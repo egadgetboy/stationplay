@@ -257,6 +257,43 @@ async def test_finds_commercials_and_trailers_beside_the_libraries(tmp_path):
 
 
 @needs_ffmpeg
+async def test_a_station_made_while_the_first_look_is_going_waits_for_it(tmp_path):
+    """A station made just after StationPlay starts, while it's still looking
+    for commercials, gets them: ready() waits for the look under way (it
+    once didn't, and the station had none until the next hourly check)."""
+    ctx, _plex = library(tmp_path)
+    clip_file(tmp_path / "tv/commercials/a.mp4", 4)
+    fillers = FillerLibrary(ctx)
+    go = asyncio.Event()
+    asked = ctx.library.libraries
+
+    async def slow_libraries():
+        await go.wait()
+        return await asked()
+
+    ctx.library.libraries = slow_libraries
+    first = asyncio.create_task(fillers.refresh())  # (as StationPlay starts)
+    await asyncio.sleep(0.05)
+    waiting = asyncio.create_task(fillers.ready())  # (a station being made)
+    await asyncio.sleep(0.2)
+    assert not waiting.done()
+    go.set()
+    await asyncio.wait_for(waiting, 30)
+    assert [Path(c.path).name for c in fillers.pool("commercials")] == ["a.mp4"]
+    await first
+    # Once looked, ready() doesn't wait again; nor when the look failed.
+    await asyncio.wait_for(fillers.ready(), 1)
+    broken = FillerLibrary(ctx)
+
+    async def no_plex():
+        raise RuntimeError("Plex is down")
+
+    ctx.library.libraries = no_plex
+    await asyncio.wait_for(broken.ready(), 5)
+    assert broken.pool("commercials") == []
+
+
+@needs_ffmpeg
 async def test_only_new_or_changed_files_are_opened_again(tmp_path, monkeypatch):
     ctx, _plex = library(tmp_path)
     clip_file(tmp_path / "tv/commercials/a.mp4", 4)

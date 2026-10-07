@@ -101,6 +101,8 @@ class FillerLibrary:
         self._lock = asyncio.Lock()
         self.refreshed_ms = 0
         self._tried = False
+        # Set once the folders have been looked in (or tried) once.
+        self._looked = asyncio.Event()
         self._empty_looks = {COMMERCIALS: 0, TRAILERS: 0}
 
     def pool(self, kind: str) -> list[Clip]:
@@ -137,9 +139,13 @@ class FillerLibrary:
         self.ctx.db.set_meta(META_BAD, json.dumps({p: list(m) for p, m in self.bad.items()}))
 
     async def ready(self) -> None:
-        """Makes sure the folders have been looked in (or tried) once."""
+        """Makes sure the folders have been looked in (or tried) once, waiting
+        for a look already under way: a station made while the first one
+        (as StationPlay starts) is still going would otherwise get no
+        commercials or trailers until the next hourly check."""
         if not self._tried:
             await self.refresh()
+        await self._looked.wait()
 
     async def refresh(self) -> None:
         """Finds the folders (from Plex's library folders) and what's in them,
@@ -149,32 +155,39 @@ class FillerLibrary:
         async with self._lock:
             self._tried = True
             try:
-                sections = await self.ctx.library.libraries()
-            except Exception as e:
-                log.info("Can't look for commercials and trailers right now (%s)", e)
-                return
-            try:
-                found = await self._folders(sections)
-                clips = {kind: await self._clips(folders) for kind, folders in found.items()}
-            except TimeoutError:
-                log.warning(
-                    "Looking for commercials and trailers took too long (is the media share "
-                    "responding?); keeping the ones already found"
-                )
-                return
-            self._through_hiccups(clips, found)
-            present = {c.path for kind in clips for c in clips[kind]}
-            if any(p not in present for p in self.bad):  # files since removed
-                self.bad = {p: m for p, m in self.bad.items() if p in present}
-                self._save_bad()
-            if clips != self.clips or not self.refreshed_ms:
-                log.info(
-                    "Found %d commercials and %d trailers",
-                    len(clips[COMMERCIALS]),
-                    len(clips[TRAILERS]),
-                )
-            self.clips, self.folders = clips, found
-            self.refreshed_ms = int(time.time() * 1000)
+                await self._look()
+            finally:
+                self._looked.set()
+
+    async def _look(self) -> None:
+        """What refresh does, holding its lock."""
+        try:
+            sections = await self.ctx.library.libraries()
+        except Exception as e:
+            log.info("Can't look for commercials and trailers right now (%s)", e)
+            return
+        try:
+            found = await self._folders(sections)
+            clips = {kind: await self._clips(folders) for kind, folders in found.items()}
+        except TimeoutError:
+            log.warning(
+                "Looking for commercials and trailers took too long (is the media share "
+                "responding?); keeping the ones already found"
+            )
+            return
+        self._through_hiccups(clips, found)
+        present = {c.path for kind in clips for c in clips[kind]}
+        if any(p not in present for p in self.bad):  # files since removed
+            self.bad = {p: m for p, m in self.bad.items() if p in present}
+            self._save_bad()
+        if clips != self.clips or not self.refreshed_ms:
+            log.info(
+                "Found %d commercials and %d trailers",
+                len(clips[COMMERCIALS]),
+                len(clips[TRAILERS]),
+            )
+        self.clips, self.folders = clips, found
+        self.refreshed_ms = int(time.time() * 1000)
 
     async def _folders(self, sections: list[dict]) -> dict[str, list[str]]:
         """The commercials folders beside TV libraries, trailers beside movies."""
