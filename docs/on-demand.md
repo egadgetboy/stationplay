@@ -117,7 +117,7 @@ The answer is a play session:
 | `url` | Where the player gets it: `/play/<session>/file.<container>` |
 | `resumeMs` | Where this person stopped last time (0: the start) |
 | `durationMs` | How long it is |
-| `markers` | `intro` and `credits`, each `[startMs, endMs]` or null (the Skip intro and Skip credits buttons) |
+| `markers` | `intro` and `credits`, each `[startMs, endMs]` or null, and `creditsToEnd` (the Skip intro and Skip credits buttons; episodes only) |
 | `subtitles` | The subtitle tracks; ones in separate files have a `url` to load beside the video |
 
 `/play/<session>/…` addresses need no sign-in (a player can't sign in):
@@ -134,6 +134,68 @@ A session counts as a device watching, for the Admin's limits (see
 (a file request or a progress report). One more device than the limits
 allow is answered 503 with `limit` and `most`, as for stations.
 
+## Skip intro and Skip credits
+
+For episodes only. Plex finds an episode's intro by matching it across a
+season, and its closing credits as they start; movies are made too many
+ways (credits over the final scene, scenes between the credits) for a
+button to be trusted, so they have none. A button in the wrong place is
+worse than none, so an episode's markers are used only where they fit its
+file (`plex._skips`), by the rules stations use (`markers.py`) and these:
+
+- A marker ending past the end of the file, or ending before it starts,
+  means Plex's markers don't fit this file (they were found in another, since
+  replaced): none are used.
+- Nor are they for an episode with versions of different lengths (over a
+  second apart): Plex finds markers in one, and the others may not line up.
+- The intro starts in the first half and runs under five minutes; it must
+  end before the credits start (otherwise neither is used) and at least a
+  minute before the end. The credits start in the second half: the ones
+  Plex says are final, or else the last.
+- A scrap of under five seconds before the intro, or after the credits,
+  goes with it. Skip intro shows from the very start, and Skip credits goes
+  on to the next episode rather than a second of black (`creditsToEnd`).
+
+The apps only offer the buttons: nothing is skipped unless the viewer
+presses one. A button shows while the player is inside its part (again if
+the viewer goes back into it), and lands exactly at its end; Skip credits
+with `creditsToEnd` goes on to the next episode, or finishes the show.
+
+## Keeping up
+
+Playing a file should be steady before it's anything else. The apps buffer
+the way players do for a file first: well ahead (the Android app up to 90
+seconds, within its memory budget), and after a stall, a good 8 seconds
+before carrying on, so a slow patch is one pause rather than many. Waits
+after a seek, or before the first picture, aren't stalls.
+
+Only trouble that lasts counts: 4 stalls within 3 minutes, 20 seconds of
+them in all, or one of 15 seconds; or frames the device couldn't draw in
+time, through most of a minute (not one hiccup). Then a short test says
+where the trouble is: frames not drawn in time are the device's; for a file
+not arriving in time, a 3-second connection test (`/api/v1/speed-test`)
+against what the file needs (`bitrateKbps` in the play answer) says whether
+it's the connection, or StationPlay reading the file (its disk, or Plex).
+
+Until a title has smaller versions to offer, the app pauses, says which it
+is in a sentence, and offers Keep watching or Stop. Next (planned, with
+versions below): a smaller version of the same title, from where the viewer
+is. At home, the main button offers it ("Keep watching in 1080p from
+42:10"); away from home, the app switches to it on its own and says so. An
+Admin can turn either way round for each. With no smaller version, it stops
+and says so (later, a converted copy).
+
+## Versions (planned)
+
+A title Plex has in several versions (4K, 1080p, 480p) is listed once; its
+page has a version chip beside Play, set to the best version this device
+plays as it is, with the others to choose from. Some Admins keep a separate
+4K library: an Admin setting, **Combine the same title across libraries**
+(off at first), lists each title once with its versions from every shared
+library, matched by Plex's own IDs; off, each library stands apart, as in
+Plex. Either way, a smaller version for keeping up can be found in another
+shared library.
+
 ## Progress, resume and watched
 
 `POST /progress` with `{"key", "positionMs"}` (every 10 seconds or so while
@@ -146,8 +208,8 @@ progress (user_id, rating_key, show_key, position_ms, duration_ms,
           watched, updated_ms, PRIMARY KEY (user_id, rating_key))
 ```
 
-- Reaching a program's credits (Plex's marker) or, without one, 90% of the
-  way through marks it **watched** and puts its position back to the start.
+- Reaching an episode's credits (Plex's marker) or, for a movie or an
+  episode without one, 90% of the way through marks it **watched** and puts its position back to the start.
   Watched stays watched while someone watches it again.
 - Less than a minute in starts from the beginning next time.
 - **Up next** for a show: the episode someone is partway through (or barely

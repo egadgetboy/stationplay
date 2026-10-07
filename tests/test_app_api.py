@@ -112,6 +112,10 @@ def app(tmp_path):
     fp.add_subtitles("300", "pgs", "English")
     fp.add_subtitles("300", "srt", "Spanish", external=b"1\n00:00:01,000 --> 00:00:02,000\nHola\n")
     fp.set_markers("300", ("intro", 60_000, 120_000), ("credits", 5_000_000, 5_300_000, True))
+    # (An episode's markers are the apps'; a movie's aren't.)
+    fp.set_markers("202", ("intro", 60_000, 120_000), ("credits", 1_200_000, 1_319_000, True))
+    fp.describe("202", colorTrc="smpte2084", bitDepth=10, video="hevc", width=3840, height=2160)
+    fp.files["202"] = b"an episode, as it is" * 100
     fp.released["300"] = "1999-03-31"
     fp.files["300"] = b"a movie, as it is" * 100
     settings = Settings(
@@ -243,7 +247,10 @@ def test_the_app_connection_matches_its_document(app):
             episode["showKey"] == "100" and episode["backdrop"] == "/api/v1/art/100?kind=backdrop"
         )
         movie = check.answer(phone.get("/api/v1/items/300", headers=sam), "GET /api/v1/items/{key}")
-        assert movie["markers"] == {"intro": [60_000, 120_000], "credits": [5_000_000, 5_400_000]}
+        assert movie["markers"] == {"intro": None, "credits": None, "creditsToEnd": False}
+        assert episode["markers"] == {
+            "intro": [60_000, 120_000], "credits": [1_200_000, 1_320_000], "creditsToEnd": True
+        }  # fmt: skip
         assert movie["picture"] == {"size": "4K", "hdr": "HDR10"}
         listed = check.answer(
             phone.get("/api/v1/items/100/episodes?season=1", headers=sam),
@@ -279,6 +286,12 @@ def test_the_app_connection_matches_its_document(app):
         assert [a["title"] for a in start["added"]] == ["TV Shows", "Movies"]
         assert phone.post(played["leave"]).status_code == 204
         assert phone.get(played["url"]).status_code == 404
+        played = check.answer(
+            phone.post("/api/v1/play", headers=sam, json={"key": "202", "device": tv}),
+            "POST /api/v1/play",
+        )
+        assert played["markers"]["intro"] == [60_000, 120_000]
+        assert phone.post(played["leave"]).status_code == 204
 
         # A device that has signed in before keeps its device token.
         again = phone.post("/api/v1/sign-in", json={**SAM, "device": signed["device"]})

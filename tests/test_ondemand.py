@@ -142,6 +142,61 @@ def test_progress_resumes_and_finishes():
     assert ondemand.progressed(None, 19 * 60_000, with_credits) == (19 * 60_000, False)
 
 
+def test_skip_buttons_only_where_an_episodes_markers_fit_its_file():
+    def mark(kind, start, end, final=False):
+        m = {"type": kind, "startTimeOffset": start, "endTimeOffset": end}
+        return {**m, "final": "1"} if final else m
+
+    skips = plex_module._skips
+    minute, length = 60_000, 44 * 60_000
+    intro, credits = (
+        mark("intro", 90_000, 150_000),
+        mark("credits", 42 * minute, length - 500, True),
+    )
+    # An intro after a cold open, and credits Plex says are final (to the end).
+    assert skips(length, [intro, credits]) == ((90_000, 150_000), (42 * minute, length))
+    # Scraps of a few seconds before the intro, or after the credits, go with them.
+    tight = [mark("intro", 3_000, 60_000), mark("credits", 42 * minute, length - 4_000)]
+    assert skips(length, tight) == ((0, 60_000), (42 * minute, length))
+    # Credits with a scene after them: Skip credits goes to the scene.
+    assert skips(length, [mark("credits", 40 * minute, 41 * minute)]) == (
+        None, (40 * minute, 41 * minute)
+    )  # fmt: skip
+    # Markers that don't fit this file (found in another, since replaced).
+    assert skips(length, [intro, mark("credits", 42 * minute, length + 30_000, True)]) == (
+        None, None
+    )  # fmt: skip
+    assert skips(length, [intro, mark("credits", 43 * minute, 42 * minute)]) == (None, None)
+    # Versions of the same length line up with the markers; others may not.
+    assert skips(length, [intro], [length, length + 400]) == ((90_000, 150_000), None)
+    assert skips(length, [intro], [length, length - 45_000]) == (None, None)
+    # An intro running into the credits: neither. One ending in the last minute: no intro.
+    short = 8 * minute
+    overlapping = [mark("intro", 3 * minute, 7 * minute), mark("credits", 270_000, short, True)]
+    assert skips(short, overlapping) == (None, None)
+    assert skips(short, [mark("intro", 3 * minute, 450_000)]) == (None, None)
+    # Stations' rules: an intro in the first half, under five minutes; credits
+    # in the second half; nothing under two seconds.
+    assert skips(length, [mark("intro", 23 * minute, 24 * minute)]) == (None, None)
+    assert skips(length, [mark("intro", minute, 7 * minute)]) == (None, None)
+    assert skips(length, [mark("credits", 10 * minute, 11 * minute)]) == (None, None)
+    assert skips(length, [mark("intro", minute, minute + 1_500)]) == (None, None)
+
+
+def test_movies_have_no_skip_buttons():
+    raw = {"ratingKey": "1", "duration": 100 * 60_000, "Marker": [
+        {"type": "intro", "startTimeOffset": 60_000, "endTimeOffset": 120_000},
+        {"type": "credits", "startTimeOffset": 95 * 60_000, "endTimeOffset": 100 * 60_000, "final": 1},
+    ]}  # fmt: skip
+    movie = plex_module.to_entry({**raw, "type": "movie"}, details=True)
+    episode = plex_module.to_entry({**raw, "type": "episode"}, details=True)
+    assert movie and (movie.intro, movie.credits) == (None, None)
+    assert episode and episode.intro == (60_000, 120_000)
+    # So a movie is watched 90% of the way through, however long its credits.
+    assert ondemand.progressed(None, 89 * 60_000, movie) == (89 * 60_000, False)
+    assert ondemand.progressed(None, 90 * 60_000, movie) == (0, True)
+
+
 def test_the_next_episode_skips_specials_and_whats_watched():
     eps = [
         Entry(k, catalog.EPISODE, k, season=s, episode=n)
@@ -295,7 +350,7 @@ def test_browsing_a_library(app, plex):
         assert home.get("/api/v1/items/300/episodes").status_code == 400
         movie = home.get("/api/v1/items/300").json()
         assert movie["audio"][0]["name"] == "English · Dolby Digital · 5.1"
-        assert movie["markers"] == {"intro": None, "credits": None}
+        assert movie["markers"] == {"intro": None, "credits": None, "creditsToEnd": False}
         assert movie["picture"] == {"size": "1080p", "hdr": None}
         # Search: titles containing the words, those starting with them first.
         found = home.get("/api/v1/search?q=movie").json()["items"]
@@ -339,6 +394,7 @@ def test_playing_a_file_as_it_is(app, plex, tmp_path, caplog):
         assert part.headers["content-range"] == f"bytes 10-{len(data) - 1}/{len(data)}"
         assert home.get(episode["url"]).content == data
         assert episode["markers"]["credits"] == [48 * 60_000, 50 * 60_000]
+        assert episode["markers"]["creditsToEnd"] is True
         # A device that can't play a file as it is is told why.
         refused = play(home, "301")
         assert refused.status_code == 422

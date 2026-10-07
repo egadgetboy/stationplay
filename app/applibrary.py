@@ -339,7 +339,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if e.kind == catalog.EPISODE and e.show_key and not e.has_art:
             out["backdrop"] = art(e.show_key, "backdrop")
         out.update(
-            markers={"intro": _span(e.intro), "credits": _span(e.credits)},
+            markers=_markers(e),
             picture={"size": media.size_label or None, "hdr": ondemand.hdr_label(media)}
             if media
             else None,
@@ -478,7 +478,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "leave": f"{here}/leave",
             "resumeMs": ondemand.resume_at(ctx.db.progress_of(user_id, [e.key]).get(e.key)),
             "durationMs": media.duration_ms or e.duration_ms,
-            "markers": {"intro": _span(e.intro), "credits": _span(e.credits)},
+            "bitrateKbps": media.bitrate_kbps,
+            "markers": _markers(e),
             "audio": tracks(media.audio, True),
             "subtitles": [
                 {
@@ -644,8 +645,16 @@ def _whole(text: str | None, otherwise: int, name: str, low: int, high: int) -> 
     return value
 
 
-def _span(span: tuple[int, int] | None) -> list[int] | None:
-    return list(span) if span else None
+def _markers(e: Entry) -> dict[str, Any]:
+    """Where an episode's intro and closing credits are (see plex._skips),
+    for the Skip intro and Skip credits buttons; a movie has neither."""
+    credits = e.credits
+    return {
+        "intro": list(e.intro) if e.intro else None,
+        "credits": list(credits) if credits else None,
+        # Nothing follows the credits: Skip credits goes on to what's next.
+        "creditsToEnd": bool(credits and e.duration_ms and credits[1] >= e.duration_ms),
+    }
 
 
 class _Passed(StreamingResponse):

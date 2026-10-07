@@ -1138,9 +1138,10 @@ def to_entry(m: dict[str, Any], section: str = "", details: bool = False) -> Ent
     added = _int(m.get("addedAt"))
     library = str(m.get("librarySectionID") or section or "")
     show_key = str(m.get("grandparentRatingKey") or "") if episode else ""
+    media = tuple(to_media(m)) if details and kind != catalog.SHOW else ()
     intro = credits = None
-    if details and kind != catalog.SHOW:
-        intro, credits = _skips(duration, m.get("Marker"))
+    if details and episode:  # (movies have no Skip buttons)
+        intro, credits = _skips(duration, m.get("Marker"), [x.duration_ms for x in media])
     return Entry(
         key=key,
         kind=kind,
@@ -1164,7 +1165,7 @@ def to_entry(m: dict[str, Any], section: str = "", details: bool = False) -> Ent
         has_art=bool(m.get("art")),
         intro=intro,
         credits=credits,
-        media=tuple(to_media(m)) if details and kind != catalog.SHOW else (),
+        media=media,
     )
 
 
@@ -1172,16 +1173,44 @@ def _int(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _skips(duration: int | None, raw: Any) -> tuple[tuple[int, int] | None, tuple[int, int] | None]:
-    """A program's intro and closing credits, from Plex's markers, for the
-    apps' Skip intro and Skip credits buttons: only where they look right,
-    by the rules stations use (see markers.py)."""
+# Skip intro and Skip credits (episodes only; see _skips).
+# A marker ending more than this past the end of an episode's file was found
+# in another file (one since replaced).
+MARKER_SLACK_MS = 2_000
+# Versions of an episode more than this apart in length may not line up with
+# its markers (Plex finds them in one file).
+VERSIONS_SLACK_MS = 1_000
+
+
+def _skips(
+    duration: int | None, raw: Any, lengths: list[int | None] | None = None
+) -> tuple[tuple[int, int] | None, tuple[int, int] | None]:
+    """An episode's intro and closing credits, from Plex's markers, for the
+    apps' Skip intro and Skip credits buttons. A button in the wrong place is
+    worse than none, so markers are used only where they fit the episode's
+    file, by the rules stations use (see markers.py) and these:
+      * a marker ending past the end of the file, or ending before it
+        starts, means Plex's markers don't fit this file (it was found in
+        another, since replaced): none are used;
+      * nor when the episode has versions of different lengths (Plex finds
+        markers in one of them, and the others may not line up);
+      * the intro must end before the credits start (otherwise neither is
+        used), and at least a minute before the episode ends;
+      * a scrap of under five seconds before the intro, or after the
+        credits, goes with it: Skip intro shows from the very start, and
+        Skip credits goes on to what's next rather than a second of black.
+    """
     from . import markers  # (markers.py uses this module)
 
     if not duration or not isinstance(raw, list):
         return None, None
+    if any(n is not None and abs(n - duration) > VERSIONS_SLACK_MS for n in lengths or []):
+        return None, None
+    found = markers.parse_markers(raw)
+    if any(m.end_ms > duration + MARKER_SLACK_MS or m.end_ms < m.start_ms for m in found):
+        return None, None
     intros, closing = [], []
-    for m in markers.parse_markers(raw):
+    for m in found:
         start, end = max(0, m.start_ms), min(duration, m.end_ms)
         if end - start < markers.MIN_MARKER_MS:
             continue
@@ -1192,8 +1221,17 @@ def _skips(duration: int | None, raw: Any) -> tuple[tuple[int, int] | None, tupl
             closing.append((m.final, start, duration if m.final else end))
     # The first intro; the credits Plex says are final, or else the last.
     intro = min(intros, default=None)
-    final = max(closing, default=None)
-    return intro, (final[1], final[2]) if final else None
+    last = max(closing, default=None)
+    credits = (last[1], last[2]) if last else None
+    if intro and credits and intro[1] > credits[0]:
+        return None, None
+    if intro and intro[1] > duration - markers.MIN_PROGRAM_MS:
+        intro = None
+    if intro and intro[0] < markers.MIN_KEEP_MS:
+        intro = (0, intro[1])
+    if credits and duration - credits[1] < markers.MIN_KEEP_MS:
+        credits = (credits[0], duration)
+    return intro, credits
 
 
 def to_media(m: dict[str, Any]) -> list[Media]:

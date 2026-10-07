@@ -370,11 +370,12 @@ A show's, movie's or episode's details: its card's fields, and more.
 | `seasons[].episodes` | number | How many episodes it has |
 | `seasons[].unwatched` | number | How many of them this person hasn't watched |
 | `next` | card or null | (A show) the episode to play next: the one this person is partway through, or the one after the last they finished, or the first; null once they've watched it all |
-| `markers` | object | (An episode or movie) where its intro and closing credits are, for Skip intro and Skip credits buttons |
-| `markers.intro` | list or null | The intro, as `[startMs, endMs]`; null if it hasn't one |
+| `markers` | object | (An episode) where its intro and closing credits are, for the Skip intro and Skip credits buttons. Movies have none, so they have no Skip buttons |
+| `markers.intro` | list or null | The intro, as `[startMs, endMs]`: show Skip intro from its start until its end, and skip to its end. Null if it hasn't one, or Plex's markers don't fit its file |
 | `markers.intro[]` | number | A time in it, in milliseconds from its start |
-| `markers.credits` | list or null | The closing credits, as `[startMs, endMs]`; null if it hasn't them |
+| `markers.credits` | list or null | The closing credits, as `[startMs, endMs]`; null if it hasn't them, or Plex's markers don't fit its file |
 | `markers.credits[]` | number | A time in it |
+| `markers.creditsToEnd` | boolean | Whether the credits run to its end: Skip credits then goes on to the next episode (or finishes), rather than to a scene after them |
 | `picture` | object or null | (An episode or movie) its picture |
 | `picture.size` | string or null | `4K`, `1080p`, `720p` or `SD` |
 | `picture.hdr` | string or null | `Dolby Vision`, `HDR10` or `HLG`; null if it isn't HDR |
@@ -443,6 +444,14 @@ An Admin's limits on devices watching count programs played this way too
 (see Playing a station): one more device is answered 503 with `limit` and
 `most`.
 
+Skip intro and Skip credits are for episodes only. Show Skip intro while
+the player is inside `markers.intro`, and Skip credits inside
+`markers.credits`, again whenever the viewer goes back into them; pressing
+one moves to the end of that part, or with `creditsToEnd`, on to the next
+episode. Only offer them: nothing is skipped unless the viewer presses the
+button. Movies have no markers, since where a movie's credits start is too
+often uncertain.
+
 | Field | Type | What it is |
 |---|---|---|
 | `session` | string | This playing's ID (for progress reports) |
@@ -451,11 +460,13 @@ An Admin's limits on devices watching count programs played this way too
 | `leave` | string | Where to `POST` when the player stops |
 | `resumeMs` | number | Where this person stopped last time (0: the start). Offer to resume there, or start over |
 | `durationMs` | number or null | How long it is |
+| `bitrateKbps` | number or null | What the file needs, in kilobits a second: to tell, when playing keeps stopping to load, whether the connection is too slow for it (see `/api/v1/speed-test`) |
 | `markers` | object | As in its details |
 | `markers.intro` | list or null | As in its details |
 | `markers.intro[]` | number | As in its details |
 | `markers.credits` | list or null | As in its details |
 | `markers.credits[]` | number | As in its details |
+| `markers.creditsToEnd` | boolean | As in its details |
 | `audio` | list | Its sound tracks, as in its details |
 | `audio[].id` | string | As in its details |
 | `audio[].name` | string | As in its details |
@@ -486,8 +497,9 @@ Where this person is in an episode or movie: send `{"key": "1234",
 plays (`session` keeps the device counted as watching), and when it stops.
 Or mark it from a menu: `{"key": "1234", "watched": true}` (or `false`).
 
-Reaching its closing credits (or, without them, 90% of the way) marks it
-watched and starts it from the beginning next time. Less than a minute in
+Reaching an episode's closing credits (or 90% of the way, for a movie or
+an episode without them) marks it watched and starts it from the beginning
+next time. Less than a minute in
 starts it from the beginning too.
 
 | Field | Type | What it is |
