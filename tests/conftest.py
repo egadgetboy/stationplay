@@ -17,6 +17,17 @@ def no_background_scans(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def daytime(monkeypatch):
+    """The tests run outside the overnight checks' hours, whatever the time
+    is where they run (a test of those hours passes the time it means, and
+    the tests of the overnight checks say when it's night)."""
+    real = scanner.Scanner.in_window
+    monkeypatch.setattr(
+        scanner.Scanner, "in_window", lambda self, now=None: now is not None and real(self, now)
+    )
+
+
+@pytest.fixture(autouse=True)
 def plain_new_stations(monkeypatch):
     """New stations start plain in tests (no Intro Bumper, nothing in the
     corner, no Up Next Banner, episode order), so streams start with their
