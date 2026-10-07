@@ -95,7 +95,7 @@ StationPlay it can talk to.
 | `outside` | boolean | Whether the app reached StationPlay through its public port |
 | `awayAddress` | string or null | The address to use away from home (such as `https://tv.example.com`), when an Admin has turned that on; null otherwise |
 | `features` | list | What this server offers apps |
-| `features[]` | string | One of them: `hls` (stations as HLS), `away` (watching away from home is on) |
+| `features[]` | string | One of them: `hls` (stations as HLS), `speed-test` (connection tests, from 1.20.0), `away` (watching away from home is on) |
 
 ## POST /api/v1/link
 
@@ -214,11 +214,45 @@ in use, also `"onNow"`: the numbers of the stations playing, which the app
 can offer to join instead. All the apps watching a station share its one
 stream, on one tuner.
 
+An Admin can limit how many devices watch through the apps at once, and of
+those, how many away from home (on the Access tab). A device already
+watching can always change station; one more device is answered 503 with
+`"limit"` (`devices`, or `away`) and `"most"` (the limit), and a `detail`
+the app shows as it is, such as "An Admin has limited StationPlay to 5
+devices watching at once, so it runs smoothly for everyone. Please try
+again later." It should offer to try again rather than retrying by itself.
+
 `POST` to the `hls` address with `index.m3u8` changed to `leave` (such as
 `/hls/<number>/leave`) says this device stopped watching a station
 (tuned away, or went back to the guide). If no other app is watching it,
 its stream stops and its tuner is free at once; otherwise it stops once
 nothing has asked for it for 30 seconds. Answers 204, whatever the station.
+
+## GET /api/v1/speed-test
+
+A connection test: data for the app to time, so the Admin can see how fast
+StationPlay reaches devices (at home, and away from home, where it's the
+home internet's upload) and how many can watch at once. `?mb=` is how many
+megabytes (1 to 64; 20 if it isn't given). The data is random, so nothing
+along the way can shrink it, and it has a `Content-Length`. An app times it
+from a moment after the data starts (so the connection's start-up isn't
+counted), and may stop reading after about 8 seconds on a slow connection.
+One test from an address at a time: another within 10 seconds is answered
+429.
+
+## POST /api/v1/speed-test
+
+What the app found: `{"mbps": 48.2, "app": "...", "deviceName": "..."}`
+(`app` and `deviceName` as for signing in). StationPlay keeps it for the
+Access tab, with where it ran as StationPlay sees it, and recommends limits
+from the fastest recent tests.
+
+| Field | Type | What it is |
+|---|---|---|
+| `mbps` | number | The speed kept, in megabits a second |
+| `where` | string | `home`, or `away` (through the public port) |
+| `eachMbps` | number | What one device watching takes, at the biggest picture the stations use |
+| `room` | number | How many devices a connection this fast has room for at once |
 
 ## A program
 

@@ -84,8 +84,10 @@ class HlsStream:
         self.number = number
         self.folder = Path(tempfile.mkdtemp(prefix=f"stationplay-hls-{number}-"))
         self.last_asked = time.monotonic()
-        # Who's been watching (by address), and when each last asked.
+        # Who's been watching (by address), and when each last asked; and
+        # which of them are away from home.
         self.clients: dict[str, float] = {}
+        self.away: set[str] = set()
         self.ended = False
         self.ended_because = ""
         self._stopping = False
@@ -94,7 +96,7 @@ class HlsStream:
         self._viewer: Viewer = b.subscribe(f"app viewers on {number}")
         self._task = asyncio.create_task(self._run(), name=f"hls-{number}")
 
-    def asked_by(self, client: str | None) -> None:
+    def asked_by(self, client: str | None, away: bool = False) -> None:
         """A player asked for the playlist or a piece."""
         now = time.monotonic()
         self.last_asked = now
@@ -103,11 +105,14 @@ class HlsStream:
         if client not in self.clients:
             log.info("An app on %s is watching station %d", client, self.number)
         self.clients[client] = now
+        if away:
+            self.away.add(client)
 
     def left_by(self, client: str) -> None:
         """An app said it stopped watching: the stream stops now if no other
         app has asked for it lately. (An address that wasn't watching changes
         nothing, so one device can't stop another's.)"""
+        self.away.discard(client)
         if self.clients.pop(client, None) is None:
             return
         log.info("An app on %s stopped watching station %d", client, self.number)
@@ -121,8 +126,13 @@ class HlsStream:
 
     def watching(self) -> int:
         """How many apps (by address) asked for it in the last IDLE_S."""
+        return len(self.watchers())
+
+    def watchers(self) -> dict[str, bool]:
+        """The apps that asked for it in the last IDLE_S, and whether each is
+        away from home."""
         now = time.monotonic()
-        return sum(1 for at in self.clients.values() if now - at < IDLE_S)
+        return {c: c in self.away for c, at in self.clients.items() if now - at < IDLE_S}
 
     async def playlist(self) -> str | None:
         """The playlist, once it has enough pieces for a player to start; None
@@ -254,6 +264,15 @@ class HlsStreams:
     def watching(self, channel_id: int) -> int:
         stream = self.get(channel_id)
         return stream.watching() if stream else 0
+
+    def watchers(self) -> dict[str, bool]:
+        """Every device watching any station through the apps (see
+        HlsStream.watchers), each once."""
+        out: dict[str, bool] = {}
+        for stream in self._by_station.values():
+            if not stream.over:
+                out.update(stream.watchers())
+        return out
 
     async def stop_all(self, because: str) -> None:
         streams = list(self._by_station.values())

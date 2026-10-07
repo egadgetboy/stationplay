@@ -18,10 +18,10 @@ from typing import TYPE_CHECKING, Any
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import __version__, access, hdhr, intro, links, specials
+from . import __version__, access, capacity, hdhr, intro, links, specials
 from .broadcaster import now_ms
 from .text import plain
 
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 VERSION = 1
 PREFIX = "/api/v1/"
 HEADER = (b"stationplay-api", str(VERSION).encode())
-FEATURES = ("hls",)
+FEATURES = ("hls", "speed-test")
 
 GUIDE_DEFAULT_MS = 6 * 3600_000
 GUIDE_MAX_MS = 2 * 86_400_000
@@ -83,6 +83,12 @@ class LinkStart(BaseModel):
 
 class LinkCheck(BaseModel):
     poll: str = Field(max_length=100)
+
+
+class SpeedTested(BaseModel):
+    mbps: float
+    app: str = Field(default="", max_length=APP_MAX)
+    deviceName: str = Field(default="", max_length=APP_MAX)
 
 
 class LinkCode(BaseModel):
@@ -362,6 +368,62 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 }
                 for c, palette, (now_on, next_on) in zip(channels, palettes, airing, strict=True)
             ]
+        }
+
+    # Connection tests (see capacity.py) ------------------------------------
+
+    @app.get("/api/v1/speed-test")
+    async def speed_test(request: Request):
+        """Data for an app to time: `?mb=` megabytes of it (TEST_MB unless
+        asked), random so nothing along the way can shrink it. One test from
+        an address at a time."""
+        try:
+            mb = int(request.query_params.get("mb", capacity.TEST_MB))
+        except ValueError:
+            raise HTTPException(400, "mb must be a number") from None
+        if not 1 <= mb <= capacity.TEST_MB_MOST:
+            raise HTTPException(400, f"mb must be between 1 and {capacity.TEST_MB_MOST}")
+        if not ctx.capacity.may_test(access.address(request.scope)):
+            raise HTTPException(
+                429, "A connection test just ran from here. Try again in a few seconds."
+            )
+
+        async def data():
+            for _ in range(mb):
+                yield capacity.TEST_BLOCK
+
+        return StreamingResponse(
+            data(),
+            media_type="application/octet-stream",
+            headers={
+                "Content-Length": str(mb * len(capacity.TEST_BLOCK)),
+                "Cache-Control": "no-store",
+            },
+        )
+
+    @app.post("/api/v1/speed-test")
+    async def speed_tested(body: SpeedTested, request: Request):
+        """What an app found: kept for the Access tab, where StationPlay
+        recommends limits from it. Where it ran (at home, or away from home
+        through the public port) is as StationPlay sees it."""
+        user = access.signed_in(request)
+        where = "away" if access.outside(request.scope) else "home"
+        try:
+            test = ctx.capacity.record(
+                where,
+                body.mbps,
+                app_label(body.app, body.deviceName),
+                user.name if user else "",
+                now_ms(),
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        each, _ = capacity.stream_mbps(settings, ctx.db.list_channels())
+        return {
+            "mbps": test.mbps,
+            "where": where,
+            "eachMbps": each,
+            "room": capacity.room(test, each),
         }
 
     @app.get("/api/v1/guide")

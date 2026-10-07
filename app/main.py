@@ -39,6 +39,7 @@ from . import (
     appapi,
     away,
     backups,
+    capacity,
     hdhr,
     hls,
     intro,
@@ -338,6 +339,14 @@ class LimitsIn(BaseModel):
     names: dict[str, PlainText] = Field(default_factory=dict, max_length=500)
 
 
+class AppLimitsIn(BaseModel):
+    """How many devices may watch through StationPlay's apps at once, and
+    of those, away from home (0: no limit; see capacity.py)."""
+
+    devices: int
+    away: int
+
+
 class PlaybackIn(BaseModel):
     """New stations' picture size, the tuners, the welcome seen, and what
     else new stations start with, by the editor's names (see playback.py);
@@ -409,6 +418,7 @@ class AppContext:
     bumpers: BumperLibrary = field(init=False)  # Intro Bumpers you've uploaded
     access: access.Access = field(init=False)  # who can sign in
     away: away.Away = field(init=False)  # StationPlay's apps away from home
+    capacity: capacity.Capacity = field(init=False)  # how many apps may watch at once
     stats: stats.Stats = field(init=False)  # how much each station is watched
     # Your shows and movies, wherever they come from (see library.py).
     library: Library = field(init=False)
@@ -426,6 +436,7 @@ class AppContext:
         self.bumpers = BumperLibrary(self.settings.data_dir / "bumpers")
         self.access = access.Access(self.db)
         self.away = away.Away(self.db, self.access)
+        self.capacity = capacity.Capacity(self.db)
         self.stats = stats.Stats(self.db)
         self.updater = Updater(self)
         self.markers = MarkerFinder(self.db, self.library)
@@ -749,14 +760,31 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     # StationPlay's apps (and AirPlay and Chromecast): stations as HLS ---------
 
-    async def hls_playlist_for(number: int, client: str) -> Response:
+    async def hls_playlist_for(number: int, client: str, away_: bool = False) -> Response:
         """A station's HLS playlist, for an app (`client`: which, for its
-        stream's list of who's watching). The first ask starts the station's
-        stream for apps (see hls.py), and waits until a player has enough to
-        start on."""
+        stream's list of who's watching; `away_`: away from home). The first
+        ask starts the station's stream for apps (see hls.py), and waits until
+        a player has enough to start on. One more device than an Admin's
+        limits allow is turned away (see capacity.py)."""
         channel = ctx.db.get_channel_by_number(number)
         if channel is None:
             raise HTTPException(404, f"There's no station {number}")
+        watching = ctx.hls_streams.watchers()
+        if (over := ctx.capacity.refusal(watching, client, away_)) is not None:
+            limit, most = over
+            log.warning(
+                "The limit of %s watching%s at once (set on the Access tab) was reached, "
+                "so an app on %s couldn't tune to station %s",
+                capacity.devices(most),
+                " away from home" if limit == "away" else "",
+                client,
+                channel.number,
+            )
+            return JSONResponse(
+                {"detail": capacity.refused_because(limit, most), "limit": limit, "most": most},
+                status_code=503,
+                headers=hls.HEADERS,
+            )
         stream = ctx.hls_streams.get(channel.id)
         if stream is None:
             b = ctx.broadcaster(channel.id)
@@ -778,7 +806,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 )
             playback.make_room(ctx, b)
             stream = ctx.hls_streams.start(b, channel.number)
-        stream.asked_by(client)
+        stream.asked_by(client, away_)
         playlist = await stream.playlist()
         if playlist is None:
             return JSONResponse(
@@ -841,7 +869,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     async def hls_playlist_away(key: str, number: int, request: Request):
         user = away_user(key, recheck=True)
         ctx.away.watching(key, user, number, access.where(request.scope))
-        return await hls_playlist_for(number, away_client(key, user))
+        return await hls_playlist_for(number, away_client(key, user), away_=True)
 
     @app.get("/hls/k/{key}/{number}/logo.png")
     async def logo_away(key: str, number: int):
@@ -2356,6 +2384,51 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         tested["at"] = now_ms()
         ctx.db.set_meta(META_SPEED_TEST, json.dumps(tested))
         return playback_json()
+
+    # How many of StationPlay's apps may watch at once (see capacity.py) ----
+
+    def app_limits_json() -> dict:
+        now = now_ms()
+        each, picture = capacity.stream_mbps(settings, ctx.db.list_channels())
+        rooms = {}
+        for where in capacity.WHERE:
+            best = ctx.capacity.best(where, now)
+            rooms[where] = (
+                {"devices": capacity.room(best, each), "test": best.as_dict()} if best else None
+            )
+        watching = ctx.hls_streams.watchers()
+        limits_ = ctx.capacity.limits
+        return {
+            "devices": limits_.devices,
+            "away": limits_.away,
+            "most": capacity.MOST,
+            "eachMbps": each,
+            "picture": picture,
+            "room": rooms,
+            "tests": [t.as_dict() for t in ctx.capacity.tests()],
+            "watching": {"devices": len(watching), "away": sum(watching.values())},
+        }
+
+    @app.get("/api/app-limits")
+    async def app_limits_get():
+        return app_limits_json()
+
+    @app.put("/api/app-limits")
+    async def app_limits_put(body: AppLimitsIn, request: Request):
+        before = ctx.capacity.limits
+        try:
+            after = ctx.capacity.save(body.devices, body.away)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        if after != before:
+            user = access.signed_in(request)
+            log.info(
+                "Devices that can watch at once in StationPlay's apps: %s; away from home: %s%s",
+                after.devices or "no limit",
+                after.away or "no limit",
+                f" (set by {user.name})" if user else "",
+            )
+        return app_limits_json()
 
     async def scan_json() -> dict:
         """How far the checks have got, and going through the broken-files

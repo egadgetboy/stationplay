@@ -22,7 +22,7 @@ DOC = Path(__file__).resolve().parent.parent / "docs" / "app-api.md"
 PUBLIC_PORT = 8443
 PAT = {"name": "Pat", "password": "correct horse"}
 SAM = {"name": "Sam", "password": "battery staple"}
-TYPES = {"string": str, "number": int, "boolean": bool, "list": list, "object": dict}
+TYPES = {"string": str, "number": (int, float), "boolean": bool, "list": list, "object": dict}
 
 
 def documented() -> dict[str, dict[str, str]]:
@@ -33,6 +33,8 @@ def documented() -> dict[str, dict[str, str]]:
     for line in DOC.read_text().splitlines():
         if line.startswith("## "):
             heading = line[3:].strip()
+            if heading.startswith(("GET /", "POST /")):
+                sections[heading] = {}  # (an address, even with no fields: data, say)
         elif row := re.fullmatch(r"\| `([^`]+)` \| ([^|]+) \|.*", line):
             sections.setdefault(heading, {})[row.group(1)] = row.group(2).strip()
     return sections
@@ -76,7 +78,7 @@ class Checker:
             self._object(value, "", "A program")
             return
         expected = TYPES[kind]
-        assert isinstance(value, expected) and not (expected is int and isinstance(value, bool)), (
+        assert isinstance(value, expected) and not (kind == "number" and isinstance(value, bool)), (
             f"{section}: {path} is {value!r}, not a {kind}"
         )
         if kind == "object":
@@ -130,7 +132,7 @@ def test_the_app_connection_matches_its_document(app):
         )
         server = check.answer(home.get("/api/v1/server"), "GET /api/v1/server")
         assert server["api"] == 1 and not server["signIn"] and server["notSetUp"] is None
-        assert server["features"] == ["hls"]
+        assert server["features"] == ["hls", "speed-test"]
         # From the internet, until signing in is on, there's nothing to do.
         outside = check.answer(internet.get("/api/v1/server"), "GET /api/v1/server")
         assert outside["signIn"] and "home network" in outside["notSetUp"]
@@ -189,6 +191,17 @@ def test_the_app_connection_matches_its_document(app):
             f"from={start + 8 * 86_400_000}",
         ):
             check.answer(phone.get(f"/api/v1/guide?{bad}", headers=sam), "GET /api/v1/guide", 400)
+
+        # A connection test (see test_capacity.py): the data, then what was found.
+        data = phone.get("/api/v1/speed-test?mb=1", headers=sam)
+        assert data.status_code == 200 and len(data.content) == 1 << 20
+        assert data.headers["stationplay-api"] == "1"
+        assert phone.get("/api/v1/speed-test?mb=1").status_code == 401
+        tested = {"mbps": 52.0, "app": "StationPlay for Android", "deviceName": "Pixel"}
+        found = check.answer(
+            phone.post("/api/v1/speed-test", headers=sam, json=tested), "POST /api/v1/speed-test"
+        )
+        assert (found["where"], found["mbps"]) == ("home", 52.0)
 
         # A device that has signed in before keeps its device token.
         again = phone.post("/api/v1/sign-in", json={**SAM, "device": signed["device"]})
@@ -259,4 +272,6 @@ def test_the_app_connection_matches_its_document(app):
         pat = bearer(token["token"])
         assert internet.get("/api/v1/stations", headers=pat).status_code == 200
         assert internet.get("/hls/5/index.m3u8", headers=pat).status_code == 404
+        away = internet.post("/api/v1/speed-test", headers=pat, json={"mbps": 12.5})
+        assert check.answer(away, "POST /api/v1/speed-test")["where"] == "away"
     check.everything_seen()

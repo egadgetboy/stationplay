@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import os
 import re
@@ -59,13 +60,18 @@ def starts_on_a_keyframe(path) -> bool:
 
 def video_start(path, what: str) -> str:
     """The first few video packets or frames of a piece, for a failure's message."""
-    entries = {"packet": "packet=pts_time,flags,size", "frame": "frame=key_frame,pict_type,pts_time"}[what]
+    entries = {
+        "packet": "packet=pts_time,flags,size",
+        "frame": "frame=key_frame,pict_type,pts_time",
+    }[what]
     got = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0", "-read_intervals", "%+#4",
          "-show_entries", entries, "-of", "csv=p=0", str(path)],
         capture_output=True, text=True,
     )  # fmt: skip
-    return " ".join(got.stdout.split()) + (f" ({got.stderr.strip()[:120]})" if got.stderr.strip() else "")
+    return " ".join(got.stdout.split()) + (
+        f" ({got.stderr.strip()[:120]})" if got.stderr.strip() else ""
+    )
 
 
 def two_episode_show(media) -> FakePlex:
@@ -133,7 +139,7 @@ async def test_an_app_watches_a_station_as_hls(tmp_path, media, monkeypatch):
         ordered = sorted(got, key=lambda name: int(name[1:-3]))
         for name in ordered:
             (tmp_path / name).write_bytes(got[name])
-        for before, name in zip(ordered, ordered[1:]):
+        for before, name in itertools.pairwise(ordered):
             path = tmp_path / name
             assert starts_on_a_keyframe(path), (
                 f"{name} doesn't start on a keyframe. Its packets: {video_start(path, 'packet')}; "
@@ -273,7 +279,7 @@ async def test_an_app_away_from_home_watches_through_the_public_port(tmp_path, m
             auth = await sign_in()
             server = (await phone.get("/api/v1/server", headers=auth)).json()
             assert server["outside"] and server["awayAddress"] is None
-            assert server["features"] == ["hls"]
+            assert server["features"] == ["hls", "speed-test"]
             # Off: from outside, nothing to play.
             assert await hls_of(auth) == "/hls/7/index.m3u8"
             assert (await phone.get("/hls/7/index.m3u8")).status_code == 404
@@ -286,7 +292,7 @@ async def test_an_app_away_from_home_watches_through_the_public_port(tmp_path, m
             assert on.status_code == 200 and on.json()["address"] == "https://tv.example.com"
             server = (await phone.get("/api/v1/server", headers=auth)).json()
             assert server["awayAddress"] == "https://tv.example.com"
-            assert server["features"] == ["hls", "away"]
+            assert server["features"] == ["hls", "speed-test", "away"]
             at_home = (await inside.get("/api/v1/server")).json()
             assert not at_home["outside"] and at_home["awayAddress"] == "https://tv.example.com"
             assert (await inside.get("/api/v1/stations")).json()["stations"][0]["hls"] == (

@@ -230,7 +230,10 @@ def test_the_quick_check_finds_whats_broken_and_leaves_the_rest(tmp_path, files)
 def deep_scan_all(client: TestClient, monkeypatch) -> None:
     ctx = client.app.state.ctx
     monkeypatch.setattr(ctx.scanner, "in_window", lambda now=None: True)
-    for _ in range(20):
+    # (A file a busy machine was too slow to check is checked again in the
+    # next round, rather than in half an hour: the tests don't wait that long.)
+    monkeypatch.setattr(sc, "SKIPPED_RETRY_S", 0.0)
+    for _ in range(60):
         if not client.portal.call(ctx.scanner.round):
             break
 
