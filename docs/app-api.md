@@ -448,8 +448,8 @@ Skip intro and Skip credits are for episodes only. Show Skip intro while
 the player is inside `markers.intro`, and Skip credits inside
 `markers.credits`, again whenever the viewer goes back into them; pressing
 one moves to the end of that part, or with `creditsToEnd`, on to the next
-episode. Only offer them: nothing is skipped unless the viewer presses the
-button. Movies have no markers, since where a movie's credits start is too
+episode. Offer them; skip without asking only where the viewer has turned
+that on. Movies have no markers, since where a movie's credits start is too
 often uncertain.
 
 | Field | Type | What it is |

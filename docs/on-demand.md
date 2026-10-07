@@ -156,10 +156,11 @@ file (`plex._skips`), by the rules stations use (`markers.py`) and these:
   goes with it. Skip intro shows from the very start, and Skip credits goes
   on to the next episode rather than a second of black (`creditsToEnd`).
 
-The apps only offer the buttons: nothing is skipped unless the viewer
-presses one. A button shows while the player is inside its part (again if
-the viewer goes back into it), and lands exactly at its end; Skip credits
-with `creditsToEnd` goes on to the next episode, or finishes the show.
+The apps offer the buttons: nothing is skipped unless the viewer presses
+one (skipping without asking is planned as a setting, off at first). A
+button shows while the player is inside its part (again if the viewer goes
+back into it), and lands exactly at its end; Skip credits with
+`creditsToEnd` goes on to the next episode, or finishes the show.
 
 ## Keeping up
 
