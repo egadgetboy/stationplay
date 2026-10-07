@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import shutil
@@ -46,12 +47,14 @@ def sequence(playlist: str) -> int:
 
 
 def starts_on_a_keyframe(path) -> bool:
-    first = subprocess.run(
+    # (As JSON: a frame with side data, such as the first one of an encode,
+    # which carries the encoder's settings, has more than its fields in CSV.)
+    frames = json.loads(subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0", "-read_intervals", "%+#1",
-         "-show_entries", "frame=key_frame", "-of", "csv=p=0", str(path)],
+         "-show_entries", "frame=key_frame", "-of", "json", str(path)],
         capture_output=True, text=True, check=True,
-    ).stdout.split()  # fmt: skip
-    return bool(first) and first[0] == "1"
+    ).stdout).get("frames") or []  # fmt: skip
+    return bool(frames) and frames[0].get("key_frame") == 1
 
 
 def video_start(path, what: str) -> str:
