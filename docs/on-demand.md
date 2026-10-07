@@ -15,7 +15,7 @@ library layer it builds on is in `docs/library.md`.
    library. Every key an app asks about is checked against that.
 3. **The best picture and sound first.** A file plays as it is whenever the
    device can play it (direct play). Repackaging and converting come only
-   when it can't (1.22.0).
+   when it can't (1.23.0).
 4. **Each person's own place.** Where someone stopped, what they've
    watched, and what's next are kept per StationPlay user.
 5. **Lean.** Plex stays the catalog (Phase 3 adds folders). StationPlay
@@ -26,7 +26,11 @@ library layer it builds on is in `docs/library.md`.
 - **1.21.0:** sharing libraries; browsing, details, search and pictures;
   direct play; progress, resume and watched; Continue Watching and
   recently added. At home, and over a VPN (which looks like home).
-- **1.22.0:** repackaging and converting (HLS, with seeking), choosing
+- **1.22.0:** versions (the best one the device and its connection keep
+  up with, one chosen when playing, and a smaller one when playing can't
+  keep up); Skip intro and Skip credits for episodes only, where Plex's
+  markers fit the file. The apps' own addresses move to `/api/internal`.
+- **1.23.0:** repackaging and converting (HLS, with seeking), choosing
   audio and subtitle tracks when converting (picture subtitles drawn in),
   and the Admin's quality cap away from home. Watching on demand through
   the public port arrives here, since files can then be made to fit an
@@ -34,7 +38,7 @@ library layer it builds on is in `docs/library.md`.
 
 The `features` an app sees (`GET /api/v1/server`) say what this server
 offers where the app is: `library` once a library is shared (and, in 1.21.0,
-only at home); `convert` from 1.22.0.
+only at home); `convert` from 1.23.0.
 
 ## Sharing libraries
 
@@ -57,7 +61,7 @@ lists things, so checking rarely costs a request. A key that isn't shared,
 or that Plex doesn't know, answers 404 with the same sentence either way,
 so nothing can be learned by guessing keys.
 
-## The addresses (all under `/api/v1`, documented in `docs/app-api.md`)
+## The addresses (all under `/api/internal`, documented in `docs/internal-api.md`)
 
 | Address | What it answers |
 |---|---|
@@ -78,7 +82,7 @@ many this person hasn't watched. Text is made plain, as for stations.
 Pictures come from Plex, made the size asked for (`w` is rounded up to one
 of a few widths so they can be kept: 160, 320, 480, 720, 1280, 1920), and
 kept in memory (up to 48 MB) like the station editor's posters. They need a
-sign-in whenever signing in is on, as everything under `/api/v1` does, so
+sign-in whenever signing in is on, as everything under `/api/internal` does, so
 apps send their token with pictures too.
 
 ## Playing
@@ -113,7 +117,7 @@ The answer is a play session:
 | Field | What it is |
 |---|---|
 | `session` | The session's ID |
-| `method` | `direct` (1.22.0 adds `repackage` and `convert`) |
+| `method` | `direct` (1.23.0 adds `repackage` and `convert`) |
 | `url` | Where the player gets it: `/play/<session>/file.<container>` |
 | `resumeMs` | Where this person stopped last time (0: the start) |
 | `durationMs` | How long it is |
@@ -176,7 +180,7 @@ a second are hiccups. After that: 4 stalls within 3 minutes, 20 seconds of
 them in all, or one of 20 seconds; or frames the device couldn't draw in
 time, through most of a minute. Then short tests say where the trouble is:
 frames not drawn in time are the device's; for a file not arriving in time,
-a 3-second connection test (`/api/v1/speed-test`) against what the file
+a 3-second connection test (`/api/internal/speed-test`) against what the file
 needs (`bitrateKbps` in the play answer) says whether it's the connection;
 a fast connection with the file itself arriving slower than it needs (the
 player's own measure) says it's StationPlay reading the file (its disk, or
@@ -254,5 +258,5 @@ stations are airing it right now.
 2. Sharing, the "is it shared?" check, browsing, details, search and
    pictures, with the Plex calls behind `Library`.
 3. Play sessions, direct play, progress and Continue Watching.
-4. The contract (`docs/app-api.md`) and its tests, the Access tab, the
+4. The contract (`docs/internal-api.md`) and its tests, the Access tab, the
    README; then 1.21.0.

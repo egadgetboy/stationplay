@@ -14,7 +14,7 @@ have limits of their own, and the tuners cover them.
 The server can't measure its own internet upload without a speed-test
 service somewhere else, and StationPlay depends on no outside service. So
 the apps measure it, the way viewers use it: an app times data sent to it
-by StationPlay (GET /api/v1/speed-test) and says what it found. From away
+by StationPlay (GET /api/internal/speed-test) and says what it found. From away
 from home, that's the upload as a viewer away from home gets it.
 
 A device already watching may always change station (it's still one

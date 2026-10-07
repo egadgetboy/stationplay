@@ -36,6 +36,7 @@ from pydantic import AfterValidator, BaseModel, Field
 from . import (
     __version__,
     access,
+    api,
     appapi,
     applibrary,
     away,
@@ -1260,6 +1261,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             "passwordMax": access.PASSWORD_MAX,
             "stationLimits": access.STATION_LIMITS,
             "newUserStations": access.NEW_USER_STATIONS,
+            "apiTokenNameMax": access.API_TOKEN_NAME_MAX,
         }
         page = page.replace("__ACCESS__", json.dumps(rules))
         page = page.replace("__PASSWORD_MIN__", str(access.PASSWORD_MIN))
@@ -2704,6 +2706,41 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         if not path.exists():
             return JSONResponse({"files": []})
         return FileResponse(path, filename="broken-files.json", media_type="application/json")
+
+    # StationPlay's API (see api.py): what an Admin's token can have it do, as
+    # the page does it.
+
+    async def api_status() -> dict[str, Any]:
+        return {
+            "version": __version__,
+            "plexConnected": bool((await plex_status(find_dvr=False))["ok"]),
+            "tuners": playback.load(ctx.db).tuners,
+            "playing": [
+                {"number": s["number"], "viewers": s["viewers"]}
+                for s in streams_now()
+                if s["number"] is not None
+            ],
+        }
+
+    async def api_update(channel_id: int, request: Request) -> bool:
+        answer = await update_from_plex(channel_id, request)
+        return bool(answer.get("changed"))
+
+    async def api_backup() -> str:
+        return (await backup_now())["name"]
+
+    api.routes(
+        app,
+        ctx,
+        api.Actions(
+            status=api_status,
+            update_station=api_update,
+            check_station=lambda channel_id: jobs.start_check(ctx, channel_id).as_dict(),
+            refresh_guide=after_change,
+            backup=api_backup,
+            asking_plex=[asking_plex],
+        ),
+    )
 
     return app
 

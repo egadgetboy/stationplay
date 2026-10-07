@@ -81,18 +81,23 @@ What stays on `ctx.plex`: `hdhr`, the guide refresh (`dvrs`, `reload_guide`),
 `sessions`, `accounts`, `plex_pass`, `stop_session` and `identity` for Plex's
 status line.
 
-## The app connection, version 1
+## StationPlay's API, and the apps' own addresses
 
-A small, documented set of addresses under `/api/v1`, for StationPlay's apps.
-It reuses what exists and adds no new features to the server. Its contract
-is `docs/app-api.md`; what follows is the outline.
+Two small, documented sets of addresses, reusing what exists. StationPlay's
+API, under `/api/v1`, is for anyone's scripts and players as well as the
+apps: the server, its stations and their guide, and a few Admin actions,
+with API tokens and an OpenAPI spec (`docs/api.md`). What only
+StationPlay's apps use (signing in, connection tests, the library on
+demand) is under `/api/internal` (`docs/internal-api.md`), free to change
+along with the apps. What follows is the outline.
 
-- `GET /api/v1/server` (open): name, version, connection version, whether
+- `GET /api/v1/server` (open): name, version, API version, whether
   signing in is required, and the features this server has.
-- `POST /api/v1/sign-in`: name and password in, a session token out, for
-  apps (the page keeps using its cookie). `POST /api/v1/sign-out` ends it. Apps send the token as
-  `Authorization: Bearer <token>`; sessions, the 30-day lifetime, signing
-  out and the access log all work as today.
+- `POST /api/internal/sign-in`: name and password in, a session token out,
+  for apps (the page keeps using its cookie). `POST /api/internal/sign-out`
+  ends it. Apps send the token as `Authorization: Bearer <token>`;
+  sessions, the 30-day lifetime, signing out and the access log all work
+  as today.
 - `GET /api/v1/stations`: every station the person may watch: number, name,
   description, logo address, the Intro Bumper's colors for its logo, its
   HLS address, and what's on now and next.
@@ -103,15 +108,17 @@ is `docs/app-api.md`; what follows is the outline.
 - Every answer carries `StationPlay-API: 1`. Additions never break version
   1; a breaking change would be version 2, served beside it.
 
-Tests check each address against the document `docs/app-api.md`, so the
-document and the server can't drift apart.
+Tests check each address against its document (`docs/api.md` or
+`docs/internal-api.md`), so the documents and the server can't drift
+apart.
 
 ## Order of work
 
 1. `app/library.py`: `Library` and `LibraryError`, with unit tests. Done.
 2. Move each call site in the Plex map's list (a) onto `ctx.library`. Done.
-3. The app connection (`app/appapi.py`), its document (`docs/app-api.md`)
-   and its contract tests (`tests/test_app_api.py`). Done.
+3. The app connection (`app/appapi.py`), its documents (now `docs/api.md`
+   and `docs/internal-api.md`) and its contract tests
+   (`tests/test_app_api.py`). Done.
 4. Phase 1's gate: every existing test passes, stations play exactly as
    before, and the app connection is documented.
 5. Library keys (digits, or `f` + digits): with the folder source, in

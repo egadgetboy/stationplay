@@ -268,7 +268,7 @@ async def test_an_app_away_from_home_watches_through_the_public_port(tmp_path, m
             assert (await inside.post("/api/access/users", json=PAT)).status_code == 201
 
             async def sign_in() -> dict[str, str]:
-                signed = await phone.post("/api/v1/sign-in", json=PAT)
+                signed = await phone.post("/api/internal/sign-in", json=PAT)
                 assert signed.status_code == 200, signed.text
                 return {"Authorization": f"Bearer {signed.json()['token']}"}
 
@@ -327,7 +327,7 @@ async def test_an_app_away_from_home_watches_through_the_public_port(tmp_path, m
             log = (await inside.get("/api/logs?access_log=true")).json()["text"]
             assert "Pat is watching station 7 away from home, from 203.0.113.7" in log
             # Signing out ends that app's address.
-            assert (await phone.post("/api/v1/sign-out", headers=auth)).status_code == 200
+            assert (await phone.post("/api/internal/sign-out", headers=auth)).status_code == 200
             assert (await phone.get(hls_url)).status_code == 404
             assert (await phone.get(logo)).status_code == 404
             # And turning it off ends every one.

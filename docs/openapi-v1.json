@@ -1,0 +1,1021 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "StationPlay API",
+    "description": "StationPlay's API: the server, its stations, their guide and streams, and things an Admin can have it do. Send an API token (made on StationPlay's Access tab) as `Authorization: Bearer <token>`: a Viewer token reads, an Admin token also does what's marked Admin. Version 1 only grows; see docs/api.md.",
+    "version": "1",
+    "license": {
+      "name": "GPL-3.0-only"
+    }
+  },
+  "paths": {
+    "/api/v1/server": {
+      "get": {
+        "summary": "What this server is",
+        "description": "Asked first: its name and version, whether requests need a token, and what it offers here. Needs no token.",
+        "operationId": "getServer",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Server"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/stations": {
+      "get": {
+        "summary": "The stations",
+        "description": "Every station, with what's on now and next, and where to play it.",
+        "operationId": "getStations",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stations"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or one that isn't valid (while signing in is on)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The token may not do this, or isn't accepted from there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/guide": {
+      "get": {
+        "summary": "The guide",
+        "description": "Each station's programs between two times: 6 hours from now unless asked; at most 2 days, starting within 7 days of now.",
+        "operationId": "getGuide",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Where it starts (ms)",
+              "title": "From"
+            },
+            "description": "Where it starts (ms)"
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Where it ends (ms)",
+              "title": "To"
+            },
+            "description": "Where it ends (ms)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Guide"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Something in the request wasn't understood",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or one that isn't valid (while signing in is on)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The token may not do this, or isn't accepted from there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/status": {
+      "get": {
+        "summary": "How StationPlay is doing",
+        "description": "Whether Plex answers, how many tuners there are, and what's playing.",
+        "operationId": "getStatus",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or one that isn't valid (while signing in is on)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The token may not do this, or isn't accepted from there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stations/{number}/update": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Update a station from Plex now",
+        "description": "Follows Plex straight away (as Update now does on the page): new and removed programs, with a held update applied. Admin.",
+        "operationId": "updateStation",
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Updated"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Something in the request wasn't understood",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or one that isn't valid (while signing in is on)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The token may not do this, or isn't accepted from there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "There's no such station",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stations/{number}/check": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Check a station's files",
+        "description": "Starts the quick check of each of its programs' files, as Check files does on the page (or, while one is running, says how far it has got). Admin.",
+        "operationId": "checkStation",
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Check"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Something in the request wasn't understood",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or one that isn't valid (while signing in is on)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The token may not do this, or isn't accepted from there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "There's no such station",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "How a station's file check is going",
+        "description": "Its last check, running or done, without starting one. Admin.",
+        "operationId": "getStationCheck",
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Check"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Something in the request wasn't understood",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or one that isn't valid (while signing in is on)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The token may not do this, or isn't accepted from there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "There's no such station",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/guide/refresh": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Ask Plex to refresh its guide",
+        "description": "As StationPlay does by itself after a change. Admin.",
+        "operationId": "refreshGuide",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuideRefreshed"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or one that isn't valid (while signing in is on)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The token may not do this, or isn't accepted from there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/backups": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Back StationPlay up now",
+        "description": "Makes a backup, as StationPlay does every night. Admin.",
+        "operationId": "makeBackup",
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Backup"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or one that isn't valid (while signing in is on)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The token may not do this, or isn't accepted from there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Backup": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "The backup's file name, in the backups folder"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "Backup"
+      },
+      "Check": {
+        "properties": {
+          "number": {
+            "type": "integer",
+            "title": "Number"
+          },
+          "running": {
+            "type": "boolean",
+            "title": "Running",
+            "description": "Whether the check is still going"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Programs to check (0: no check yet)"
+          },
+          "done": {
+            "type": "integer",
+            "title": "Done",
+            "description": "Programs checked so far"
+          },
+          "newlyBroken": {
+            "type": "integer",
+            "title": "Newlybroken",
+            "description": "Programs it found problems in (now off the air)"
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped",
+            "description": "Programs that couldn't be checked"
+          }
+        },
+        "type": "object",
+        "required": [
+          "number",
+          "running",
+          "total",
+          "done",
+          "newlyBroken",
+          "skipped"
+        ],
+        "title": "Check"
+      },
+      "Colors": {
+        "properties": {
+          "dark": {
+            "type": "string",
+            "title": "Dark",
+            "description": "#RRGGBB"
+          },
+          "light": {
+            "type": "string",
+            "title": "Light",
+            "description": "#RRGGBB"
+          },
+          "accent": {
+            "type": "string",
+            "title": "Accent",
+            "description": "#RRGGBB"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dark",
+          "light",
+          "accent"
+        ],
+        "title": "Colors"
+      },
+      "Guide": {
+        "properties": {
+          "from": {
+            "type": "integer",
+            "title": "From",
+            "description": "Where the guide starts (ms)"
+          },
+          "to": {
+            "type": "integer",
+            "title": "To",
+            "description": "Where it ends (ms)"
+          },
+          "stations": {
+            "items": {
+              "$ref": "#/components/schemas/GuideStation"
+            },
+            "type": "array",
+            "title": "Stations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "stations"
+        ],
+        "title": "Guide"
+      },
+      "GuideRefreshed": {
+        "properties": {
+          "refreshed": {
+            "type": "boolean",
+            "title": "Refreshed",
+            "description": "Whether Plex said it would refresh its guide"
+          }
+        },
+        "type": "object",
+        "required": [
+          "refreshed"
+        ],
+        "title": "GuideRefreshed"
+      },
+      "GuideStation": {
+        "properties": {
+          "number": {
+            "type": "integer",
+            "title": "Number"
+          },
+          "programs": {
+            "items": {
+              "$ref": "#/components/schemas/Program"
+            },
+            "type": "array",
+            "title": "Programs",
+            "description": "Its programs in the time asked for, in order"
+          }
+        },
+        "type": "object",
+        "required": [
+          "number",
+          "programs"
+        ],
+        "title": "GuideStation"
+      },
+      "Playing": {
+        "properties": {
+          "number": {
+            "type": "integer",
+            "title": "Number",
+            "description": "The station's number"
+          },
+          "viewers": {
+            "type": "integer",
+            "title": "Viewers",
+            "description": "Devices watching it"
+          }
+        },
+        "type": "object",
+        "required": [
+          "number",
+          "viewers"
+        ],
+        "title": "Playing"
+      },
+      "Program": {
+        "properties": {
+          "start": {
+            "type": "integer",
+            "title": "Start",
+            "description": "When it starts, in milliseconds since 1970 (UTC)"
+          },
+          "end": {
+            "type": "integer",
+            "title": "End",
+            "description": "When it ends (the commercials after it included)"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "description": "episode or movie"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "The show's title, or the movie's"
+          },
+          "episodeTitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Episodetitle",
+            "description": "The episode's title (null for a movie)"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season"
+          },
+          "episode": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Episode"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary",
+            "description": "What it's about (may be empty)"
+          },
+          "art": {
+            "type": "string",
+            "title": "Art",
+            "description": "Its picture, on the home network: the show's, or the movie's"
+          },
+          "special": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Special",
+            "description": "What special it's part of: 'Feature Presentation', a block's name, or a marathon's"
+          }
+        },
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "kind",
+          "title",
+          "episodeTitle",
+          "season",
+          "episode",
+          "year",
+          "summary",
+          "art",
+          "special"
+        ],
+        "title": "Program"
+      },
+      "Server": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "The server's name, as set when it was set up"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The server's own ID, the same for as long as it's set up"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "description": "StationPlay's version, such as 1.22.0"
+          },
+          "api": {
+            "type": "integer",
+            "title": "Api",
+            "description": "The newest API version this server answers (1)"
+          },
+          "signIn": {
+            "type": "boolean",
+            "title": "Signin",
+            "description": "Whether requests need a token (signing in is on)"
+          },
+          "notSetUp": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notsetup",
+            "description": "Why the server can't be used from here yet (a sentence), or null"
+          },
+          "outside": {
+            "type": "boolean",
+            "title": "Outside",
+            "description": "Whether this request came from the internet (the public port)"
+          },
+          "awayAddress": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Awayaddress",
+            "description": "Where StationPlay's apps reach it from outside, when that's on"
+          },
+          "features": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Features",
+            "description": "What it offers here: hls, speed-test, away, library (more may be added)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "id",
+          "version",
+          "api",
+          "signIn",
+          "notSetUp",
+          "outside",
+          "awayAddress",
+          "features"
+        ],
+        "title": "Server"
+      },
+      "Station": {
+        "properties": {
+          "number": {
+            "type": "integer",
+            "title": "Number"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "logo": {
+            "type": "string",
+            "title": "Logo",
+            "description": "Its logo (an address on the server)"
+          },
+          "colors": {
+            "$ref": "#/components/schemas/Colors",
+            "description": "Colors from its logo, as its Intro Bumper uses them"
+          },
+          "hls": {
+            "type": "string",
+            "title": "Hls",
+            "description": "Where to play it (HLS): an address on the server. From the internet (with watching away from home on), an address of the token's own, which needs no token itself"
+          },
+          "now": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Program"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What's on now"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Program"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What's on next"
+          }
+        },
+        "type": "object",
+        "required": [
+          "number",
+          "name",
+          "description",
+          "logo",
+          "colors",
+          "hls",
+          "now",
+          "next"
+        ],
+        "title": "Station"
+      },
+      "Stations": {
+        "properties": {
+          "stations": {
+            "items": {
+              "$ref": "#/components/schemas/Station"
+            },
+            "type": "array",
+            "title": "Stations",
+            "description": "Every station, in number order"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stations"
+        ],
+        "title": "Stations"
+      },
+      "Status": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "description": "StationPlay's version"
+          },
+          "plexConnected": {
+            "type": "boolean",
+            "title": "Plexconnected",
+            "description": "Whether Plex answers"
+          },
+          "tuners": {
+            "type": "integer",
+            "title": "Tuners",
+            "description": "How many stations can play at once"
+          },
+          "playing": {
+            "items": {
+              "$ref": "#/components/schemas/Playing"
+            },
+            "type": "array",
+            "title": "Playing",
+            "description": "The stations playing now"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "plexConnected",
+          "tuners",
+          "playing"
+        ],
+        "title": "Status"
+      },
+      "Updated": {
+        "properties": {
+          "number": {
+            "type": "integer",
+            "title": "Number"
+          },
+          "changed": {
+            "type": "boolean",
+            "title": "Changed",
+            "description": "Whether Plex had anything new for it"
+          }
+        },
+        "type": "object",
+        "required": [
+          "number",
+          "changed"
+        ],
+        "title": "Updated"
+      },
+      "Error": {
+        "type": "object",
+        "title": "Error",
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "Why, as a sentence to show"
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    "securitySchemes": {
+      "token": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "An API token from the Access tab (or a StationPlay app's sign-in)"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Admin",
+      "description": "Needs an Admin token"
+    }
+  ],
+  "security": [
+    {
+      "token": []
+    }
+  ]
+}

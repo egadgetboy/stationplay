@@ -22,7 +22,7 @@ If you find it useful, you can [buy me a coffee](https://buymeacoffee.com/egadge
 - [How stations play](#how-stations-play)
 - [Station features](#station-features): logos, corner logo, Up Next Banner, Station ID card, commercials, Intro Bumper, subtitles, specials
 - [Keeping stations on the air](#keeping-stations-on-the-air): safeguards, the Broken files list, file checks, Sonarr and Radarr
-- [Who can use StationPlay](#who-can-use-stationplay) · [Stats](#stats) · [Settings](#settings) · [Troubleshooting](#troubleshooting) · [Development](#development)
+- [Who can use StationPlay](#who-can-use-stationplay) · [Stats](#stats) · [StationPlay's API](#stationplays-api) · [Settings](#settings) · [Troubleshooting](#troubleshooting) · [Development](#development)
 - [Contributing](#contributing) · [Forks and credit](#forks-and-credit) · [License](#license)
 
 ## What you need
@@ -349,7 +349,7 @@ StationPlay's own apps are in development. They connect directly to your Station
 - **Built for stability.** An Admin sets how many devices can watch at once, including how many away from home. StationPlay tests what your server and internet connection can handle and recommends limits. When a limit is reached, the app explains why and asks the viewer to try again later.
 - **Your library on demand.** Browse your shows and movies, search them, and pick up where you left off with Continue Watching. Skip an episode's intro and credits at the press of a button, and choose subtitles and audio tracks. Each device gets the best picture and sound it supports, including Dolby Vision and Dolby Atmos, and a file is converted only when a device can't play it as it is.
 
-The server side is ready: StationPlay 1.19.0 and later include the connection the apps use, documented in [docs/app-api.md](docs/app-api.md).
+The server side is ready: StationPlay 1.19.0 and later include what the apps use. They read the stations and guide through [StationPlay's API](#stationplays-api), like any other client, and sign in, test connections and browse your library through addresses of their own, documented for the apps in [docs/internal-api.md](docs/internal-api.md).
 
 **Sharing your library with the apps.** Your library stays out of the apps until an Admin chooses which libraries to share, on the **Access** tab under **Your library in StationPlay's apps**. Stations, Plex, Jellyfin and other apps don't change either way. Each person who signs in has their own Continue Watching, resume points and watched list (while sign-in is off, everyone shares one). Programs played this way count toward the limit on devices watching at once. A title with several versions (4K and 1080p, say) is listed once, and each device plays the best version it can. If playing can't keep up for a while, even with the buffer, the app tests the connection to find out why, then offers a smaller version from where you are (or switches to it on its own, as you choose on the Access tab). For now, the library plays files as they are, on your home network or through a VPN; converting files that a device can't play, and watching your library through the public port, come later. The design is in [docs/on-demand.md](docs/on-demand.md).
 
@@ -826,6 +826,21 @@ A viewing counts once it lasts a minute, so flipping past a station doesn't coun
 
 **Who's watching** (Admins only while sign-in is on): each Plex user's viewing, and the stations and programs each watches most. While a station has viewers, StationPlay asks Plex every 30 seconds what it's playing and to whom, and matches each Live TV session to a station. Viewing in other apps isn't counted per user, and neither is time when two stations air the same program at once. If your Plex token isn't allowed to see what's playing, the tab says so.
 
+## StationPlay's API
+
+*Optional.* Your own scripts, home automation (such as Home Assistant) and other players can use StationPlay's API, under `/api/v1`: the server, its stations with what's on now and next, the guide, each station's HLS stream, and how StationPlay is doing. With an Admin token, they can also update a station from Plex, check a station's files, ask Plex to refresh its guide, and make a backup. It's documented in [docs/api.md](docs/api.md), with an OpenAPI spec at `/api/v1/openapi.json` (also in [docs/openapi-v1.json](docs/openapi-v1.json)).
+
+Version 1 is a stable contract: it only grows. New fields and addresses may be added, but nothing is renamed, removed or changed in meaning. A change that would break a client comes as version 2, served beside version 1, which then carries `Deprecation` and `Sunset` headers for at least six months before it goes.
+
+**API tokens.** While sign-in is off, the API needs no token on your network. Once it's on, an Admin makes a token for each script on the **Access** tab, under **API tokens**: give it a name, choose **Viewer** (it can only read) or **Admin**, and choose when it expires. The token is shown once, so copy it then; StationPlay keeps only a hash of it. Scripts send it as `Authorization: Bearer <token>`.
+
+- A token works only with the API, never with StationPlay's page, and never does more than the Admin who made it may do now.
+- The Access tab shows when each token was last used. Revoke one there at any time; removing the Admin who made it revokes it too. The access log records each token made and revoked.
+
+**From the internet.** API tokens are refused on the public port until an Admin checks **Accept API tokens from the internet** on the **Access** tab, and even then work only over HTTPS (through a reverse proxy or a Cloudflare Tunnel; see [Reaching StationPlay from outside your home](#reaching-stationplay-from-outside-your-home)). With Cloudflare Access in front, a script also needs a Cloudflare Access service token. A VPN is simpler still: to StationPlay, a script on the VPN is on your home network.
+
+StationPlay's own apps also use addresses under `/api/internal`. Those are for the apps only, aren't part of the API, and may change with any release.
+
 ## Settings
 
 StationPlay is set up mostly on its page. These environment variables (in the YAML or `docker-compose.yml`) cover the rest:
@@ -959,7 +974,10 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/replacing.py`, `app/arr.py` | Replacing files with Sonarr and Radarr |
 | `app/gpu.py` | GPU detection, the startup test, and turning off a failing GPU |
 | `app/hls.py` | Stations as HLS, for StationPlay's apps and other HLS players |
-| `app/appapi.py` | The app connection: what StationPlay's apps ask the server (`/api/v1`) |
+| `app/appapi.py`, `app/api.py` | StationPlay's API (`/api/v1`): the server, stations and guide; API tokens, Admin actions and the OpenAPI spec. Also the apps' own sign-in and connection tests (`/api/internal`) |
+| `app/links.py` | Signing in an app with a code |
+| `app/away.py`, `app/capacity.py` | StationPlay's apps away from home; limits on devices watching, and connection tests |
+| `app/ondemand.py`, `app/applibrary.py`, `app/catalog.py` | Your library on demand in StationPlay's apps |
 | `app/hdhr.py` | HDHomeRun and XMLTV formats |
 | `app/breaks.py` | Commercials, trailers and Station ID cards |
 | `app/intro.py` | Drawing the Intro Bumper and Station ID card, and their sound |
@@ -975,7 +993,7 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/web/index.html` | The web page |
 | `tests/` | Unit and end-to-end tests |
 | `Dockerfile`, `stationplay.yaml`, `docker-compose.yml` | The image, the TrueNAS app, and the Compose file |
-| `docs/` | StationPlay's logo; the app connection (`app-api.md`) and the library's design (`library.md`) |
+| `docs/` | StationPlay's logo; StationPlay's API (`api.md`, `openapi-v1.json`); the apps' own addresses (`internal-api.md`); the designs of the library (`library.md`) and of watching it on demand (`on-demand.md`) |
 
 ## Contributing
 

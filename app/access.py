@@ -20,6 +20,12 @@ same way and send their token in a header instead (Authorization: Bearer;
 see appapi.py). Signing in is logged (who and from where) in the access log,
 which the Logs tab shows.
 
+Scripts and other apps use StationPlay's API (/api/v1, see api.py) with an
+API token an Admin makes on the Access tab: a Viewer token reads; an Admin
+token does what an Admin may there too. A token works only under /api/v1,
+and from the internet only once an Admin allows that. It's kept as a hash,
+shown once, and can be revoked; removing the Admin who made it removes it.
+
 Locked out? Create an empty file called reset-access in the data folder and
 restart StationPlay: every user is removed, and it's open again.
 
@@ -122,6 +128,21 @@ NOT_SET_UP = (
     "Signing in to StationPlay isn't set up yet. Add the first user from your home network."
 )
 
+# API tokens (see the module's notes, and api.py): "spk_" and 43 random
+# characters; what each may do (its scope).
+API_TOKEN_PREFIX = "spk_"
+VIEWER = "viewer"
+SCOPES = (VIEWER, ADMIN)
+API_TOKENS_MOST = 100
+API_TOKEN_NAME_MAX = 60
+API_OUTSIDE_META = "api_outside"  # whether tokens are taken from the internet
+BAD_TOKEN = "That API token isn't valid. It may have expired or been revoked."
+TOKEN_API_ONLY = "API tokens work only with StationPlay's API, under /api/v1"
+TOKEN_NOT_OUTSIDE = (
+    "API tokens aren't accepted from the internet. An Admin can allow them on the Access tab."
+)
+TOKEN_READS_ONLY = "This API token can only read (its scope is Viewer)"
+
 # What Plex and IPTV apps use: the tuner, its guide, streams and pictures for
 # the guide (and the stations as HLS, for StationPlay's apps). Open on the
 # home network (they can't sign in); never offered on the public port.
@@ -141,16 +162,19 @@ PAGE = frozenset({"/", "/link", "/apple-touch-icon.png", "/api/access/me", "/api
 OPEN = (
     PAGE
     | {"/api/access/sign-in", "/api/access/sign-out"}
-    | {"/api/v1/sign-in", "/api/v1/link", "/api/v1/link/check"}
+    | {"/api/internal/sign-in", "/api/internal/link", "/api/internal/link/check"}
     | FOR_PLEX
 )
 # Programs played on demand in StationPlay's apps: each at an address of its
 # own, which is what lets a player in (see ondemand.py). On the home network
 # only, for now.
 PLAY_UNDER = "/play/"
-# What StationPlay's apps use: from the internet, only over HTTPS (their
-# passwords, sign-ins and stream addresses must never cross it in the clear).
-FOR_APPS_UNDER = ("/api/v1/", "/hls/k/", PLAY_UNDER)
+# What StationPlay's apps use, and the API: from the internet, only over
+# HTTPS (passwords, sign-ins, tokens and stream addresses must never cross it
+# in the clear).
+API_UNDER = "/api/v1/"
+INTERNAL_UNDER = "/api/internal/"
+FOR_APPS_UNDER = (API_UNDER, INTERNAL_UNDER, "/hls/k/", PLAY_UNDER)
 # Also open on the home network: the stations' logos (Plex shows them).
 OPEN_UNDER = (*FOR_PLEX_UNDER, "/channel-icon/", "/logos/")
 # What a User may do; everything else is for Admins. (A path ending in "/"
@@ -161,15 +185,16 @@ FOR_USERS = {
         "/api/channels", "/api/channels/", "/api/bumpers", "/api/logos", "/api/collections",
         "/api/filter/", "/api/libraries", "/api/libraries/", "/api/stats", "/api/status",
         "/poster/", "/logos/", "/bumpers/", "/plex-logo/", "/api/v1/stations", "/api/v1/guide",
-        "/api/v1/speed-test", "/api/access/link/", "/api/v1/libraries", "/api/v1/libraries/",
-        "/api/v1/home", "/api/v1/search", "/api/v1/items/", "/api/v1/art/",
+        "/api/v1/status", "/api/access/link/", "/api/internal/speed-test",
+        "/api/internal/libraries", "/api/internal/libraries/", "/api/internal/home",
+        "/api/internal/search", "/api/internal/items/", "/api/internal/art/",
     ),
     "POST": (
         "/api/access/me/password", "/api/channels", "/api/channels/", "/api/collections/stations",
         "/api/filter/preview", "/api/intro/preview", "/api/upnext/preview", "/api/logos",
         "/api/logos/plex", "/api/bumpers", "/api/smart/split", "/api/smart/stations",
-        "/api/v1/sign-out", "/api/v1/speed-test", "/api/access/link", "/api/v1/play",
-        "/api/v1/progress",
+        "/api/internal/sign-out", "/api/internal/speed-test", "/api/access/link",
+        "/api/internal/play", "/api/internal/progress",
     ),
     "PUT": ("/api/channels/",),
     "DELETE": ("/api/channels/",),
@@ -523,11 +548,13 @@ class Access:
         return self.session_user_hashed(session_hash(token))
 
     def session_user_hashed(self, hashed: str) -> User | None:
-        """session_user, for a session known by its token's hash."""
+        """session_user, for a session known by its token's hash (an API
+        token's too)."""
         now = _now()
         found = self.db.session_user(hashed, now - SESSION_DAYS * 86_400_000)
         if found is None:
-            return None
+            token = self._api_token_hashed(hashed)
+            return token.as_user() if token else None
         user, seen_ms = found
         if now - seen_ms > SEEN_EVERY_MS:
             self.db.seen(hashed, now)
@@ -535,6 +562,82 @@ class Access:
 
     def forget_old_sessions(self) -> None:
         self.db.forget_sessions_before(_now() - SESSION_DAYS * 86_400_000)
+
+    # API tokens --------------------------------------------------------------
+
+    def make_api_token(
+        self, name: str, scope: str, by: User, days: int | None
+    ) -> tuple[ApiToken, str]:
+        """A new API token, made by the Admin `by`: the token (shown this
+        once) and what it is. ValueError if that won't do."""
+        name = plain(name).strip()
+        if not name or len(name) > API_TOKEN_NAME_MAX:
+            raise ValueError(f"Give the token a name, up to {API_TOKEN_NAME_MAX} characters")
+        if scope not in SCOPES:
+            raise ValueError("Choose Viewer or Admin")
+        if days is not None and not 1 <= days <= 3650:
+            raise ValueError("A token can last from 1 day to 10 years, or never expire")
+        if len(self.db.api_tokens()) >= API_TOKENS_MOST:
+            raise ValueError(f"StationPlay keeps at most {API_TOKENS_MOST} API tokens")
+        token = API_TOKEN_PREFIX + secrets.token_urlsafe(32)
+        now = _now()
+        expires = now + days * 86_400_000 if days else None
+        token_id = self.db.add_api_token(_token_hash(token), name, scope, by.id, now, expires)
+        made = ApiToken(token_id, name, scope, by, now, 0, expires)
+        what = "Admin" if scope == ADMIN else "Viewer"
+        self.record(logging.INFO, f"{by.name} made the API token \u201c{name}\u201d ({what})")
+        return made, token
+
+    def api_tokens(self) -> list[ApiToken]:
+        return [_api_token(row, owner) for row, owner in self.db.api_tokens()]
+
+    def revoke_api_token(self, token_id: int, by: User | None) -> bool:
+        found = next((t for t in self.api_tokens() if t.id == token_id), None)
+        if found is None or not self.db.delete_api_token(token_id):
+            return False
+        who = by.name if by else "Someone"
+        self.record(logging.INFO, f"{who} revoked the API token \u201c{found.name}\u201d")
+        return True
+
+    def api_token(self, token: str) -> ApiToken | None:
+        """The API token a request was made with, while it's good."""
+        if not token.startswith(API_TOKEN_PREFIX):
+            return None
+        return self._api_token_hashed(_token_hash(token))
+
+    def _api_token_hashed(self, hashed: str) -> ApiToken | None:
+        found = self.db.api_token(hashed)
+        if found is None:
+            return None
+        token = _api_token(*found)
+        now = _now()
+        if token.expires_ms is not None and now >= token.expires_ms:
+            return None
+        if now - token.used_ms > SEEN_EVERY_MS:
+            self.db.api_token_used(token.id, now)
+        return token
+
+    @property
+    def api_outside(self) -> bool:
+        """Whether API tokens are taken from the internet (the public port)."""
+        return self.db.get_meta(API_OUTSIDE_META) == "1"
+
+    def set_api_outside(self, on: bool, by: User | None) -> None:
+        if on == self.api_outside:
+            return
+        self.db.set_meta(API_OUTSIDE_META, "1" if on else "0")
+        who = by.name if by else "Someone"
+        self.record(
+            logging.WARNING if on else logging.INFO,
+            f"{who} {'allowed' if on else 'stopped'} API tokens from the internet",
+        )
+
+
+def _api_token(row: dict, owner: User) -> ApiToken:
+    return ApiToken(
+        row["id"], row["name"], row["scope"], owner, row["created_ms"], row["used_ms"],
+        row["expires_ms"],
+    )  # fmt: skip
 
 
 def _recent(tries: deque[tuple[float, str]]) -> deque[tuple[float, str]]:
@@ -570,6 +673,37 @@ def _now() -> int:
 
 
 # Who may do what ---------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ApiToken:
+    """An API token (never the token itself: that's shown once, when it's made)."""
+
+    id: int
+    name: str
+    scope: str  # VIEWER or ADMIN
+    owner: User  # the Admin who made it
+    created_ms: int
+    used_ms: int  # when it was last used; 0 if never
+    expires_ms: int | None  # None: never
+
+    @property
+    def admin(self) -> bool:
+        """Whether it may do what an Admin may: an Admin token, while the
+        Admin who made it still is one (it never does more than they may)."""
+        return self.scope == ADMIN and self.owner.role == ADMIN
+
+    def as_user(self) -> User:
+        """Who a request made with it is, for what it may do and the log:
+        an Admin for an Admin token (see admin), a User otherwise."""
+        return User(
+            id=self.owner.id,
+            name=f"API token \u201c{self.name}\u201d",
+            role=ADMIN if self.admin else USER,
+            created_ms=self.created_ms,
+            signed_in_ms=self.used_ms,
+            max_stations=0,
+        )
 
 
 def may_change(user: User | None, channel: Channel) -> bool:
@@ -644,12 +778,33 @@ class Gate:
         if path.startswith((AWAY_UNDER, PLAY_UNDER)):
             return None  # (its address says whose it is)
         token = bearer(scope) or _cookie(scope, COOKIE)
+        if token and token.startswith(API_TOKEN_PREFIX):
+            refused = self._api_token(scope, token)
+            return None if path in OPEN else refused
         user = state["user"] = self.access.session_user(token) if token else None
         if path in OPEN:
             return None
         if user is None:
             return 401, "Sign in to StationPlay"
         if user.role != ADMIN and not _for_users(path, scope["method"]):
+            return 403, ADMINS_ONLY
+        return None
+
+    def _api_token(self, scope: dict, token: str) -> tuple[int, str] | None:
+        """_decide, for a request made with an API token."""
+        state = scope["state"]
+        found = self.access.api_token(token)
+        if found is None:
+            return 401, BAD_TOKEN
+        if not scope["path"].startswith(API_UNDER):
+            return 403, TOKEN_API_ONLY
+        if state["outside"] and not self.access.api_outside:
+            return 403, TOKEN_NOT_OUTSIDE
+        state["user"] = user = found.as_user()
+        state["api_token"] = found
+        if found.scope != ADMIN and scope["method"] not in SAFE_METHODS:
+            return 403, TOKEN_READS_ONLY
+        if user.role != ADMIN and not _for_users(scope["path"], scope["method"]):
             return 403, ADMINS_ONLY
         return None
 

@@ -321,14 +321,16 @@ def app(plex, tmp_path):
 
 
 def play(client: TestClient, key: str, device: dict | None = None, **headers):
-    return client.post("/api/v1/play", json={"key": key, "device": device or TV}, headers=headers)
+    return client.post(
+        "/api/internal/play", json={"key": key, "device": device or TV}, headers=headers
+    )
 
 
 def test_nothing_is_shown_until_an_admin_shares_a_library(app, caplog):
     caplog.set_level(logging.INFO)
     with TestClient(app) as home:
         assert "library" not in home.get("/api/v1/server").json()["features"]
-        for address in ("/api/v1/libraries", "/api/v1/home", "/api/v1/items/300"):
+        for address in ("/api/internal/libraries", "/api/internal/home", "/api/internal/items/300"):
             refused = home.get(address)
             assert refused.status_code == 404, address
             assert refused.json()["detail"] == "No libraries are shared with StationPlay's apps"
@@ -346,67 +348,69 @@ def test_nothing_is_shown_until_an_admin_shares_a_library(app, caplog):
         assert "library" in home.get("/api/v1/server").json()["features"]
         # The library not shared stays out of sight: its movie is as good as
         # missing, by key, in search and in lists.
-        assert [x["title"] for x in home.get("/api/v1/libraries").json()["libraries"]] == [
+        assert [x["title"] for x in home.get("/api/internal/libraries").json()["libraries"]] == [
             "TV Shows",
             "Movies",
         ]
-        hidden = home.get("/api/v1/items/302")
+        hidden = home.get("/api/internal/items/302")
         assert hidden.status_code == 404 and hidden.json()["detail"] == ondemand.NOT_SHARED
-        assert home.get("/api/v1/items/999").json() == hidden.json()
-        assert home.get("/api/v1/libraries/3").status_code == 404
-        assert home.get("/api/v1/art/302").status_code == 404
-        assert home.get("/api/v1/search?q=birthday").json() == {"items": [], "onNow": []}
+        assert home.get("/api/internal/items/999").json() == hidden.json()
+        assert home.get("/api/internal/libraries/3").status_code == 404
+        assert home.get("/api/internal/art/302").status_code == 404
+        assert home.get("/api/internal/search?q=birthday").json() == {"items": [], "onNow": []}
         assert play(home, "302").status_code == 404
         # Unsharing hides what was seen before too.
-        assert home.get("/api/v1/items/300").status_code == 200
+        assert home.get("/api/internal/items/300").status_code == 200
         home.put("/api/app-libraries", json={"libraries": ["1"]})
-        assert home.get("/api/v1/items/300").status_code == 404
+        assert home.get("/api/internal/items/300").status_code == 404
 
 
 def test_browsing_a_library(app, plex):
     with TestClient(app) as home:
         home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
-        page = home.get("/api/v1/libraries/2?sort=title&size=1").json()
+        page = home.get("/api/internal/libraries/2?sort=title&size=1").json()
         assert (page["total"], page["kind"], page["title"]) == (2, "movie", "Movies")
         assert [m["title"] for m in page["items"]] == ["Another Movie"]
-        rest = home.get("/api/v1/libraries/2?sort=title&size=1&start=1").json()
+        rest = home.get("/api/internal/libraries/2?sort=title&size=1&start=1").json()
         assert [m["title"] for m in rest["items"]] == ["The Movie"]
         for bad in ("sort=size", "size=0", "size=201", "start=-1", "size=lots"):
-            assert home.get(f"/api/v1/libraries/2?{bad}").status_code == 400, bad
-        show = home.get("/api/v1/items/100").json()
+            assert home.get(f"/api/internal/libraries/2?{bad}").status_code == 400, bad
+        show = home.get("/api/internal/items/100").json()
         assert [(s["season"], s["title"], s["episodes"]) for s in show["seasons"]] == [
             (1, "Season 1", 3), (2, "Season 2", 1), (0, "Specials", 1)
         ]  # fmt: skip
         assert (show["unwatched"], show["next"]["key"]) == (5, "201")
         assert show["summary"] == "Bonanza summary" and show["year"] == 1959
-        two = home.get("/api/v1/items/100/episodes?season=2").json()["episodes"]
+        two = home.get("/api/internal/items/100/episodes?season=2").json()["episodes"]
         assert [(e["key"], e["episodeTitle"], e["title"]) for e in two] == [
             ("204", "Season Two", "Bonanza")
         ]
-        assert len(home.get("/api/v1/items/100/episodes").json()["episodes"]) == 5
-        assert home.get("/api/v1/items/300/episodes").status_code == 400
-        movie = home.get("/api/v1/items/300").json()
+        assert len(home.get("/api/internal/items/100/episodes").json()["episodes"]) == 5
+        assert home.get("/api/internal/items/300/episodes").status_code == 400
+        movie = home.get("/api/internal/items/300").json()
         assert movie["audio"][0]["name"] == "English · Dolby Digital · 5.1"
         assert movie["markers"] == {"intro": None, "credits": None, "creditsToEnd": False}
         assert movie["picture"] == {"size": "1080p", "hdr": None}
         # Search: titles containing the words, those starting with them first.
-        found = home.get("/api/v1/search?q=movie").json()["items"]
+        found = home.get("/api/internal/search?q=movie").json()["items"]
         assert [m["title"] for m in found] == ["Another Movie", "The Movie"]
-        assert [m["title"] for m in home.get("/api/v1/search?q=the").json()["items"]] == [
+        assert [m["title"] for m in home.get("/api/internal/search?q=the").json()["items"]] == [
             "The Movie",  # (starts with it)
             "Another Movie",
         ]
-        assert home.get("/api/v1/search?q=%20").status_code == 400
+        assert home.get("/api/internal/search?q=%20").status_code == 400
         # Pictures, at a few sizes.
-        poster = home.get("/api/v1/art/300?kind=poster&w=300")
+        poster = home.get("/api/internal/art/300?kind=poster&w=300")
         assert poster.status_code == 200 and poster.content == b"poster 300"
-        still = home.get("/api/v1/art/201?kind=thumb&w=400")
+        still = home.get("/api/internal/art/201?kind=thumb&w=400")
         assert still.status_code == 200
-        assert home.get("/api/v1/art/201?kind=poster").content == b"poster 100"  # (its show's)
-        assert home.get("/api/v1/art/300?kind=banner").status_code == 400
+        assert (
+            home.get("/api/internal/art/201?kind=poster").content == b"poster 100"
+        )  # (its show's)
+        assert home.get("/api/internal/art/300?kind=banner").status_code == 400
         # (Kept: asked again, Plex isn't.)
         asked = len(plex.requests)
-        assert home.get("/api/v1/art/300?kind=poster&w=320").status_code == 200
+        assert home.get("/api/internal/art/300?kind=poster&w=320").status_code == 200
         assert len(plex.requests) == asked
 
 
@@ -442,11 +446,11 @@ def test_playing_a_file_as_it_is(app, plex, tmp_path, caplog):
             "/api/app-libraries", json={"libraries": ["1", "2"], "whenSlow": {"home": "switch"}}
         )
         assert "at home, switch to a smaller version" in caplog.text
-        slow = home.post("/api/v1/play", json={"key": "300", "device": TV, "maxKbps": 9_000})
+        slow = home.post("/api/internal/play", json={"key": "300", "device": TV, "maxKbps": 9_000})
         assert slow.json()["version"] == "30001"  # (8,000 kbps doesn't fit 9,000 with room)
         assert [v["fits"] for v in slow.json()["versions"]] == [False, True]
         smaller = home.post(
-            "/api/v1/play", json={"key": "300", "device": TV, "version": "30001"}
+            "/api/internal/play", json={"key": "300", "device": TV, "version": "30001"}
         ).json()
         assert smaller["version"] == "30001" and smaller["whenSlow"] == "switch"
         assert home.get("/api/app-libraries").json()["whenSlow"] == {
@@ -492,38 +496,39 @@ def test_progress_continue_watching_and_whats_next(app):
         home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
 
         def report(key: str, ms: int) -> dict:
-            got = home.post("/api/v1/progress", json={"key": key, "positionMs": ms})
+            got = home.post("/api/internal/progress", json={"key": key, "positionMs": ms})
             assert got.status_code == 200, got.text
             return got.json()
 
-        assert home.get("/api/v1/home").json()["continue"] == []
+        assert home.get("/api/internal/home").json()["continue"] == []
         assert report("300", 30 * 60_000) == {"positionMs": 30 * 60_000, "watched": False}
         assert play(home, "300").json()["resumeMs"] == 30 * 60_000
         # Into its credits: watched, and next is the following episode.
         assert report("201", 49 * 60_000) == {"positionMs": 0, "watched": True}
-        going = home.get("/api/v1/home").json()["continue"]
+        going = home.get("/api/internal/home").json()["continue"]
         assert [(c["key"], c["positionMs"]) for c in going] == [("202", 0), ("300", 30 * 60_000)]
-        show = home.get("/api/v1/items/100").json()
+        show = home.get("/api/internal/items/100").json()
         assert show["next"]["key"] == "202" and show["unwatched"] == 4
         assert show["seasons"][0]["unwatched"] == 2
-        listed = home.get("/api/v1/libraries/1").json()["items"]
+        listed = home.get("/api/internal/libraries/1").json()["items"]
         assert listed[0]["unwatched"] == 4
         # Partway into the next one: that's the one to carry on with.
         report("202", 10 * 60_000)
-        assert home.get("/api/v1/items/100").json()["next"]["positionMs"] == 10 * 60_000
+        assert home.get("/api/internal/items/100").json()["next"]["positionMs"] == 10 * 60_000
         # Marked from a menu.
-        assert home.post("/api/v1/progress", json={"key": "300", "watched": True}).json() == {
+        assert home.post("/api/internal/progress", json={"key": "300", "watched": True}).json() == {
             "positionMs": 0,
             "watched": True,
         }
-        assert [c["key"] for c in home.get("/api/v1/home").json()["continue"]] == ["202"]
+        assert [c["key"] for c in home.get("/api/internal/home").json()["continue"]] == ["202"]
         # Marking an episode unwatched doesn't make it the one to watch next.
-        home.post("/api/v1/progress", json={"key": "203", "watched": False})
-        assert [c["key"] for c in home.get("/api/v1/home").json()["continue"]] == ["202"]
-        assert home.get("/api/v1/items/100").json()["next"]["key"] == "202"
-        assert home.post("/api/v1/progress", json={"key": "300"}).status_code == 400
+        home.post("/api/internal/progress", json={"key": "203", "watched": False})
+        assert [c["key"] for c in home.get("/api/internal/home").json()["continue"]] == ["202"]
+        assert home.get("/api/internal/items/100").json()["next"]["key"] == "202"
+        assert home.post("/api/internal/progress", json={"key": "300"}).status_code == 400
         assert (
-            home.post("/api/v1/progress", json={"key": "100", "watched": True}).status_code == 400
+            home.post("/api/internal/progress", json={"key": "100", "watched": True}).status_code
+            == 400
         )
 
 
@@ -534,19 +539,19 @@ def test_each_person_has_their_own_place(app):
         sam = {"name": "Sam", "password": "battery staple", "role": "user"}
         assert home.post("/api/access/users", json=sam).status_code == 201
         phone = TestClient(app)
-        token = phone.post("/api/v1/sign-in", json=sam).json()["token"]
+        token = phone.post("/api/internal/sign-in", json=sam).json()["token"]
         auth = {"Authorization": f"Bearer {token}"}
-        assert phone.get("/api/v1/libraries", headers=auth).status_code == 200  # (a User may)
+        assert phone.get("/api/internal/libraries", headers=auth).status_code == 200  # (a User may)
         moved = phone.post(
-            "/api/v1/progress", headers=auth, json={"key": "300", "positionMs": 1_800_000}
+            "/api/internal/progress", headers=auth, json={"key": "300", "positionMs": 1_800_000}
         )
         assert moved.status_code == 200
-        assert home.get("/api/v1/items/300").json()["positionMs"] == 0  # (Pat's own)
-        assert phone.get("/api/v1/items/300", headers=auth).json()["positionMs"] == 1_800_000
+        assert home.get("/api/internal/items/300").json()["positionMs"] == 0  # (Pat's own)
+        assert phone.get("/api/internal/items/300", headers=auth).json()["positionMs"] == 1_800_000
         # A program's own address needs no token, and ends with its sign-in.
         played = play(phone, "300", **auth).json()
         assert phone.get(played["url"]).status_code == 200
-        phone.post("/api/v1/sign-out", headers=auth)
+        phone.post("/api/internal/sign-out", headers=auth)
         app.state.ctx.plays.get(played["session"]).checked -= ondemand.RECHECK_S + 1
         assert phone.get(played["url"]).status_code == 404
         # Removing someone removes their progress.
@@ -563,14 +568,14 @@ def test_away_from_home_waits_for_now(app):
         internet = TestClient(
             app, base_url=f"http://testserver:{PUBLIC_PORT}", headers={"X-Forwarded-Proto": "https"}
         )
-        token = internet.post("/api/v1/sign-in", json=ADMIN).json()["token"]
+        token = internet.post("/api/internal/sign-in", json=ADMIN).json()["token"]
         auth = {"Authorization": f"Bearer {token}"}
         assert "library" not in internet.get("/api/v1/server").json()["features"]
-        refused = internet.get("/api/v1/libraries", headers=auth)
+        refused = internet.get("/api/internal/libraries", headers=auth)
         assert refused.status_code == 403 and "home network" in refused.json()["detail"]
         # Search still finds what's on the stations; the library, at home.
-        assert internet.get("/api/v1/search?q=movie", headers=auth).json()["items"] == []
-        assert len(home.get("/api/v1/search?q=movie").json()["items"]) == 2
+        assert internet.get("/api/internal/search?q=movie", headers=auth).json()["items"] == []
+        assert len(home.get("/api/internal/search?q=movie").json()["items"]) == 2
         played = play(home, "300").json()  # (at home, where a cookie signs in)
         assert internet.get(played["url"]).status_code == 404
 

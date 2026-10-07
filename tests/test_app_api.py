@@ -1,5 +1,7 @@
-"""The app connection (/api/v1, see appapi.py): checked against its
-document, docs/app-api.md, field by field, so the two can't drift apart."""
+"""StationPlay's API (/api/v1, see appapi.py and api.py) and the apps' own
+addresses (/api/internal): checked against their documents, docs/api.md and
+docs/internal-api.md, field by field, so they can't drift apart. (The API's
+tokens and its OpenAPI spec: test_api.py.)"""
 
 from __future__ import annotations
 
@@ -7,6 +9,7 @@ import itertools
 import re
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -18,7 +21,8 @@ from app.plex import PlexClient
 
 from .fakeplex_library import LibraryPlex
 
-DOC = Path(__file__).resolve().parent.parent / "docs" / "app-api.md"
+DOCS = Path(__file__).resolve().parent.parent / "docs"
+API_DOC, INTERNAL_DOC = DOCS / "api.md", DOCS / "internal-api.md"
 PUBLIC_PORT = 8443
 PAT = {"name": "Pat", "password": "correct horse"}
 SAM = {"name": "Sam", "password": "battery staple"}
@@ -27,23 +31,28 @@ TYPES = {"string": str, "number": (int, float), "boolean": bool, "list": list, "
 SHAPES = {"program": "A program", "card": "A card"}
 
 
-def documented() -> dict[str, dict[str, str]]:
-    """Each section of the document with a table of fields ("GET
+def documented(*docs: Path) -> dict[str, dict[str, str]]:
+    """Each section of the documents with a table of fields ("GET
     /api/v1/stations", "A program"): each field's path, and its type."""
     sections: dict[str, dict[str, str]] = {}
-    heading = ""
-    for line in DOC.read_text().splitlines():
-        if line.startswith("## "):
-            heading = line[3:].strip()
-            if heading.startswith(("GET /", "POST /")):
-                sections[heading] = {}  # (an address, even with no fields: data, say)
-        elif row := re.fullmatch(r"\| `([^`]+)` \| ([^|]+) \|.*", line):
-            sections.setdefault(heading, {})[row.group(1)] = row.group(2).strip()
+    for doc in docs:
+        heading = ""
+        for line in doc.read_text().splitlines():
+            if line.startswith("## "):
+                heading = line[3:].strip()
+                if heading.startswith(("GET /", "POST /")):
+                    sections[heading] = {}  # (an address, even with no fields: data, say)
+            elif row := re.fullmatch(r"\| `([^`]+)` \| ([^|]+) \|.*", line):
+                sections.setdefault(heading, {})[row.group(1)] = row.group(2).strip()
     return sections
 
 
-DOCUMENTED = documented()
-PROGRAM = DOCUMENTED["A program"]
+DOCUMENTED = documented(API_DOC, INTERNAL_DOC)
+
+
+def addresses(doc: Path) -> set[str]:
+    """The addresses a document describes ("GET /api/v1/stations")."""
+    return {name for name in documented(doc) if name.startswith(("GET /", "POST /"))}
 
 
 class Checker:
@@ -57,7 +66,7 @@ class Checker:
         assert res.headers.get("stationplay-api") == "1", (endpoint, res.headers)
         assert res.status_code == status, (endpoint, res.text)
         body = res.json()
-        if status != 200:
+        if status not in (200, 201):
             assert set(body) == {"detail"} and isinstance(body["detail"], str), body
             return body
         self._object(body, "", endpoint)
@@ -134,17 +143,19 @@ def bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_the_app_connection_matches_its_document(app):
-    check = Checker()
-    routes = {
+def served(app, under: str) -> set[str]:
+    return {
         f"{method} {route.path}"
         for route in app.routes
-        if getattr(route, "path", "").startswith("/api/v1/")
+        if getattr(route, "path", "").startswith(under)
         for method in route.methods
     }
-    assert routes == {
-        name for name in DOCUMENTED if name.startswith(("GET /api/v1/", "POST /api/v1/"))
-    }
+
+
+def test_the_api_and_the_apps_addresses_match_their_documents(app):
+    check = Checker()
+    assert served(app, "/api/v1/") == addresses(API_DOC)
+    assert served(app, "/api/internal/") == addresses(INTERNAL_DOC)
     with TestClient(app) as home:
         # (Through a reverse proxy with HTTPS, as it says.)
         internet = TestClient(
@@ -171,18 +182,22 @@ def test_the_app_connection_matches_its_document(app):
         assert now["kind"] == "episode" and now["title"] == "Show" and now["art"] == "/art/100"
         assert now["episodeTitle"].startswith("Ep ") and now["season"] == 1
         assert now["start"] <= time.time() * 1000 < now["end"] == upcoming["start"]
-        refused = home.post("/api/v1/sign-in", json=PAT)
-        check.answer(refused, "POST /api/v1/sign-in", 400)
+        refused = home.post("/api/internal/sign-in", json=PAT)
+        check.answer(refused, "POST /api/internal/sign-in", 400)
 
         # Signing in on: an app signs in, and sends its token.
         assert home.post("/api/access/users", json=PAT).status_code == 201
         assert home.post("/api/access/users", json={**SAM, "role": "user"}).status_code == 201
         phone = TestClient(app)  # (no cookies: an app)
         check.answer(phone.get("/api/v1/stations"), "GET /api/v1/stations", 401)
-        wrong = phone.post("/api/v1/sign-in", json={**SAM, "password": "not it at all"})
-        check.answer(wrong, "POST /api/v1/sign-in", 401)
-        check.answer(phone.post("/api/v1/sign-in", json={"name": 7}), "POST /api/v1/sign-in", 400)
-        signed = check.answer(phone.post("/api/v1/sign-in", json=SAM), "POST /api/v1/sign-in")
+        wrong = phone.post("/api/internal/sign-in", json={**SAM, "password": "not it at all"})
+        check.answer(wrong, "POST /api/internal/sign-in", 401)
+        check.answer(
+            phone.post("/api/internal/sign-in", json={"name": 7}), "POST /api/internal/sign-in", 400
+        )
+        signed = check.answer(
+            phone.post("/api/internal/sign-in", json=SAM), "POST /api/internal/sign-in"
+        )
         assert signed["user"] == {"name": "Sam", "role": "user"} and signed["device"]
         assert not phone.cookies  # (apps get a token, not a cookie)
         sam = bearer(signed["token"])
@@ -213,41 +228,53 @@ def test_the_app_connection_matches_its_document(app):
             check.answer(phone.get(f"/api/v1/guide?{bad}", headers=sam), "GET /api/v1/guide", 400)
 
         # A connection test (see test_capacity.py): the data, then what was found.
-        data = phone.get("/api/v1/speed-test?mb=1", headers=sam)
+        data = phone.get("/api/internal/speed-test?mb=1", headers=sam)
         assert data.status_code == 200 and len(data.content) == 1 << 20
         assert data.headers["stationplay-api"] == "1"
-        assert phone.get("/api/v1/speed-test?mb=1").status_code == 401
+        assert phone.get("/api/internal/speed-test?mb=1").status_code == 401
         tested = {"mbps": 52.0, "app": "StationPlay for Android", "deviceName": "Pixel"}
         found = check.answer(
-            phone.post("/api/v1/speed-test", headers=sam, json=tested), "POST /api/v1/speed-test"
+            phone.post("/api/internal/speed-test", headers=sam, json=tested),
+            "POST /api/internal/speed-test",
         )
         assert (found["where"], found["mbps"]) == ("home", 52.0)
 
         # Your library (see test_ondemand.py): shared by an Admin, then
         # browsed and played.
-        check.answer(phone.get("/api/v1/libraries", headers=sam), "GET /api/v1/libraries", 404)
+        check.answer(
+            phone.get("/api/internal/libraries", headers=sam), "GET /api/internal/libraries", 404
+        )
         assert home.put("/api/app-libraries", json={"libraries": ["1", "2"]}).status_code == 200
         features = check.answer(phone.get("/api/v1/server"), "GET /api/v1/server")["features"]
         assert features == ["hls", "speed-test", "library"]
-        libs = check.answer(phone.get("/api/v1/libraries", headers=sam), "GET /api/v1/libraries")
+        libs = check.answer(
+            phone.get("/api/internal/libraries", headers=sam), "GET /api/internal/libraries"
+        )
         assert [(x["key"], x["kind"]) for x in libs["libraries"]] == [("1", "show"), ("2", "movie")]
         shows = check.answer(
-            phone.get("/api/v1/libraries/1?size=10", headers=sam), "GET /api/v1/libraries/{key}"
+            phone.get("/api/internal/libraries/1?size=10", headers=sam),
+            "GET /api/internal/libraries/{key}",
         )
         assert shows["total"] == 1 and shows["items"][0]["unwatched"] == 4
         movies = check.answer(
-            phone.get("/api/v1/libraries/2?sort=added", headers=sam), "GET /api/v1/libraries/{key}"
+            phone.get("/api/internal/libraries/2?sort=added", headers=sam),
+            "GET /api/internal/libraries/{key}",
         )
-        assert movies["items"][0]["poster"] == "/api/v1/art/300?kind=poster"
-        show = check.answer(phone.get("/api/v1/items/100", headers=sam), "GET /api/v1/items/{key}")
+        assert movies["items"][0]["poster"] == "/api/internal/art/300?kind=poster"
+        show = check.answer(
+            phone.get("/api/internal/items/100", headers=sam), "GET /api/internal/items/{key}"
+        )
         assert show["next"]["key"] == "201" and show["seasons"][0]["title"] == "Season 1"
         episode = check.answer(
-            phone.get("/api/v1/items/202", headers=sam), "GET /api/v1/items/{key}"
+            phone.get("/api/internal/items/202", headers=sam), "GET /api/internal/items/{key}"
         )
         assert (
-            episode["showKey"] == "100" and episode["backdrop"] == "/api/v1/art/100?kind=backdrop"
+            episode["showKey"] == "100"
+            and episode["backdrop"] == "/api/internal/art/100?kind=backdrop"
         )
-        movie = check.answer(phone.get("/api/v1/items/300", headers=sam), "GET /api/v1/items/{key}")
+        movie = check.answer(
+            phone.get("/api/internal/items/300", headers=sam), "GET /api/internal/items/{key}"
+        )
         assert movie["markers"] == {"intro": None, "credits": None, "creditsToEnd": False}
         assert episode["markers"] == {
             "intro": [60_000, 120_000], "credits": [1_200_000, 1_320_000], "creditsToEnd": True
@@ -255,23 +282,27 @@ def test_the_app_connection_matches_its_document(app):
         assert movie["picture"] == {"size": "4K", "hdr": "HDR10"}
         assert [v["name"] for v in movie["versions"]] == ["4K · HDR10", "1080p"]
         listed = check.answer(
-            phone.get("/api/v1/items/100/episodes?season=1", headers=sam),
-            "GET /api/v1/items/{key}/episodes",
+            phone.get("/api/internal/items/100/episodes?season=1", headers=sam),
+            "GET /api/internal/items/{key}/episodes",
         )
         assert [e["episode"] for e in listed["episodes"]] == [1, 2, 3, 4]
-        found = check.answer(phone.get("/api/v1/search?q=movie", headers=sam), "GET /api/v1/search")
+        found = check.answer(
+            phone.get("/api/internal/search?q=movie", headers=sam), "GET /api/internal/search"
+        )
         assert [x["key"] for x in found["items"]] == ["300"] and found["onNow"] == []
         # (Search is where the stations and the library meet.)
-        found = check.answer(phone.get("/api/v1/search?q=show", headers=sam), "GET /api/v1/search")
+        found = check.answer(
+            phone.get("/api/internal/search?q=show", headers=sam), "GET /api/internal/search"
+        )
         assert [x["key"] for x in found["items"]] == ["100"]
         assert [(s["number"], s["now"]["title"]) for s in found["onNow"]] == [(5, "Show")]
-        poster = phone.get("/api/v1/art/300?kind=poster&w=300", headers=sam)
+        poster = phone.get("/api/internal/art/300?kind=poster&w=300", headers=sam)
         assert poster.status_code == 200 and poster.headers["stationplay-api"] == "1"
         tv = {"containers": ["mkv"], "video": [{"codec": "hevc", "width": 3840, "height": 2160,
               "bitDepth": 10}], "hdr": ["hdr10"], "audio": ["aac"]}  # fmt: skip
         played = check.answer(
-            phone.post("/api/v1/play", headers=sam, json={"key": "300", "device": tv}),
-            "POST /api/v1/play",
+            phone.post("/api/internal/play", headers=sam, json={"key": "300", "device": tv}),
+            "POST /api/internal/play",
         )
         assert played["method"] == "direct" and played["resumeMs"] == 0
         assert played["version"] == movie["versions"][0]["id"] and played["whenSlow"] == "offer"
@@ -282,27 +313,29 @@ def test_the_app_connection_matches_its_document(app):
         [external] = [t for t in played["subtitles"] if t["external"]]
         assert phone.get(external["url"]).text.endswith("Hola\n")
         moved = check.answer(
-            phone.post("/api/v1/progress", headers=sam,
+            phone.post("/api/internal/progress", headers=sam,
                        json={"key": "300", "positionMs": 600_000, "session": played["session"]}),
-            "POST /api/v1/progress",
+            "POST /api/internal/progress",
         )  # fmt: skip
         assert moved == {"positionMs": 600_000, "watched": False}
-        start = check.answer(phone.get("/api/v1/home", headers=sam), "GET /api/v1/home")
+        start = check.answer(phone.get("/api/internal/home", headers=sam), "GET /api/internal/home")
         assert [(c["key"], c["positionMs"]) for c in start["continue"]] == [("300", 600_000)]
         assert [a["title"] for a in start["added"]] == ["TV Shows", "Movies"]
         assert phone.post(played["leave"]).status_code == 204
         assert phone.get(played["url"]).status_code == 404
         played = check.answer(
-            phone.post("/api/v1/play", headers=sam, json={"key": "202", "device": tv}),
-            "POST /api/v1/play",
+            phone.post("/api/internal/play", headers=sam, json={"key": "202", "device": tv}),
+            "POST /api/internal/play",
         )
         assert played["markers"]["intro"] == [60_000, 120_000]
         assert phone.post(played["leave"]).status_code == 204
 
         # A device that has signed in before keeps its device token.
-        again = phone.post("/api/v1/sign-in", json={**SAM, "device": signed["device"]})
-        assert check.answer(again, "POST /api/v1/sign-in")["device"] is None
-        out = check.answer(phone.post("/api/v1/sign-out", headers=sam), "POST /api/v1/sign-out")
+        again = phone.post("/api/internal/sign-in", json={**SAM, "device": signed["device"]})
+        assert check.answer(again, "POST /api/internal/sign-in")["device"] is None
+        out = check.answer(
+            phone.post("/api/internal/sign-out", headers=sam), "POST /api/internal/sign-out"
+        )
         assert out == {"ok": True}
         check.answer(phone.get("/api/v1/stations", headers=sam), "GET /api/v1/stations", 401)
         assert (
@@ -316,15 +349,19 @@ def test_the_app_connection_matches_its_document(app):
         # Signing in with a code: the TV asks, someone signed in enters it.
         tv = TestClient(app)
         started = check.answer(
-            tv.post("/api/v1/link", json={"app": "StationPlay for Roku", "deviceName": "Den Roku"}),
-            "POST /api/v1/link",
+            tv.post(
+                "/api/internal/link", json={"app": "StationPlay for Roku", "deviceName": "Den Roku"}
+            ),
+            "POST /api/internal/link",
         )
         assert re.fullmatch(r"[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}", started["code"])
         assert started["linkAt"] == "/link" and started["expiresIn"] == 600
-        waiting = tv.post("/api/v1/link/check", json={"poll": started["poll"]})
-        check.answer(waiting, "POST /api/v1/link/check", 202)
+        waiting = tv.post("/api/internal/link/check", json={"poll": started["poll"]})
+        check.answer(waiting, "POST /api/internal/link/check", 202)
         check.answer(
-            tv.post("/api/v1/link/check", json={"poll": "guess"}), "POST /api/v1/link/check", 404
+            tv.post("/api/internal/link/check", json={"poll": "guess"}),
+            "POST /api/internal/link/check",
+            404,
         )
         assert home.get("/link").status_code == 200  # (the page, where codes go)
         wrong = home.get("/api/access/link/AAAA-AAAA")
@@ -335,13 +372,14 @@ def test_the_app_connection_matches_its_document(app):
         assert home.post("/api/access/link", json={"code": typed}).status_code == 200
         assert home.post("/api/access/link", json={"code": typed}).status_code == 404  # (once)
         linked = check.answer(
-            tv.post("/api/v1/link/check", json={"poll": started["poll"]}), "POST /api/v1/link/check"
+            tv.post("/api/internal/link/check", json={"poll": started["poll"]}),
+            "POST /api/internal/link/check",
         )
         assert linked["user"] == {"name": "Pat", "role": "admin"}
         assert tv.get("/api/v1/stations", headers=bearer(linked["token"])).status_code == 200
         # (Handed over once.)
-        gone = tv.post("/api/v1/link/check", json={"poll": started["poll"]})
-        check.answer(gone, "POST /api/v1/link/check", 404)
+        gone = tv.post("/api/internal/link/check", json={"poll": started["poll"]})
+        check.answer(gone, "POST /api/internal/link/check", 404)
         log = home.get("/api/logs?access_log=true").json()["text"]
         assert "Pat (Admin) linked StationPlay for Roku on Den Roku" in log
         # The Access tab lists signed-in apps, and signs one out.
@@ -357,17 +395,67 @@ def test_the_app_connection_matches_its_document(app):
 
         # From the internet, only over HTTPS.
         plain_http = TestClient(app, base_url=f"http://testserver:{PUBLIC_PORT}")
-        refused = plain_http.post("/api/v1/sign-in", json=PAT)
+        refused = plain_http.post("/api/internal/sign-in", json=PAT)
         assert refused.status_code == 403 and "HTTPS" in refused.json()["detail"]
         assert plain_http.get("/api/v1/server").status_code == 403
         # Over HTTPS, once signing in is on: signing in and the stations, but
         # not the streams (until watching away from home is on: test_hls.py).
         outside = check.answer(internet.get("/api/v1/server"), "GET /api/v1/server")
         assert outside["signIn"] and outside["notSetUp"] is None
-        token = check.answer(internet.post("/api/v1/sign-in", json=PAT), "POST /api/v1/sign-in")
+        token = check.answer(
+            internet.post("/api/internal/sign-in", json=PAT), "POST /api/internal/sign-in"
+        )
         pat = bearer(token["token"])
         assert internet.get("/api/v1/stations", headers=pat).status_code == 200
         assert internet.get("/hls/5/index.m3u8", headers=pat).status_code == 404
-        away = internet.post("/api/v1/speed-test", headers=pat, json={"mbps": 12.5})
-        assert check.answer(away, "POST /api/v1/speed-test")["where"] == "away"
+        away = internet.post("/api/internal/speed-test", headers=pat, json={"mbps": 12.5})
+        assert check.answer(away, "POST /api/internal/speed-test")["where"] == "away"
+
+        # StationPlay's API with an Admin's API token (see test_api.py): how
+        # StationPlay is doing, and what an Admin can have it do.
+        minted = home.post("/api/api-tokens", json={"name": "Home Assistant", "scope": "admin"})
+        assert minted.status_code == 201, minted.text
+        admin = bearer(minted.json()["token"])  # (from home, whose event loop the check runs on)
+        ctx = app.state.ctx
+        five_id = made.json()["id"]
+        # (A station playing, as far as the status can tell.)
+        ctx.broadcasters[five_id] = SimpleNamespace(
+            running=True, viewers={"plex"}, now_playing=None, started_at_ms=0, off_air=False,
+            off_air_why="",
+        )  # fmt: skip
+        try:
+            status = check.answer(home.get("/api/v1/status", headers=admin), "GET /api/v1/status")
+        finally:
+            del ctx.broadcasters[five_id]
+        assert status["playing"] == [{"number": 5, "viewers": 1}] and status["tuners"] >= 1
+        updated = home.post("/api/v1/stations/5/update", headers=admin)
+        assert check.answer(updated, "POST /api/v1/stations/{number}/update") == {
+            "number": 5, "changed": False
+        }  # fmt: skip
+        missing = home.post("/api/v1/stations/9/update", headers=admin)
+        check.answer(missing, "POST /api/v1/stations/{number}/update", 404)
+        before = check.answer(
+            home.get("/api/v1/stations/5/check", headers=admin),
+            "GET /api/v1/stations/{number}/check",
+        )
+        assert before["total"] == 0 and not before["running"]
+        checking = check.answer(
+            home.post("/api/v1/stations/5/check", headers=admin),
+            "POST /api/v1/stations/{number}/check",
+        )
+        assert checking["running"] and checking["total"] == 4
+        for _ in range(100):
+            checked = home.get("/api/v1/stations/5/check", headers=admin).json()
+            if not checked["running"]:
+                break
+            time.sleep(0.05)
+        assert checked["done"] == 4
+        check.answer(
+            home.post("/api/v1/guide/refresh", headers=admin), "POST /api/v1/guide/refresh"
+        )
+        backed = home.post("/api/v1/backups", headers=admin)
+        name = check.answer(backed, "POST /api/v1/backups", 201)["name"]
+        assert name in [b["name"] for b in home.get("/api/backups").json()["backups"]]
+        spec = home.get("/api/v1/openapi.json", headers=admin)
+        assert spec.status_code == 200 and spec.json()["info"]["title"] == "StationPlay API"
     check.everything_seen()

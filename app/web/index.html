@@ -456,6 +456,8 @@
     table.users thead { display: none; }
     table.users tr { display: block; border-bottom: 1px solid var(--line); padding: 8px 0; }
     table.users td { display: block; border: 0; padding: 4px 12px; }
+    /* (Without the header row, each cell says what it is.) */
+    table.users td[data-label]::before { content: attr(data-label) ": "; color: var(--ink-2); }
   }
 
   /* Stats */
@@ -669,6 +671,10 @@
     <details class="panel arr" id="appLibrariesPanel">
       <summary><strong>Your library in StationPlay’s apps</strong><span class="muted" id="appLibrariesSum"></span></summary>
       <div class="arr-body" id="appLibrariesBody"></div>
+    </details>
+    <details class="panel arr" id="apiTokensPanel">
+      <summary><strong>API tokens</strong><span class="muted" id="apiTokensSum"></span></summary>
+      <div class="arr-body" id="apiTokensBody"></div>
     </details>
     <p class="muted small">Plex and IPTV apps never sign in, so the tuner, guide, and stream addresses on the Add to Plex tab stay open on your network. Locked out? Create an empty file named <code>reset-access</code> in StationPlay’s data folder, then restart StationPlay. This removes every user and turns off sign-in, so anyone on your network can use StationPlay again.</p>
   </section>
@@ -1416,7 +1422,7 @@ function showTab(name) {
   if (name === 'logs') loadLogs(true);
   if (name === 'setup') { loadBackups(); renderPlaybackPanel(); }
   if (name === 'stats') loadStats();
-  if (name === 'access') { loadAccess(); loadApps(); loadLimits(); loadAway(); loadAppLimits(); loadAppLibraries(); }
+  if (name === 'access') { loadAccess(); loadApps(); loadLimits(); loadAway(); loadAppLimits(); loadAppLibraries(); loadApiTokens(); }
   history.replaceState(null, '', '#' + name);
 }
 
@@ -4439,6 +4445,85 @@ async function loadAppLibraries() {
     h('div', { class: 'scan-set' }, save, result),
     ...(got.playing ? [h('p', { class: 'muted small', style: 'margin:0' }, `Playing from your library now: ${plural(got.playing, 'device')}.`)] : []));
 }
+// API tokens, for StationPlay's API (see api.py) ----------------------------------------
+const API_TOKEN_DAYS = [[30, 'In 30 days'], [90, 'In 90 days'], [365, 'In a year'], [0, 'Never']];
+async function loadApiTokens() {
+  let got;
+  try { got = await api('/api/api-tokens'); }
+  catch (e) { $('#apiTokensSum').textContent = ''; $('#apiTokensBody').replaceChildren(h('p', { class: 'muted', style: 'margin:0' }, e.message)); return; }
+  const n = got.tokens.length;
+  $('#apiTokensSum').textContent = (n ? plural(n, 'token') : 'None') + (got.outside ? ', accepted from the internet' : '');
+  const body = $('#apiTokensBody');
+  if (body.dataset.editing) return;  // (not while one is being made, or shown)
+  const editing = () => { body.dataset.editing = '1'; };
+  const when = ms => new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+  const intro = h('p', { style: 'margin:0' }, 'API tokens let your own scripts, home automation (such as Home Assistant) and other players use StationPlay’s API: its stations, guide and streams, and how it’s doing. An Admin token can also update a station from Plex, check a station’s files, refresh Plex’s guide, and make a backup. The README’s “StationPlay’s API” section explains how, and docs/api.md lists every address.');
+  if (!got.signIn) {
+    body.replaceChildren(intro, h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' Sign-in is off, so the API needs no token on your network. API tokens come with sign-in: add a user above first.'));
+    return;
+  }
+  const table = n ? h('table', { class: 'users' },
+    h('thead', {}, h('tr', {}, h('th', {}, 'Name'), h('th', {}, 'Scope'), h('th', {}, 'Made by'), h('th', {}, 'Last used'), h('th', {}, 'Expires'), h('th', {}, ''))),
+    h('tbody', {}, ...got.tokens.map(t => h('tr', {},
+      h('td', {}, h('strong', {}, t.name)),
+      h('td', { 'data-label': 'Scope' }, t.scope === 'admin' ? 'Admin' : 'Viewer'),
+      h('td', { class: 'small', 'data-label': 'Made by' }, `${t.by}, ${when(t.createdMs)}`),
+      h('td', { class: 'small', 'data-label': 'Last used' }, t.usedMs ? when(t.usedMs) : 'Never'),
+      h('td', { class: 'small', 'data-label': 'Expires' }, t.expiresMs ? when(t.expiresMs) : 'Never'),
+      h('td', {}, h('button', { class: 'btn danger', type: 'button', onclick: async () => {
+        if (!confirm(`Revoke “${t.name}”? Anything using it stops working at once.`)) return;
+        try { await api(`/api/api-tokens/${t.id}`, { method: 'DELETE' }); toast(`“${t.name}” is revoked`); }
+        catch (err) { toast(err.message, true); }
+        loadApiTokens();
+      } }, 'Revoke')))))) : null;
+  const name = h('input', { type: 'text', id: 'apiTokenName', maxlength: ACCESS.apiTokenNameMax, placeholder: 'Home Assistant', autocomplete: 'off', oninput: editing });
+  const scope = h('select', { id: 'apiTokenScope', onchange: editing },
+    h('option', { value: 'viewer' }, 'Viewer (reads only)'), h('option', { value: 'admin' }, 'Admin'));
+  const days = h('select', { id: 'apiTokenDays', onchange: editing }, ...API_TOKEN_DAYS.map(([d, label]) => h('option', { value: String(d) }, label)));
+  days.value = '90';
+  const result = h('span', { class: 'hint', role: 'status' });
+  const shown = h('div', { hidden: true });
+  const make = h('button', { type: 'submit', class: 'btn primary' }, 'Make token');
+  const form = h('form', { class: 'adduser', onsubmit: async e => {
+    e.preventDefault();
+    let made;
+    try { made = await api('/api/api-tokens', { method: 'POST', body: { name: name.value, scope: scope.value, days: Number(days.value) || null } }); }
+    catch (err) { result.textContent = err.message; return; }
+    editing();
+    result.textContent = '';
+    const code = h('code', { style: 'word-break:break-all' }, made.token);
+    const copy = h('button', { type: 'button', class: 'btn', onclick: async () => {
+      toast(await copyText(made.token) ? 'Copied' : 'Couldn’t copy. Select the token and copy it.', false);
+    } }, 'Copy');
+    const done = h('button', { type: 'button', class: 'btn', onclick: () => { delete body.dataset.editing; loadApiTokens(); } }, 'Done');
+    shown.replaceChildren(h('div', { class: 'limit-note' },
+      h('strong', {}, `“${made.name}” is ready`),
+      h('p', { class: 'small', style: 'margin:4px 0' }, 'Copy it now: StationPlay keeps only a fingerprint of it, so it can’t show it again. Scripts send it in a header: ', h('code', {}, 'Authorization: Bearer <token>'), '.'),
+      h('div', { class: 'copyrow' }, code, copy, done)));
+    shown.hidden = false;
+    form.hidden = true;
+  } },
+    h('div', { class: 'field' }, h('label', { for: 'apiTokenName' }, 'What it’s for'), name),
+    h('div', { class: 'field' }, h('label', { for: 'apiTokenScope' }, 'Scope'), scope),
+    h('div', { class: 'field' }, h('label', { for: 'apiTokenDays' }, 'Expires'), days),
+    make);
+  const outside = h('input', { type: 'checkbox', checked: got.outside, onchange: async () => {
+    if (outside.checked && !confirm('Accept API tokens from the internet? A script with a token could then use it from anywhere, over HTTPS through your public port.')) { outside.checked = false; return; }
+    try { await api('/api/api-tokens/outside', { method: 'PUT', body: { on: outside.checked } }); toast(outside.checked ? 'API tokens are accepted from the internet' : 'API tokens work on your home network only'); }
+    catch (err) { toast(err.message, true); }
+    loadApiTokens();
+  } });
+  body.replaceChildren(intro,
+    h('div', { class: 'limit-note' }, h('strong', {}, 'How they work'),
+      h('ul', {},
+        h('li', {}, h('strong', {}, 'Viewer or Admin. '), 'A Viewer token only reads. An Admin token never does more than the Admin who made it can do now.'),
+        h('li', {}, h('strong', {}, 'Shown once. '), 'StationPlay keeps only a fingerprint of each token. If one is lost, revoke it and make another.'),
+        h('li', {}, h('strong', {}, 'The API only. '), 'A token can’t open this page or sign in to StationPlay’s apps. It stops working when it expires, when it’s revoked, or when the Admin who made it is removed.'))),
+    ...(table ? [table] : [h('p', { class: 'muted small', style: 'margin:0' }, 'No API tokens yet.')]),
+    form, shown, result,
+    h('label', {}, outside, ' Accept API tokens from the internet'),
+    h('p', { class: 'hint', style: 'margin:0' }, 'Off by default. With it off, tokens work only on your home network, or through a VPN such as Tailscale or WireGuard (to StationPlay, a VPN is home). With it on, they also work through the public port, over HTTPS only.'));
+}
 // Checking files -------------------------------------------------------------------
 const clock = t => { const [hh, mm] = t.split(':').map(Number); return new Date(2000, 0, 1, hh, mm).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
 let scanShown = null;
@@ -4633,9 +4718,9 @@ async function loadApps() {
     h('thead', {}, h('tr', {}, h('th', {}, 'App'), h('th', {}, 'Signed in as'), h('th', {}, 'Signed in'), h('th', {}, 'Last used'), h('th', {}, ''))),
     h('tbody', {}, ...apps.map(a => h('tr', {},
       h('td', {}, h('strong', {}, a.app)),
-      h('td', {}, a.user),
-      h('td', { class: 'small' }, when(a.signedInMs)),
-      h('td', { class: 'small' }, when(a.seenMs)),
+      h('td', { 'data-label': 'Signed in as' }, a.user),
+      h('td', { class: 'small', 'data-label': 'Signed in' }, when(a.signedInMs)),
+      h('td', { class: 'small', 'data-label': 'Last used' }, when(a.seenMs)),
       h('td', {}, h('button', { class: 'btn danger', type: 'button', onclick: async () => {
         if (!confirm(`Sign out ${a.app}? It will need to sign in again to watch.`)) return;
         try { await api(`/api/access/apps/${a.id}`, { method: 'DELETE' }); toast(`${a.app} is signed out`); }

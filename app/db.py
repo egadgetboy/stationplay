@@ -162,6 +162,18 @@ CREATE TABLE IF NOT EXISTS devices (
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_ms   INTEGER NOT NULL
 );
+-- API tokens an Admin made, for scripts and other apps (see api.py), by a
+-- hash of the token: what each may do, and whose it is (gone with them).
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash   TEXT    NOT NULL UNIQUE,
+    name         TEXT    NOT NULL,
+    scope        TEXT    NOT NULL,     -- viewer or admin
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_ms   INTEGER NOT NULL,
+    used_ms      INTEGER NOT NULL DEFAULT 0,
+    expires_ms   INTEGER               -- NULL: never
+);
 -- Signing in and out, and changes to who can (the newest kept).
 CREATE TABLE IF NOT EXISTS access_log (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1475,6 +1487,51 @@ class Database:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
 
+    # API tokens (see access.py and api.py) -----------------------------------------
+
+    def add_api_token(
+        self, token_hash: str, name: str, scope: str, user_id: int, now: int, expires_ms: int | None
+    ) -> int:
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO api_tokens (token_hash, name, scope, user_id, created_ms, expires_ms) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (token_hash, name, scope, user_id, now, expires_ms),
+            )
+        return int(cur.lastrowid or 0)
+
+    def api_tokens(self) -> list[tuple[dict, User]]:
+        """Every API token (newest first), and whose it is."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT api_tokens.id AS token_id, api_tokens.name AS token_name, scope, "
+                "api_tokens.created_ms AS token_created_ms, used_ms, expires_ms, users.* "
+                "FROM api_tokens JOIN users ON users.id = api_tokens.user_id "
+                "ORDER BY api_tokens.id DESC"
+            ).fetchall()
+        return [(_token_row(row), _user(row)) for row in rows]
+
+    def api_token(self, token_hash: str) -> tuple[dict, User] | None:
+        """The API token with this hash, and whose it is."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT api_tokens.id AS token_id, api_tokens.name AS token_name, scope, "
+                "api_tokens.created_ms AS token_created_ms, used_ms, expires_ms, users.* "
+                "FROM api_tokens JOIN users ON users.id = api_tokens.user_id "
+                "WHERE token_hash = ?",
+                (token_hash,),
+            ).fetchone()
+        return (_token_row(row), _user(row)) if row else None
+
+    def api_token_used(self, token_id: int, now: int) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("UPDATE api_tokens SET used_ms = ? WHERE id = ?", (now, token_id))
+
+    def delete_api_token(self, token_id: int) -> bool:
+        with self._lock, self._conn:
+            cur = self._conn.execute("DELETE FROM api_tokens WHERE id = ?", (token_id,))
+        return cur.rowcount > 0
+
     def forget_sessions_before(self, seen_ms: int) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM sessions WHERE seen_ms < ?", (seen_ms,))
@@ -1642,6 +1699,17 @@ def _user(row: sqlite3.Row) -> User:
         row["id"], row["name"], row["role"], row["created_ms"], row["signed_in_ms"],
         row["max_stations"],
     )  # fmt: skip
+
+
+def _token_row(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["token_id"],
+        "name": row["token_name"],
+        "scope": row["scope"],
+        "created_ms": row["token_created_ms"],
+        "used_ms": row["used_ms"],
+        "expires_ms": row["expires_ms"],
+    }
 
 
 def _items_json(items: list[Item]) -> str:

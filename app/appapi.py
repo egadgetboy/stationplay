@@ -1,10 +1,13 @@
-"""The app connection: what StationPlay's own apps ask the server, under
-/api/v1. docs/app-api.md is its contract, and tests/test_app_api.py checks
-the two match.
+"""StationPlay's API (/api/v1: the server, its stations and their guide,
+documented in docs/api.md, with an OpenAPI spec; see api.py for the rest of
+it), and what StationPlay's own apps ask besides (/api/internal: signing in
+and connection tests, documented for the apps alone in
+docs/internal-api.md). tests/test_app_api.py checks both documents against
+the server.
 
 It's a thin layer over what the server already does (stations, their
 schedules, signing in, HLS): nothing here plays or schedules anything.
-Version 1 only grows; a change that would break an app becomes version 2,
+Version 1 only grows; a change that would break a client becomes version 2,
 served beside it.
 """
 
@@ -15,13 +18,13 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import __version__, access, capacity, hdhr, intro, links, specials
+from . import __version__, access, api, capacity, hdhr, intro, links, specials
 from .broadcaster import now_ms
 from .text import plain
 
@@ -34,6 +37,9 @@ if TYPE_CHECKING:
 
 VERSION = 1
 PREFIX = "/api/v1/"
+# What only StationPlay's own apps use: not part of the public API (no
+# OpenAPI, no promise it stays the same; see docs/internal-api.md).
+INTERNAL = "/api/internal/"
 HEADER = (b"stationplay-api", str(VERSION).encode())
 FEATURES = ("hls", "speed-test")
 
@@ -44,8 +50,9 @@ COLOURS_AT_ONCE = 4  # logos read for their colors at once (each by ffmpeg)
 
 
 class ApiHeader:
-    """Adds `StationPlay-API: 1` to every answer under /api/v1, refusals
-    included: a plain ASGI layer, outside the others."""
+    """Adds `StationPlay-API: 1` to every answer under /api/v1 and
+    /api/internal, refusals included: a plain ASGI layer, outside the
+    others."""
 
     def __init__(self, app: Callable) -> None:
         self.app = app
@@ -53,7 +60,7 @@ class ApiHeader:
     async def __call__(
         self, scope: dict, receive: Callable[[], Awaitable[Any]], send: Callable
     ) -> None:
-        if scope["type"] != "http" or not scope["path"].startswith(PREFIX):
+        if scope["type"] != "http" or not scope["path"].startswith((PREFIX, INTERNAL)):
             await self.app(scope, receive, send)
             return
 
@@ -110,8 +117,8 @@ def in_sentence(label: str) -> str:
 
 
 def program(item: Item, start_ms: int, end_ms: int, special: str) -> dict[str, Any]:
-    """A program, as the app connection describes one (see "A program" in
-    docs/app-api.md). Text is made plain: one program's odd details in
+    """A program, as the API describes one (see "A program" in
+    docs/api.md). Text is made plain: one program's odd details in
     Plex can't spoil a whole answer."""
     episode = item.kind == "episode"
     name = plain(item.title or "")
@@ -132,20 +139,8 @@ def program(item: Item, start_ms: int, end_ms: int, special: str) -> dict[str, A
     }
 
 
-def _ms(text: str | None, otherwise: int, name: str) -> int:
-    """A time given in the address, in milliseconds (`otherwise` if it
-    isn't given)."""
-    if text is None or text == "":
-        return otherwise
-    try:
-        return int(text)
-    except ValueError:
-        raise HTTPException(400, f"The guide's {name!r} must be a time in milliseconds") from None
-
-
 def slot_program(station: StationSchedule, slot: Slot | None) -> dict[str, Any] | None:
-    """A station's program, as the app connection describes one (None for
-    none)."""
+    """A station's program, as the API describes one (None for none)."""
     if slot is None:
         return None
     special = specials.label(station.special(slot), slot.index)
@@ -153,7 +148,8 @@ def slot_program(station: StationSchedule, slot: Slot | None) -> dict[str, Any] 
 
 
 def routes(app: FastAPI, ctx: AppContext) -> None:
-    """The app connection's addresses."""
+    """The API's addresses for the server, its stations and guide, and the
+    apps' own for signing in and connection tests."""
     app.add_middleware(ApiHeader)
     settings = ctx.settings
 
@@ -161,11 +157,24 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     async def not_understood(request: Request, e: RequestValidationError):
         """For apps, a sentence (as every refusal is); for the page, as
         FastAPI says it."""
-        if not request.url.path.startswith(PREFIX):
+        if not request.url.path.startswith((PREFIX, INTERNAL)):
             return await request_validation_exception_handler(request, e)
-        return JSONResponse({"detail": "StationPlay didn't understand that request"}, 400)
+        errors = list(e.errors())
+        where = tuple(errors[0].get("loc", ())) if errors else ()
+        if len(where) == 2 and where[0] in ("query", "path"):
+            detail = f"StationPlay didn't understand {where[1]!r} in that request"
+        else:
+            detail = "StationPlay didn't understand that request"
+        return JSONResponse({"detail": detail}, 400)
 
-    @app.get("/api/v1/server")
+    @app.get(
+        "/api/v1/server",
+        response_model=api.Server,
+        operation_id="getServer",
+        summary="What this server is",
+        description="Asked first: its name and version, whether requests need a token, and "
+        "what it offers here. Needs no token.",
+    )
     async def server(request: Request):
         not_set_up = (
             access.NOT_SET_UP if access.outside(request.scope) and not ctx.access.required else None
@@ -188,7 +197,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             ],
         }
 
-    @app.post("/api/v1/sign-in")
+    @app.post("/api/internal/sign-in")
     async def sign_in(body: AppSignIn, request: Request):
         if not ctx.access.required:
             raise HTTPException(400, "Signing in to StationPlay is off, so there's no need to")
@@ -222,7 +231,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     # Signing in with a code (see links.py) --------------------------------
 
-    @app.post("/api/v1/link")
+    @app.post("/api/internal/link")
     async def link_start(body: LinkStart, request: Request):
         if not ctx.access.required:
             raise HTTPException(400, "Signing in to StationPlay is off, so there's no need to")
@@ -240,7 +249,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "linkAt": "/link",
         }
 
-    @app.post("/api/v1/link/check")
+    @app.post("/api/internal/link/check")
     async def link_check(body: LinkCheck):
         pending = ctx.links.check(body.poll)
         if pending is None:
@@ -250,7 +259,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         user = pending.user
         return {"token": pending.token, "user": {"name": user.name, "role": user.role}}
 
-    @app.post("/api/v1/sign-out")
+    @app.post("/api/internal/sign-out")
     async def sign_out(request: Request):
         token = access.bearer(request.scope)
         user = access.signed_in(request)
@@ -344,7 +353,13 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             return home
         return f"/hls/k/{key}/{channel.number}/logo.png?{home.partition('?')[2]}"
 
-    @app.get("/api/v1/stations")
+    @app.get(
+        "/api/v1/stations",
+        response_model=api.Stations,
+        operation_id="getStations",
+        summary="The stations",
+        description="Every station, with what's on now and next, and where to play it.",
+    )
     async def stations(request: Request):
         key = away_key(request)
         channels = ctx.db.list_channels()
@@ -384,7 +399,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     # Connection tests (see capacity.py) ------------------------------------
 
-    @app.get("/api/v1/speed-test")
+    @app.get("/api/internal/speed-test")
     async def speed_test(request: Request):
         """Data for an app to time: `?mb=` megabytes of it (TEST_MB unless
         asked), random so nothing along the way can shrink it. One test from
@@ -413,7 +428,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             },
         )
 
-    @app.post("/api/v1/speed-test")
+    @app.post("/api/internal/speed-test")
     async def speed_tested(body: SpeedTested, request: Request):
         """What an app found: kept for the Access tab, where StationPlay
         recommends limits from it. Where it ran (at home, or away from home
@@ -438,11 +453,21 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "room": capacity.room(test, each),
         }
 
-    @app.get("/api/v1/guide")
-    async def guide(request: Request):
+    @app.get(
+        "/api/v1/guide",
+        response_model=api.Guide,
+        operation_id="getGuide",
+        summary="The guide",
+        description="Each station's programs between two times: 6 hours from now unless asked; "
+        "at most 2 days, starting within 7 days of now.",
+    )
+    async def guide(
+        start: int | None = Query(None, alias="from", description="Where it starts (ms)"),
+        end: int | None = Query(None, alias="to", description="Where it ends (ms)"),
+    ):
         now = now_ms()
-        from_ms = _ms(request.query_params.get("from"), now, "from")
-        to_ms = _ms(request.query_params.get("to"), from_ms + GUIDE_DEFAULT_MS, "to")
+        from_ms = now if start is None else start
+        to_ms = from_ms + GUIDE_DEFAULT_MS if end is None else end
         if abs(from_ms - now) > GUIDE_REACH_MS:
             raise HTTPException(400, "The guide can start at most 7 days from now")
         if not 0 < to_ms - from_ms <= GUIDE_MAX_MS:

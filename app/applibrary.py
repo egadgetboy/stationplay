@@ -1,6 +1,7 @@
-"""Your library in StationPlay's apps: the app connection's addresses for
-browsing and playing it (see docs/on-demand.md, and docs/app-api.md for the
-contract), the play sessions' own addresses, and the Access tab's setting.
+"""Your library in StationPlay's apps: the apps' own addresses for browsing
+and playing it (under /api/internal; see docs/on-demand.md, and
+docs/internal-api.md for the contract), the play sessions' own addresses,
+and the Access tab's setting.
 
 The deciding is in ondemand.py; this is the asking and answering.
 """
@@ -101,11 +102,11 @@ class SharedLibraries(BaseModel):
 
 
 def art(key: str, kind: str) -> str:
-    return f"/api/v1/art/{key}?kind={kind}"
+    return f"/api/internal/art/{key}?kind={kind}"
 
 
 def card(e: Entry, progress: dict[str, tuple[int, bool]], unwatched: int | None = None) -> dict:
-    """A show, movie or episode in a list (see "A card" in docs/app-api.md)."""
+    """A show, movie or episode in a list (see "A card" in docs/internal-api.md)."""
     out: dict[str, Any] = {
         "key": e.key,
         "kind": e.kind,
@@ -149,8 +150,8 @@ def details(e: Entry) -> dict:
 
 
 def versions(e: Entry) -> list[dict]:
-    """An episode's or movie's versions, the best first (see "Versions" in
-    docs/app-api.md)."""
+    """An episode's or movie's versions, the best first (see `versions` in
+    docs/internal-api.md)."""
     best = ondemand.best_first(e.media)
     names = ondemand.version_labels(best)
     return [
@@ -254,13 +255,13 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     # Browsing --------------------------------------------------------------
 
-    @app.get("/api/v1/libraries")
+    @app.get("/api/internal/libraries")
     async def libraries(request: Request):
         shared_here(request)
         with Asking():
             return {"libraries": await cat.libraries()}
 
-    @app.get("/api/v1/libraries/{key}")
+    @app.get("/api/internal/libraries/{key}")
     async def library_page(key: str, request: Request):
         shared_here(request)
         sort = request.query_params.get("sort", "title")
@@ -282,7 +283,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "items": cards(user_id, page),
         }
 
-    @app.get("/api/v1/home")
+    @app.get("/api/internal/home")
     async def home(request: Request):
         shared_here(request)
         user_id, _ = person(request)
@@ -324,7 +325,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 )
         return out
 
-    @app.get("/api/v1/search")
+    @app.get("/api/internal/search")
     async def search(request: Request):
         """The one place your library and the stations meet: what's in the
         library, and which stations are airing it now."""
@@ -340,7 +341,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 found = await cat.search(words)
         return {"items": cards(user_id, found), "onNow": await asyncio.to_thread(on_now, words)}
 
-    @app.get("/api/v1/items/{key}")
+    @app.get("/api/internal/items/{key}")
     async def item(key: str, request: Request):
         shared_here(request)
         user_id, _ = person(request)
@@ -388,7 +389,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         )
         return out
 
-    @app.get("/api/v1/items/{key}/episodes")
+    @app.get("/api/internal/items/{key}/episodes")
     async def episodes_of(key: str, request: Request):
         shared_here(request)
         season_text = request.query_params.get("season")
@@ -402,7 +403,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         chosen = [x for x in found if season is None or x.season == season]
         return {"show": key, "season": season, "episodes": cards(user_id, chosen)}
 
-    @app.get("/api/v1/art/{key}")
+    @app.get("/api/internal/art/{key}")
     async def picture(key: str, request: Request):
         shared_here(request)
         kind = request.query_params.get("kind", "poster")
@@ -432,7 +433,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     # Playing ---------------------------------------------------------------
 
-    @app.post("/api/v1/play")
+    @app.post("/api/internal/play")
     async def play(body: PlayAsk, request: Request):
         shared_here(request)
         user_id, name = person(request)
@@ -535,7 +536,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             ],
         }
 
-    @app.post("/api/v1/progress")
+    @app.post("/api/internal/progress")
     async def progress(body: ProgressReport, request: Request):
         shared_here(request)
         user_id, _ = person(request)

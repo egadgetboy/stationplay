@@ -155,20 +155,20 @@ def test_the_access_tab_sets_the_limits_and_shows_the_tests(client, caplog):
     assert "at once in StationPlay's apps: 6; away from home: 2" in caplog.text
 
     # A connection test: the data, then what the app found.
-    data = client.get("/api/v1/speed-test?mb=3")
+    data = client.get("/api/internal/speed-test?mb=3")
     assert data.status_code == 200 and len(data.content) == 3 << 20
     assert data.headers["content-length"] == str(3 << 20)
     assert data.headers["stationplay-api"] == "1"
-    again = client.get("/api/v1/speed-test")
+    again = client.get("/api/internal/speed-test")
     assert again.status_code == 429 and "just ran" in again.json()["detail"]
     for mb in ("0", "65", "lots"):
-        assert client.get(f"/api/v1/speed-test?mb={mb}").status_code == 400
+        assert client.get(f"/api/internal/speed-test?mb={mb}").status_code == 400
     found = client.post(
-        "/api/v1/speed-test",
+        "/api/internal/speed-test",
         json={"mbps": 87.5, "app": "StationPlay for Android", "deviceName": "Pixel"},
     )
     assert found.json() == {"mbps": 87.5, "where": "home", "eachMbps": 4.0, "room": 15}
-    assert client.post("/api/v1/speed-test", json={"mbps": -1}).status_code == 400
+    assert client.post("/api/internal/speed-test", json={"mbps": -1}).status_code == 400
     got = client.get("/api/app-limits").json()
     [test] = got["tests"]
     assert (test["where"], test["device"], test["mbps"]) == (
