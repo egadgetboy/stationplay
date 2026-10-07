@@ -833,7 +833,7 @@
             },
             "type": "array",
             "title": "Features",
-            "description": "What it offers here: hls, speed-test, away, library (more may be added)"
+            "description": "What it offers here: hls, speed-test, away, library, reports (more may be added)"
           }
         },
         "type": "object",

@@ -503,7 +503,7 @@
   .logline.WARNING .lvl { color: var(--accent); }
   .logline.ERROR { background: var(--bad-soft); }
   .logline.ERROR .lvl { color: var(--bad); }
-  .logline .msg { word-break: break-word; }
+  .logline .msg { word-break: break-word; white-space: pre-wrap; }  /* (an app's report runs over lines) */
   @media (max-width: 720px) { .logline { grid-template-columns: 1fr; gap: 2px; } }
   .checks { display: flex; gap: 14px; align-items: center; }
   .checks label { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; cursor: pointer; }

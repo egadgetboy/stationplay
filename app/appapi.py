@@ -28,6 +28,8 @@ from . import __version__, access, api, capacity, hdhr, intro, links, specials
 from .broadcaster import now_ms
 from .text import plain
 
+log = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
@@ -41,7 +43,7 @@ PREFIX = "/api/v1/"
 # OpenAPI, no promise it stays the same; see docs/internal-api.md).
 INTERNAL = "/api/internal/"
 HEADER = (b"stationplay-api", str(VERSION).encode())
-FEATURES = ("hls", "speed-test")
+FEATURES = ("hls", "speed-test", "reports")
 
 GUIDE_DEFAULT_MS = 6 * 3600_000
 GUIDE_MAX_MS = 2 * 86_400_000
@@ -100,6 +102,35 @@ class SpeedTested(BaseModel):
 
 class LinkCode(BaseModel):
     code: str = Field(max_length=20)
+
+
+# Problem reports from the apps: what goes in the Logs tab, at most.
+REPORT_MAX = 24_000
+REPORT_LINES = 400
+REPORT_EVERY_S = 30  # one from each address at most this often
+
+
+class Report(BaseModel):
+    text: str = Field(max_length=REPORT_MAX * 8)  # (what is kept: report_text)
+    app: str = Field(default="", max_length=APP_MAX)
+    deviceName: str = Field(default="", max_length=APP_MAX)
+
+
+def report_text(text: str) -> str:
+    """A report as the Logs tab shows it: each line plain, and no more than
+    REPORT_LINES of them or REPORT_MAX characters (the rest left off, and
+    said so)."""
+    lines = [plain(line) for line in text.splitlines()]
+    kept: list[str] = []
+    size = 0
+    for line in lines:
+        if len(kept) >= REPORT_LINES or size + len(line) > REPORT_MAX:
+            more = len(lines) - len(kept)
+            kept.append(f"(and {more} more {'line' if more == 1 else 'lines'}, left off)")
+            break
+        kept.append(line)
+        size += len(line) + 1
+    return "\n".join(kept).strip()
 
 
 def app_label(app: str, device: str) -> str:
@@ -452,6 +483,31 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "eachMbps": each,
             "room": capacity.room(test, each),
         }
+
+    # Problem reports (see the apps' Options: Send a report) ----------------------
+
+    reported: dict[str, float] = {}
+
+    @app.post("/api/internal/report")
+    async def report(body: Report, request: Request):
+        """A report from an app, in the Logs tab (and StationPlay's log), for
+        whoever is looking into a problem: what the app did lately, and on
+        what device. One from each address every REPORT_EVERY_S at most."""
+        now = time.monotonic()
+        address = access.address(request.scope)
+        if now - reported.get(address, -REPORT_EVERY_S) < REPORT_EVERY_S:
+            raise HTTPException(429, "A report was just sent from here. Try again in a minute.")
+        for at, when in list(reported.items()):
+            if now - when >= REPORT_EVERY_S:
+                del reported[at]
+        text = report_text(body.text)
+        if not text:
+            raise HTTPException(400, "The report is empty")
+        reported[address] = now
+        user = access.signed_in(request)
+        by = f" ({user.name})" if user else ""
+        log.warning("Report from %s%s:\n%s", app_label(body.app, body.deviceName), by, text)
+        return {"ok": True}
 
     @app.get(
         "/api/v1/guide",

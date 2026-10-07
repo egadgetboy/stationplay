@@ -73,7 +73,8 @@ class Server(_Shape):
         description="Where StationPlay's apps reach it from outside, when that's on"
     )
     features: list[str] = Field(
-        description="What it offers here: hls, speed-test, away, library (more may be added)"
+        description="What it offers here: hls, speed-test, away, library, reports (more may be "
+        "added)"
     )
 
 

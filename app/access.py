@@ -194,7 +194,7 @@ FOR_USERS = {
         "/api/filter/preview", "/api/intro/preview", "/api/upnext/preview", "/api/logos",
         "/api/logos/plex", "/api/bumpers", "/api/smart/split", "/api/smart/stations",
         "/api/internal/sign-out", "/api/internal/speed-test", "/api/access/link",
-        "/api/internal/play", "/api/internal/progress",
+        "/api/internal/play", "/api/internal/progress", "/api/internal/report",
     ),
     "PUT": ("/api/channels/",),
     "DELETE": ("/api/channels/",),

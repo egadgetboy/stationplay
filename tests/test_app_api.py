@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from app import appapi
 from app.config import Settings
 from app.main import create_app
 from app.plex import PlexClient
@@ -163,7 +164,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         )
         server = check.answer(home.get("/api/v1/server"), "GET /api/v1/server")
         assert server["api"] == 1 and not server["signIn"] and server["notSetUp"] is None
-        assert server["features"] == ["hls", "speed-test"]
+        assert server["features"] == ["hls", "speed-test", "reports"]
         # From the internet, until signing in is on, there's nothing to do.
         outside = check.answer(internet.get("/api/v1/server"), "GET /api/v1/server")
         assert outside["signIn"] and "home network" in outside["notSetUp"]
@@ -239,6 +240,30 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         )
         assert (found["where"], found["mbps"]) == ("home", 52.0)
 
+        # A problem report, for the Logs tab: each line plain, and not too many.
+        lines = ["StationPlay for Android 0.1.0 (build 7)", "14:02:05 Tuned to 5\tHometown 5"]
+        reported = phone.post(
+            "/api/internal/report",
+            headers=sam,
+            json={"text": "\n".join(lines + ["x" * 10] * 500), "app": "StationPlay for Android",
+                  "deviceName": "Pixel"},
+        )  # fmt: skip
+        assert check.answer(reported, "POST /api/internal/report") == {"ok": True}
+        again = phone.post("/api/internal/report", headers=sam, json={"text": "Again"})
+        check.answer(again, "POST /api/internal/report", 429)
+        [entry] = [
+            e["message"]
+            for e in home.get("/api/logs?levels=WARNING").json()["entries"]
+            if e["message"].startswith("Report from")
+        ]
+        head, *body = entry.splitlines()
+        assert head == "Report from StationPlay for Android on Pixel (Sam):"
+        assert body[:2] == [
+            "StationPlay for Android 0.1.0 (build 7)",
+            "14:02:05 Tuned to 5 Hometown 5",
+        ]
+        assert body[-1] == "(and 102 more lines, left off)" and len(body) == 401
+
         # Your library (see test_ondemand.py): shared by an Admin, then
         # browsed and played.
         check.answer(
@@ -246,7 +271,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         )
         assert home.put("/api/app-libraries", json={"libraries": ["1", "2"]}).status_code == 200
         features = check.answer(phone.get("/api/v1/server"), "GET /api/v1/server")["features"]
-        assert features == ["hls", "speed-test", "library"]
+        assert features == ["hls", "speed-test", "reports", "library"]
         libs = check.answer(
             phone.get("/api/internal/libraries", headers=sam), "GET /api/internal/libraries"
         )
@@ -459,3 +484,8 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         spec = home.get("/api/v1/openapi.json", headers=admin)
         assert spec.status_code == 200 and spec.json()["info"]["title"] == "StationPlay API"
     check.everything_seen()
+
+
+def test_a_report_is_kept_plain_and_short():
+    assert appapi.report_text("a\x00b\n\n" + "y" * 30_000) == "a b\n\n(and 1 more line, left off)"
+    assert appapi.report_text("  \n\t\n") == ""

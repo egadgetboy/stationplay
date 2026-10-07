@@ -158,6 +158,27 @@ from the fastest recent tests.
 | `eachMbps` | number | What one device watching takes, at the biggest picture the stations use |
 | `room` | number | How many devices a connection this fast has room for at once |
 
+## POST /api/internal/report
+
+A problem report, for whoever is looking into a problem (from 1.22.1, when
+`features` lists `reports`): what the app did lately, and on what device.
+It goes in StationPlay's log, and so in the Logs tab, as a warning that
+starts "Report from" and the app's name (with who's signed in). Send:
+
+```json
+{"text": "...", "app": "StationPlay for Android TV", "deviceName": "Den"}
+```
+
+`text` is lines of plain text: the app's and device's details, then what
+it did lately, oldest first, with any crash. Never a token or a password.
+StationPlay keeps at most 400 lines or 24,000 characters of it, and says
+how many it left off. One report from an address every 30 seconds:
+another is answered 429. An empty one is answered 400.
+
+| Field | Type | What it is |
+|---|---|---|
+| `ok` | boolean | Always true |
+
 ## Your library
 
 When an Admin shares libraries with the apps (on the Access tab, under
