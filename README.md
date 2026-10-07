@@ -15,7 +15,7 @@ If you find it useful, you can [buy me a coffee](https://buymeacoffee.com/egadge
 - [What you need](#what-you-need)
 - [Install](#install): [TrueNAS SCALE](#truenas-scale) · [Docker Compose (Linux, Proxmox, Raspberry Pi)](#docker-compose-linux-proxmox-raspberry-pi) · [Synology](#synology) · [Unraid](#unraid) · [Windows and macOS](#windows-and-macos) · [docker run](#docker-run)
 - [GPU encoding](#gpu-encoding) · [Updating](#updating) · [Backups](#backups) · [How StationPlay reads your files](#how-stationplay-reads-your-files) · [Security and remote access](#security-and-remote-access)
-- [Watch your stations](#watch-your-stations): Plex, Jellyfin, Emby, Kodi and other apps
+- [Watch your stations](#watch-your-stations): Plex, Jellyfin, Emby, Kodi and other apps · [Coming soon: StationPlay's own apps](#coming-soon-stationplays-own-apps)
 - [Reaching StationPlay from outside your home](#reaching-stationplay-from-outside-your-home): a VPN, a reverse proxy, or a Cloudflare Tunnel
 - [First-time setup](#first-time-setup)
 - [Making stations](#making-stations)
@@ -333,6 +333,23 @@ Channels DVR, TiviMate, VLC and most IPTV apps accept the playlist address, `htt
 **Keeping other apps' guides current.** These apps download the guide on their own schedule, usually once a day. When you change a station, refresh the guide in the app (in Jellyfin: **Dashboard → Scheduled Tasks → Refresh Guide**), or it shows that station's old schedule until its next refresh. Updates from Plex (such as new episodes) take effect when Plex downloads its guide, so an app that refreshes less often may briefly show an older schedule.
 
 **Away from home.** These addresses only work on your home network. Plex users away from home watch through Plex as usual. Other apps must be on your network, or reach it over a VPN.
+
+### Coming soon: StationPlay's own apps
+
+StationPlay's own apps are on the way, made for StationPlay and connected straight to your server, so watching your stations needs neither Plex Pass nor another app in between.
+
+- **Where:** iPhone, iPad and Apple TV; Android phones and tablets, Google TV, Android TV and Fire TV; and Roku.
+- **The guide,** laid out for each screen: on a TV, moved through with the remote; on a phone, every station at a glance, dragged through the hours; on a tablet, with the chosen program and a picture above it.
+- **Tuning in** shows the station's own card, in its Intro Bumper colors, until the picture arrives. Flip up and down through the stations, type a station's number on a remote, or jump back to the last one. When every tuner is in use, the app says so and offers the stations already on.
+- **Favorites,** and a guide of just your favorites.
+- **Night mode:** loud scenes quieter, quiet voices clearer, for watching late.
+- **On phones and tablets:** picture-in-picture, a picture that fits or fills the screen, and AirPlay (Apple) or Cast (Android) to a TV.
+- **Signing in, safely:** on a TV, with a code entered on StationPlay's page, so no password is typed with a remote; on a phone, with your name and password. Each app shows under **Signed-in apps** on the **Access** tab, where it can be signed out.
+- **Away from home,** if an Admin turns it on: over HTTPS, through the same reverse proxy as StationPlay's page (see [Reaching StationPlay from outside your home](#reaching-stationplay-from-outside-your-home)).
+- **Steady by design:** an Admin chooses how many apps can play at once (and how many of those away from home), StationPlay measures what the server and its internet connection can manage and recommends the numbers, and anyone over a limit is told plainly why.
+- **Later, your library on demand:** shows and movies to browse, Continue Watching and resume, **Skip intro** and **Skip credits** buttons, subtitle and audio choices, and the best picture and sound each device can play (Dolby Vision and Dolby Atmos included), converted only when a device can't play a file as it is.
+
+The server side is already in place: StationPlay 1.19.0 and newer have the connection the apps use (described in [docs/app-api.md](docs/app-api.md)).
 
 ## Reaching StationPlay from outside your home
 
