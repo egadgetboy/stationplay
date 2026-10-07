@@ -1,0 +1,82 @@
+# StationPlay — Docker Compose, for Linux, Proxmox, a Raspberry Pi 4 or 5,
+# Synology, Unraid, and Docker Desktop on Windows or macOS.
+# On TrueNAS SCALE, use stationplay.yaml instead.
+#
+# Before starting (README: Install > Docker Compose, or your system's section):
+#   1. Unzip StationPlay into a folder (it creates src/), and copy this file
+#      from src/ into that folder, beside src/:  cp src/docker-compose.yml .
+#   2. Make a data folder owned by the user below:
+#        mkdir -p data && sudo chown -R 1000:1000 data
+#      (Docker Desktop on Windows or macOS: just make the folder, and delete
+#      the "user:" line below.)
+#   3. Change the lines marked  <- CHANGE
+#   4. In that folder:  docker compose up -d --build
+#
+# To update later: unzip the new version over src/, raise the version in
+# "image:" (e.g. 1.19.0 -> 1.19.1), then run  docker compose up -d --build
+
+services:
+  stationplay:
+    build:
+      context: ./src
+      dockerfile: Dockerfile
+    image: stationplay:1.19.0
+    container_name: stationplay
+    restart: unless-stopped
+    init: true
+    # The user StationPlay runs as. It needs write access to the data folder
+    # and read access to your media.
+    user: "1000:1000"                                  # <- CHANGE if your media belongs to another user
+    ports:
+      - "3310:3310"     # Plex, other apps and your home network. Never forward it to the internet.
+      # The page for the internet, through a Cloudflare Tunnel or other reverse
+      # proxy (README: "Security and remote access"). Remove it if
+      # you don't need that, and remove PUBLIC_PORT below too.
+      - "3311:3311"
+    environment:
+      PLEX_URL: "http://192.168.1.10:32400"            # <- CHANGE to your Plex server's address
+      PLEX_TOKEN: "paste-your-plex-token-here"         # <- CHANGE (README: "Finding your Plex token")
+      TZ: "America/Chicago"                            # <- CHANGE to your time zone
+      PORT: "3310"
+      PUBLIC_PORT: "3311"
+      MEDIA_DIR: "/media"
+      # auto = use a GPU if one passes a test encode, otherwise the CPU.
+      # Other values: intel, amd, nvidia, cpu
+      HW_ACCEL: "auto"
+    volumes:
+      # Stations, settings, logos, backups
+      - ./data:/data
+      # Your media library, read-only. StationPlay matches the paths Plex
+      # reports to this folder automatically.
+      - /path/to/your/media:/media:ro                  # <- CHANGE
+
+    # --- GPU: Intel or AMD -------------------------------------------------
+    # Uncomment these lines to let StationPlay use the GPU (check that
+    # /dev/dri exists first: ls -ln /dev/dri). The group is the number of the
+    # group that owns /dev/dri/renderD128 in that listing.
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # group_add:
+    #   - "107"
+
+    # --- GPU: NVIDIA (with the NVIDIA Container Toolkit installed) --------
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+    # It runs as an ordinary user, and may never gain privileges or keep any
+    # it doesn't need.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

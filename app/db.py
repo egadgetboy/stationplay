@@ -1,0 +1,1615 @@
+"""SQLite storage for stations, their eras and frozen playlists.
+
+A station's schedule is a series of eras, each a playlist frozen when it
+was made, taking over from the one before at a program break. An era never
+changes once saved, so the schedule (and the guide Plex has downloaded)
+never shifts on its own; updates only ever add a new era that starts after
+what the guide already shows.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+import threading
+import time
+from collections import Counter
+from dataclasses import asdict, dataclass, field, fields
+from functools import cached_property
+from operator import attrgetter
+from pathlib import Path
+from typing import Any
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS channels (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    number       INTEGER NOT NULL UNIQUE,
+    name         TEXT    NOT NULL,
+    order_mode   TEXT    NOT NULL DEFAULT 'shuffle',
+    sources      TEXT    NOT NULL DEFAULT '[]',
+    epoch_ms     INTEGER NOT NULL DEFAULT 0,
+    total_ms     INTEGER NOT NULL DEFAULT 0,
+    built_at_ms  INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS eras (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id   INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    start_ms     INTEGER,             -- NULL: from the station's beginning
+    epoch_ms     INTEGER NOT NULL,
+    seed         TEXT    NOT NULL,
+    order_mode   TEXT    NOT NULL,
+    chained      INTEGER NOT NULL DEFAULT 0,
+    first_pass   TEXT,
+    tail         TEXT,
+    created_ms   INTEGER NOT NULL,
+    reason       TEXT    NOT NULL DEFAULT '',
+    added        INTEGER NOT NULL DEFAULT 0,
+    removed      INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS era_items (
+    era_id        INTEGER NOT NULL REFERENCES eras(id) ON DELETE CASCADE,
+    position      INTEGER NOT NULL,
+    start_ms      INTEGER NOT NULL,
+    duration_ms   INTEGER NOT NULL,
+    rating_key    TEXT    NOT NULL,
+    kind          TEXT    NOT NULL,
+    title         TEXT    NOT NULL,
+    show_title    TEXT,
+    show_key      TEXT,
+    season        INTEGER,
+    episode       INTEGER,
+    year          INTEGER,
+    summary       TEXT,
+    file_path     TEXT,
+    part_key      TEXT,
+    lead_ms       INTEGER NOT NULL DEFAULT 0,
+    segments      TEXT,               -- JSON [[start, end], ...] ms; NULL: all
+    breaks        TEXT,               -- JSON [[file, ms], ...] played after it
+    PRIMARY KEY (era_id, position)
+);
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+-- Intro and credits markers Plex has for each program, as last asked.
+CREATE TABLE IF NOT EXISTS markers (
+    rating_key   TEXT PRIMARY KEY,
+    duration_ms  INTEGER NOT NULL,
+    markers      TEXT    NOT NULL,     -- JSON [[kind, start, end, final], ...]
+    checked_ms   INTEGER NOT NULL,     -- when Plex was last asked
+    first_ms     INTEGER NOT NULL      -- since when it has said this
+);
+-- The marathons a station has had (or has coming), for choosing the next:
+-- when each was due, the show, and where it left off (its last episode's
+-- season and number).
+CREATE TABLE IF NOT EXISTS marathons (
+    channel_id   INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    due_ms       INTEGER NOT NULL,
+    show_key     TEXT    NOT NULL,
+    last_season  INTEGER NOT NULL DEFAULT 0,
+    last_episode INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (channel_id, due_ms)
+);
+-- Feature Presentations and time-of-day blocks a station has had (or has
+-- coming), for choosing what's next: by kind and when each was due, what
+-- it was (the film's rating key, the block's id) and, for a block, where
+-- its run of programs got to (see specials.py).
+CREATE TABLE IF NOT EXISTS special_runs (
+    channel_id   INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    kind         TEXT    NOT NULL,
+    due_ms       INTEGER NOT NULL,
+    key          TEXT    NOT NULL,
+    value        TEXT    NOT NULL DEFAULT '',
+    PRIMARY KEY (channel_id, kind, due_ms)
+);
+-- Programs a station's specials draw on besides its own (a Feature
+-- Presentation's films, a block's shows), as Plex last listed them: JSON
+-- items, by name ("feature", "block:<id>").
+CREATE TABLE IF NOT EXISTS program_sets (
+    channel_id   INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    name         TEXT    NOT NULL,
+    items        TEXT    NOT NULL,
+    PRIMARY KEY (channel_id, name)
+);
+-- Logos you've uploaded (the pictures are in the data folder's logos/).
+CREATE TABLE IF NOT EXISTS logos (
+    id           TEXT    PRIMARY KEY,
+    name         TEXT    NOT NULL,
+    created_ms   INTEGER NOT NULL
+);
+-- What checking each program's file found (see scanner.py).
+CREATE TABLE IF NOT EXISTS scans (
+    rating_key   TEXT    PRIMARY KEY,
+    file         TEXT    NOT NULL,     -- Plex's path to the file checked
+    size         INTEGER NOT NULL DEFAULT 0,
+    quick_ms     INTEGER NOT NULL DEFAULT 0,   -- when the quick check last ran
+    quick        TEXT    NOT NULL DEFAULT '',  -- ok, broken, damaged or unsupported
+    deep_ms      INTEGER NOT NULL DEFAULT 0,   -- when a deep scan finished
+    deep_at_s    REAL    NOT NULL DEFAULT 0,   -- how far an unfinished one got
+    deep         TEXT    NOT NULL DEFAULT '',  -- ok, broken or damaged
+    bad_minutes  TEXT    NOT NULL DEFAULT '[]', -- JSON: minutes with glitches
+    tries        INTEGER NOT NULL DEFAULT 0,   -- deep scans cut off by read errors
+    note         TEXT    NOT NULL DEFAULT '',
+    kept         INTEGER NOT NULL DEFAULT 0,   -- you put it back on the air
+    picture_to_s REAL    NOT NULL DEFAULT 0,   -- what the deep scan found so far:
+    sound_from_s REAL    NOT NULL DEFAULT -1,  -- (see ScanRecord)
+    sound_to_s   REAL    NOT NULL DEFAULT -1,
+    black_s      REAL    NOT NULL DEFAULT 0,
+    gaps         TEXT    NOT NULL DEFAULT '[]' -- JSON: [kind, from, to]
+);
+-- Who can sign in to StationPlay's page (none: anyone can use it).
+CREATE TABLE IF NOT EXISTS users (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+    password     TEXT    NOT NULL,     -- scrypt hash (see access.py)
+    role         TEXT    NOT NULL,     -- admin or user
+    created_ms   INTEGER NOT NULL,
+    signed_in_ms INTEGER NOT NULL DEFAULT 0,
+    max_stations INTEGER               -- the most stations a User may make; NULL: no limit
+);
+-- Who's signed in, by a hash of their browser's token.
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash   TEXT    PRIMARY KEY,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_ms   INTEGER NOT NULL,
+    seen_ms      INTEGER NOT NULL
+);
+-- Browsers someone has signed in on, by a hash of a token kept in them
+-- (see access.py: signing in on one from the internet never waits behind
+-- strangers' wrong passwords).
+CREATE TABLE IF NOT EXISTS devices (
+    token_hash   TEXT    PRIMARY KEY,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_ms   INTEGER NOT NULL
+);
+-- Signing in and out, and changes to who can (the newest kept).
+CREATE TABLE IF NOT EXISTS access_log (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    time_ms      INTEGER NOT NULL,
+    level        TEXT    NOT NULL,
+    message      TEXT    NOT NULL
+);
+-- Each time a station was watched (see stats.py).
+CREATE TABLE IF NOT EXISTS views (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id   INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    start_ms     INTEGER NOT NULL,
+    end_ms       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS views_by_end ON views (end_ms);
+CREATE INDEX IF NOT EXISTS views_by_station ON views (channel_id);
+-- What aired while it was: seconds watched of each show or movie, by day.
+CREATE TABLE IF NOT EXISTS watched (
+    channel_id   INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    day          TEXT    NOT NULL,     -- the local date, YYYY-MM-DD
+    title        TEXT    NOT NULL,     -- the show, or the movie
+    kind         TEXT    NOT NULL,     -- episode or movie
+    seconds      REAL    NOT NULL,
+    PRIMARY KEY (channel_id, day, title, kind)
+);
+-- Who watched, as Plex says (its Live TV sessions, see stats.py): seconds
+-- of each station and show or movie, by Plex user and day.
+CREATE TABLE IF NOT EXISTS user_watched (
+    user_id      TEXT    NOT NULL,     -- Plex's id for the user
+    user_name    TEXT    NOT NULL,     -- as Plex last named them
+    channel_id   INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    day          TEXT    NOT NULL,     -- the local date, YYYY-MM-DD
+    title        TEXT    NOT NULL,     -- the show, or the movie
+    kind         TEXT    NOT NULL,     -- episode or movie
+    seconds      REAL    NOT NULL,
+    PRIMARY KEY (user_id, channel_id, day, title, kind)
+);
+"""
+
+Segments = tuple[tuple[int, int], ...]
+Breaks = tuple[tuple[str, int], ...]
+
+
+@dataclass
+class Channel:
+    id: int
+    number: int
+    name: str
+    sources: list[dict]
+    # The station's logo ("" shows its number instead).
+    logo: str
+    # Episode order (rotate) or shuffle.
+    order_mode: str
+    # How 4:3 programs fill the 16:9 picture: fit (black bars), stretch, zoom.
+    aspect_mode: str
+    # Skip intros and credits, where Plex has found them.
+    skip_intros: bool
+    # Commercials (after episodes) or trailers (after movies): 0 to 3.
+    breaks: int
+    # A Station ID card saying what's up next, after each program: whether,
+    # how long, and with its jingle or silent.
+    station_id: bool
+    id_seconds: int
+    id_sound: bool
+    # The station's logo, name or a clock in the corner during programs:
+    # off, logo, name or clock.
+    watermark: str
+    # How big it is (small, medium, large) and how see-through (high, medium,
+    # low transparency).
+    watermark_size: str
+    watermark_transparency: str
+    # Which corner: top-left, top-right, bottom-left or bottom-right.
+    watermark_position: str
+    # When: always, or at the start of each program (its first 30 seconds).
+    watermark_timing: str
+    # The logo in its own colours, or all in white (as real channels show it).
+    watermark_style: str
+    # The corner clock's format: 12 (8:05 PM) or 24 (20:05) hours.
+    clock_format: str
+    # The Intro Bumper when someone tunes in: its length in seconds (0: off),
+    # with the dial's sound or silent, and the line it shows about the station.
+    intro_seconds: int
+    intro_sound: bool
+    description: str
+    # Or a video of your own instead (one of the bumpers you've uploaded).
+    intro_video: str
+    # Someone tuning in joins it where it is ("now", as on real TV), or the
+    # program on now from its beginning ("start"; see broadcaster.py).
+    tune_in: str
+    # The Up Next Banner near the end of each program: how long it's shown
+    # (0: off) and how big it is (small, medium, large).
+    up_next_seconds: int
+    up_next_size: str
+    # Marathons (three episodes of one show in a row, now and then; see
+    # marathons.py): off, at random times (marathons_a_week of them), or at
+    # set times (on marathon_days, Monday 0 to Sunday 6, at marathon_time);
+    # with each show's next episodes in order, or a random stretch.
+    marathon_mode: str
+    marathons_a_week: int
+    marathon_days: str
+    marathon_time: str
+    marathon_episodes: str
+    # The size of its picture: 480p, 720p or 1080p (see ff.PICTURES).
+    picture: str
+    # Subtitles drawn into the picture: off, forced (only the lines meant
+    # to be read) or always (see subtitles.py).
+    subtitles: str
+    # A Feature Presentation (see specials.py): off or on, on feature_days
+    # at feature_time, a movie from feature_source (a movie library or
+    # collection, as a source; {} for the station's own movies).
+    feature_mode: str
+    feature_days: str
+    feature_time: str
+    feature_source: dict
+    # Time-of-day blocks: [{"id", "name", "days", "start", "end", "sources"}].
+    blocks: list[dict]
+    # Who made it (a user's id), if it was made while signing in was on.
+    created_by: int | None = None
+    # When it was made; for a station made before 1.15, when it's known to
+    # have been on the air by (created_exact False).
+    created_ms: int = 0
+    created_exact: bool = True
+
+    @property
+    def has_intro(self) -> bool:
+        return bool(self.intro_video) or self.intro_seconds > 0
+
+
+# A station's settings: its column, its name in the web API, and what a new
+# station starts with. (Stations made before a setting existed keep how
+# StationPlay behaved then: see the defaults in _ADDED_COLUMNS.)
+STATION_SETTINGS: tuple[tuple[str, str, object], ...] = (
+    ("order_mode", "orderMode", "shuffle"),
+    ("aspect_mode", "aspectMode", "fit"),
+    ("skip_intros", "skipIntros", False),
+    ("breaks", "breaks", 0),
+    ("station_id", "stationId", False),
+    ("id_seconds", "idSeconds", 5),
+    ("id_sound", "idSound", True),
+    ("watermark", "watermark", "logo"),
+    ("watermark_size", "watermarkSize", "large"),
+    ("watermark_transparency", "watermarkTransparency", "medium"),
+    ("watermark_position", "watermarkPosition", "bottom-left"),
+    ("watermark_timing", "watermarkTiming", "always"),
+    ("watermark_style", "watermarkStyle", "color"),
+    ("clock_format", "clockFormat", "12"),
+    ("intro_seconds", "introSeconds", 10),
+    ("intro_sound", "introSound", True),
+    ("description", "description", ""),
+    ("intro_video", "introVideo", ""),
+    ("tune_in", "tuneIn", "now"),
+    ("up_next_seconds", "upNextSeconds", 10),
+    ("up_next_size", "upNextSize", "large"),
+    ("marathon_mode", "marathonMode", "off"),
+    ("marathons_a_week", "marathonsAWeek", 2),
+    ("marathon_days", "marathonDays", "5"),
+    ("marathon_time", "marathonTime", "20:00"),
+    ("marathon_episodes", "marathonEpisodes", "next"),
+    # (A new station's is the one set for new stations: see playback.py.)
+    ("picture", "picture", "720p"),
+    ("subtitles", "subtitles", "off"),
+    ("feature_mode", "featureMode", "off"),
+    ("feature_days", "featureDays", "4"),
+    ("feature_time", "featureTime", "20:00"),
+    ("feature_source", "featureSource", {}),
+    ("blocks", "blocks", ()),
+)
+# Its marathon, Feature Presentation and block settings (see specials.py).
+SPECIAL_SETTINGS = tuple(
+    c for c, _, _ in STATION_SETTINGS if c.startswith(("marathon", "feature")) or c == "blocks"
+)
+# What a new station starts with, unless told otherwise.
+NEW_STATION: dict[str, object] = {column: default for column, _, default in STATION_SETTINGS}
+# The settings stored as 0 or 1.
+_FLAGS = frozenset(column for column, _, default in STATION_SETTINGS if isinstance(default, bool))
+# Everything about a station that's stored with it.
+_CHANNEL_COLUMNS = ("number", "name", "sources", "logo", *(c for c, _, _ in STATION_SETTINGS))
+
+
+@dataclass(frozen=True)
+class User:
+    """Someone who can sign in to StationPlay's page."""
+
+    id: int
+    name: str
+    role: str  # admin or user (see access.py)
+    created_ms: int
+    signed_in_ms: int  # when they last signed in; 0 if never
+    max_stations: int | None  # the most stations they may make as a User; None: no limit
+
+
+@dataclass
+class ScanRecord:
+    """What checking one program's file found."""
+
+    rating_key: str
+    file: str
+    size: int = 0
+    quick_ms: int = 0
+    quick: str = ""
+    deep_ms: int = 0
+    deep_at_s: float = 0.0
+    deep: str = ""
+    bad_minutes: list[int] = field(default_factory=list)
+    tries: int = 0
+    note: str = ""
+    # You chose Retry after a check found a problem: checks leave this file
+    # on the air.
+    kept: bool = False
+    # What the deep scan found so far (it can stop and carry on): how far
+    # the picture went; the first and last moments with sound (-1: none
+    # yet); how many seconds were black; and where the picture froze, or
+    # the sound was silent, for long ([kind, from, to], kind "picture" or
+    # "sound").
+    picture_to_s: float = 0.0
+    sound_from_s: float = -1.0
+    sound_to_s: float = -1.0
+    black_s: float = 0.0
+    gaps: list[list] = field(default_factory=list)
+    # Where the picture broke up, or the sound dropped out, as the deep scan
+    # judges it ([kind, at], kind "picture" or "sound", at in seconds: see
+    # scanner.what_it_costs). (bad_minutes are the minutes they're in.)
+    glitches: list[list] = field(default_factory=list)
+
+
+_SCAN_FIELDS = tuple(f.name for f in fields(ScanRecord))
+_SCAN_JSON = ("bad_minutes", "gaps", "glitches")
+
+
+@dataclass
+class Item:
+    """One scheduled entry in a channel's loop."""
+
+    position: int
+    start_ms: int  # offset of this item from the start of the loop
+    duration_ms: int
+    rating_key: str
+    kind: str  # "episode" or "movie"
+    title: str
+    show_title: str | None = None
+    show_key: str | None = None
+    season: int | None = None
+    episode: int | None = None
+    year: int | None = None
+    summary: str | None = None
+    file_path: str | None = None
+    part_key: str | None = None
+    # A card that plays before the program (a Feature Presentation's), in
+    # ms; its time is included in duration_ms.
+    lead_ms: int = 0
+    # The parts of the file that air, as (start, end) in ms of the file, in
+    # order; None for the whole file. With intros and credits skipped,
+    # duration_ms is how long these parts add up to: the program's length
+    # on the station.
+    segments: Segments | None = None
+    # What plays straight after the program, in order: (file, ms) for each
+    # commercial or trailer, and ("@id", ms) for the Station ID card. Their
+    # time is included in duration_ms.
+    breaks: Breaks | None = None
+
+    @property
+    def program_ms(self) -> int:
+        """How long the program itself runs, without the card before it or
+        what follows it."""
+        return self.duration_ms - self.lead_ms - sum(ms for _, ms in self.breaks or ())
+
+    @property
+    def program_end_ms(self) -> int:
+        """When the program ends, from the start of its slot: where what
+        follows it begins."""
+        return self.lead_ms + self.program_ms
+
+    @property
+    def display_title(self) -> str:
+        return self.show_title or self.title
+
+    @property
+    def label(self) -> str:
+        """e.g. 'Cheers S03E07 "Diane Meets Mom"' or '"Jaws" (1975)'."""
+        if self.kind == "episode" and self.show_title:
+            return (
+                f"{self.show_title} S{self.season or 0:02d}E{self.episode or 0:02d} "
+                f"\u201c{self.title}\u201d"
+            )
+        year = f" ({self.year})" if self.year else ""
+        return f"\u201c{self.title}\u201d{year}"
+
+
+def show_key(item: Item) -> str:
+    """Programs with the same key count as "the same show"."""
+    return item.show_key or f"movie:{item.rating_key}"
+
+
+# era_items columns, in Item's field order (the two stored as JSON last).
+_JSON_FIELDS = ("segments", "breaks")
+_ITEM_FIELDS = tuple(f.name for f in fields(Item) if f.name not in _JSON_FIELDS)
+_ITEM_COLUMNS = ", ".join((*_ITEM_FIELDS, *_JSON_FIELDS))
+# The columns a station's programs had before eras (the old channel_items).
+_OLD_ITEM_COLUMNS = (
+    "position, start_ms, duration_ms, rating_key, kind, title, show_title, show_key, "
+    "season, episode, year, summary, file_path, part_key"
+)
+# What a deep scan found so far, cleared to start it afresh.
+_DEEP_AFRESH = (
+    "deep_at_s = 0, bad_minutes = '[]', picture_to_s = 0, sound_from_s = -1, "
+    "sound_to_s = -1, black_s = 0, gaps = '[]', glitches = '[]'"
+)
+# Columns added since the first version: (table, column, definition).
+_ADDED_COLUMNS = (
+    ("channels", "aspect_mode", "TEXT NOT NULL DEFAULT 'fit'"),
+    ("channels", "logo", "TEXT NOT NULL DEFAULT ''"),
+    ("channels", "skip_intros", "INTEGER NOT NULL DEFAULT 0"),
+    ("era_items", "segments", "TEXT"),
+    ("era_items", "breaks", "TEXT"),
+    ("channels", "breaks", "INTEGER NOT NULL DEFAULT 0"),
+    ("channels", "station_id", "INTEGER NOT NULL DEFAULT 0"),
+    ("channels", "watermark", "TEXT NOT NULL DEFAULT 'off'"),
+    ("channels", "watermark_size", "TEXT NOT NULL DEFAULT 'large'"),
+    ("channels", "watermark_transparency", "TEXT NOT NULL DEFAULT 'low'"),
+    ("channels", "watermark_position", "TEXT NOT NULL DEFAULT 'bottom-right'"),
+    ("channels", "watermark_timing", "TEXT NOT NULL DEFAULT 'always'"),
+    ("channels", "watermark_style", "TEXT NOT NULL DEFAULT 'color'"),
+    ("channels", "clock_format", "TEXT NOT NULL DEFAULT '12'"),
+    # Added in 1.8. A station made before keeps how it played: no Intro
+    # Bumper, and its Station ID card (if it has one) ten seconds and silent.
+    ("channels", "intro_seconds", "INTEGER NOT NULL DEFAULT 0"),
+    ("channels", "intro_sound", "INTEGER NOT NULL DEFAULT 1"),
+    ("channels", "description", "TEXT NOT NULL DEFAULT ''"),
+    ("channels", "id_seconds", "INTEGER NOT NULL DEFAULT 10"),
+    ("channels", "id_sound", "INTEGER NOT NULL DEFAULT 0"),
+    ("channels", "intro_video", "TEXT NOT NULL DEFAULT ''"),
+    # Added in 1.8.3: a station made before has no Up Next Banner.
+    ("channels", "up_next_seconds", "INTEGER NOT NULL DEFAULT 0"),
+    ("channels", "up_next_size", "TEXT NOT NULL DEFAULT 'large'"),
+    ("channels", "created_by", "INTEGER"),
+    # (Users made by an early build of 1.9.0 have no limit.)
+    ("users", "max_stations", "INTEGER"),
+    # Added in 1.10: what the deep scan finds besides decoding errors.
+    ("scans", "picture_to_s", "REAL NOT NULL DEFAULT 0"),
+    ("scans", "sound_from_s", "REAL NOT NULL DEFAULT -1"),
+    ("scans", "sound_to_s", "REAL NOT NULL DEFAULT -1"),
+    ("scans", "black_s", "REAL NOT NULL DEFAULT 0"),
+    ("scans", "gaps", "TEXT NOT NULL DEFAULT '[]'"),
+    # Added in 1.13: marathons, and the eras they air in (special: what's
+    # special about an era, as JSON; NULL for an ordinary one).
+    ("channels", "marathon_mode", "TEXT NOT NULL DEFAULT 'off'"),
+    ("channels", "marathons_a_week", "INTEGER NOT NULL DEFAULT 2"),
+    ("channels", "marathon_days", "TEXT NOT NULL DEFAULT '5'"),
+    ("channels", "marathon_time", "TEXT NOT NULL DEFAULT '20:00'"),
+    ("channels", "marathon_episodes", "TEXT NOT NULL DEFAULT 'next'"),
+    ("eras", "special", "TEXT"),
+    # Added in 1.14: each station's picture size.
+    ("channels", "picture", "TEXT NOT NULL DEFAULT '720p'"),
+    # Added in 1.15: subtitles drawn in, Feature Presentations and blocks.
+    ("channels", "subtitles", "TEXT NOT NULL DEFAULT 'off'"),
+    ("channels", "feature_mode", "TEXT NOT NULL DEFAULT 'off'"),
+    ("channels", "feature_days", "TEXT NOT NULL DEFAULT '4'"),
+    ("channels", "feature_time", "TEXT NOT NULL DEFAULT '20:00'"),
+    ("channels", "feature_source", "TEXT NOT NULL DEFAULT '{}'"),
+    ("channels", "blocks", "TEXT NOT NULL DEFAULT '[]'"),
+    ("era_items", "lead_ms", "INTEGER NOT NULL DEFAULT 0"),
+    # Added in 1.15: when each station was made (see Channel.created_ms).
+    ("channels", "created_ms", "INTEGER NOT NULL DEFAULT 0"),
+    ("channels", "created_exact", "INTEGER NOT NULL DEFAULT 1"),
+    # Added in 1.16: where someone tuning in joins.
+    ("channels", "tune_in", "TEXT NOT NULL DEFAULT 'now'"),
+    # Added in 1.16.3: where the deep scan found the picture or sound break up.
+    ("scans", "glitches", "TEXT NOT NULL DEFAULT '[]'"),
+    # Added in 1.19: which of StationPlay's apps a sign-in is ('' for a
+    # browser), on what device, as the app says.
+    ("sessions", "app", "TEXT NOT NULL DEFAULT ''"),
+)
+
+
+# The marathons remembered for each station (for choosing the next ones).
+MARATHONS_KEPT = 200
+
+
+@dataclass(frozen=True)
+class NewEra:
+    """An era to save (see Database.replace_eras; Era for what each is)."""
+
+    items: list[Item]
+    start_ms: int | None
+    epoch_ms: int
+    seed: str
+    order_mode: str
+    created_ms: int
+    reason: str
+    first_pass: list[str] | None = None
+    tail: list[tuple[str, str]] | None = None
+    added: int = 0
+    removed: int = 0
+    special: dict | None = None
+
+
+@dataclass(frozen=True)
+class SpecialRun:
+    """A Feature Presentation or block a station has had, or has coming:
+    when it was due, what it was (the film, the block), and (a block) where
+    its programs got to."""
+
+    due_ms: int
+    key: str
+    value: str = ""
+
+
+@dataclass(frozen=True)
+class MarathonRecord:
+    """A marathon a station has had, or has coming: when it was due, the
+    show (its key), and the (season, episode) it left off at."""
+
+    due_ms: int
+    show_key: str
+    last: tuple[int, int]
+
+
+@dataclass
+class Era:
+    """One stretch of a station's schedule: a frozen playlist and where it
+    takes over. See schedule.EraSchedule for how it's played. An era never
+    changes once saved, so what's worked out from its items is kept."""
+
+    id: int
+    channel_id: int
+    start_ms: int | None
+    epoch_ms: int
+    seed: str
+    order_mode: str
+    chained: bool
+    first_pass: list[str] | None
+    tail: list[tuple[str, str]]
+    created_ms: int
+    reason: str
+    added: int
+    removed: int
+    items: list[Item]
+    # What's special about it: {"kind": "marathon", "title": the show's
+    # title, "show": its key, "due": when it was due}; None for an ordinary
+    # era.
+    special: dict | None = None
+
+    @cached_property
+    def total_ms(self) -> int:
+        return sum(i.duration_ms for i in self.items)
+
+    @cached_property
+    def rating_keys(self) -> frozenset[str]:
+        return frozenset(i.rating_key for i in self.items)
+
+    @cached_property
+    def trimmed_count(self) -> int:
+        """Programs with an intro or credits skipped."""
+        return sum(1 for i in self.items if i.segments)
+
+    @cached_property
+    def show_counts(self) -> Counter[str]:
+        return Counter(show_key(i) for i in self.items)
+
+
+@dataclass
+class CachedMarkers:
+    """What Plex last said about a program's markers."""
+
+    duration_ms: int  # the program's length then (a new file means asking again)
+    markers: str  # JSON
+    checked_ms: int  # when
+    first_ms: int  # since when it has said the same
+
+
+def copy_database(source: Path, dest: Path) -> None:
+    """A consistent copy of a database for a backup, read through a connection
+    of its own so nothing else waits for it. Sign-ins (and the browsers they
+    were on) aren't copied: a backup restored later signs everyone out, and
+    one passed around can't be used to sign in."""
+    src = sqlite3.connect(source)
+    out = sqlite3.connect(dest)
+    try:
+        src.backup(out)
+        for table in ("sessions", "devices"):
+            if out.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (table,)).fetchone():
+                out.execute(f"DELETE FROM {table}")
+        out.commit()
+        out.execute("PRAGMA journal_mode = DELETE")  # one self-contained file
+    finally:
+        out.close()
+        src.close()
+
+
+@dataclass
+class Database:
+    path: Path
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def __post_init__(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(self.path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA foreign_keys = ON")
+        self._conn.execute("PRAGMA journal_mode = WAL")
+        self._conn.executescript(SCHEMA)
+        self._upgrade()
+        # Each station's eras are cached in memory; an era never changes, and
+        # they're read on every schedule lookup.
+        self._eras_cache: dict[int, list[Era]] = {}
+        self._sets_cache: dict[int, dict[str, list[Item]]] = {}
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def _date_stations(self) -> None:
+        """When stations made before 1.15 (or without a date for any other
+        reason) were made: exactly, if the era they started with is still
+        kept; otherwise the earliest they're known to have been on the air
+        (their oldest era, or viewing), so made on or before then."""
+        now = int(time.time() * 1000)
+        with self._conn:
+            for row in self._conn.execute(
+                "SELECT id, built_at_ms FROM channels WHERE created_ms = 0"
+            ).fetchall():
+                made = self._conn.execute(
+                    "SELECT MIN(created_ms) FROM eras WHERE channel_id = ? AND reason = 'created'",
+                    (row["id"],),
+                ).fetchone()[0]
+                if made:
+                    self._conn.execute(
+                        "UPDATE channels SET created_ms = ?, created_exact = 1 WHERE id = ?",
+                        (made, row["id"]),
+                    )
+                    continue
+                known = [
+                    self._conn.execute(
+                        "SELECT MIN(created_ms) FROM eras WHERE channel_id = ?", (row["id"],)
+                    ).fetchone()[0],
+                    self._conn.execute(
+                        "SELECT MIN(start_ms) FROM views WHERE channel_id = ?", (row["id"],)
+                    ).fetchone()[0],
+                    row["built_at_ms"] or None,
+                    now,
+                ]
+                self._conn.execute(
+                    "UPDATE channels SET created_ms = ?, created_exact = 0 WHERE id = ?",
+                    (min(k for k in known if k), row["id"]),
+                )
+
+    def _upgrade(self) -> None:
+        """Brings a database made by an earlier version up to date."""
+        with self._conn:
+            self._conn.execute("DROP INDEX IF EXISTS views_by_start")  # (an early 1.9.0's)
+        for table, column, definition in _ADDED_COLUMNS:
+            have = {row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+            if column not in have:
+                with self._conn:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        old = self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'channel_items'"
+        ).fetchone()
+        if old:
+            # Before eras, each station had one playlist. It becomes the
+            # station's first era, scheduled exactly as before.
+            with self._conn:
+                for row in self._conn.execute(
+                    "SELECT * FROM channels WHERE id IN (SELECT channel_id FROM channel_items)"
+                ).fetchall():
+                    cur = self._conn.execute(
+                        "INSERT INTO eras (channel_id, start_ms, epoch_ms, seed, order_mode, "
+                        "chained, created_ms, reason) VALUES (?, NULL, ?, ?, ?, 1, ?, 'built')",
+                        (
+                            row["id"],
+                            row["epoch_ms"],
+                            f"{row['id']}:{row['built_at_ms']}",
+                            row["order_mode"],
+                            row["built_at_ms"],
+                        ),
+                    )
+                    self._conn.execute(
+                        f"INSERT INTO era_items (era_id, {_OLD_ITEM_COLUMNS}) "
+                        f"SELECT ?, {_OLD_ITEM_COLUMNS} FROM channel_items WHERE channel_id = ?",
+                        (cur.lastrowid, row["id"]),
+                    )
+                self._conn.execute("DROP TABLE channel_items")
+        self._date_stations()
+
+    # Channels -------------------------------------------------------------
+
+    def list_channels(self) -> list[Channel]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM channels ORDER BY number").fetchall()
+        return [self._channel(r) for r in rows]
+
+    def get_channel(self, channel_id: int) -> Channel | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM channels WHERE id = ?", (channel_id,)
+            ).fetchone()
+        return self._channel(row) if row else None
+
+    def get_channel_by_number(self, number: int) -> Channel | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM channels WHERE number = ?", (number,)
+            ).fetchone()
+        return self._channel(row) if row else None
+
+    def create_channel(
+        self,
+        number: int,
+        name: str,
+        sources: list[dict],
+        logo: str = "",
+        created_by: int | None = None,
+        **settings,
+    ) -> Channel:
+        """A new station; settings not given (or None) are NEW_STATION's."""
+        given = {k: v for k, v in settings.items() if v is not None}
+        unknown = given.keys() - NEW_STATION.keys()
+        if unknown:
+            raise TypeError(f"Unknown station settings: {', '.join(sorted(unknown))}")
+        values = _settings_row(
+            {
+                **NEW_STATION,
+                **given,
+                "number": number,
+                "name": name,
+                "sources": sources,
+                "logo": logo,
+            }
+        )
+        values["created_by"] = created_by
+        values["created_ms"] = int(time.time() * 1000)
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                f"INSERT INTO channels ({', '.join(values)}) VALUES ({', '.join('?' * len(values))})",
+                list(values.values()),
+            )
+        channel = self.get_channel(int(cur.lastrowid or 0))
+        assert channel is not None
+        return channel
+
+    def update_channel(self, channel_id: int, **settings) -> None:
+        """Changes the given settings of a station (number=, name=, logo=...);
+        the others stay as they are."""
+        unknown = settings.keys() - set(_CHANNEL_COLUMNS)
+        if unknown:
+            raise TypeError(f"Unknown station settings: {', '.join(sorted(unknown))}")
+        values = _settings_row(settings)
+        if not values:
+            return
+        with self._lock, self._conn:
+            self._conn.execute(
+                f"UPDATE channels SET {', '.join(f'{k} = ?' for k in values)} WHERE id = ?",
+                [*values.values(), channel_id],
+            )
+
+    def delete_channel(self, channel_id: int) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM channels WHERE id = ?", (channel_id,))
+            self._eras_cache.pop(channel_id, None)
+            self._sets_cache.pop(channel_id, None)
+
+    # Eras -----------------------------------------------------------------
+
+    def eras(self, channel_id: int) -> list[Era]:
+        """The station's eras, earliest first."""
+        cached = self._eras_cache.get(channel_id)
+        if cached is not None:
+            return cached
+        # Loaded and cached under the lock, so an era being added on another
+        # thread can't be missed by a cache filled just before it.
+        with self._lock:
+            cached = self._eras_cache.get(channel_id)
+            if cached is not None:
+                return cached
+            rows = self._conn.execute(
+                "SELECT * FROM eras WHERE channel_id = ? "
+                "ORDER BY start_ms IS NOT NULL, start_ms, id",
+                (channel_id,),
+            ).fetchall()
+            eras = [self._era(r, self._era_items(r["id"])) for r in rows]
+            self._eras_cache[channel_id] = eras
+            return eras
+
+    def _era_items(self, era_id: int) -> list[Item]:
+        cur = self._conn.cursor()
+        cur.row_factory = None  # plain tuples, in Item's field order: much quicker
+        rows = cur.execute(
+            f"SELECT {_ITEM_COLUMNS} FROM era_items WHERE era_id = ? ORDER BY position",
+            (era_id,),
+        ).fetchall()
+        return [
+            Item(*r[:-2], segments=_load_segments(r[-2]), breaks=_load_breaks(r[-1]))  # type: ignore[misc]
+            for r in rows
+        ]
+
+    def add_era(
+        self,
+        channel_id: int,
+        items: list[Item],
+        *,
+        start_ms: int | None,
+        epoch_ms: int,
+        seed: str,
+        order_mode: str,
+        created_ms: int,
+        reason: str,
+        first_pass: list[str] | None = None,
+        tail: list[tuple[str, str]] | None = None,
+        added: int = 0,
+        removed: int = 0,
+        special: dict | None = None,
+    ) -> Era:
+        """Saves a new era. Its playlist must already have its offsets."""
+        era = NewEra(
+            items, start_ms, epoch_ms, seed, order_mode, created_ms, reason,
+            first_pass, tail, added, removed, special,
+        )  # fmt: skip
+        return self.replace_eras(channel_id, [], [era])[0]
+
+    def replace_eras(self, channel_id: int, era_ids: list[int], new: list[NewEra]) -> list[Era]:
+        """Deletes the eras `era_ids` and saves `new` ones, all at once: if
+        anything goes wrong, nothing changes."""
+        with self._lock, self._conn:
+            if era_ids:
+                self._conn.executemany("DELETE FROM eras WHERE id = ?", [(i,) for i in era_ids])
+            made = [self._insert_era(channel_id, e) for e in new]
+            cached = self._eras_cache.get(channel_id)
+            if cached is not None:
+                # Keep the existing era objects, so their worked-out
+                # schedules stay cached.
+                self._eras_cache[channel_id] = sorted(
+                    [*(e for e in cached if e.id not in era_ids), *made],
+                    key=lambda e: (e.start_ms is not None, e.start_ms or 0, e.id),
+                )
+        return made
+
+    def _insert_era(self, channel_id: int, new: NewEra) -> Era:
+        """(With the lock held, in a transaction.)"""
+        cur = self._conn.execute(
+            "INSERT INTO eras (channel_id, start_ms, epoch_ms, seed, order_mode, chained, "
+            "first_pass, tail, created_ms, reason, added, removed, special) "
+            "VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                channel_id,
+                new.start_ms,
+                new.epoch_ms,
+                new.seed,
+                new.order_mode,
+                json.dumps(new.first_pass) if new.first_pass else None,
+                json.dumps(new.tail) if new.tail else None,
+                new.created_ms,
+                new.reason,
+                new.added,
+                new.removed,
+                json.dumps(new.special) if new.special else None,
+            ),
+        )
+        era_id = int(cur.lastrowid or 0)
+        values = attrgetter(*_ITEM_FIELDS)
+        self._conn.executemany(
+            f"INSERT INTO era_items (era_id, {_ITEM_COLUMNS}) "
+            f"VALUES ({', '.join('?' * (len(_ITEM_FIELDS) + 3))})",
+            [
+                (
+                    era_id,
+                    *values(i),
+                    json.dumps(i.segments) if i.segments else None,
+                    json.dumps(i.breaks) if i.breaks else None,
+                )
+                for i in new.items
+            ],
+        )
+        row = self._conn.execute("SELECT * FROM eras WHERE id = ?", (era_id,)).fetchone()
+        return self._era(row, list(new.items))
+
+    def delete_eras(self, channel_id: int, era_ids: list[int]) -> None:
+        if era_ids:
+            self.replace_eras(channel_id, era_ids, [])
+
+    def latest_items(self, channel_id: int) -> list[Item]:
+        """The station's programs as of its newest era (not counting a
+        marathon's, which has only a few of them)."""
+        latest = self.latest_era(channel_id)
+        return latest.items if latest else []
+
+    def latest_era(self, channel_id: int) -> Era | None:
+        """The station's newest ordinary era (not a marathon's)."""
+        return next((e for e in reversed(self.eras(channel_id)) if not e.special), None)
+
+    # Marathons --------------------------------------------------------------
+
+    def marathons(self, channel_id: int) -> list[MarathonRecord]:
+        """The marathons a station has had or has coming, earliest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM marathons WHERE channel_id = ? ORDER BY due_ms", (channel_id,)
+            ).fetchall()
+        return [
+            MarathonRecord(r["due_ms"], r["show_key"], (r["last_season"], r["last_episode"]))
+            for r in rows
+        ]
+
+    def forget_marathons(self, channel_id: int, dues: list[int]) -> None:
+        """Forgets marathons that won't happen after all (their eras were
+        replaced before they aired), by when they were due."""
+        if not dues:
+            return
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "DELETE FROM marathons WHERE channel_id = ? AND due_ms = ?",
+                [(channel_id, d) for d in dues],
+            )
+
+    def remember_marathon(self, channel_id: int, record: MarathonRecord) -> None:
+        """Remembers a marathon, keeping the station's latest MARATHONS_KEPT."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO marathons "
+                "(channel_id, due_ms, show_key, last_season, last_episode) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (channel_id, record.due_ms, record.show_key, record.last[0], record.last[1]),
+            )
+            self._conn.execute(
+                "DELETE FROM marathons WHERE channel_id = ? AND due_ms NOT IN "
+                "(SELECT due_ms FROM marathons WHERE channel_id = ? "
+                "ORDER BY due_ms DESC LIMIT ?)",
+                (channel_id, channel_id, MARATHONS_KEPT),
+            )
+
+    # Feature Presentations and blocks: what they were, and their programs ---
+
+    def special_runs(self, channel_id: int, kind: str) -> list[SpecialRun]:
+        """A station's specials of `kind` it has had or has coming, earliest
+        first (see specials.py)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT due_ms, key, value FROM special_runs WHERE channel_id = ? AND kind = ? "
+                "ORDER BY due_ms",
+                (channel_id, kind),
+            ).fetchall()
+        return [SpecialRun(r["due_ms"], r["key"], r["value"]) for r in rows]
+
+    def remember_special(self, channel_id: int, kind: str, run: SpecialRun) -> None:
+        """Remembers a special, keeping the station's latest MARATHONS_KEPT
+        of its kind."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO special_runs (channel_id, kind, due_ms, key, value) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (channel_id, kind, run.due_ms, run.key, run.value),
+            )
+            self._conn.execute(
+                "DELETE FROM special_runs WHERE channel_id = ? AND kind = ? AND due_ms NOT IN "
+                "(SELECT due_ms FROM special_runs WHERE channel_id = ? AND kind = ? "
+                "ORDER BY due_ms DESC LIMIT ?)",
+                (channel_id, kind, channel_id, kind, MARATHONS_KEPT),
+            )
+
+    def forget_specials(self, channel_id: int, dues: list[tuple[str, int]]) -> None:
+        """Forgets specials that won't happen after all, by (kind, when due)."""
+        if not dues:
+            return
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "DELETE FROM special_runs WHERE channel_id = ? AND kind = ? AND due_ms = ?",
+                [(channel_id, kind, due) for kind, due in dues],
+            )
+
+    def program_sets(self, channel_id: int) -> dict[str, list[Item]]:
+        """The programs a station's specials draw on, by name (see
+        save_program_sets). Don't change what's returned: it's kept."""
+        cached = self._sets_cache.get(channel_id)
+        if cached is not None:
+            return cached
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT name, items FROM program_sets WHERE channel_id = ? ORDER BY name",
+                (channel_id,),
+            ).fetchall()
+            found = {r["name"]: _items_from_json(r["items"]) for r in rows}
+            self._sets_cache[channel_id] = found
+        return found
+
+    def program_set(self, channel_id: int, name: str) -> list[Item]:
+        """The programs a station's special `name` draws on; [] if none."""
+        return self.program_sets(channel_id).get(name, [])
+
+    def program_set_names(self, channel_id: int) -> list[str]:
+        return list(self.program_sets(channel_id))
+
+    def save_program_sets(self, channel_id: int, sets: dict[str, list[Item]]) -> None:
+        """A station's program sets are `sets` (any others go)."""
+        with self._lock, self._conn:
+            self._sets_cache.pop(channel_id, None)
+            self._conn.execute("DELETE FROM program_sets WHERE channel_id = ?", (channel_id,))
+            self._conn.executemany(
+                "INSERT INTO program_sets (channel_id, name, items) VALUES (?, ?, ?)",
+                [(channel_id, name, _items_json(items)) for name, items in sets.items()],
+            )
+
+    def all_programs(self, channel_id: int) -> list[Item]:
+        """A station's programs and those its specials draw on, each once."""
+        out = {i.rating_key: i for i in self.latest_items(channel_id)}
+        for items in self.program_sets(channel_id).values():
+            for item in items:
+                out.setdefault(item.rating_key, item)
+        return list(out.values())
+
+    # Intro and credits markers, as Plex last reported them ------------------
+
+    def cached_markers(self, rating_keys: list[str]) -> dict[str, CachedMarkers]:
+        """What Plex last said about each of these programs' markers."""
+        out: dict[str, CachedMarkers] = {}
+        with self._lock:
+            for start in range(0, len(rating_keys), 500):
+                chunk = rating_keys[start : start + 500]
+                rows = self._conn.execute(
+                    f"SELECT * FROM markers WHERE rating_key IN ({', '.join('?' * len(chunk))})",
+                    chunk,
+                ).fetchall()
+                for r in rows:
+                    out[r["rating_key"]] = CachedMarkers(
+                        r["duration_ms"], r["markers"], r["checked_ms"], r["first_ms"]
+                    )
+        return out
+
+    def save_markers(self, rows: list[tuple[str, int, str, int, int]]) -> None:
+        """Saves (rating_key, duration_ms, markers JSON, checked_ms, first_ms) rows."""
+        if not rows:
+            return
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "INSERT INTO markers (rating_key, duration_ms, markers, checked_ms, first_ms) "
+                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(rating_key) DO UPDATE SET "
+                "duration_ms = excluded.duration_ms, markers = excluded.markers, "
+                "checked_ms = excluded.checked_ms, first_ms = excluded.first_ms",
+                rows,
+            )
+
+    def forget_markers_before(self, checked_ms: int) -> None:
+        """Drops markers not asked about since `checked_ms` (programs long gone)."""
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM markers WHERE checked_ms < ?", (checked_ms,))
+
+    # Logos you've uploaded --------------------------------------------------
+
+    def custom_logos(self) -> list[tuple[str, str]]:
+        """(id, name) of each uploaded logo, oldest first."""
+        with self._lock:
+            rows = self._conn.execute("SELECT id, name FROM logos ORDER BY created_ms").fetchall()
+        return [(r["id"], r["name"]) for r in rows]
+
+    def add_custom_logo(self, logo_id: str, name: str, created_ms: int) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO logos (id, name, created_ms) VALUES (?, ?, ?)",
+                (logo_id, name, created_ms),
+            )
+
+    def delete_custom_logo(self, logo_id: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM logos WHERE id = ?", (logo_id,))
+
+    # Settings kept between restarts ---------------------------------------
+
+    # What checking files found ---------------------------------------------
+
+    def scans(self) -> dict[str, ScanRecord]:
+        with self._lock:
+            rows = self._conn.execute(f"SELECT {', '.join(_SCAN_FIELDS)} FROM scans").fetchall()
+        return {row["rating_key"]: _scan_record(row) for row in rows}
+
+    def scan(self, rating_key: str) -> ScanRecord | None:
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT {', '.join(_SCAN_FIELDS)} FROM scans WHERE rating_key = ?", (rating_key,)
+            ).fetchone()
+        return _scan_record(row) if row else None
+
+    def save_quick(self, record: ScanRecord) -> None:
+        """Saves a quick check's result, leaving a deep scan's progress on
+        the same file as it is (one may have moved on meanwhile)."""
+        current = self.scan(record.rating_key)
+        if current is not None and current.file == record.file and current.size == record.size:
+            with self._lock, self._conn:
+                self._conn.execute(
+                    "UPDATE scans SET quick_ms = ?, quick = ? WHERE rating_key = ?",
+                    (record.quick_ms, record.quick, record.rating_key),
+                )
+        else:
+            self.save_scan(record)
+
+    def save_scan(self, record: ScanRecord) -> None:
+        values = [getattr(record, f) for f in _SCAN_FIELDS]
+        for name in _SCAN_JSON:
+            values[_SCAN_FIELDS.index(name)] = json.dumps(getattr(record, name))
+        with self._lock, self._conn:
+            self._conn.execute(
+                f"INSERT OR REPLACE INTO scans ({', '.join(_SCAN_FIELDS)}) "
+                f"VALUES ({', '.join('?' * len(_SCAN_FIELDS))})",
+                values,
+            )
+
+    def keep_on_air(self, rating_key: str, file: str | None = None, size: int = 0) -> None:
+        """Checks (and playing it, for what its file is) leave this program's
+        current file on the air from now on. `file`: the file, if it may not
+        have been checked yet (it was taken off the air as it played)."""
+        with self._lock, self._conn:
+            kept = self._conn.execute(
+                "UPDATE scans SET kept = 1 WHERE rating_key = ?", (rating_key,)
+            ).rowcount
+        if not kept and file:
+            self.save_scan(ScanRecord(rating_key, file, size, kept=True))
+
+    def check_all_again(self, quick_ms: int) -> None:
+        """Every program's file is checked again, from scratch (the checks
+        changed), as if last quick-checked at `quick_ms`. Files you put back
+        on the air stay there."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE scans SET quick_ms = ?, quick = '', deep_ms = 0, "
+                f"deep = '', tries = 0, note = '', {_DEEP_AFRESH}",
+                (quick_ms,),
+            )
+
+    def deep_scan_again(self, rating_keys: list[str]) -> None:
+        """These programs' files are deep-scanned again, from scratch (what
+        the deep scan judges changed); their quick checks stand, and so does
+        your putting one back on the air."""
+        with self._lock, self._conn:
+            self._conn.executemany(
+                f"UPDATE scans SET deep_ms = 0, deep = '', tries = 0, note = '', {_DEEP_AFRESH} "
+                "WHERE rating_key = ?",
+                [(k,) for k in rating_keys],
+            )
+
+    def forget_scans(self, rating_keys: list[str]) -> None:
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "DELETE FROM scans WHERE rating_key = ?", [(k,) for k in rating_keys]
+            )
+
+    def set_every_picture(self, picture: str) -> None:
+        """Every station's picture is `picture` (see playback.start)."""
+        with self._lock, self._conn:
+            self._conn.execute("UPDATE channels SET picture = ?", (picture,))
+
+    def get_meta(self, key: str, default: str = "") -> str:
+        with self._lock:
+            row = self._conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def set_meta(self, key: str, value: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
+    # Users and signing in (see access.py) ------------------------------------
+
+    def users(self) -> list[User]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM users ORDER BY name").fetchall()
+        return [_user(r) for r in rows]
+
+    def has_users(self) -> bool:
+        with self._lock:
+            return self._conn.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
+
+    def user_named(self, name: str) -> tuple[User, str] | None:
+        """A user, by name (any case), with their password's hash."""
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM users WHERE name = ?", (name,)).fetchone()
+        return (_user(row), row["password"]) if row else None
+
+    def add_user(
+        self, name: str, password_hash: str, role: str, created_ms: int, max_stations: int | None
+    ) -> User:
+        """Adds a user; sqlite3.IntegrityError if there's one by that name."""
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO users (name, password, role, created_ms, max_stations) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (name, password_hash, role, created_ms, max_stations),
+            )
+        return User(int(cur.lastrowid or 0), name, role, created_ms, 0, max_stations)
+
+    def user(self, user_id: int) -> User | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return _user(row) if row else None
+
+    def set_max_stations(self, user_id: int, max_stations: int | None) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE users SET max_stations = ? WHERE id = ?", (max_stations, user_id)
+            )
+
+    def stations_made(self) -> dict[int, int]:
+        """How many of the stations there are each user made, by their id."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT created_by, COUNT(*) AS n FROM channels "
+                "WHERE created_by IS NOT NULL GROUP BY created_by"
+            ).fetchall()
+        return {r["created_by"]: r["n"] for r in rows}
+
+    def update_user(
+        self, user_id: int, *, password_hash: str | None = None, role: str | None = None
+    ) -> None:
+        with self._lock, self._conn:
+            if password_hash is not None:
+                self._conn.execute(
+                    "UPDATE users SET password = ? WHERE id = ?", (password_hash, user_id)
+                )
+                # Signed out everywhere: whoever knew the old one is out.
+                self._conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            if role is not None:
+                self._conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+
+    def delete_user(self, user_id: int) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+    def delete_all_users(self) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM users")
+
+    def add_session(
+        self, token_hash: str, user_id: int, now: int, keep: int, app: str = ""
+    ) -> None:
+        """Signs a browser (or `app`, one of StationPlay's) in as a user,
+        keeping only their `keep` newest sign-ins (the rest are signed out)."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO sessions (token_hash, user_id, created_ms, seen_ms, app) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (token_hash, user_id, now, now, app),
+            )
+            self._conn.execute(
+                "DELETE FROM sessions WHERE user_id = ? AND token_hash NOT IN ("
+                "SELECT token_hash FROM sessions WHERE user_id = ? ORDER BY created_ms DESC, rowid DESC "
+                "LIMIT ?)",
+                (user_id, user_id, keep),
+            )
+            self._conn.execute("UPDATE users SET signed_in_ms = ? WHERE id = ?", (now, user_id))
+
+    def session_user(self, token_hash: str, since_ms: int) -> tuple[User, int] | None:
+        """Who's signed in with this token, if they were seen since `since_ms`,
+        and when they were last seen."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT users.*, sessions.seen_ms FROM sessions JOIN users "
+                "ON users.id = sessions.user_id WHERE token_hash = ? AND seen_ms >= ?",
+                (token_hash, since_ms),
+            ).fetchone()
+        return (_user(row), row["seen_ms"]) if row else None
+
+    def seen(self, token_hash: str, now: int) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE sessions SET seen_ms = ? WHERE token_hash = ?", (now, token_hash)
+            )
+
+    def add_device(self, token_hash: str, user_id: int, now: int, keep: int) -> None:
+        """Remembers a browser someone signed in on, keeping their `keep`
+        newest."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO devices (token_hash, user_id, created_ms) VALUES (?, ?, ?)",
+                (token_hash, user_id, now),
+            )
+            self._conn.execute(
+                "DELETE FROM devices WHERE user_id = ? AND token_hash NOT IN ("
+                "SELECT token_hash FROM devices WHERE user_id = ? ORDER BY created_ms DESC, rowid DESC "
+                "LIMIT ?)",
+                (user_id, user_id, keep),
+            )
+
+    def device_user(self, token_hash: str) -> int | None:
+        """Whose browser this is, if it's one they signed in on."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT user_id FROM devices WHERE token_hash = ?", (token_hash,)
+            ).fetchone()
+        return int(row["user_id"]) if row else None
+
+    def app_sessions(self, since_ms: int) -> list[dict]:
+        """The apps signed in (seen since `since_ms`), newest first: {id,
+        user, app, created_ms, seen_ms}."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT sessions.rowid AS id, users.name AS user, sessions.app, "
+                "sessions.created_ms, sessions.seen_ms FROM sessions JOIN users "
+                "ON users.id = sessions.user_id WHERE sessions.app != '' AND seen_ms >= ? "
+                "ORDER BY sessions.seen_ms DESC",
+                (since_ms,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def end_app_session(self, session_id: int) -> str | None:
+        """Signs an app out, by its sign-in's id: what it was, or None."""
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT users.name AS user, sessions.app FROM sessions JOIN users "
+                "ON users.id = sessions.user_id WHERE sessions.rowid = ? AND sessions.app != ''",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            self._conn.execute("DELETE FROM sessions WHERE rowid = ?", (session_id,))
+        return f"{row['app']} ({row['user']})"
+
+    def end_session(self, token_hash: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+
+    def forget_sessions_before(self, seen_ms: int) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM sessions WHERE seen_ms < ?", (seen_ms,))
+
+    def add_access_entry(self, time_ms: int, level: str, message: str, keep: int) -> None:
+        """Adds an entry to the access log, keeping the newest `keep`."""
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO access_log (time_ms, level, message) VALUES (?, ?, ?)",
+                (time_ms, level, message),
+            )
+            self._conn.execute(
+                "DELETE FROM access_log WHERE id <= ?", (int(cur.lastrowid or 0) - keep,)
+            )
+
+    def access_entries(self, limit: int) -> list[tuple[int, str, str]]:
+        """The newest `limit` entries in the access log, oldest first: (time
+        in ms, level, message)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT time_ms, level, message FROM access_log ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [(r["time_ms"], r["level"], r["message"]) for r in reversed(rows)]
+
+    # Viewing (see stats.py) ---------------------------------------------------
+
+    def add_view(
+        self,
+        channel_id: int,
+        start_ms: int,
+        end_ms: int,
+        watched: list[tuple[str, str, str, float]],
+    ) -> None:
+        """Records a viewing of a station, and what aired in it: (day, show
+        or movie, kind, seconds) for each."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO views (channel_id, start_ms, end_ms) VALUES (?, ?, ?)",
+                (channel_id, start_ms, end_ms),
+            )
+            self._conn.executemany(
+                "INSERT INTO watched (channel_id, day, title, kind, seconds) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(channel_id, day, title, kind) DO UPDATE SET seconds = seconds + excluded.seconds",
+                [(channel_id, *w) for w in watched],
+            )
+
+    def views_since(self, since_ms: int) -> list[tuple[int, int, int]]:
+        """(station's id, start, end) of each viewing that ended since `since_ms`."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT channel_id, start_ms, end_ms FROM views WHERE end_ms >= ?", (since_ms,)
+            ).fetchall()
+        return [(r["channel_id"], r["start_ms"], r["end_ms"]) for r in rows]
+
+    def watched_since(self, since_day: str) -> list[tuple[int, str, str, float]]:
+        """(station's id, show or movie, kind, seconds) watched on or since a day."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT channel_id, title, kind, SUM(seconds) AS seconds FROM watched "
+                "WHERE day >= ? GROUP BY channel_id, title, kind",
+                (since_day,),
+            ).fetchall()
+        return [(r["channel_id"], r["title"], r["kind"], r["seconds"]) for r in rows]
+
+    def forget_views_before(self, start_ms: int, day: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM views WHERE end_ms < ?", (start_ms,))
+            self._conn.execute("DELETE FROM watched WHERE day < ?", (day,))
+            self._conn.execute("DELETE FROM user_watched WHERE day < ?", (day,))
+
+    def add_user_watching(self, rows: list[tuple[str, str, int, str, str, str, float]]) -> None:
+        """Adds what Plex users watched: (Plex's id for them, their name,
+        station's id, day, show or movie, kind, seconds) for each."""
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "INSERT INTO user_watched (user_id, user_name, channel_id, day, title, kind, "
+                "seconds) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (user_id, channel_id, day, title, kind) DO UPDATE SET "
+                "seconds = seconds + excluded.seconds, user_name = excluded.user_name",
+                rows,
+            )
+
+    def user_watched_since(self, since_day: str) -> list[tuple[str, str, int, str, str, float]]:
+        """(Plex's id for a user, their name as of their latest viewing,
+        station's id, show or movie, kind, seconds) watched on or since a day."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT user_id, user_name, MAX(day) AS last_day, channel_id, title, kind, "
+                "SUM(seconds) AS seconds FROM user_watched WHERE day >= ? "
+                "GROUP BY user_id, user_name, channel_id, title, kind",
+                (since_day,),
+            ).fetchall()
+        latest: dict[str, tuple[str, str]] = {}
+        for r in rows:
+            if r["user_id"] not in latest or r["last_day"] > latest[r["user_id"]][0]:
+                latest[r["user_id"]] = (r["last_day"], r["user_name"])
+        summed: dict[tuple[str, int, str, str], float] = {}
+        for r in rows:
+            key = (r["user_id"], r["channel_id"], r["title"], r["kind"])
+            summed[key] = summed.get(key, 0.0) + r["seconds"]
+        return [
+            (user, latest[user][1], channel_id, title, kind, seconds)
+            for (user, channel_id, title, kind), seconds in summed.items()
+        ]
+
+    @staticmethod
+    def _era(row: sqlite3.Row, items: list[Item]) -> Era:
+        return Era(
+            id=row["id"],
+            channel_id=row["channel_id"],
+            start_ms=row["start_ms"],
+            epoch_ms=row["epoch_ms"],
+            seed=row["seed"],
+            order_mode=row["order_mode"],
+            chained=bool(row["chained"]),
+            first_pass=json.loads(row["first_pass"]) if row["first_pass"] else None,
+            tail=[tuple(t) for t in json.loads(row["tail"])] if row["tail"] else [],
+            created_ms=row["created_ms"],
+            reason=row["reason"],
+            added=row["added"],
+            removed=row["removed"],
+            items=items,
+            special=_special(row["special"]),
+        )
+
+    @staticmethod
+    def _channel(row: sqlite3.Row) -> Channel:
+        settings: dict[str, Any] = {
+            c: bool(row[c]) if c in _FLAGS else row[c] for c, _, _ in STATION_SETTINGS
+        }
+        settings["blocks"] = [b for b in _json_list(settings["blocks"]) if isinstance(b, dict)]
+        settings["feature_source"] = _json_dict(settings["feature_source"])
+        return Channel(
+            id=row["id"],
+            number=row["number"],
+            name=row["name"],
+            sources=json.loads(row["sources"] or "[]"),
+            logo=row["logo"],
+            **settings,
+            created_by=row["created_by"],
+            created_ms=row["created_ms"],
+            created_exact=bool(row["created_exact"]),
+        )
+
+
+def _json_list(text: str | None) -> list:
+    try:
+        value = json.loads(text or "[]")
+    except ValueError:
+        return []
+    return value if isinstance(value, list) else []
+
+
+def _json_dict(text: str | None) -> dict:
+    try:
+        value = json.loads(text or "{}")
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _user(row: sqlite3.Row) -> User:
+    return User(
+        row["id"], row["name"], row["role"], row["created_ms"], row["signed_in_ms"],
+        row["max_stations"],
+    )  # fmt: skip
+
+
+def _items_json(items: list[Item]) -> str:
+    return json.dumps([asdict(i) for i in items])
+
+
+def _items_from_json(text: str) -> list[Item]:
+    out = []
+    for value in _json_list(text):
+        if not isinstance(value, dict):
+            continue
+        try:
+            segments, breaks = value.pop("segments", None), value.pop("breaks", None)
+            out.append(
+                Item(
+                    **value,
+                    segments=tuple((int(a), int(b)) for a, b in segments) if segments else None,
+                    breaks=tuple((str(f), int(ms)) for f, ms in breaks) if breaks else None,
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _load_segments(text: str | None) -> Segments | None:
+    if not text:
+        return None
+    return tuple((int(a), int(b)) for a, b in json.loads(text))
+
+
+def _settings_row(settings: dict) -> dict:
+    """Station settings as stored: only those given, sources as JSON."""
+    out = {k: settings[k] for k in _CHANNEL_COLUMNS if settings.get(k) is not None}
+    for listed in ("sources", "blocks"):
+        if listed in out:
+            out[listed] = json.dumps(list(out[listed]))
+    if "feature_source" in out:
+        out["feature_source"] = json.dumps(dict(out["feature_source"]))
+    for flag in _FLAGS & out.keys():
+        out[flag] = int(out[flag])
+    return out
+
+
+def _scan_record(row: sqlite3.Row) -> ScanRecord:
+    values = dict(row)
+    for name in _SCAN_JSON:
+        values[name] = json.loads(values[name] or "[]")
+    values["kept"] = bool(values["kept"])
+    return ScanRecord(**values)
+
+
+def _special(text: str | None) -> dict | None:
+    if not text:
+        return None
+    try:
+        found = json.loads(text)
+    except ValueError:
+        return None
+    return found if isinstance(found, dict) else None
+
+
+def _load_breaks(text: str | None) -> Breaks | None:
+    if not text:
+        return None
+    return tuple((str(f), int(ms)) for f, ms in json.loads(text))

@@ -1,0 +1,29 @@
+[project]
+name = "stationplay"
+version = "1.19.0"
+description = "Custom, always-on TV stations in Plex, built from your own Plex library"
+requires-python = ">=3.11"
+license = "GPL-3.0-only"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["tools/logos/drafts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "SIM", "RUF", "ASYNC", "PIE", "RET", "PERF", "I"]
+ignore = [
+    "E501",     # long lines are left to the formatter
+    "RUF001",   # typographic apostrophes in on-screen text are intentional
+    "ASYNC109", # plain timeout arguments are clearer here than asyncio.timeout blocks
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ASYNC110"]
+# the logo drawing scripts use short geometry names (l, x0, sc) and build SVG strings in loops
+"tools/logos/*" = ["E741", "B007", "PERF401", "RUF005", "RUF059"]
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true
+check_untyped_defs = true

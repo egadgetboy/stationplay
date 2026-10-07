@@ -1,0 +1,185 @@
+"""Watching away from home in StationPlay's own apps: optional, off unless
+an Admin turns it on in the Access tab. Setups that use only Plex, Jellyfin
+or other IPTV apps never see a difference.
+
+What Plex and IPTV apps use stays on the home network (see access.py). An
+app away from home reaches StationPlay one of two ways:
+
+- Through a VPN (Tailscale, WireGuard), straight to the home port: as far as
+  StationPlay can tell, it's at home, and everything works as it does there.
+- Through the public port (PUBLIC_PORT, behind a reverse proxy), signed in.
+  A player can't sign in, so there a station's stream has an address of its
+  own for each signed-in app: /hls/k/<key>/<number>/... The key belongs to
+  that app's sign-in. It stops working when the sign-in does (signing out, a
+  new password, the user being removed), when this is turned off, and when
+  StationPlay restarts (the app then asks for the stations again and gets a
+  new one). Nothing about it is kept on disk.
+
+The address set here (what the apps reach StationPlay at from outside) is
+told to the apps (/api/v1/server), so an app set up at home remembers it and
+uses it when home doesn't answer.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import secrets
+import time
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
+
+if TYPE_CHECKING:
+    from .access import Access
+    from .db import Database, User
+
+log = logging.getLogger(__name__)
+
+META = "away"
+KEY_BYTES = 24
+# How long a key's sign-in is taken as still good, for the stream's pieces
+# (the playlist, asked for every couple of seconds, checks every time).
+RECHECK_S = 60.0
+KEYS_KEPT = 1000  # app sign-ins with a key at once, at most (the oldest go)
+SEEN_KEPT = 1000  # (who's watching what, for the access log)
+SEEN_AGAIN_S = 3600.0  # a viewing is logged again after this long
+ADDRESS_MAX = 200
+
+
+@dataclass
+class _Key:
+    session: str  # the sign-in's token hash
+    user: User
+    checked: float  # when the sign-in was last found good
+
+
+def normalize_address(text: str) -> str:
+    """The address the apps reach StationPlay at from outside, as typed:
+    "https://tv.example.com", "http://nas.tailnet.ts.net:3310". ValueError
+    if it isn't one."""
+    text = text.strip()
+    problem = (
+        "Enter the whole address, starting with https:// or http:// (such as "
+        "https://tv.example.com)"
+    )
+    if not text or len(text) > ADDRESS_MAX or any(c.isspace() for c in text):
+        raise ValueError(problem)
+    parts = urlsplit(text)
+    try:
+        port = parts.port
+    except ValueError:
+        raise ValueError(problem) from None
+    if (
+        parts.scheme not in ("http", "https")
+        or not parts.hostname
+        or parts.username is not None
+        or parts.password is not None
+        or parts.path not in ("", "/")
+        or parts.query
+        or parts.fragment
+    ):
+        raise ValueError(problem)
+    host = parts.hostname if ":" not in parts.hostname else f"[{parts.hostname}]"
+    return f"{parts.scheme}://{host}" + (f":{port}" if port else "")
+
+
+class Away:
+    """Whether apps may watch away from home, where they reach StationPlay
+    then, and the keys of the apps' streams."""
+
+    def __init__(self, db: Database, access: Access) -> None:
+        self.db = db
+        self.access = access
+        self.on = False
+        self.address = ""
+        self._keys: dict[str, _Key] = {}  # key -> whose
+        self._by_session: dict[str, str] = {}  # sign-in's token hash -> key
+        self._seen: dict[tuple[str, int], float] = {}  # (key, station) -> when logged
+        self._load()
+
+    def _load(self) -> None:
+        try:
+            got = json.loads(self.db.get_meta(META) or "{}")
+        except ValueError:
+            got = {}
+        if not isinstance(got, dict):
+            got = {}
+        self.on = got.get("on") is True
+        try:
+            self.address = normalize_address(str(got.get("address") or ""))
+        except ValueError:
+            self.address = ""
+        if not self.address:
+            self.on = False
+
+    def save(self, on: bool, address: str) -> None:
+        """Turns it on or off, with the address apps use from outside.
+        ValueError if that won't do."""
+        address = normalize_address(address) if address.strip() or on else ""
+        self.on, self.address = on, address
+        self.db.set_meta(META, json.dumps({"on": on, "address": address}))
+        if not on:
+            self._keys.clear()
+            self._by_session.clear()
+
+    @property
+    def apps(self) -> int:
+        """How many app sign-ins have a key now."""
+        return len(self._keys)
+
+    def key_for(self, session: str, user: User) -> str | None:
+        """The key of a signed-in app's streams (`session`: its sign-in's
+        token hash), made the first time it's asked for; None while this is
+        off."""
+        if not self.on:
+            return None
+        key = self._by_session.get(session)
+        if key is not None and key in self._keys:
+            return key
+        while len(self._keys) >= KEYS_KEPT:
+            oldest = next(iter(self._keys))
+            self._by_session.pop(self._keys.pop(oldest).session, None)
+        key = secrets.token_urlsafe(KEY_BYTES)
+        self._keys[key] = _Key(session, user, time.monotonic())
+        self._by_session[session] = key
+        return key
+
+    def user_of(self, key: str, *, recheck: bool) -> User | None:
+        """Whose a key is, while it's good; None if it isn't (anymore).
+        `recheck`: ask whether its sign-in is still good now, rather than
+        within RECHECK_S."""
+        if not self.on:
+            return None
+        found = self._keys.get(key)
+        if found is None:
+            return None
+        now = time.monotonic()
+        if recheck or now - found.checked > RECHECK_S:
+            user = self.access.session_user_hashed(found.session)
+            if user is None:
+                self.forget(key)
+                return None
+            found.user, found.checked = user, now
+        return found.user
+
+    def forget(self, key: str) -> None:
+        found = self._keys.pop(key, None)
+        if found is not None:
+            self._by_session.pop(found.session, None)
+
+    def watching(self, key: str, user: User, number: int, where: str) -> None:
+        """Logs (once an hour) that someone's watching a station away from
+        home, in the access log."""
+        now = time.monotonic()
+        last = self._seen.get((key, number))
+        if last is not None and now - last < SEEN_AGAIN_S:
+            return
+        if len(self._seen) >= SEEN_KEPT:
+            self._seen = {k: t for k, t in self._seen.items() if now - t < SEEN_AGAIN_S}
+            while len(self._seen) >= SEEN_KEPT:
+                del self._seen[next(iter(self._seen))]
+        self._seen[(key, number)] = now
+        self.access.record(
+            logging.INFO, f"{user.name} is watching station {number} away from home, from {where}"
+        )

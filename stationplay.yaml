@@ -1,0 +1,97 @@
+# StationPlay — TrueNAS SCALE custom app (TrueNAS SCALE 24.10 or later)
+#
+# Install: Apps > Discover Apps > ⋮ (top right) > Install via YAML.
+# Name the app "stationplay" and paste this whole file.
+#
+# Before installing (README: Install > TrueNAS SCALE):
+#   1. In System > Shell, make a folder on a pool with a data folder in it,
+#      unzip StationPlay there (it creates src/), and give data to the user
+#      below:
+#        sudo mkdir -p /mnt/tank/apps/stationplay/data
+#        cd /mnt/tank/apps/stationplay
+#        sudo unzip -o /path/to/stationplay-<version>.zip
+#        sudo chown -R 1000:1000 data
+#   2. Change every line marked  <- CHANGE
+#
+# Paths are case-sensitive: StationPlay and stationplay are different folders.
+#
+# To update later, in this order:
+#   1. Unzip the new version over the src folder:
+#        cd /mnt/tank/apps/stationplay
+#        sudo unzip -o /path/to/stationplay-<version>.zip
+#   2. Edit the app, raise the version in "image:" (e.g. 1.19.0 -> 1.19.1),
+#      change nothing else, and save.
+# A new version number is what tells TrueNAS to rebuild, and it builds from
+# whatever is in src when you save: save first and it builds the old code
+# under the new number (raise the number again to fix that).
+
+services:
+  stationplay:
+    build:
+      context: /mnt/tank/apps/stationplay/src       # <- CHANGE to your src folder
+      dockerfile: Dockerfile
+    image: stationplay:1.19.0
+    container_name: stationplay
+    restart: unless-stopped
+    init: true
+    # The user StationPlay runs as. It needs write access to the data folder
+    # and read access to your media. (TrueNAS's built-in apps user is 568:568.)
+    user: "1000:1000"                                # <- CHANGE if your media belongs to another user
+    ports:
+      - "3310:3310"     # Plex and your home network. Never forward it or tunnel to it.
+      # The page for the internet: point your Cloudflare Tunnel at this one
+      # (README: "Security and remote access"). Plex's addresses aren't on
+      # it, and signing in is always required. Remove this line and
+      # PUBLIC_PORT below if you don't need it.
+      - "3311:3311"
+    environment:
+      PLEX_URL: "http://192.168.1.10:32400"          # <- CHANGE to your Plex server's address
+      PLEX_TOKEN: "paste-your-plex-token-here"       # <- CHANGE (README: "Finding your Plex token")
+      TZ: "America/Chicago"                          # <- CHANGE to your time zone
+      PORT: "3310"
+      PUBLIC_PORT: "3311"
+      MEDIA_DIR: "/media"
+      # auto = use a GPU if one passes a test encode, otherwise the CPU.
+      # Other values: intel, amd, nvidia, cpu
+      HW_ACCEL: "auto"
+    volumes:
+      # Stations, settings, logos, the Broken files list and backups
+      - /mnt/tank/apps/stationplay/data:/data        # <- CHANGE to your data folder
+      # Your media library, read-only. StationPlay matches the paths Plex
+      # reports to this folder automatically.
+      - /mnt/tank/media:/media:ro                    # <- CHANGE to your media folder
+
+    # --- GPU: Intel or AMD (such as Quick Sync) --------------------------
+    # If the server has no Intel or AMD graphics, delete everything from
+    # "devices:" down to the "107" line: the app won't start without /dev/dri.
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      # The group that owns /dev/dri/renderD128, so StationPlay may use the
+      # GPU. 107 is the usual TrueNAS value; check with:  ls -ln /dev/dri
+      - "107"
+
+    # --- GPU: NVIDIA ----------------------------------------------------
+    # First turn on Apps > Configure > Settings > Install NVIDIA Drivers.
+    # Then uncomment these lines (and remove the Intel/AMD lines above if
+    # there's no /dev/dri):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+    # It runs as an ordinary user, and may never gain privileges or keep any
+    # it doesn't need.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
