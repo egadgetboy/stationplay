@@ -102,12 +102,32 @@ def test_why_a_device_cant_play_a_file_as_it_is():
     )
 
 
-def test_the_first_version_the_device_can_play_is_chosen():
+def test_the_best_version_the_device_can_play_is_chosen():
     entry = Entry("1", catalog.MOVIE, "Two Versions", media=(media(container="avi"), media()))
     chosen, why = ondemand.choose(entry, TV_BOX)
     assert chosen is entry.media[1] and why == []
     only = Entry("1", catalog.MOVIE, "One", media=(media(container="avi"),))
     assert ondemand.choose(only, TV_BOX) == (None, ["its file type (AVI)"])
+    # The best first: the biggest picture, HDR before not, then the most detail.
+    sd = media(id="sd", width=720, height=480, bitrate_kbps=2_000)
+    hd = media(id="hd", bitrate_kbps=8_000)
+    hd_more = media(id="hd2", bitrate_kbps=12_000)
+    uhd = media(id="uhd", video="hevc", width=3840, height=2160, bit_depth=10, bitrate_kbps=40_000)
+    hdr = media(id="hdr", video="hevc", width=3840, height=2160, bit_depth=10, hdr=catalog.HDR10)
+    many = Entry("2", catalog.MOVIE, "Many", media=(sd, hd, uhd, hd_more, hdr))
+    assert [m.id for m in ondemand.best_first(many.media)] == ["hdr", "uhd", "hd2", "hd", "sd"]
+    names = ondemand.version_labels(ondemand.best_first(many.media))
+    assert list(names.values()) == ["4K · HDR10", "4K", "1080p · 12 Mbps", "1080p · 8 Mbps", "480p"]
+    assert ondemand.choose(many, TV_BOX)[0] is hdr
+    # A 1080p screen without HDR gets the best it can play; one asked for plays if it can.
+    hd_box = ondemand.device(["mkv"], [("h264", 1920, 1080, 8)], [], ["aac"])
+    assert ondemand.choose(many, hd_box)[0] is hd_more
+    assert ondemand.choose(many, hd_box, "sd")[0] is sd
+    assert ondemand.choose(many, hd_box, "uhd") == (None, ["its picture's format (HEVC)"])
+    assert ondemand.choose(many, hd_box, "gone")[0] is hd_more  # (a version since removed)
+    codecs = [media(id="a"), media(id="b", video="hevc")]
+    assert list(ondemand.version_labels(codecs).values()) == ["1080p · H.264", "1080p · HEVC"]
+    assert catalog.size_label(720, 576) == "576p" and catalog.size_label(320, 240) == "SD"
 
 
 def test_tracks_are_named_plainly():
@@ -241,6 +261,14 @@ def test_shared_libraries_are_kept(tmp_path):
             shared.save(bad)
     db.set_meta(ondemand.META, "not json")
     assert ondemand.Shared(db).keys == ()
+    # When playing can't keep up: offer a smaller version at home, switch away from home.
+    assert shared.when_slow == {"home": "offer", "away": "switch"}
+    assert shared.save_when_slow("switch", None) == {"home": "switch", "away": "switch"}
+    assert ondemand.Shared(db).when_slow["home"] == "switch"
+    with pytest.raises(ValueError):
+        shared.save_when_slow("sometimes", None)
+    db.set_meta(ondemand.SLOW_META, '{"home": "never"}')
+    assert ondemand.Shared(db).when_slow == {"home": "offer", "away": "switch"}
 
 
 # Through the apps ------------------------------------------------------------------------------
@@ -262,6 +290,7 @@ def plex(tmp_path):
     movie.write_bytes(bytes(range(256)) * 40)
     fp.add_movie("300", "The Movie", str(movie), 100 * 60_000, year=1999, section="2")
     fp.describe("300", audio="ac3")
+    fp.add_version("300", 1280, 720)
     fp.add_subtitles("300", "srt", "English", external=b"1\n00:00:01,000 --> 00:00:02,000\nHi\n")
     fp.add_movie("301", "Another Movie", "/films/other.avi", 90 * 60_000, section="2")
     fp.describe("301", container="avi", video="mpeg4", audio="mp3")
@@ -395,6 +424,26 @@ def test_playing_a_file_as_it_is(app, plex, tmp_path, caplog):
         assert home.get(episode["url"]).content == data
         assert episode["markers"]["credits"] == [48 * 60_000, 50 * 60_000]
         assert episode["markers"]["creditsToEnd"] is True
+        # A version chosen; and what the apps do when playing can't keep up.
+        assert [(v["id"], v["name"]) for v in played["versions"]] == [
+            ("30000", "1080p"),
+            ("30001", "720p"),
+        ]
+        assert played["version"] == "30000" and played["whenSlow"] == "offer"
+        home.put(
+            "/api/app-libraries", json={"libraries": ["1", "2"], "whenSlow": {"home": "switch"}}
+        )
+        assert "at home, switch to a smaller version" in caplog.text
+        smaller = home.post(
+            "/api/v1/play", json={"key": "300", "device": TV, "version": "30001"}
+        ).json()
+        assert smaller["version"] == "30001" and smaller["whenSlow"] == "switch"
+        assert home.get("/api/app-libraries").json()["whenSlow"] == {
+            "home": "switch",
+            "away": "switch",
+        }
+        bad = {"libraries": ["1", "2"], "whenSlow": {"home": "maybe"}}
+        assert home.put("/api/app-libraries", json=bad).status_code == 400
         # A device that can't play a file as it is is told why.
         refused = play(home, "301")
         assert refused.status_code == 422

@@ -31,6 +31,12 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 META = "app_libraries"
+# When playing can't keep up (see docs/on-demand.md, "Keeping up"): offer a
+# smaller version of the title, or switch to it on its own; at home, and
+# away from home.
+SLOW_META = "app_when_slow"
+WHEN_SLOW = ("offer", "switch")
+SLOW_DEFAULTS = {"home": "offer", "away": "switch"}
 LIBRARIES_MOST = 100
 NOT_SHARED = "That isn't in a library shared with StationPlay's apps"
 UNREACHABLE = "Your library can't be reached right now. Try again in a moment."
@@ -81,6 +87,33 @@ class Shared:
     def __init__(self, db: Database) -> None:
         self.db = db
         self.keys: tuple[str, ...] = self._load()
+        self.when_slow: dict[str, str] = self._load_slow()
+
+    def _load_slow(self) -> dict[str, str]:
+        try:
+            got = json.loads(self.db.get_meta(SLOW_META) or "{}")
+        except ValueError:
+            got = {}
+        if not isinstance(got, dict):
+            got = {}
+        return {
+            where: got[where] if got.get(where) in WHEN_SLOW else default
+            for where, default in SLOW_DEFAULTS.items()
+        }
+
+    def save_when_slow(self, home: str | None, away: str | None) -> dict[str, str]:
+        """What the apps do when playing can't keep up, at home and away
+        (None leaves one as it is). ValueError for anything else."""
+        chosen = dict(self.when_slow)
+        for where, value in (("home", home), ("away", away)):
+            if value is None:
+                continue
+            if value not in WHEN_SLOW:
+                raise ValueError("Choose Offer or Switch")
+            chosen[where] = value
+        self.when_slow = chosen
+        self.db.set_meta(SLOW_META, json.dumps(chosen))
+        return chosen
 
     def _load(self) -> tuple[str, ...]:
         try:
@@ -371,16 +404,57 @@ def unplayable(media: Media, dev: Device) -> list[str]:
     return why
 
 
-def choose(entry: Entry, dev: Device) -> tuple[Media | None, list[str]]:
-    """The version of a program's file to play as it is on a device: the
-    first the device can play (None, and why not, if there's none)."""
+def best_first(media: Iterable[Media]) -> list[Media]:
+    """A program's versions, the best first: the biggest picture, HDR before
+    not, then the most detail (bitrate)."""
+    return sorted(
+        media,
+        key=lambda m: (
+            -(m.width * m.height),
+            0 if (m.hdr or m.dv_profile is not None) else 1,
+            -(m.bitrate_kbps or 0),
+        ),
+    )
+
+
+def choose(entry: Entry, dev: Device, version: str | None = None) -> tuple[Media | None, list[str]]:
+    """The version of a program's file to play as it is on a device: the one
+    asked for, or else the best the device can play (None, and why not, if
+    it can't). A version that's gone counts as not asked for."""
+    asked = next((m for m in entry.media if version and m.id == version), None)
+    if asked is not None:
+        why = unplayable(asked, dev)
+        return (asked, []) if not why else (None, why)
     first_why: list[str] = []
-    for media in entry.media:
+    for media in best_first(entry.media):
         why = unplayable(media, dev)
         if not why:
             return media, []
         first_why = first_why or why
     return None, first_why
+
+
+def version_labels(media: Iterable[Media]) -> dict[int, str]:
+    """How each version is named, by its place: "4K · HDR10", "1080p"; where
+    two would be named the same, their formats ("1080p · HEVC") or how much
+    detail they carry ("1080p · 12 Mbps") tell them apart."""
+    found = list(media)
+
+    def base(m: Media) -> str:
+        return " · ".join(x for x in (m.size_label, hdr_label(m)) if x) or label(m.container)
+
+    names = [base(m) for m in found]
+    out = {}
+    for i, m in enumerate(found):
+        same = [x for j, x in enumerate(found) if names[j] == names[i]]
+        name = names[i]
+        if len(same) > 1:
+            if len({x.video for x in same}) == len(same):
+                name += f" · {label(m.video)}"
+            elif m.bitrate_kbps:
+                name += f" · {round(m.bitrate_kbps / 1000)} Mbps"
+        out[i] = name
+    return out
 
 
 def cant_play(why: list[str]) -> str:

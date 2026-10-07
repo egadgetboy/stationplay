@@ -112,6 +112,7 @@ def app(tmp_path):
     fp.add_subtitles("300", "pgs", "English")
     fp.add_subtitles("300", "srt", "Spanish", external=b"1\n00:00:01,000 --> 00:00:02,000\nHola\n")
     fp.set_markers("300", ("intro", 60_000, 120_000), ("credits", 5_000_000, 5_300_000, True))
+    fp.add_version("300", 1920, 1080)  # (and in 1080p, as H.264)
     # (An episode's markers are the apps'; a movie's aren't.)
     fp.set_markers("202", ("intro", 60_000, 120_000), ("credits", 1_200_000, 1_319_000, True))
     fp.describe("202", colorTrc="smpte2084", bitDepth=10, video="hevc", width=3840, height=2160)
@@ -252,6 +253,7 @@ def test_the_app_connection_matches_its_document(app):
             "intro": [60_000, 120_000], "credits": [1_200_000, 1_320_000], "creditsToEnd": True
         }  # fmt: skip
         assert movie["picture"] == {"size": "4K", "hdr": "HDR10"}
+        assert [v["name"] for v in movie["versions"]] == ["4K · HDR10", "1080p"]
         listed = check.answer(
             phone.get("/api/v1/items/100/episodes?season=1", headers=sam),
             "GET /api/v1/items/{key}/episodes",
@@ -272,6 +274,10 @@ def test_the_app_connection_matches_its_document(app):
             "POST /api/v1/play",
         )
         assert played["method"] == "direct" and played["resumeMs"] == 0
+        assert played["version"] == movie["versions"][0]["id"] and played["whenSlow"] == "offer"
+        assert [(v["playable"], v["why"]) for v in played["versions"]] == [
+            (True, None), (False, ["its picture's format (H.264)"])
+        ]  # fmt: skip
         assert phone.get(played["url"]).content == b"a movie, as it is" * 100
         [external] = [t for t in played["subtitles"] if t["external"]]
         assert phone.get(external["url"]).text.endswith("Hola\n")

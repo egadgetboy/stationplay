@@ -22,6 +22,7 @@ class LibraryPlex(FakePlex):
         self.files: dict[str, bytes] = {}  # file contents served from Plex, by rating key
         self.subtitle_files: dict[str, bytes] = {}  # external subtitles, by stream id
         self.released: dict[str, str] = {}  # originallyAvailableAt, by rating key
+        self.versions: dict[str, list[tuple[dict, list[dict]]]] = {}  # more versions, by rating key
 
     def describe(
         self,
@@ -35,13 +36,29 @@ class LibraryPlex(FakePlex):
     ) -> None:
         """What a program's file holds: its container, picture and sound
         (extra: more of the video stream's fields, such as colorTrc)."""
-        self.media[key] = {"container": container, "videoCodec": video, "bitrate": 8000}
+        self.media[key] = {"id": int(key) * 100, "container": container, "videoCodec": video,
+                           "bitrate": 8000}  # fmt: skip
         self.streams[key] = [
             {"id": int(key) * 10 + 1, "streamType": 1, "codec": video, "width": width,
              "height": height, "bitDepth": extra.pop("bitDepth", 8), "index": 0, **extra},
             {"id": int(key) * 10 + 2, "streamType": 2, "codec": audio, "channels": 6,
              "language": "English", "default": True, "index": 1},
         ]  # fmt: skip
+
+    def add_version(
+        self, key: str, width: int, height: int, video: str = "h264", bitrate: int = 4000, **extra
+    ) -> None:
+        """Another version of a described program's file (Plex lists each in
+        its Media), its sound as the first's."""
+        n = len(self.versions.setdefault(key, [])) + 1
+        media = {"id": int(key) * 100 + n, "container": "mkv", "videoCodec": video,
+                 "bitrate": bitrate, "duration": extra.pop("duration", None)}  # fmt: skip
+        streams = [
+            {"id": int(key) * 1000 + n * 10 + 1, "streamType": 1, "codec": video, "width": width,
+             "height": height, "bitDepth": extra.pop("bitDepth", 8), "index": 0, **extra},
+            *[t for t in self.streams[key] if t["streamType"] == 2],
+        ]  # fmt: skip
+        self.versions[key].append((media, streams))
 
     def add_subtitles(self, key: str, codec: str, language: str, external: bytes | None = None):
         stream = {
@@ -84,6 +101,14 @@ class LibraryPlex(FakePlex):
             entry["Media"] = [{**media, **self.media[key],
                                "Part": [{**media["Part"][0], "container": self.media[key]["container"],
                                          "Stream": self.streams[key]}]}]  # fmt: skip
+            for n, (more, streams) in enumerate(self.versions.get(key, []), 1):
+                part = {**media["Part"][0], "key": f"/library/parts/{key}/{n + 1}/file.mkv",
+                        "file": f"{media['Part'][0]['file']}.v{n + 1}", "container": "mkv",
+                        "Stream": streams}  # fmt: skip
+                if more["duration"]:
+                    part["duration"] = more["duration"]
+                entry["Media"].append({**media, **{k: v for k, v in more.items() if v is not None},
+                                       "Part": [part]})  # fmt: skip
         return entry
 
     def handler(self, request: httpx.Request) -> httpx.Response:

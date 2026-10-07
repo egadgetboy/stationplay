@@ -377,7 +377,7 @@ A show's, movie's or episode's details: its card's fields, and more.
 | `markers.credits[]` | number | A time in it |
 | `markers.creditsToEnd` | boolean | Whether the credits run to its end: Skip credits then goes on to the next episode (or finishes), rather than to a scene after them |
 | `picture` | object or null | (An episode or movie) its picture |
-| `picture.size` | string or null | `4K`, `1080p`, `720p` or `SD` |
+| `picture.size` | string or null | `4K`, `1080p`, `720p`, `576p`, `480p` or `SD` (of its best version) |
 | `picture.hdr` | string or null | `Dolby Vision`, `HDR10` or `HLG`; null if it isn't HDR |
 | `audio` | list | (An episode or movie) its sound tracks |
 | `audio[].id` | string | The track's ID |
@@ -395,6 +395,14 @@ A show's, movie's or episode's details: its card's fields, and more.
 | `subtitles[].forced` | boolean | Whether it's only the parts in another language |
 | `subtitles[].external` | boolean | Whether it's a file of its own beside the video, rather than inside it |
 | `subtitles[].index` | number or null | Its place among all the file's tracks (null for a file of its own) |
+| `versions` | list | (An episode or movie) its versions, the best first: the biggest picture, HDR before not, then the most detail. One for most; more where the library has the same title as 4K and 1080p files, say |
+| `versions[].id` | string | The version's ID, to play it (`version` in `POST /api/v1/play`) |
+| `versions[].name` | string | How to list it, such as "4K · HDR10" or "1080p" (with its format, or its Mbps, where two would read the same) |
+| `versions[].size` | string or null | As `picture.size` |
+| `versions[].hdr` | string or null | As `picture.hdr` |
+| `versions[].bitrateKbps` | number or null | What it needs, in kilobits a second |
+
+Its `picture`, `audio` and `subtitles` are its best version's.
 
 ## GET /api/v1/items/{key}/episodes
 
@@ -432,7 +440,9 @@ and `deviceName` (as for signing in, for the log):
 ```
 
 `hdr` lists only what the screen shows (`hdr10`, `hlg`, `dv` for Dolby
-Vision); `[]` for a screen without HDR. A file plays as it is when the
+Vision); `[]` for a screen without HDR. Add `"version"` (a version's `id`
+from its details) to play that version; without it, the best version the
+device can play as it is plays. A file plays as it is when the
 device can play its file type, its picture's format at its size and bit
 depth, its HDR (Dolby Vision profile 5 needs `dv`; other profiles also play
 as the HDR10, HLG or ordinary picture beneath), and the sound of its default
@@ -452,6 +462,14 @@ episode. Offer them; skip without asking only where the viewer has turned
 that on. Movies have no markers, since where a movie's credits start is too
 often uncertain.
 
+When playing keeps stopping to load, let the player's buffer deal with it
+first. Only trouble that lasts counts (the Android app: 4 stalls within 3
+minutes, 20 seconds of them, one of 15 seconds, or frames not drawn in time
+through most of a minute). Then a short connection test (`/api/v1/speed-test`)
+against `bitrateKbps` says whether it's the connection, StationPlay reading
+the file, or the device. If a smaller version is `playable`, do as
+`whenSlow` says, from where the viewer is; otherwise, say so plainly.
+
 | Field | Type | What it is |
 |---|---|---|
 | `session` | string | This playing's ID (for progress reports) |
@@ -461,6 +479,17 @@ often uncertain.
 | `resumeMs` | number | Where this person stopped last time (0: the start). Offer to resume there, or start over |
 | `durationMs` | number or null | How long it is |
 | `bitrateKbps` | number or null | What the file needs, in kilobits a second: to tell, when playing keeps stopping to load, whether the connection is too slow for it (see `/api/v1/speed-test`) |
+| `version` | string or null | The version playing |
+| `versions` | list | Its versions, the best first, as in its details |
+| `versions[].id` | string | As in its details |
+| `versions[].name` | string | As in its details |
+| `versions[].size` | string or null | As in its details |
+| `versions[].hdr` | string or null | As in its details |
+| `versions[].bitrateKbps` | number or null | As in its details |
+| `versions[].playable` | boolean | Whether this device can play it as it is |
+| `versions[].why` | list or null | Why not, as in a 422's `why` (null when it can) |
+| `versions[].why[]` | string | One reason |
+| `whenSlow` | string | What the Admin chose for when playing can't keep up here: `offer` (stop, and offer a smaller playable version from where the viewer is) or `switch` (switch to it on its own, and say so) |
 | `markers` | object | As in its details |
 | `markers.intro` | list or null | As in its details |
 | `markers.intro[]` | number | As in its details |

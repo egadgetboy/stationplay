@@ -178,24 +178,28 @@ not arriving in time, a 3-second connection test (`/api/v1/speed-test`)
 against what the file needs (`bitrateKbps` in the play answer) says whether
 it's the connection, or StationPlay reading the file (its disk, or Plex).
 
-Until a title has smaller versions to offer, the app pauses, says which it
-is in a sentence, and offers Keep watching or Stop. Next (planned, with
-versions below): a smaller version of the same title, from where the viewer
-is. At home, the main button offers it ("Keep watching in 1080p from
-42:10"); away from home, the app switches to it on its own and says so. An
-Admin can turn either way round for each. With no smaller version, it stops
-and says so (later, a converted copy).
+Then a smaller version of the same title that the device can play, from
+where the viewer is, as the Admin chose (`whenSlow`, kept in `meta` as
+`app_when_slow`): at home, the app stops and its main button offers it
+("Keep watching in 1080p from 42:10"); away from home, it switches on its
+own and says so. Each can be turned the other way on the Access tab. With
+no smaller version, the app pauses, says which it is in a sentence, and
+offers Keep watching or Stop (later, a converted copy).
 
-## Versions (planned)
+## Versions
 
-A title Plex has in several versions (4K, 1080p, 480p) is listed once; its
-page has a version chip beside Play, set to the best version this device
-plays as it is, with the others to choose from. Some Admins keep a separate
-4K library: an Admin setting, **Combine the same title across libraries**
-(off at first), lists each title once with its versions from every shared
-library, matched by Plex's own IDs; off, each library stands apart, as in
-Plex. Either way, a smaller version for keeping up can be found in another
-shared library.
+A title Plex has in several versions (4K, 1080p, 480p) is listed once. Its
+details list them the best first (the biggest picture, HDR before not, then
+the most detail), named plainly ("4K · HDR10", "1080p"; their format or
+Mbps where two would read the same). Playing takes the version asked for,
+or else the best the device can play as it is; the play answer lists them
+all with whether this device can play each.
+
+Planned: some Admins keep a separate 4K library. An Admin setting, **Combine
+the same title across libraries** (off at first), will list each title once
+with its versions from every shared library, matched by Plex's own IDs;
+off, each library stands apart, as in Plex. Either way, a smaller version
+for keeping up can come from another shared library.
 
 ## Progress, resume and watched
 

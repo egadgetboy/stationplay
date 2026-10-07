@@ -99,6 +99,7 @@ class Media:
     part_key: str | None = None  # the source's address for it
     size: int | None = None
     duration_ms: int | None = None
+    id: str = ""  # the source's own id for this version
     audio: tuple[Track, ...] = ()
     subtitles: tuple[Track, ...] = ()
 
@@ -121,6 +122,10 @@ def size_label(width: int, height: int) -> str:
         return "1080p"
     if width >= 1100 or height >= 650:
         return "720p"
+    if height >= 540:
+        return "576p"
+    if height >= 360:
+        return "480p"
     return "SD" if width or height else ""
 
 

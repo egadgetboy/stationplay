@@ -1262,6 +1262,7 @@ def to_media(m: dict[str, Any]) -> list[Media]:
                 part_key=part.get("key") if isinstance(part.get("key"), str) else None,
                 size=_int(part.get("size")),
                 duration_ms=_int(part.get("duration")) or _int(media.get("duration")),
+                id=str(media.get("id") or ""),
                 audio=tuple(
                     _track(s, catalog.audio_codec) for s in streams if s.get("streamType") == 2
                 ),

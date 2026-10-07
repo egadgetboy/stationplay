@@ -74,6 +74,7 @@ class Abilities(BaseModel):
 class PlayAsk(BaseModel):
     key: str = Field(max_length=20)
     device: Abilities
+    version: str | None = Field(default=None, max_length=40)
     app: str = Field(default="", max_length=APP_MAX)
     deviceName: str = Field(default="", max_length=APP_MAX)
 
@@ -85,8 +86,14 @@ class ProgressReport(BaseModel):
     session: str | None = Field(default=None, max_length=64)
 
 
+class WhenSlow(BaseModel):
+    home: str | None = Field(default=None, max_length=10)
+    away: str | None = Field(default=None, max_length=10)
+
+
 class SharedLibraries(BaseModel):
     libraries: list[str] = Field(max_length=ondemand.LIBRARIES_MOST)
+    whenSlow: WhenSlow | None = None
 
 
 # What the apps are told ----------------------------------------------------------------
@@ -138,6 +145,34 @@ def details(e: Entry) -> dict:
         "released": e.released or None,
         "backdrop": art(e.key, "backdrop") if e.has_art else None,
     }
+
+
+def versions(e: Entry) -> list[dict]:
+    """An episode's or movie's versions, the best first (see "Versions" in
+    docs/app-api.md)."""
+    best = ondemand.best_first(e.media)
+    names = ondemand.version_labels(best)
+    return [
+        {
+            "id": m.id,
+            "name": names[i],
+            "size": m.size_label or None,
+            "hdr": ondemand.hdr_label(m),
+            "bitrateKbps": m.bitrate_kbps,
+        }
+        for i, m in enumerate(best)
+        if m.id
+    ]
+
+
+def playable_versions(e: Entry, dev: ondemand.Device) -> list[dict]:
+    """Its versions, each saying whether this device can play it as it is."""
+    out = []
+    best = [m for m in ondemand.best_first(e.media) if m.id]
+    for v, m in zip(versions(e), best, strict=True):
+        why = ondemand.unplayable(m, dev)
+        out.append({**v, "playable": not why, "why": why or None})
+    return out
 
 
 def tracks(found: tuple[Track, ...], audio: bool) -> list[dict]:
@@ -334,7 +369,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 "next": nxt,
             }
         progress = ctx.db.progress_of(user_id, [key])
-        media = e.media[0] if e.media else None
+        media = next(iter(ondemand.best_first(e.media)), None)
         out = {**card(e, progress), **details(e)}
         if e.kind == catalog.EPISODE and e.show_key and not e.has_art:
             out["backdrop"] = art(e.show_key, "backdrop")
@@ -345,6 +380,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             else None,
             audio=tracks(media.audio, True) if media else [],
             subtitles=tracks(media.subtitles, False) if media else [],
+            versions=versions(e),
         )
         return out
 
@@ -408,7 +444,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             body.device.hdr,
             body.device.audio,
         )
-        media, why = ondemand.choose(e, dev)
+        media, why = ondemand.choose(e, dev, body.version)
         if media is None:
             log.info(
                 "A StationPlay app can't play %s as it is (%s)", describe(e), ondemand.and_list(why)
@@ -479,6 +515,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "resumeMs": ondemand.resume_at(ctx.db.progress_of(user_id, [e.key]).get(e.key)),
             "durationMs": media.duration_ms or e.duration_ms,
             "bitrateKbps": media.bitrate_kbps,
+            "version": media.id or None,
+            "versions": playable_versions(e, dev),
+            "whenSlow": ctx.shared.when_slow["home"],
             "markers": _markers(e),
             "audio": tracks(media.audio, True),
             "subtitles": [
@@ -610,6 +649,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 for s in found
             ],
             "shared": list(ctx.shared.keys),
+            "whenSlow": ctx.shared.when_slow,
             "problem": problem,
             "playing": len(ctx.plays.watching()),
         }
@@ -618,6 +658,16 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     async def share_libraries(body: SharedLibraries, request: Request):
         try:
             keys = ctx.shared.save(body.libraries)
+            if body.whenSlow is not None:
+                before = dict(ctx.shared.when_slow)
+                after = ctx.shared.save_when_slow(body.whenSlow.home, body.whenSlow.away)
+                if after != before:
+                    log.info(
+                        "When playing in StationPlay's apps can't keep up: at home, %s; away "
+                        "from home, %s",
+                        _slow_words(after["home"]),
+                        _slow_words(after["away"]),
+                    )
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
         ctx.app_pictures.clear()  # (programs playing from one unshared stop at their next ask)
@@ -643,6 +693,10 @@ def _whole(text: str | None, otherwise: int, name: str, low: int, high: int) -> 
     if not low <= value <= high:
         raise HTTPException(400, f"{name} must be from {low} to {high}")
     return value
+
+
+def _slow_words(choice: str) -> str:
+    return "switch to a smaller version" if choice == "switch" else "offer a smaller version"
 
 
 def _markers(e: Entry) -> dict[str, Any]:
