@@ -336,18 +336,18 @@ Channels DVR, TiviMate, VLC and most IPTV apps accept the playlist address, `htt
 
 ### Coming soon: StationPlay's own apps
 
-StationPlay's own apps are in development. They connect directly to your StationPlay server, so you can watch your stations without Plex Pass or another app in between.
+StationPlay's own apps are in development. They connect directly to your StationPlay server, so you can watch your stations without Plex Pass or any other app.
 
 - **Platforms.** iPhone, iPad and Apple TV; Android phones and tablets, Google TV, Android TV and Fire TV; and Roku.
 - **A guide made for every screen.** On a TV, you browse it with your remote. On a phone, you see every station at a glance and swipe through the hours. On a tablet, the selected program and a live picture sit above the guide.
-- **Changing stations.** While a station tunes in, its own card appears in its Intro Bumper colors. Flip up and down through your stations, enter a station number on your remote, or jump back to the last station you watched. If every tuner is in use, the app tells you and offers the stations that are already on.
-- **Favorites.** Mark the stations you watch most, and show only those in the guide if you like.
+- **Changing stations.** While a station tunes in, you see its card in the same colors as its Intro Bumper. Flip up and down through your stations, enter a station number on your remote, or jump back to the last station you watched. If every tuner is in use, the app says so and lets you join a station that's already playing.
+- **Favorites.** Mark the stations you watch most, and choose to show only those in the guide.
 - **Night mode.** It softens loud scenes and makes quiet dialogue easier to hear, so you can watch late without disturbing anyone.
-- **Phone and tablet extras.** Picture-in-picture, a choice between fitting the picture to the screen and filling it, and AirPlay (Apple) or Cast (Android) to your TV.
-- **Secure sign-in.** On a TV, you sign in by entering a short code on StationPlay's page, so you never type a password with a remote. On a phone or tablet, you can use your name and password instead. Every signed-in app appears under **Signed-in apps** on the **Access** tab, where an Admin can sign it out.
-- **Watching away from home.** When an Admin turns it on, the apps work away from home over HTTPS, through the same reverse proxy that serves StationPlay's page (see [Reaching StationPlay from outside your home](#reaching-stationplay-from-outside-your-home)).
+- **Phone and tablet extras.** Keep watching in picture-in-picture, choose whether the picture fits or fills the screen, and send it to your TV with AirPlay (Apple) or Cast (Android).
+- **Secure sign-in.** On a TV, the app shows a short code that you enter on StationPlay's page from your phone or computer, so you never type a password with a remote. On a phone or tablet, you can use your name and password instead. Every signed-in app appears under **Signed-in apps** on the **Access** tab, where an Admin can sign it out.
+- **Watching away from home.** When an Admin turns this on, the apps also work away from home, over HTTPS through the same reverse proxy that serves StationPlay's page (see [Reaching StationPlay from outside your home](#reaching-stationplay-from-outside-your-home)).
 - **Built for stability.** An Admin sets how many devices can watch at once, including how many away from home. StationPlay tests what your server and internet connection can handle and recommends limits. When a limit is reached, the app explains why and asks the viewer to try again later.
-- **Later: your library on demand.** Browse your shows and movies, pick up where you left off with Continue Watching, skip intros and credits with a button, and choose subtitles and audio tracks. Each device gets the best picture and sound it supports, including Dolby Vision and Dolby Atmos, and a file is converted only when a device can't play it as it is.
+- **Later: your library on demand.** Browse your shows and movies, pick up where you left off with Continue Watching, skip intros and credits at the press of a button, and choose subtitles and audio tracks. Each device gets the best picture and sound it supports, including Dolby Vision and Dolby Atmos, and a file is converted only when a device can't play it as is.
 
 The server side is ready: StationPlay 1.19.0 and later include the connection the apps use, documented in [docs/app-api.md](docs/app-api.md).
 
@@ -524,7 +524,15 @@ When every tuner is busy, someone tuning in to another station sees an **All tun
 
 A station keeps running for 20 seconds after its last viewer leaves, so flipping back is instant. A station in that state gives up its tuner if someone needs it.
 
-**Test this server** on the **Add to Plex** tab makes a few seconds of video at each picture size (at low priority, so stations that are playing aren't affected) and estimates how many stations your server can play at once. Its suggestion leaves 30% headroom. **Use N tuners for 720p** applies it; choose **Save** to keep it.
+**Test this server** on the **Add to Plex** tab makes a few seconds of video at each picture size (at low priority, so stations that are playing aren't affected) and estimates how many stations your server can play at once. Its suggestion leaves 30% headroom. **Use N tuners for 720p** applies it; choose **Save** to keep it. If you set more tuners than the test suggests, the page warns you.
+
+### How many can watch at once
+
+Every device watching through StationPlay's apps (or another player using the HLS addresses) receives its own copy of the station: at home over your network, and away from home over your internet connection's upload. A station still uses one tuner no matter how many people watch it, so this limit is about your network rather than your server's processor.
+
+On the **Access** tab, under **How many can watch at once in StationPlay's apps**, an Admin can limit how many devices watch at once, and how many of those can be away from home. Leave a box empty for no limit. A device that's already watching can always change stations; one more device is turned away with a message such as: "An Admin has limited StationPlay to 5 devices watching at once, so it runs smoothly for everyone. Please try again later." Plex, Jellyfin and IPTV apps aren't counted here: they have limits of their own, and the tuners cover them.
+
+StationPlay recommends limits from **connection tests** run in its apps. A test times data sent by StationPlay, so it measures the connection the way viewers use it. Run one at home, and one on a phone away from home (on mobile data, for example) to measure your home's upload. StationPlay doesn't use an outside speed-test service. The recommendation uses the fastest recent test and leaves 30% headroom, and the page warns you if a limit is set higher.
 
 ### Schedules
 
