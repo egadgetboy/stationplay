@@ -143,7 +143,9 @@ def _ms(text: str | None, otherwise: int, name: str) -> int:
         raise HTTPException(400, f"The guide's {name!r} must be a time in milliseconds") from None
 
 
-def _slot(station: StationSchedule, slot: Slot | None) -> dict[str, Any] | None:
+def slot_program(station: StationSchedule, slot: Slot | None) -> dict[str, Any] | None:
+    """A station's program, as the app connection describes one (None for
+    none)."""
     if slot is None:
         return None
     special = specials.label(station.special(slot), slot.index)
@@ -178,7 +180,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "notSetUp": not_set_up,
             "outside": access.outside(request.scope),
             "awayAddress": away,
-            "features": [*FEATURES, *(["away"] if away else [])],
+            "features": [
+                *FEATURES,
+                *(["away"] if away else []),
+                # (Your library: at home, or through a VPN, for now.)
+                *(["library"] if ctx.shared.on and not access.outside(request.scope) else []),
+            ],
         }
 
     @app.post("/api/v1/sign-in")
@@ -348,7 +355,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             for channel in channels:
                 station = ctx.station(channel.id)
                 slot = station.locate(now)
-                out.append((_slot(station, slot), _slot(station, slot and station.after(slot))))
+                out.append(
+                    (
+                        slot_program(station, slot),
+                        slot_program(station, slot and station.after(slot)),
+                    )
+                )
             return out
 
         airing, palettes = await asyncio.gather(
@@ -441,7 +453,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             out = []
             for channel in channels:
                 station = ctx.station(channel.id)
-                programs = [_slot(station, slot) for slot in station.between(from_ms, to_ms)]
+                programs = [slot_program(station, slot) for slot in station.between(from_ms, to_ms)]
                 out.append({"number": channel.number, "programs": programs})
             return out
 

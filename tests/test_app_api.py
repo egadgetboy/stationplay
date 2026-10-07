@@ -16,13 +16,15 @@ from app.config import Settings
 from app.main import create_app
 from app.plex import PlexClient
 
-from .fakeplex import FakePlex
+from .fakeplex_library import LibraryPlex
 
 DOC = Path(__file__).resolve().parent.parent / "docs" / "app-api.md"
 PUBLIC_PORT = 8443
 PAT = {"name": "Pat", "password": "correct horse"}
 SAM = {"name": "Sam", "password": "battery staple"}
 TYPES = {"string": str, "number": (int, float), "boolean": bool, "list": list, "object": dict}
+# Kinds of field that are objects described in sections of their own.
+SHAPES = {"program": "A program", "card": "A card"}
 
 
 def documented() -> dict[str, dict[str, str]]:
@@ -74,8 +76,8 @@ class Checker:
         if value is None:
             assert nullable == "null", f"{section}: {path} is null"
             return
-        if kind == "program":
-            self._object(value, "", "A program")
+        if kind in SHAPES:
+            self._object(value, "", SHAPES[kind])
             return
         expected = TYPES[kind]
         assert isinstance(value, expected) and not (kind == "number" and isinstance(value, bool)), (
@@ -97,17 +99,30 @@ class Checker:
 
 @pytest.fixture
 def app(tmp_path):
-    fp = FakePlex()
+    fp = LibraryPlex()
     fp.add_show("100", "Show")
     for n in range(1, 5):
         fp.add_episode(f"20{n}", "100", 1, n, f"Ep {n}", f"/x/{n}.mkv", 22 * 60_000)
+    # A library of movies, with one described in full (see test_ondemand.py).
+    fp.add_section("2", "Movies", "movie")
+    fp.add_movie(
+        "300", "A Movie", "/x/movie.mkv", 90 * 60_000, year=1999, section="2", genres=["Drama"]
+    )
+    fp.describe("300", colorTrc="smpte2084", bitDepth=10, video="hevc", width=3840, height=2160)
+    fp.add_subtitles("300", "pgs", "English")
+    fp.add_subtitles("300", "srt", "Spanish", external=b"1\n00:00:01,000 --> 00:00:02,000\nHola\n")
+    fp.set_markers("300", ("intro", 60_000, 120_000), ("credits", 5_000_000, 5_300_000, True))
+    fp.released["300"] = "1999-03-31"
+    fp.files["300"] = b"a movie, as it is" * 100
     settings = Settings(
         plex_url="http://plex.test",
         plex_token="token",
         data_dir=tmp_path / "data",
         public_port=PUBLIC_PORT,
     )
-    return create_app(settings, PlexClient("http://plex.test", "token", transport=fp.transport()))
+    app = create_app(settings, PlexClient("http://plex.test", "token", transport=fp.transport()))
+    app.state.ctx.play_transport = fp.transport()  # (Plex's files)
+    return app
 
 
 def bearer(token: str) -> dict[str, str]:
@@ -202,6 +217,68 @@ def test_the_app_connection_matches_its_document(app):
             phone.post("/api/v1/speed-test", headers=sam, json=tested), "POST /api/v1/speed-test"
         )
         assert (found["where"], found["mbps"]) == ("home", 52.0)
+
+        # Your library (see test_ondemand.py): shared by an Admin, then
+        # browsed and played.
+        check.answer(phone.get("/api/v1/libraries", headers=sam), "GET /api/v1/libraries", 404)
+        assert home.put("/api/app-libraries", json={"libraries": ["1", "2"]}).status_code == 200
+        features = check.answer(phone.get("/api/v1/server"), "GET /api/v1/server")["features"]
+        assert features == ["hls", "speed-test", "library"]
+        libs = check.answer(phone.get("/api/v1/libraries", headers=sam), "GET /api/v1/libraries")
+        assert [(x["key"], x["kind"]) for x in libs["libraries"]] == [("1", "show"), ("2", "movie")]
+        shows = check.answer(
+            phone.get("/api/v1/libraries/1?size=10", headers=sam), "GET /api/v1/libraries/{key}"
+        )
+        assert shows["total"] == 1 and shows["items"][0]["unwatched"] == 4
+        movies = check.answer(
+            phone.get("/api/v1/libraries/2?sort=added", headers=sam), "GET /api/v1/libraries/{key}"
+        )
+        assert movies["items"][0]["poster"] == "/api/v1/art/300?kind=poster"
+        show = check.answer(phone.get("/api/v1/items/100", headers=sam), "GET /api/v1/items/{key}")
+        assert show["next"]["key"] == "201" and show["seasons"][0]["title"] == "Season 1"
+        episode = check.answer(
+            phone.get("/api/v1/items/202", headers=sam), "GET /api/v1/items/{key}"
+        )
+        assert (
+            episode["showKey"] == "100" and episode["backdrop"] == "/api/v1/art/100?kind=backdrop"
+        )
+        movie = check.answer(phone.get("/api/v1/items/300", headers=sam), "GET /api/v1/items/{key}")
+        assert movie["markers"] == {"intro": [60_000, 120_000], "credits": [5_000_000, 5_400_000]}
+        assert movie["picture"] == {"size": "4K", "hdr": "HDR10"}
+        listed = check.answer(
+            phone.get("/api/v1/items/100/episodes?season=1", headers=sam),
+            "GET /api/v1/items/{key}/episodes",
+        )
+        assert [e["episode"] for e in listed["episodes"]] == [1, 2, 3, 4]
+        found = check.answer(phone.get("/api/v1/search?q=movie", headers=sam), "GET /api/v1/search")
+        assert [x["key"] for x in found["items"]] == ["300"] and found["onNow"] == []
+        # (Search is where the stations and the library meet.)
+        found = check.answer(phone.get("/api/v1/search?q=show", headers=sam), "GET /api/v1/search")
+        assert [x["key"] for x in found["items"]] == ["100"]
+        assert [(s["number"], s["now"]["title"]) for s in found["onNow"]] == [(5, "Show")]
+        poster = phone.get("/api/v1/art/300?kind=poster&w=300", headers=sam)
+        assert poster.status_code == 200 and poster.headers["stationplay-api"] == "1"
+        tv = {"containers": ["mkv"], "video": [{"codec": "hevc", "width": 3840, "height": 2160,
+              "bitDepth": 10}], "hdr": ["hdr10"], "audio": ["aac"]}  # fmt: skip
+        played = check.answer(
+            phone.post("/api/v1/play", headers=sam, json={"key": "300", "device": tv}),
+            "POST /api/v1/play",
+        )
+        assert played["method"] == "direct" and played["resumeMs"] == 0
+        assert phone.get(played["url"]).content == b"a movie, as it is" * 100
+        [external] = [t for t in played["subtitles"] if t["external"]]
+        assert phone.get(external["url"]).text.endswith("Hola\n")
+        moved = check.answer(
+            phone.post("/api/v1/progress", headers=sam,
+                       json={"key": "300", "positionMs": 600_000, "session": played["session"]}),
+            "POST /api/v1/progress",
+        )  # fmt: skip
+        assert moved == {"positionMs": 600_000, "watched": False}
+        start = check.answer(phone.get("/api/v1/home", headers=sam), "GET /api/v1/home")
+        assert [(c["key"], c["positionMs"]) for c in start["continue"]] == [("300", 600_000)]
+        assert [a["title"] for a in start["added"]] == ["TV Shows", "Movies"]
+        assert phone.post(played["leave"]).status_code == 204
+        assert phone.get(played["url"]).status_code == 404
 
         # A device that has signed in before keeps its device token.
         again = phone.post("/api/v1/sign-in", json={**SAM, "device": signed["device"]})

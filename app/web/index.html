@@ -666,6 +666,10 @@
       <summary><strong>How many can watch at once in StationPlay’s apps</strong><span class="muted" id="appLimitsSum"></span></summary>
       <div class="arr-body" id="appLimitsBody"></div>
     </details>
+    <details class="panel arr" id="appLibrariesPanel">
+      <summary><strong>Your library in StationPlay’s apps</strong><span class="muted" id="appLibrariesSum"></span></summary>
+      <div class="arr-body" id="appLibrariesBody"></div>
+    </details>
     <p class="muted small">Plex and IPTV apps never sign in, so the tuner, guide, and stream addresses on the Add to Plex tab stay open on your network. Locked out? Create an empty file named <code>reset-access</code> in StationPlay’s data folder, then restart StationPlay. This removes every user and turns off sign-in, so anyone on your network can use StationPlay again.</p>
   </section>
 
@@ -1412,7 +1416,7 @@ function showTab(name) {
   if (name === 'logs') loadLogs(true);
   if (name === 'setup') { loadBackups(); renderPlaybackPanel(); }
   if (name === 'stats') loadStats();
-  if (name === 'access') { loadAccess(); loadApps(); loadLimits(); loadAway(); loadAppLimits(); }
+  if (name === 'access') { loadAccess(); loadApps(); loadLimits(); loadAway(); loadAppLimits(); loadAppLibraries(); }
   history.replaceState(null, '', '#' + name);
 }
 
@@ -4367,7 +4371,7 @@ async function loadAppLimits() {
     ...got.tests.map(t => h('tr', {}, h('td', {}, new Date(t.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })),
       h('td', {}, t.where === 'away' ? 'Away from home' : 'At home'), h('td', {}, t.device + (t.user ? ` (${t.user})` : '')), h('td', {}, `${t.mbps} Mbps`)))) : null;
   body.replaceChildren(
-    h('p', { style: 'margin:0' }, 'Each device watching in StationPlay’s apps gets its own copy of the station: at home over your network, and away from home over your internet connection’s upload. A station still uses one tuner no matter how many people watch it, so these limits are about your network, not your server’s processor. Plex, Jellyfin and IPTV apps aren’t counted here: they have limits of their own, and the tuners cover them.'),
+    h('p', { style: 'margin:0' }, 'Each device watching in StationPlay’s apps gets its own copy of the station: at home over your network, and away from home over your internet connection’s upload. A station still uses one tuner no matter how many people watch it, so these limits are about your network, not your server’s processor. Programs played from your library in the apps count too. Plex, Jellyfin and IPTV apps aren’t counted here: they have limits of their own, and the tuners cover them.'),
     h('p', { class: 'muted small', style: 'margin:0' }, `Watching in StationPlay’s apps now: ${plural(got.watching.devices, 'device')}${got.watching.away ? ` (${got.watching.away} away from home)` : ''}.`),
     h('div', { class: 'scan-set' }, h('label', { for: 'appLimitDevices', style: 'min-width:220px' }, 'Devices watching at once'), devices),
     h('div', { class: 'scan-set' }, h('label', { for: 'appLimitAway', style: 'min-width:220px' }, 'Of those, away from home'), away),
@@ -4381,6 +4385,45 @@ async function loadAppLimits() {
     h('div', { class: 'scan-set' }, save, useBtn, result),
     ...(tests ? [h('div', {}, h('strong', {}, 'Recent connection tests'), tests)] : []));
   paint();
+}
+// Your library in StationPlay's apps (see ondemand.py) --------------------------------
+async function loadAppLibraries() {
+  let got;
+  try { got = await api('/api/app-libraries'); }
+  catch (e) { $('#appLibrariesSum').textContent = ''; $('#appLibrariesBody').replaceChildren(h('p', { class: 'muted', style: 'margin:0' }, e.message)); return; }
+  const shared = got.libraries.filter(l => got.shared.includes(l.key));
+  $('#appLibrariesSum').textContent = shared.length ? `Shared: ${shared.map(l => l.title).join(', ')}` : 'Off';
+  const body = $('#appLibrariesBody');
+  if (body.dataset.editing) return;  // (not while it's being changed)
+  const editing = () => { body.dataset.editing = '1'; };
+  const boxes = new Map();
+  const choices = got.libraries.map(l => {
+    const box = h('input', { type: 'checkbox', checked: got.shared.includes(l.key), oninput: editing });
+    boxes.set(l.key, box);
+    return h('label', {}, box, ` ${l.title} `, h('span', { class: 'muted small' }, l.kind === 'movie' ? '(movies)' : '(shows)'));
+  });
+  const result = h('span', { class: 'hint', role: 'status' });
+  const save = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
+    const chosen = [...boxes].filter(([, b]) => b.checked).map(([key]) => key);
+    try { await api('/api/app-libraries', { method: 'PUT', body: { libraries: chosen } }); }
+    catch (e) { result.textContent = e.message; return; }
+    toast(chosen.length ? 'Saved. StationPlay’s apps can show the libraries you chose.' : 'Saved. StationPlay’s apps don’t show any library.');
+    delete body.dataset.editing;
+    loadAppLibraries();
+  } }, 'Save');
+  body.replaceChildren(
+    h('p', { style: 'margin:0' }, 'Choose the libraries people can browse and watch on demand in StationPlay’s apps, beside your stations. None are shared until you choose. Stations don’t change, and neither do Plex, Jellyfin or other apps.'),
+    h('div', { class: 'limit-note' }, h('strong', {}, 'How it works'),
+      h('ul', {},
+        h('li', {}, h('strong', {}, 'The best picture and sound. '), 'A file plays as it is whenever the device can play it, including 4K and HDR. If a device can’t play a file as it is, the app says why. Converting files for the apps comes later.'),
+        h('li', {}, h('strong', {}, 'Each person’s own place. '), 'Continue Watching, where to resume and what’s been watched are kept for each person who signs in (shared by everyone while sign-in is off).'),
+        h('li', {}, h('strong', {}, 'At home for now. '), 'Your library can be watched on your home network, or through a VPN such as Tailscale or WireGuard. Watching it through the public port comes later, with converting to fit your upload speed.'),
+        h('li', {}, 'Programs played this way count toward the limit on devices watching at once, above.'))),
+    ...(got.problem ? [h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' ', got.problem)] : []),
+    ...(choices.length ? [h('div', { class: 'arr-body', style: 'margin:0;gap:6px' }, ...choices)]
+      : [h('p', { class: 'muted small', style: 'margin:0' }, got.problem ? '' : 'Plex doesn’t list any libraries of shows or movies.')]),
+    h('div', { class: 'scan-set' }, save, result),
+    ...(got.playing ? [h('p', { class: 'muted small', style: 'margin:0' }, `Playing from your library now: ${plural(got.playing, 'device')}.`)] : []));
 }
 // Checking files -------------------------------------------------------------------
 const clock = t => { const [hh, mm] = t.split(':').map(Number); return new Date(2000, 0, 1, hh, mm).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };

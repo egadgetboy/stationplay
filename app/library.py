@@ -21,6 +21,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from .catalog import Entry
     from .db import Item
     from .plex import Lookups, MediaPart, PlexClient
 
@@ -181,6 +182,41 @@ class Library:
 
     async def logo_bytes(self, key: str, where: str) -> bytes:
         return await self._plex_for(key).logo_bytes(where)
+
+    # For StationPlay's apps (see docs/on-demand.md) ------------------------
+
+    async def browse(
+        self, library: str, kind: str, sort: str, start: int, size: int
+    ) -> tuple[int, list[Entry]]:
+        """A page of a library's shows or movies (sort: "title", "added" or
+        "released"): (how many in all, the page)."""
+        return await self._plex_for(library).browse(library, kind, sort, start, size)
+
+    async def recently_added(self, library: str, kind: str, count: int) -> list[Entry]:
+        return await self._plex_for(library).recently_added(library, kind, count)
+
+    async def search(self, library: str, kind: str, words: str, count: int) -> list[Entry]:
+        return await self._plex_for(library).search(library, kind, words, count)
+
+    async def entry(self, key: str, details: bool = False) -> Entry | None:
+        """A show, movie or episode; None if there's no such thing."""
+        if is_folder_key(key):
+            return None
+        return await self.plex.entry(key, details)
+
+    async def entries(self, keys: list[str]) -> list[Entry]:
+        """Several at once, in the order asked (those gone are left out)."""
+        return await self.plex.entries([k for k in keys if is_plex_key(k)])
+
+    async def show_episodes(self, show: str) -> list[Entry]:
+        if is_folder_key(show):
+            return []
+        return await self.plex.show_episodes(show)
+
+    async def picture(self, key: str, which: str, width: int, height: int) -> tuple[bytes, str]:
+        """A picture of a show, movie or episode: "thumb" (a poster, or an
+        episode's still) or "art" (a backdrop)."""
+        return await self._plex_for(key).picture(key, which, width, height)
 
     # Sonarr and Radarr -----------------------------------------------------
 

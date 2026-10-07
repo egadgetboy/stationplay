@@ -17,8 +17,8 @@ apart.
   is renamed, removed or changed in meaning. Apps ignore fields they don't
   know. A change that would break an app becomes version 2, served beside
   version 1.
-- Addresses in answers (`logo`, `hls`, `art`) are relative to the server:
-  add them to the address the app reached the server at.
+- Addresses in answers (`logo`, `hls`, `art`, `url`) are relative to the
+  server: add them to the address the app reached the server at.
 - Times are milliseconds since 1970 (UTC).
 - An error is an HTTP status with `{"detail": "..."}`, a sentence an app can
   show as it is.
@@ -95,7 +95,7 @@ StationPlay it can talk to.
 | `outside` | boolean | Whether the app reached StationPlay through its public port |
 | `awayAddress` | string or null | The address to use away from home (such as `https://tv.example.com`), when an Admin has turned that on; null otherwise |
 | `features` | list | What this server offers apps |
-| `features[]` | string | One of them: `hls` (stations as HLS), `speed-test` (connection tests, from 1.20.0), `away` (watching away from home is on) |
+| `features[]` | string | One of them: `hls` (stations as HLS), `speed-test` (connection tests, from 1.20.0), `away` (watching away from home is on), `library` (libraries are shared with the apps, and can be watched from here; from 1.21.0) |
 
 ## POST /api/v1/link
 
@@ -253,6 +253,272 @@ from the fastest recent tests.
 | `where` | string | `home`, or `away` (through the public port) |
 | `eachMbps` | number | What one device watching takes, at the biggest picture the stations use |
 | `room` | number | How many devices a connection this fast has room for at once |
+
+## Your library
+
+When an Admin shares libraries with the apps (on the Access tab, under
+**Your library in StationPlay's apps**), the apps can browse them and play
+their shows and movies on demand. Until then, `features` doesn't list
+`library`, and these addresses answer 404 ("No libraries are shared with
+StationPlay's apps"). For now, this is on the home network (or through a
+VPN, which looks like home): through the public port they answer 403, and
+`features` doesn't list `library` there.
+
+Anything that isn't in a shared library answers 404, the same as something
+that doesn't exist. When the library can't be reached (Plex is down, say),
+these answer 503.
+
+Keys are strings, and the same key always means the same show, movie or
+episode. Pictures (`poster`, `backdrop`, `thumb`) are addresses under
+`/api/v1/art`: add `&w=` with the width it will be shown at, in pixels, and
+send the app's token with them.
+
+Each person has their own place in what they watch (Continue Watching,
+where to resume, what they've watched), kept by StationPlay. While signing
+in is off, everyone shares one.
+
+## GET /api/v1/libraries
+
+The shared libraries, in the library's own order.
+
+| Field | Type | What it is |
+|---|---|---|
+| `libraries` | list | The shared libraries |
+| `libraries[].key` | string | Its key |
+| `libraries[].title` | string | Its name, such as "TV Shows" |
+| `libraries[].kind` | string | `show` (a library of shows) or `movie` |
+
+## GET /api/v1/libraries/{key}
+
+One shared library's shows or movies, a page at a time: `?start=` (0 if it
+isn't given) and `?size=` (1 to 200; 50 if it isn't given), sorted by
+`?sort=`: `title` (the default), `added` (newest first) or `released`
+(newest first).
+
+| Field | Type | What it is |
+|---|---|---|
+| `key` | string | The library's key |
+| `title` | string | Its name |
+| `kind` | string | `show` or `movie` |
+| `total` | number | How many shows or movies it has in all |
+| `start` | number | Where this page starts |
+| `items` | list | This page |
+| `items[]` | card | One show or movie |
+
+## GET /api/v1/home
+
+What the app's home screen shows.
+
+| Field | Type | What it is |
+|---|---|---|
+| `continue` | list | Continue Watching: what this person is partway through, and the next episode of shows they've been watching, newest first (up to 20) |
+| `continue[]` | card | An episode or movie; `positionMs` is where to start it |
+| `added` | list | Each shared library's recently added shows or movies (libraries with none are left out) |
+| `added[].library` | string | The library's key |
+| `added[].title` | string | Its name |
+| `added[].items` | list | Its newest movies, or the shows with the newest episodes (up to 20) |
+| `added[].items[]` | card | One show or movie |
+
+## GET /api/v1/search
+
+Search: the one place the library and the stations meet. Shows and movies
+whose titles contain `?q=` (up to 100 characters), across the shared
+libraries, titles starting with it first (up to 50); and the stations
+airing a show or movie with it in its title right now. It answers wherever
+the stations do, with `items` empty where the library isn't offered.
+
+| Field | Type | What it is |
+|---|---|---|
+| `items` | list | What was found in the library |
+| `items[]` | card | One show or movie |
+| `onNow` | list | The stations airing a match now, in number order |
+| `onNow[].number` | number | The station's number |
+| `onNow[].name` | string | Its name |
+| `onNow[].now` | program | What's on it now |
+
+## GET /api/v1/items/{key}
+
+A show's, movie's or episode's details: its card's fields, and more.
+
+| Field | Type | What it is |
+|---|---|---|
+| `key` | string | As in a card |
+| `kind` | string | As in a card |
+| `title` | string | As in a card |
+| `year` | number or null | As in a card |
+| `poster` | string or null | As in a card |
+| `episodes` | number or null | (A show) as in a card |
+| `unwatched` | number or null | (A show) as in a card |
+| `durationMs` | number or null | (An episode or movie) as in a card |
+| `positionMs` | number | (An episode or movie) as in a card |
+| `watched` | boolean | (An episode or movie) as in a card |
+| `episodeTitle` | string or null | (An episode) as in a card |
+| `season` | number or null | (An episode) as in a card |
+| `episode` | number or null | (An episode) as in a card |
+| `showKey` | string or null | (An episode) as in a card |
+| `thumb` | string or null | (An episode) as in a card |
+| `summary` | string | What it's about (may be empty) |
+| `genres` | list | Its genres (its first few) |
+| `genres[]` | string | One genre |
+| `contentRating` | string or null | Its rating, such as `TV-PG` |
+| `studio` | string or null | Its studio, or a show's network |
+| `released` | string or null | When it first came out, as `YYYY-MM-DD` |
+| `backdrop` | string or null | A wide picture for behind the details (an episode's is its show's) |
+| `seasons` | list | (A show) its seasons, in order, specials last |
+| `seasons[].season` | number or null | The season's number (0: specials; null for episodes without one, which are listed with all of a show's episodes) |
+| `seasons[].title` | string | "Season 1", "Specials" |
+| `seasons[].episodes` | number | How many episodes it has |
+| `seasons[].unwatched` | number | How many of them this person hasn't watched |
+| `next` | card or null | (A show) the episode to play next: the one this person is partway through, or the one after the last they finished, or the first; null once they've watched it all |
+| `markers` | object | (An episode or movie) where its intro and closing credits are, for Skip intro and Skip credits buttons |
+| `markers.intro` | list or null | The intro, as `[startMs, endMs]`; null if it hasn't one |
+| `markers.intro[]` | number | A time in it, in milliseconds from its start |
+| `markers.credits` | list or null | The closing credits, as `[startMs, endMs]`; null if it hasn't them |
+| `markers.credits[]` | number | A time in it |
+| `picture` | object or null | (An episode or movie) its picture |
+| `picture.size` | string or null | `4K`, `1080p`, `720p` or `SD` |
+| `picture.hdr` | string or null | `Dolby Vision`, `HDR10` or `HLG`; null if it isn't HDR |
+| `audio` | list | (An episode or movie) its sound tracks |
+| `audio[].id` | string | The track's ID |
+| `audio[].name` | string | How to list it, such as "English · Dolby Digital · 5.1" |
+| `audio[].language` | string or null | Its language |
+| `audio[].codec` | string | Its format, such as `aac`, `ac3`, `eac3`, `dts`, `truehd` |
+| `audio[].default` | boolean | Whether the file says to play it unless asked otherwise |
+| `audio[].index` | number or null | Its place among all the file's tracks (0 is the first) |
+| `subtitles` | list | (An episode or movie) its subtitle tracks |
+| `subtitles[].id` | string | The track's ID |
+| `subtitles[].name` | string | How to list it, such as "Spanish · Forced" |
+| `subtitles[].language` | string or null | Its language |
+| `subtitles[].codec` | string | Its format: `srt`, `ass`, `vtt` and `mov_text` are text; `pgs` and `vobsub` are pictures |
+| `subtitles[].default` | boolean | Whether the file says to show it unless asked otherwise |
+| `subtitles[].forced` | boolean | Whether it's only the parts in another language |
+| `subtitles[].external` | boolean | Whether it's a file of its own beside the video, rather than inside it |
+| `subtitles[].index` | number or null | Its place among all the file's tracks (null for a file of its own) |
+
+## GET /api/v1/items/{key}/episodes
+
+A show's episodes, in order (specials last): all of them, or one season's
+with `?season=`.
+
+| Field | Type | What it is |
+|---|---|---|
+| `show` | string | The show's key |
+| `season` | number or null | The season asked for (null: all of them) |
+| `episodes` | list | Its episodes |
+| `episodes[]` | card | One episode |
+
+## GET /api/v1/art/{key}
+
+A picture, as JPEG or PNG: `?kind=poster` (the default; 2:3, an episode's is
+its show's), `backdrop` (16:9) or `thumb` (an episode's still, 16:9), made
+`?w=` pixels wide (rounded up to 160, 320, 480, 720, 1280 or 1920). 404 if
+there's no such picture.
+
+## POST /api/v1/play
+
+Starts playing an episode or movie. Send its key and what the device can
+play, as the device itself reports it (never a guess), and optionally `app`
+and `deviceName` (as for signing in, for the log):
+
+```json
+{"key": "1234",
+ "device": {"containers": ["mkv", "mp4", "mov", "ts", "webm"],
+            "video": [{"codec": "h264", "width": 3840, "height": 2160, "bitDepth": 8},
+                      {"codec": "hevc", "width": 3840, "height": 2160, "bitDepth": 10}],
+            "hdr": ["hdr10", "hlg"],
+            "audio": ["aac", "ac3", "eac3", "mp3", "opus", "flac"]},
+ "app": "StationPlay for Android TV", "deviceName": "Den"}
+```
+
+`hdr` lists only what the screen shows (`hdr10`, `hlg`, `dv` for Dolby
+Vision); `[]` for a screen without HDR. A file plays as it is when the
+device can play its file type, its picture's format at its size and bit
+depth, its HDR (Dolby Vision profile 5 needs `dv`; other profiles also play
+as the HDR10, HLG or ordinary picture beneath), and the sound of its default
+track. If it can't, the answer is 422, with
+`detail` (a sentence to show) and `why` (a list of the reasons): StationPlay
+doesn't convert files for the apps yet.
+
+An Admin's limits on devices watching count programs played this way too
+(see Playing a station): one more device is answered 503 with `limit` and
+`most`.
+
+| Field | Type | What it is |
+|---|---|---|
+| `session` | string | This playing's ID (for progress reports) |
+| `method` | string | How it plays: `direct` (the file as it is) |
+| `url` | string | What the player plays (it needs no token), such as `/play/<session>/file.mkv`. Ranges are answered, so the player can seek |
+| `leave` | string | Where to `POST` when the player stops |
+| `resumeMs` | number | Where this person stopped last time (0: the start). Offer to resume there, or start over |
+| `durationMs` | number or null | How long it is |
+| `markers` | object | As in its details |
+| `markers.intro` | list or null | As in its details |
+| `markers.intro[]` | number | As in its details |
+| `markers.credits` | list or null | As in its details |
+| `markers.credits[]` | number | As in its details |
+| `audio` | list | Its sound tracks, as in its details |
+| `audio[].id` | string | As in its details |
+| `audio[].name` | string | As in its details |
+| `audio[].language` | string or null | As in its details |
+| `audio[].codec` | string | As in its details |
+| `audio[].default` | boolean | As in its details |
+| `audio[].index` | number or null | As in its details |
+| `subtitles` | list | Its subtitle tracks, as in its details |
+| `subtitles[].id` | string | As in its details |
+| `subtitles[].name` | string | As in its details |
+| `subtitles[].language` | string or null | As in its details |
+| `subtitles[].codec` | string | As in its details |
+| `subtitles[].default` | boolean | As in its details |
+| `subtitles[].forced` | boolean | As in its details |
+| `subtitles[].external` | boolean | As in its details |
+| `subtitles[].index` | number or null | As in its details |
+| `subtitles[].url` | string or null | For a file of its own: where to get it, to add beside the video (it needs no token). Tracks inside the file are the player's to show |
+
+The `url` (and subtitles' `url`) stop working when the app `POST`s to
+`leave`, after 4 hours unused, when the app's sign-in ends, when its library
+is no longer shared, and when StationPlay restarts (404); choose the program
+again to play it again.
+
+## POST /api/v1/progress
+
+Where this person is in an episode or movie: send `{"key": "1234",
+"positionMs": 1325000, "session": "..."}` every 10 seconds or so while it
+plays (`session` keeps the device counted as watching), and when it stops.
+Or mark it from a menu: `{"key": "1234", "watched": true}` (or `false`).
+
+Reaching its closing credits (or, without them, 90% of the way) marks it
+watched and starts it from the beginning next time. Less than a minute in
+starts it from the beginning too.
+
+| Field | Type | What it is |
+|---|---|---|
+| `positionMs` | number | Where it will start next time |
+| `watched` | boolean | Whether this person has watched it |
+
+## A card
+
+How the library's lists describe a show, movie or episode. Shows have
+`episodes` and `unwatched`; episodes and movies have `durationMs`,
+`positionMs` and `watched`; episodes also have `episodeTitle`, `season`,
+`episode`, `showKey` and `thumb`.
+
+| Field | Type | What it is |
+|---|---|---|
+| `key` | string | Its key |
+| `kind` | string | `show`, `movie` or `episode` |
+| `title` | string | The show's title, or the movie's |
+| `year` | number or null | The year |
+| `poster` | string or null | Its poster (an episode's is its show's) |
+| `episodes` | number or null | How many episodes a show has |
+| `unwatched` | number or null | How many of a show's episodes this person hasn't watched |
+| `durationMs` | number or null | How long it is |
+| `positionMs` | number | Where it would start for this person (0: the start) |
+| `watched` | boolean | Whether this person has watched it |
+| `episodeTitle` | string or null | The episode's own title |
+| `season` | number or null | The season (0: specials) |
+| `episode` | number or null | The episode |
+| `showKey` | string or null | The show's key |
+| `thumb` | string or null | The episode's still |
 
 ## A program
 

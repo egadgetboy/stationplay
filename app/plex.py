@@ -14,6 +14,8 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
+from . import catalog
+from .catalog import Entry, Media, Track
 from .db import Item
 from .library import LibraryError
 
@@ -63,10 +65,13 @@ class PlexError(LibraryError):
 # Keys come partly from what people send StationPlay, and the token makes
 # every request the server owner's, so nothing else is ever sent.
 _PLEX_PATH = re.compile(r"(/[A-Za-z0-9_:-]+)+")
+# (And several shows, movies or episodes at once, by their keys.)
+_KEYS_PATH = re.compile(r"/library/metadata/\d+(,\d+)+")
 
 
 def _checked(path: str) -> str:
-    if path != "/" and not _PLEX_PATH.fullmatch(path):  # (/: the server's own details)
+    # (/: the server's own details.)
+    if path != "/" and not _PLEX_PATH.fullmatch(path) and not _KEYS_PATH.fullmatch(path):
         raise PlexError(f"That isn't a Plex address StationPlay uses: {path[:80]!r}", 400)
     return path
 
@@ -980,6 +985,268 @@ class PlexClient:
         if not metadata:
             return None
         return first_part(metadata[0])
+
+    # For StationPlay's apps (see docs/on-demand.md) -------------------------
+
+    async def browse(
+        self, section: str, kind: str, sort: str, start: int, size: int
+    ) -> tuple[int, list[Entry]]:
+        """A page of a library's shows or movies: (how many in all, the page)."""
+        data = await self._get(
+            f"/library/sections/{section}/all",
+            {
+                "type": TYPE_SHOW if kind == catalog.SHOW else TYPE_MOVIE,
+                "sort": _SORTS[sort],
+                "X-Plex-Container-Start": start,
+                "X-Plex-Container-Size": size,
+            },
+        )
+        page = [e for m in data.get("Metadata") or [] if (e := to_entry(m, section))]
+        total = data.get("totalSize")
+        return (total if isinstance(total, int) else start + len(page)), page
+
+    async def recently_added(self, section: str, kind: str, count: int) -> list[Entry]:
+        """A library's newest movies, or the shows with the newest episodes."""
+        if kind == catalog.MOVIE:
+            return (await self.browse(section, kind, "added", 0, count))[1]
+        data = await self._get(
+            f"/library/sections/{section}/all",
+            {
+                "type": TYPE_EPISODE,
+                "sort": "addedAt:desc",
+                "X-Plex-Container-Start": 0,
+                "X-Plex-Container-Size": count * 4,
+            },
+        )
+        shows: list[str] = []
+        for m in data.get("Metadata") or []:
+            show = str(m.get("grandparentRatingKey") or "")
+            if show.isdigit() and show not in shows:
+                shows.append(show)
+        return [e for e in await self.entries(shows[:count]) if e.kind == catalog.SHOW]
+
+    async def search(self, section: str, kind: str, words: str, count: int) -> list[Entry]:
+        """A library's shows or movies whose titles contain `words`."""
+        data = await self._get(
+            f"/library/sections/{section}/all",
+            {
+                "type": TYPE_SHOW if kind == catalog.SHOW else TYPE_MOVIE,
+                "title": words,
+                "sort": "titleSort",
+                "X-Plex-Container-Start": 0,
+                "X-Plex-Container-Size": count,
+            },
+        )
+        return [e for m in data.get("Metadata") or [] if (e := to_entry(m, section))]
+
+    async def entry(self, key: str, details: bool = False) -> Entry | None:
+        """A show, movie or episode (None if Plex has no such thing). With
+        `details`, its intro and credits and what its files hold too."""
+        try:
+            data = await self._get(
+                f"/library/metadata/{key}", {"includeMarkers": 1} if details else None
+            )
+        except PlexError as e:
+            if e.status in (400, 404):
+                return None
+            raise
+        section = str(data.get("librarySectionID") or "")
+        found = [
+            x for m in data.get("Metadata") or [] if (x := to_entry(m, section, details=details))
+        ]
+        return found[0] if found else None
+
+    async def entries(self, keys: list[str]) -> list[Entry]:
+        """Several shows, movies or episodes at once, in the order asked
+        (those Plex no longer has are left out)."""
+        wanted = list(dict.fromkeys(k for k in keys if k.isascii() and k.isdigit()))
+        found: dict[str, Entry] = {}
+        for at in range(0, len(wanted), ENTRIES_AT_ONCE):
+            batch = wanted[at : at + ENTRIES_AT_ONCE]
+            try:
+                data = await self._get(f"/library/metadata/{','.join(batch)}")
+            except PlexError as e:
+                if e.status not in (400, 404):
+                    raise
+                if len(batch) == 1:
+                    continue
+                # (One of them gone may be why: each on its own, then.)
+                for key in batch:
+                    if (x := await self.entry(key)) is not None:
+                        found[x.key] = x
+                continue
+            # (Each says which library it's in; the answer as a whole only
+            # when it's about one.)
+            section = str(data.get("librarySectionID") or "") if len(batch) == 1 else ""
+            for m in data.get("Metadata") or []:
+                if (x := to_entry(m, section)) is not None:
+                    found[x.key] = x
+        return [found[k] for k in wanted if k in found]
+
+    async def show_episodes(self, show_key: str) -> list[Entry]:
+        """A show's episodes, in order (specials last). None of Plex's: []."""
+        try:
+            data = await self._get(f"/library/metadata/{show_key}/allLeaves", bulk=True)
+        except PlexError as e:
+            if e.status in (400, 404):
+                return []
+            raise
+        section = str(data.get("librarySectionID") or "")
+        found = [
+            x
+            for m in data.get("Metadata") or []
+            if (x := to_entry(m, section)) and x.kind == catalog.EPISODE
+        ]
+        return sorted(found, key=episode_order)
+
+    async def picture(self, key: str, which: str, width: int, height: int) -> tuple[bytes, str]:
+        """A show's, movie's or episode's picture (`which`: "thumb", its
+        poster or still, or "art", its backdrop), made the size asked for by
+        Plex (or as it is, if Plex won't). httpx.HTTPError if there's none."""
+        path = _checked(f"/library/metadata/{key}/{which}")
+        try:
+            return await self.get_bytes(
+                "/photo/:/transcode",
+                {"url": path, "width": width, "height": height, "minSize": 1, "upscale": 1},
+            )
+        except httpx.HTTPStatusError:
+            return await self.get_bytes(path)
+
+
+# For StationPlay's apps: how a library's shows and movies can be sorted.
+_SORTS = {"title": "titleSort", "added": "addedAt:desc", "released": "originallyAvailableAt:desc"}
+# Shows, movies and episodes asked for in one request, at most.
+ENTRIES_AT_ONCE = 50
+
+
+def episode_order(e: Entry) -> tuple[bool, int, int, str]:
+    """Seasons in order with specials (season 0) last, then episodes."""
+    season = e.season if e.season is not None else 10_000
+    return (season == 0, season, e.episode if e.episode is not None else 10_000, e.title)
+
+
+def to_entry(m: dict[str, Any], section: str = "", details: bool = False) -> Entry | None:
+    """Plex's description of a show, movie or episode, as the apps are told
+    it (see catalog.py); None for anything else. `details`: Plex was asked
+    about it alone, so its markers and streams are there."""
+    kind = m.get("type")
+    key = str(m.get("ratingKey") or "")
+    if kind not in (catalog.SHOW, catalog.MOVIE, catalog.EPISODE) or not key.isdigit():
+        return None
+    episode = kind == catalog.EPISODE
+    duration = _int(m.get("duration"))
+    added = _int(m.get("addedAt"))
+    library = str(m.get("librarySectionID") or section or "")
+    show_key = str(m.get("grandparentRatingKey") or "") if episode else ""
+    intro = credits = None
+    if details and kind != catalog.SHOW:
+        intro, credits = _skips(duration, m.get("Marker"))
+    return Entry(
+        key=key,
+        kind=kind,
+        title=str(m.get("title") or ""),
+        year=_int(m.get("year")),
+        summary=str(m.get("summary") or ""),
+        library=library if library.isdigit() else "",
+        show_key=show_key if show_key.isdigit() else None,
+        show_title=str(m.get("grandparentTitle") or "") if episode else "",
+        season=_int(m.get("parentIndex")) if episode else None,
+        episode=_int(m.get("index")) if episode else None,
+        duration_ms=duration,
+        added_ms=added * 1000 if added is not None else None,
+        released=str(m.get("originallyAvailableAt") or "")[:10],
+        episodes=_int(m.get("leafCount")) if kind == catalog.SHOW else None,
+        seasons=_int(m.get("childCount")) if kind == catalog.SHOW else None,
+        genres=tuple(genres(m)),
+        content_rating=str(m.get("contentRating") or ""),
+        studio=str(m.get("studio") or ""),
+        has_thumb=bool(m.get("thumb")),
+        has_art=bool(m.get("art")),
+        intro=intro,
+        credits=credits,
+        media=tuple(to_media(m)) if details and kind != catalog.SHOW else (),
+    )
+
+
+def _int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _skips(duration: int | None, raw: Any) -> tuple[tuple[int, int] | None, tuple[int, int] | None]:
+    """A program's intro and closing credits, from Plex's markers, for the
+    apps' Skip intro and Skip credits buttons: only where they look right,
+    by the rules stations use (see markers.py)."""
+    from . import markers  # (markers.py uses this module)
+
+    if not duration or not isinstance(raw, list):
+        return None, None
+    intros, closing = [], []
+    for m in markers.parse_markers(raw):
+        start, end = max(0, m.start_ms), min(duration, m.end_ms)
+        if end - start < markers.MIN_MARKER_MS:
+            continue
+        if m.kind == markers.INTRO and start < duration / 2:
+            if end - start <= markers.MAX_INTRO_MS:
+                intros.append((start, end))
+        elif m.kind == markers.CREDITS and start >= duration / 2:
+            closing.append((m.final, start, duration if m.final else end))
+    # The first intro; the credits Plex says are final, or else the last.
+    intro = min(intros, default=None)
+    final = max(closing, default=None)
+    return intro, (final[1], final[2]) if final else None
+
+
+def to_media(m: dict[str, Any]) -> list[Media]:
+    """The versions of a program's file, as Plex describes them."""
+    out = []
+    for media in m.get("Media") or []:
+        if not isinstance(media, dict):
+            continue
+        parts = [p for p in media.get("Part") or [] if isinstance(p, dict)]
+        part = parts[0] if parts else {}
+        streams = [s for s in part.get("Stream") or [] if isinstance(s, dict)]
+        video = next((s for s in streams if s.get("streamType") == 1), {})
+        trc = str(video.get("colorTrc") or "").lower()
+        hdr = catalog.HDR10 if trc == "smpte2084" else catalog.HLG if trc == "arib-std-b67" else ""
+        dv = (_int(video.get("DOVIProfile")) or 0) if video.get("DOVIPresent") else None
+        out.append(
+            Media(
+                container=catalog.container(part.get("container") or media.get("container")),
+                video=catalog.video_codec(video.get("codec") or media.get("videoCodec")),
+                width=_int(video.get("width")) or _int(media.get("width")) or 0,
+                height=_int(video.get("height")) or _int(media.get("height")) or 0,
+                bit_depth=_int(video.get("bitDepth")) or 8,
+                hdr=hdr,
+                dv_profile=dv,
+                bitrate_kbps=_int(media.get("bitrate")),
+                parts=max(1, len(parts)),
+                file=part.get("file") if isinstance(part.get("file"), str) else None,
+                part_key=part.get("key") if isinstance(part.get("key"), str) else None,
+                size=_int(part.get("size")),
+                duration_ms=_int(part.get("duration")) or _int(media.get("duration")),
+                audio=tuple(
+                    _track(s, catalog.audio_codec) for s in streams if s.get("streamType") == 2
+                ),
+                subtitles=tuple(
+                    _track(s, catalog.subtitle_codec) for s in streams if s.get("streamType") == 3
+                ),
+            )
+        )
+    return out
+
+
+def _track(s: dict[str, Any], codec: Callable[[str | None], str]) -> Track:
+    return Track(
+        id=str(s.get("id") or ""),
+        codec=codec(s.get("codec")),
+        language=str(s.get("language") or ""),
+        title=str(s.get("title") or ""),
+        channels=_int(s.get("channels")),
+        default=bool(s.get("default")),
+        forced=bool(s.get("forced")),
+        external=bool(s.get("key")) and s.get("index") is None,
+        index=_int(s.get("index")),
+    )
 
 
 # Plex's names for what a show or movie was matched to: its own ("tvdb://"),

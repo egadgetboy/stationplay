@@ -144,9 +144,13 @@ OPEN = (
     | {"/api/v1/sign-in", "/api/v1/link", "/api/v1/link/check"}
     | FOR_PLEX
 )
+# Programs played on demand in StationPlay's apps: each at an address of its
+# own, which is what lets a player in (see ondemand.py). On the home network
+# only, for now.
+PLAY_UNDER = "/play/"
 # What StationPlay's apps use: from the internet, only over HTTPS (their
 # passwords, sign-ins and stream addresses must never cross it in the clear).
-FOR_APPS_UNDER = ("/api/v1/", "/hls/k/")
+FOR_APPS_UNDER = ("/api/v1/", "/hls/k/", PLAY_UNDER)
 # Also open on the home network: the stations' logos (Plex shows them).
 OPEN_UNDER = (*FOR_PLEX_UNDER, "/channel-icon/", "/logos/")
 # What a User may do; everything else is for Admins. (A path ending in "/"
@@ -157,13 +161,15 @@ FOR_USERS = {
         "/api/channels", "/api/channels/", "/api/bumpers", "/api/logos", "/api/collections",
         "/api/filter/", "/api/libraries", "/api/libraries/", "/api/stats", "/api/status",
         "/poster/", "/logos/", "/bumpers/", "/plex-logo/", "/api/v1/stations", "/api/v1/guide",
-        "/api/v1/speed-test", "/api/access/link/",
+        "/api/v1/speed-test", "/api/access/link/", "/api/v1/libraries", "/api/v1/libraries/",
+        "/api/v1/home", "/api/v1/search", "/api/v1/items/", "/api/v1/art/",
     ),
     "POST": (
         "/api/access/me/password", "/api/channels", "/api/channels/", "/api/collections/stations",
         "/api/filter/preview", "/api/intro/preview", "/api/upnext/preview", "/api/logos",
         "/api/logos/plex", "/api/bumpers", "/api/smart/split", "/api/smart/stations",
-        "/api/v1/sign-out", "/api/v1/speed-test", "/api/access/link",
+        "/api/v1/sign-out", "/api/v1/speed-test", "/api/access/link", "/api/v1/play",
+        "/api/v1/progress",
     ),
     "PUT": ("/api/channels/",),
     "DELETE": ("/api/channels/",),
@@ -608,7 +614,7 @@ class Gate:
         send = _with_security_headers(send)
         if (
             public
-            and (path in FOR_PLEX or path.startswith(FOR_PLEX_UNDER))
+            and (path in FOR_PLEX or path.startswith((*FOR_PLEX_UNDER, PLAY_UNDER)))
             and not path.startswith(AWAY_UNDER)
         ):
             await _refuse(send, 404, "Not Found")
@@ -635,7 +641,7 @@ class Gate:
             if state["outside"] and path not in PAGE:
                 return 403, NOT_SET_UP
             return None
-        if path.startswith(AWAY_UNDER):
+        if path.startswith((AWAY_UNDER, PLAY_UNDER)):
             return None  # (its address says whose it is)
         token = bearer(scope) or _cookie(scope, COOKIE)
         user = state["user"] = self.access.session_user(token) if token else None

@@ -199,6 +199,19 @@ CREATE TABLE IF NOT EXISTS user_watched (
     seconds      REAL    NOT NULL,
     PRIMARY KEY (user_id, channel_id, day, title, kind)
 );
+-- Where each person is in what they watch on demand in StationPlay's apps
+-- (see ondemand.py), by StationPlay user (0 while signing in is off).
+CREATE TABLE IF NOT EXISTS progress (
+    user_id      INTEGER NOT NULL,
+    rating_key   TEXT    NOT NULL,     -- the episode or movie
+    show_key     TEXT,                 -- an episode's show
+    position_ms  INTEGER NOT NULL,
+    duration_ms  INTEGER NOT NULL DEFAULT 0,
+    watched      INTEGER NOT NULL DEFAULT 0,
+    updated_ms   INTEGER NOT NULL,
+    PRIMARY KEY (user_id, rating_key)
+);
+CREATE INDEX IF NOT EXISTS progress_by_time ON progress (user_id, updated_ms);
 """
 
 Segments = tuple[tuple[int, int], ...]
@@ -538,6 +551,8 @@ _ADDED_COLUMNS = (
 
 # The marathons remembered for each station (for choosing the next ones).
 MARATHONS_KEPT = 200
+# Programs each person's progress is kept for (the newest; see ondemand.py).
+PROGRESS_KEPT = 5000
 
 
 @dataclass(frozen=True)
@@ -1286,10 +1301,90 @@ class Database:
     def delete_user(self, user_id: int) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            self._conn.execute("DELETE FROM progress WHERE user_id = ?", (user_id,))
 
     def delete_all_users(self) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM users")
+            self._conn.execute("DELETE FROM progress WHERE user_id != 0")
+
+    # Progress in what's watched on demand (see ondemand.py) ----------------------
+
+    def save_progress(
+        self,
+        user_id: int,
+        rating_key: str,
+        show_key: str | None,
+        position_ms: int,
+        duration_ms: int,
+        watched: bool,
+        now: int,
+    ) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO progress (user_id, rating_key, show_key, position_ms, duration_ms, "
+                "watched, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(user_id, rating_key) DO UPDATE SET show_key = excluded.show_key, "
+                "position_ms = excluded.position_ms, duration_ms = excluded.duration_ms, "
+                "watched = excluded.watched, updated_ms = excluded.updated_ms",
+                (user_id, rating_key, show_key, position_ms, duration_ms, int(watched), now),
+            )
+            # (The newest PROGRESS_KEPT of each person's are kept.)
+            self._conn.execute(
+                "DELETE FROM progress WHERE user_id = ? AND rating_key NOT IN ("
+                "SELECT rating_key FROM progress WHERE user_id = ? "
+                "ORDER BY updated_ms DESC LIMIT ?)",
+                (user_id, user_id, PROGRESS_KEPT),
+            )
+
+    def progress_of(self, user_id: int, keys: list[str]) -> dict[str, tuple[int, bool]]:
+        """Someone's progress in these programs: key -> (position, watched)."""
+        out: dict[str, tuple[int, bool]] = {}
+        with self._lock:
+            for at in range(0, len(keys), 500):
+                batch = keys[at : at + 500]
+                marks = ",".join("?" * len(batch))
+                for row in self._conn.execute(
+                    "SELECT rating_key, position_ms, watched FROM progress "
+                    f"WHERE user_id = ? AND rating_key IN ({marks})",
+                    (user_id, *batch),
+                ):
+                    out[row["rating_key"]] = (row["position_ms"], bool(row["watched"]))
+        return out
+
+    def recent_progress(self, user_id: int, most: int) -> list[sqlite3.Row]:
+        """Someone's progress, newest first: rating_key, show_key,
+        position_ms, watched."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT rating_key, show_key, position_ms, watched FROM progress "
+                "WHERE user_id = ? ORDER BY updated_ms DESC, rowid DESC LIMIT ?",
+                (user_id, most),
+            ).fetchall()
+
+    def recent_progress_of_show(self, user_id: int, show_key: str, most: int) -> list[sqlite3.Row]:
+        """recent_progress, for one show's episodes."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT rating_key, show_key, position_ms, watched FROM progress "
+                "WHERE user_id = ? AND show_key = ? ORDER BY updated_ms DESC, rowid DESC LIMIT ?",
+                (user_id, show_key, most),
+            ).fetchall()
+
+    def watched_in_shows(self, user_id: int, show_keys: list[str]) -> dict[str, set[str]]:
+        """The episodes someone has watched of these shows: show -> keys."""
+        out: dict[str, set[str]] = {}
+        with self._lock:
+            for at in range(0, len(show_keys), 500):
+                batch = show_keys[at : at + 500]
+                marks = ",".join("?" * len(batch))
+                for row in self._conn.execute(
+                    "SELECT show_key, rating_key FROM progress "
+                    f"WHERE user_id = ? AND watched = 1 AND show_key IN ({marks})",
+                    (user_id, *batch),
+                ):
+                    out.setdefault(row["show_key"], set()).add(row["rating_key"])
+        return out
 
     def add_session(
         self, token_hash: str, user_id: int, now: int, keep: int, app: str = ""

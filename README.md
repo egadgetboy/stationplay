@@ -347,9 +347,11 @@ StationPlay's own apps are in development. They connect directly to your Station
 - **Secure sign-in.** On a TV, the app shows a short code that you enter on StationPlay's page from your phone or computer, so you never type a password with a remote. On a phone or tablet, you can use your name and password instead. Every signed-in app appears under **Signed-in apps** on the **Access** tab, where an Admin can sign it out.
 - **Watching away from home.** When an Admin turns this on, the apps also work away from home, over HTTPS through the same reverse proxy that serves StationPlay's page (see [Reaching StationPlay from outside your home](#reaching-stationplay-from-outside-your-home)).
 - **Built for stability.** An Admin sets how many devices can watch at once, including how many away from home. StationPlay tests what your server and internet connection can handle and recommends limits. When a limit is reached, the app explains why and asks the viewer to try again later.
-- **Later: your library on demand.** Browse your shows and movies, pick up where you left off with Continue Watching, skip intros and credits at the press of a button, and choose subtitles and audio tracks. Each device gets the best picture and sound it supports, including Dolby Vision and Dolby Atmos, and a file is converted only when a device can't play it as is.
+- **Your library on demand.** Browse your shows and movies, search them, and pick up where you left off with Continue Watching. Skip intros and credits at the press of a button, and choose subtitles and audio tracks. Each device gets the best picture and sound it supports, including Dolby Vision and Dolby Atmos, and a file is converted only when a device can't play it as it is.
 
 The server side is ready: StationPlay 1.19.0 and later include the connection the apps use, documented in [docs/app-api.md](docs/app-api.md).
+
+**Sharing your library with the apps.** Your library stays out of the apps until an Admin chooses which libraries to share, on the **Access** tab under **Your library in StationPlay's apps**. Stations, Plex, Jellyfin and other apps don't change either way. Each person who signs in has their own Continue Watching, resume points and watched list (while sign-in is off, everyone shares one). Programs played this way count toward the limit on devices watching at once. For now, the library plays files as they are, on your home network or through a VPN; converting files that a device can't play, and watching your library through the public port, come later. The design is in [docs/on-demand.md](docs/on-demand.md).
 
 ## Reaching StationPlay from outside your home
 
@@ -528,7 +530,7 @@ A station keeps running for 20 seconds after its last viewer leaves, so flipping
 
 ### How many can watch at once
 
-Every device watching through StationPlay's apps (or another player using the HLS addresses) receives its own copy of the station: at home over your network, and away from home over your internet connection's upload. A station still uses one tuner no matter how many people watch it, so this limit is about your network rather than your server's processor.
+Every device watching through StationPlay's apps (or another player using the HLS addresses) receives its own copy of the station: at home over your network, and away from home over your internet connection's upload. A station still uses one tuner no matter how many people watch it, so this limit is about your network rather than your server's processor. Programs played from your library in the apps count too.
 
 On the **Access** tab, under **How many can watch at once in StationPlay's apps**, an Admin can limit how many devices watch at once, and how many of those can be away from home. Leave a box empty for no limit. A device that's already watching can always change stations. Any device beyond the limit sees a message such as: "An Admin has limited StationPlay to 5 devices watching at once, so it runs smoothly for everyone. Please try again later." Plex, Jellyfin and IPTV apps aren't counted here: they have limits of their own, and the tuners cover them.
 

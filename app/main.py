@@ -37,6 +37,7 @@ from . import (
     __version__,
     access,
     appapi,
+    applibrary,
     away,
     backups,
     capacity,
@@ -48,6 +49,7 @@ from . import (
     links,
     logbuffer,
     marathons,
+    ondemand,
     playback,
     replacing,
     smart,
@@ -413,12 +415,20 @@ class AppContext:
     # last, for the page; and, in tests, what answers for them.
     arr_status: dict[str, dict] = field(default_factory=dict)
     arr_transport: Any = None
+    play_transport: Any = None  # (in tests, what answers for Plex's files)
+    play_client: Any = None  # fetches files from Plex for the apps' players (see applibrary.py)
     who_watches: stats.WhoWatches = field(init=False)  # who's watching, as Plex says
     limits: limits.Limits = field(init=False)  # stations kept from some Plex users
     bumpers: BumperLibrary = field(init=False)  # Intro Bumpers you've uploaded
     access: access.Access = field(init=False)  # who can sign in
     away: away.Away = field(init=False)  # StationPlay's apps away from home
     capacity: capacity.Capacity = field(init=False)  # how many apps may watch at once
+    # Your library in StationPlay's apps (see ondemand.py): which libraries
+    # are shared with them, what they're shown, what's playing, pictures.
+    shared: ondemand.Shared = field(init=False)
+    catalog: ondemand.Catalog = field(init=False)
+    plays: ondemand.PlaySessions = field(default_factory=ondemand.PlaySessions)
+    app_pictures: ondemand.PictureCache = field(default_factory=ondemand.PictureCache)
     stats: stats.Stats = field(init=False)  # how much each station is watched
     # Your shows and movies, wherever they come from (see library.py).
     library: Library = field(init=False)
@@ -437,6 +447,8 @@ class AppContext:
         self.access = access.Access(self.db)
         self.away = away.Away(self.db, self.access)
         self.capacity = capacity.Capacity(self.db)
+        self.shared = ondemand.Shared(self.db)
+        self.catalog = ondemand.Catalog(self.library, self.shared)
         self.stats = stats.Stats(self.db)
         self.updater = Updater(self)
         self.markers = MarkerFinder(self.db, self.library)
@@ -444,6 +456,14 @@ class AppContext:
         self.scanner = Scanner(self)
         self.who_watches = stats.WhoWatches(self)
         self.limits = limits.Limits(self.db)
+
+    def app_watchers(self) -> dict[str, bool]:
+        """The devices watching in StationPlay's apps now, stations and the
+        library alike: which -> whether it's away from home."""
+        watching = dict(self.hls_streams.watchers())
+        for client, away_ in self.plays.watching().items():
+            watching[client] = watching.get(client, False) or away_
+        return watching
 
     def station(self, channel_id: int) -> StationSchedule:
         """What plays when on a station, across its eras."""
@@ -574,6 +594,8 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         for b in list(ctx.broadcasters.values()):
             await b.stop("StationPlay is shutting down")
         await ctx.plex.close()
+        if ctx.play_client is not None:
+            await ctx.play_client.aclose()
         ctx.db.close()
 
     logs = logbuffer.install()
@@ -610,6 +632,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     app.add_middleware(access.Gate, access=ctx.access, public_port=settings.public_port)
     access.routes(app, ctx.access)
     appapi.routes(app, ctx)  # (for StationPlay's apps)
+    applibrary.routes(app, ctx)  # (your library in them)
     stats.routes(app, ctx)
 
     @app.exception_handler(LibraryError)
@@ -769,7 +792,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         channel = ctx.db.get_channel_by_number(number)
         if channel is None:
             raise HTTPException(404, f"There's no station {number}")
-        watching = ctx.hls_streams.watchers()
+        watching = ctx.app_watchers()
         if (over := ctx.capacity.refusal(watching, client, away_)) is not None:
             limit, most = over
             log.warning(
@@ -2396,7 +2419,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             rooms[where] = (
                 {"devices": capacity.room(best, each), "test": best.as_dict()} if best else None
             )
-        watching = ctx.hls_streams.watchers()
+        watching = ctx.app_watchers()
         limits_ = ctx.capacity.limits
         return {
             "devices": limits_.devices,
