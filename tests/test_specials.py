@@ -307,17 +307,24 @@ def test_a_block_plays_its_own_shows_and_carries_on_from_where_it_got_to(client)
     assert '<desc lang="en">Saturday Cartoons. Toons' in guide
     card = client.get("/api/channels").json()[0]
     assert card["nextBlock"] == {"title": "Saturday Cartoons", "at": runs[0].start_ms}
-    # Renamed: the same block (it carries on); a new one gets its own id.
+    # Renamed: the same block (it carries on); a new one gets its own id,
+    # half a day from the first, so they never overlap, whatever the time.
+    late = datetime.strptime(at, "%H:%M") + timedelta(hours=12)
+    if late.hour == 23 and late.minute > 15:
+        late -= timedelta(hours=1)  # (ending before midnight)
+    late_end = (late + timedelta(minutes=45)).strftime("%H:%M")
     body = {
         "number": 7,
         "sources": SHOWS,
         "blocks": [
             {**saved, "name": "Cartoon Time!"},
-            {"name": "Late", "days": "6", "start": "23:00", "end": "23:45", "sources": toons},
+            {"name": "Late", "days": "6", "start": late.strftime("%H:%M"), "end": late_end,
+             "sources": toons},
         ],
-    }
-    renamed = client.put(f"/api/channels/{made['id']}", json=body).json()
-    ids = [b["id"] for b in renamed["blocks"]]
+    }  # fmt: skip
+    renamed = client.put(f"/api/channels/{made['id']}", json=body)
+    assert renamed.status_code == 200, renamed.text
+    ids = [b["id"] for b in renamed.json()["blocks"]]
     assert ids[0] == saved["id"] and ids[1] != saved["id"] and len(ids[1]) == 8
     guide = client.get("/xmltv.xml").text
     assert "Cartoon Time! Toons" in guide and "Cartoon Time!." not in guide
