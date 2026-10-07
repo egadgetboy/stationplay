@@ -13,14 +13,14 @@
 #   4. In that folder:  docker compose up -d --build
 #
 # To update later: unzip the new version over src/, raise the version in
-# "image:" (e.g. 1.22.0 -> 1.22.1), then run  docker compose up -d --build
+# "image:" (e.g. 1.22.1 -> 1.22.2), then run  docker compose up -d --build
 
 services:
   stationplay:
     build:
       context: ./src
       dockerfile: Dockerfile
-    image: stationplay:1.22.0
+    image: stationplay:1.22.1
     container_name: stationplay
     restart: unless-stopped
     init: true
