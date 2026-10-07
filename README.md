@@ -410,6 +410,7 @@ What protects StationPlay there:
 - **Apps connect only over HTTPS.** Anything an app asks for that didn't come over HTTPS (as the proxy says) is refused, so no password, sign-in or stream address crosses the internet in the clear.
 - **Wrong passwords are limited:** 5 in 15 minutes from one address, and 100 in 15 minutes from the internet as a whole. A browser or app that has signed in before isn't held up by the second limit.
 - **Each signed-in app has a private address for its stations**, which stops working as soon as its sign-in ends: signing out, a new password, the person being removed, or an Admin signing that app out under **Signed-in apps** on the Access tab.
+- **API tokens are refused there** unless an Admin turns on **Accept API tokens from the internet**, and even then work only with [StationPlay's API](#stationplays-api).
 - **Plex's tuner, guides and streams don't exist there**, signed in or not.
 
 ### A Cloudflare Tunnel (the page only)
