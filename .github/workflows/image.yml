@@ -28,7 +28,7 @@ jobs:
           # (Each test that fails is named on the run's page, not only in its log.)
           set -o pipefail
           python -m pytest -q -p no:cacheprovider -rfE 2>&1 | tee "$RUNNER_TEMP/tests.txt" || {
-            grep -E "^(FAILED|ERROR) " "$RUNNER_TEMP/tests.txt" | head -20 | cut -c1-900 | sed 's/^/::error::/'
+            grep -E "^(FAILED|ERROR) " "$RUNNER_TEMP/tests.txt" | head -20 | cut -c1-1600 | sed 's/^/::error::/'
             exit 1
           }
       - uses: docker/login-action@v3

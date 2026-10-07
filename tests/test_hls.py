@@ -54,6 +54,17 @@ def starts_on_a_keyframe(path) -> bool:
     return bool(first) and first[0] == "1"
 
 
+def video_start(path, what: str) -> str:
+    """The first few video packets or frames of a piece, for a failure's message."""
+    entries = {"packet": "packet=pts_time,flags,size", "frame": "frame=key_frame,pict_type,pts_time"}[what]
+    got = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-read_intervals", "%+#4",
+         "-show_entries", entries, "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True,
+    )  # fmt: skip
+    return " ".join(got.stdout.split()) + (f" ({got.stderr.strip()[:120]})" if got.stderr.strip() else "")
+
+
 def two_episode_show(media) -> FakePlex:
     plex = FakePlex()
     plex.add_show("100", "Test Show")
@@ -117,10 +128,15 @@ async def test_an_app_watches_a_station_as_hls(tmp_path, media, monkeypatch):
 
         # Each piece starts on a keyframe, and together they play cleanly.
         ordered = sorted(got, key=lambda name: int(name[1:-3]))
-        for name in ordered[1:]:
+        for name in ordered:
+            (tmp_path / name).write_bytes(got[name])
+        for before, name in zip(ordered, ordered[1:]):
             path = tmp_path / name
-            path.write_bytes(got[name])
-            assert starts_on_a_keyframe(path), f"{name} doesn't start on a keyframe"
+            assert starts_on_a_keyframe(path), (
+                f"{name} doesn't start on a keyframe. Its packets: {video_start(path, 'packet')}; "
+                f"frames: {video_start(path, 'frame')}; {before} began: {video_start(tmp_path / before, 'packet')}; "
+                f"pieces {ordered}"
+            )
         joined = tmp_path / "joined.ts"
         joined.write_bytes(b"".join(got[name] for name in ordered))
         assert_clean_stream(joined)
