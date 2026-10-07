@@ -198,7 +198,7 @@ episode. Pictures (`poster`, `backdrop`, `thumb`) are addresses under
 `/api/internal/art`: add `&w=` with the width it will be shown at, in
 pixels, and send the app's token with them.
 
-Each person has their own place in what they watch (Continue Watching,
+Each person has their own place in what they watch (the Resume row,
 where to resume, what they've watched), kept by StationPlay. While signing
 in is off, everyone shares one.
 
@@ -236,7 +236,7 @@ What the app's home screen shows.
 
 | Field | Type | What it is |
 |---|---|---|
-| `continue` | list | Continue Watching: what this person is partway through, and the next episode of shows they've been watching, newest first (up to 20) |
+| `continue` | list | The Resume row: what this person is partway through, and the next episode of shows they've been watching, newest first (up to 20) |
 | `continue[]` | card | An episode or movie; `positionMs` is where to start it |
 | `added` | list | Each shared library's recently added shows or movies (libraries with none are left out) |
 | `added[].library` | string | The library's key |

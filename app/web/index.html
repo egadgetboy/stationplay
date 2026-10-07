@@ -15,9 +15,10 @@
     --ink-2: #56606b;
     --ink-3: #8a929b;
     --line: #e3dfd8;
-    --accent: #c9801c;
+    --accent: #0b7a6e;  /* StationPlay's teal (checked against the background) */
     --accent-ink: #ffffff;
-    --accent-soft: #fbefdc;
+    --accent-soft: #ddf1ed;
+    --warn: #9a5b00;
     --good: #2f7d4f;
     --good-soft: #e3f2e8;
     --bad: #b3402f;
@@ -25,7 +26,7 @@
     --shadow: 0 1px 2px rgba(20, 24, 30, .06), 0 2px 8px rgba(20, 24, 30, .05);
     --radius: 12px;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    --bar: #c9801c;  /* the Stats tab's bars: one hue, checked against the panel */
+    --bar: #0b7a6e;  /* the Stats tab's bars: one hue, checked against the panel */
     --brand: #0ea609;  /* the logo's green */
   }
   @media (prefers-color-scheme: dark) {
@@ -38,15 +39,16 @@
       --ink-2: #aab3bc;
       --ink-3: #75808b;
       --line: #28333e;
-      --accent: #e8a33d;
-      --accent-ink: #1a1206;
-      --accent-soft: #33271a;
+      --accent: #1fb5a3;
+      --accent-ink: #04201c;
+      --accent-soft: #133331;
+      --warn: #e9a43f;
       --good: #6cc592;
       --good-soft: #193326;
       --bad: #f08a78;
       --bad-soft: #3a1f1b;
       --shadow: 0 1px 2px rgba(0, 0, 0, .3);
-      --bar: #c27a1a;
+      --bar: #1a9c8d;
     }
   }
   * { box-sizing: border-box; }
@@ -500,7 +502,7 @@
   .logline:last-child { border-bottom: 0; }
   .logline .when { color: var(--ink-3); white-space: nowrap; }
   .logline .lvl { font-weight: 700; color: var(--ink-3); }
-  .logline.WARNING .lvl { color: var(--accent); }
+  .logline.WARNING .lvl { color: var(--warn); }
   .logline.ERROR { background: var(--bad-soft); }
   .logline.ERROR .lvl { color: var(--bad); }
   .logline .msg { word-break: break-word; white-space: pre-wrap; }  /* (an app's report runs over lines) */
@@ -4433,7 +4435,7 @@ async function loadAppLibraries() {
     h('div', { class: 'limit-note' }, h('strong', {}, 'How it works'),
       h('ul', {},
         h('li', {}, h('strong', {}, 'The best picture and sound. '), 'A file plays as it is whenever the device can play it, including 4K and HDR. If a device can’t play a file as it is, the app says why. Converting files for the apps comes later.'),
-        h('li', {}, h('strong', {}, 'Each person’s own place. '), 'Continue Watching, where to resume and what’s been watched are kept for each person who signs in (shared by everyone while sign-in is off).'),
+        h('li', {}, h('strong', {}, 'Each person’s own place. '), 'The Resume row, where each program picks up and what’s been watched are kept for each person who signs in (shared by everyone while sign-in is off).'),
         h('li', {}, h('strong', {}, 'At home for now. '), 'Your library can be watched on your home network, or through a VPN such as Tailscale or WireGuard. Watching it through the public port comes later, with converting to fit your upload speed.'),
         h('li', {}, h('strong', {}, 'Steady playing. '), 'The apps buffer ahead first. If playing still can’t keep up for a while, a short connection test says whether it’s the connection, StationPlay reading the file, or the device, and a smaller version of the title is used, as you choose below.'),
         h('li', {}, 'Programs played this way count toward the limit on devices watching at once, above.'))),

@@ -55,8 +55,8 @@ BOLD = FONTS / "Montserrat-ExtraBold.ttf"
 SEMI = FONTS / "Montserrat-SemiBold.ttf"
 MEDIUM = FONTS / "Montserrat-Medium.ttf"
 FPS = f"{ff.FPS_NUM}/{ff.FPS_DEN}"
-# Without a logo to take colours from: deep blue, with amber.
-PLAIN_COLOURS = ("0A1426", "1A2C4E", "F2B544")
+# Without a logo to take colours from: deep blue, with teal.
+PLAIN_COLOURS = ("0A1426", "1A2C4E", "4CCFBF")
 
 
 # The pictures a card is drawn as (the last two only with a logo).

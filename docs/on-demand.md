@@ -24,8 +24,9 @@ library layer it builds on is in `docs/library.md`.
 ## Releases
 
 - **1.21.0:** sharing libraries; browsing, details, search and pictures;
-  direct play; progress, resume and watched; Continue Watching and
-  recently added. At home, and over a VPN (which looks like home).
+  direct play; progress, resume and watched; the Resume row (then called
+  Continue Watching) and recently added. At home, and over a VPN (which
+  looks like home).
 - **1.22.0:** versions (the best one the device and its connection keep
   up with, one chosen when playing, and a smaller one when playing can't
   keep up); Skip intro and Skip credits for episodes only, where Plex's
@@ -67,7 +68,7 @@ so nothing can be learned by guessing keys.
 |---|---|
 | `GET /libraries` | The shared libraries: key, title, kind (`show` or `movie`) |
 | `GET /libraries/{key}` | One library's shows or movies, a page at a time (`start`, `size` up to 200), sorted by `title`, `added` (newest first) or `released` (newest first) |
-| `GET /home` | Continue Watching for this person, and each shared library's recently added |
+| `GET /home` | The Resume row for this person, and each shared library's recently added |
 | `GET /search?q=` | Shows and movies whose titles contain the words, across shared libraries; and stations airing one now |
 | `GET /items/{key}` | A show's or movie's or episode's details |
 | `GET /items/{key}/episodes?season=` | A show's episodes: one season's, or all of them |
@@ -229,7 +230,7 @@ progress (user_id, rating_key, show_key, position_ms, duration_ms,
 - **Up next** for a show: the episode someone is partway through (or barely
   started), or the one after the last they finished, or the first; specials
   aside, and skipping episodes already watched.
-- **Continue Watching**: programs partway through, and up next for shows
+- **The Resume row**: programs partway through, and up next for shows
   watched lately, newest first, one per show, up to 20.
 - Removing a user removes their progress.
 - Plex's own watched status is left alone in 1.21.0: one Plex account can't
@@ -257,6 +258,6 @@ stations are airing it right now.
 1. This document.
 2. Sharing, the "is it shared?" check, browsing, details, search and
    pictures, with the Plex calls behind `Library`.
-3. Play sessions, direct play, progress and Continue Watching.
+3. Play sessions, direct play, progress and the Resume row.
 4. The contract (`docs/internal-api.md`) and its tests, the Access tab, the
    README; then 1.21.0.

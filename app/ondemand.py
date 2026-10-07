@@ -684,7 +684,7 @@ def width_for(asked: int) -> int:
     return next((w for w in WIDTHS if w >= asked), WIDTHS[-1])
 
 
-# Continue Watching and what's next -------------------------------------------------
+# The Resume row and what's next -------------------------------------------------
 
 
 async def up_next(cat: Catalog, db: Database, user_id: int, show: str) -> tuple[Entry, int] | None:
