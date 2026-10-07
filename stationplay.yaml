@@ -19,7 +19,7 @@
 #   1. Unzip the new version over the src folder:
 #        cd /mnt/tank/apps/stationplay
 #        sudo unzip -o /path/to/stationplay-<version>.zip
-#   2. Edit the app, raise the version in "image:" (e.g. 1.20.0 -> 1.20.1),
+#   2. Edit the app, raise the version in "image:" (e.g. 1.21.0 -> 1.21.1),
 #      change nothing else, and save.
 # A new version number is what tells TrueNAS to rebuild, and it builds from
 # whatever is in src when you save: save first and it builds the old code
@@ -30,7 +30,7 @@ services:
     build:
       context: /mnt/tank/apps/stationplay/src       # <- CHANGE to your src folder
       dockerfile: Dockerfile
-    image: stationplay:1.20.0
+    image: stationplay:1.21.0
     container_name: stationplay
     restart: unless-stopped
     init: true
