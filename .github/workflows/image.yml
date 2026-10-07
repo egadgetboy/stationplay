@@ -24,6 +24,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
           pip install -r requirements.txt pytest==9.1.1 pytest-asyncio==1.4.0
           # (Each test that fails is named on the run's page, not only in its log.)
+          set -o pipefail
           python -m pytest -q -p no:cacheprovider -rfE 2>&1 | tee "$RUNNER_TEMP/tests.txt" || {
             grep -E "^(FAILED|ERROR) " "$RUNNER_TEMP/tests.txt" | head -20 | cut -c1-900 | sed 's/^/::error::/'
             exit 1
