@@ -441,8 +441,12 @@ and `deviceName` (as for signing in, for the log):
 
 `hdr` lists only what the screen shows (`hdr10`, `hlg`, `dv` for Dolby
 Vision); `[]` for a screen without HDR. Add `"version"` (a version's `id`
-from its details) to play that version; without it, the best version the
-device can play as it is plays. A file plays as it is when the
+from its details) to play that version. Without it, the best version the
+device can play as it is plays, unless the app sends `"maxKbps"`: how much
+its connection to StationPlay carries, as it measured lately (with
+`/api/v1/speed-test`). Then the best one that connection keeps up with
+plays (it needs no more than two-thirds of it, on average), or with none,
+the smallest the device can play. A file plays as it is when the
 device can play its file type, its picture's format at its size and bit
 depth, its HDR (Dolby Vision profile 5 needs `dv`; other profiles also play
 as the HDR10, HLG or ordinary picture beneath), and the sound of its default
@@ -491,6 +495,7 @@ showed where the trouble is (otherwise offer it); with none, say so plainly.
 | `versions[].playable` | boolean | Whether this device can play it as it is |
 | `versions[].why` | list or null | Why not, as in a 422's `why` (null when it can) |
 | `versions[].why[]` | string | One reason |
+| `versions[].fits` | boolean or null | Whether the connection keeps up with it (`maxKbps`); null when that, or what it needs, isn't known |
 | `whenSlow` | string | What the Admin chose for when playing can't keep up here: `offer` (stop, and offer a smaller playable version from where the viewer is) or `switch` (switch to it on its own, and say so) |
 | `markers` | object | As in its details |
 | `markers.intro` | list or null | As in its details |

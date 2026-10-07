@@ -417,21 +417,45 @@ def best_first(media: Iterable[Media]) -> list[Media]:
     )
 
 
-def choose(entry: Entry, dev: Device, version: str | None = None) -> tuple[Media | None, list[str]]:
+# A version fits a connection when the connection carries this much more
+# than the version needs on average (busy scenes need more).
+FIT_HEADROOM = 1.5
+
+
+def fits(media: Media, max_kbps: int | None) -> bool | None:
+    """Whether a connection carrying `max_kbps` keeps up with a version
+    (None when either isn't known)."""
+    if not max_kbps or not media.bitrate_kbps:
+        return None
+    return media.bitrate_kbps * FIT_HEADROOM <= max_kbps
+
+
+def choose(
+    entry: Entry, dev: Device, version: str | None = None, max_kbps: int | None = None
+) -> tuple[Media | None, list[str]]:
     """The version of a program's file to play as it is on a device: the one
-    asked for, or else the best the device can play (None, and why not, if
-    it can't). A version that's gone counts as not asked for."""
+    asked for; or else the best the device can play that the connection
+    keeps up with (as the app measured it: `max_kbps`), or with none that
+    does, the smallest it can play. None, and why not, if it can't play any.
+    A version that's gone counts as not asked for."""
     asked = next((m for m in entry.media if version and m.id == version), None)
     if asked is not None:
         why = unplayable(asked, dev)
         return (asked, []) if not why else (None, why)
     first_why: list[str] = []
+    playable = []
     for media in best_first(entry.media):
         why = unplayable(media, dev)
-        if not why:
-            return media, []
-        first_why = first_why or why
-    return None, first_why
+        if why:
+            first_why = first_why or why
+        else:
+            playable.append(media)
+    if not playable:
+        return None, first_why
+    if max_kbps:
+        fitting = [m for m in playable if fits(m, max_kbps) is not False]
+        return (fitting[0] if fitting else playable[-1]), []
+    return playable[0], []
 
 
 def version_labels(media: Iterable[Media]) -> dict[int, str]:

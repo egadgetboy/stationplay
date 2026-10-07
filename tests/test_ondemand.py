@@ -125,6 +125,14 @@ def test_the_best_version_the_device_can_play_is_chosen():
     assert ondemand.choose(many, hd_box, "sd")[0] is sd
     assert ondemand.choose(many, hd_box, "uhd") == (None, ["its picture's format (HEVC)"])
     assert ondemand.choose(many, hd_box, "gone")[0] is hd_more  # (a version since removed)
+    # What the connection keeps up with, as the app measured it: the best that fits,
+    # or the smallest it can play; one asked for plays regardless.
+    rated = Entry("3", catalog.MOVIE, "Rated", media=(sd, hd, uhd, hd_more))
+    assert ondemand.choose(rated, TV_BOX, max_kbps=20_000)[0] is hd_more
+    assert ondemand.choose(rated, TV_BOX, max_kbps=1_000)[0] is sd
+    assert ondemand.choose(rated, TV_BOX, "uhd", max_kbps=1_000)[0] is uhd
+    assert ondemand.choose(rated, TV_BOX, max_kbps=90_000)[0] is uhd
+    assert ondemand.fits(hdr, 1_000) is None  # (what it needs isn't known)
     codecs = [media(id="a"), media(id="b", video="hevc")]
     assert list(ondemand.version_labels(codecs).values()) == ["1080p · H.264", "1080p · HEVC"]
     assert catalog.size_label(720, 576) == "576p" and catalog.size_label(320, 240) == "SD"
@@ -434,6 +442,9 @@ def test_playing_a_file_as_it_is(app, plex, tmp_path, caplog):
             "/api/app-libraries", json={"libraries": ["1", "2"], "whenSlow": {"home": "switch"}}
         )
         assert "at home, switch to a smaller version" in caplog.text
+        slow = home.post("/api/v1/play", json={"key": "300", "device": TV, "maxKbps": 9_000})
+        assert slow.json()["version"] == "30001"  # (8,000 kbps doesn't fit 9,000 with room)
+        assert [v["fits"] for v in slow.json()["versions"]] == [False, True]
         smaller = home.post(
             "/api/v1/play", json={"key": "300", "device": TV, "version": "30001"}
         ).json()

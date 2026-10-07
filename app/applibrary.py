@@ -75,6 +75,7 @@ class PlayAsk(BaseModel):
     key: str = Field(max_length=20)
     device: Abilities
     version: str | None = Field(default=None, max_length=40)
+    maxKbps: int | None = Field(default=None, ge=100, le=10_000_000)
     app: str = Field(default="", max_length=APP_MAX)
     deviceName: str = Field(default="", max_length=APP_MAX)
 
@@ -165,13 +166,16 @@ def versions(e: Entry) -> list[dict]:
     ]
 
 
-def playable_versions(e: Entry, dev: ondemand.Device) -> list[dict]:
-    """Its versions, each saying whether this device can play it as it is."""
+def playable_versions(e: Entry, dev: ondemand.Device, max_kbps: int | None) -> list[dict]:
+    """Its versions, each saying whether this device can play it as it is,
+    and whether the connection keeps up with it."""
     out = []
     best = [m for m in ondemand.best_first(e.media) if m.id]
     for v, m in zip(versions(e), best, strict=True):
         why = ondemand.unplayable(m, dev)
-        out.append({**v, "playable": not why, "why": why or None})
+        out.append(
+            {**v, "playable": not why, "why": why or None, "fits": ondemand.fits(m, max_kbps)}
+        )
     return out
 
 
@@ -444,7 +448,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             body.device.hdr,
             body.device.audio,
         )
-        media, why = ondemand.choose(e, dev, body.version)
+        media, why = ondemand.choose(e, dev, body.version, body.maxKbps)
         if media is None:
             log.info(
                 "A StationPlay app can't play %s as it is (%s)", describe(e), ondemand.and_list(why)
@@ -516,7 +520,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "durationMs": media.duration_ms or e.duration_ms,
             "bitrateKbps": media.bitrate_kbps,
             "version": media.id or None,
-            "versions": playable_versions(e, dev),
+            "versions": playable_versions(e, dev, body.maxKbps),
             "whenSlow": ctx.shared.when_slow["home"],
             "markers": _markers(e),
             "audio": tracks(media.audio, True),
