@@ -15,15 +15,19 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
       - name: Test
         run: |
-          sudo apt-get update && sudo apt-get install -y ffmpeg
-          pip install -r requirements.txt pytest pytest-asyncio
-          python -m pytest -q
+          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+          pip install -r requirements.txt pytest==9.1.1 pytest-asyncio==1.4.0
+          # (Each test that fails is named on the run's page, not only in its log.)
+          python -m pytest -q -p no:cacheprovider -rfE 2>&1 | tee "$RUNNER_TEMP/tests.txt" || {
+            grep -E "^(FAILED|ERROR) " "$RUNNER_TEMP/tests.txt" | head -20 | cut -c1-900 | sed 's/^/::error::/'
+            exit 1
+          }
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
