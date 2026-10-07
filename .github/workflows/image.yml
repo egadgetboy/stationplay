@@ -23,6 +23,8 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
           pip install -r requirements.txt pytest==9.1.1 pytest-asyncio==1.4.0
+          # (What the tests ran with, on the run's page.)
+          echo "::notice::$(ffmpeg -version | head -1) at $(command -v ffmpeg); $(nproc) processors; $(python --version)"
           # (Each test that fails is named on the run's page, not only in its log.)
           set -o pipefail
           python -m pytest -q -p no:cacheprovider -rfE 2>&1 | tee "$RUNNER_TEMP/tests.txt" || {
