@@ -260,7 +260,7 @@ async def test_finds_commercials_and_trailers_beside_the_libraries(tmp_path):
 async def test_a_station_made_while_the_first_look_is_going_waits_for_it(tmp_path):
     """A station made just after StationPlay starts, while it's still looking
     for commercials, gets them: ready() waits for the look under way (it
-    once didn't, and the station had none until the next hourly check)."""
+    once didn't, and the station had none until the next check for updates)."""
     ctx, _plex = library(tmp_path)
     clip_file(tmp_path / "tv/commercials/a.mp4", 4)
     fillers = FillerLibrary(ctx)

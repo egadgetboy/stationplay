@@ -142,7 +142,8 @@ class FillerLibrary:
         """Makes sure the folders have been looked in (or tried) once, waiting
         for a look already under way: a station made while the first one
         (as StationPlay starts) is still going would otherwise get no
-        commercials or trailers until the next hourly check."""
+        commercials or trailers until StationPlay next checks Plex for
+        updates."""
         if not self._tried:
             await self.refresh()
         await self._looked.wait()
