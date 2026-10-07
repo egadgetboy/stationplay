@@ -933,6 +933,8 @@ The tests need ffmpeg on the `PATH` (the HDR and real-world tests also need ffmp
 
 `.github/workflows/image.yml` is optional: if you keep the code on GitHub, it runs the tests and publishes an x86-64 image to GitHub's container registry.
 
+**Releases.** Each release's notes are in `docs/releases/v<version>.md`, whose first lines name the commit of that version (`commit: <its full ID>`). When one is added to `main`, `.github/workflows/release.yml` publishes it on GitHub: the tag at that commit, the notes, and the release's files built from that commit (`stationplay-<version>.zip`, `stationplay.yaml` and `docker-compose.yml`). It checks that the commit is on `main` and is that version, leaves releases already published alone, and marks the newest as the latest.
+
 ### The logo library
 
 The logos in `app/logos/` are drawn by code in `tools/logos/`, not by hand. `kit.py` is the drawing kit; `networks.py`, `classic_tv.py`, `tv_shows.py`, `movies.py`, `toons.py`, `kids.py`, `genres.py`, `themes.py`, `seasons.py` and `letters.py` design each group from the lettering, pictures (`symbols.py`) and layouts (`layouts.py`) there; and `build.py` draws them all with Chromium and writes the PNGs and `catalog.json`. Only the PNGs and `catalog.json` ship. The fonts are open-licensed (SIL Open Font License or Apache 2.0) and only needed to redraw the logos:
@@ -994,7 +996,7 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/web/index.html` | The web page |
 | `tests/` | Unit and end-to-end tests |
 | `Dockerfile`, `stationplay.yaml`, `docker-compose.yml` | The image, the TrueNAS app, and the Compose file |
-| `docs/` | StationPlay's logo; StationPlay's API (`api.md`, `openapi-v1.json`); the apps' own addresses (`internal-api.md`); the designs of the library (`library.md`) and of watching it on demand (`on-demand.md`) |
+| `docs/` | StationPlay's logo; StationPlay's API (`api.md`, `openapi-v1.json`); the apps' own addresses (`internal-api.md`); the designs of the library (`library.md`) and of watching it on demand (`on-demand.md`); each release's notes (`releases/`) |
 
 ## Contributing
 

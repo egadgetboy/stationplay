@@ -1,0 +1,74 @@
+# Publishes StationPlay's releases on GitHub, from docs/releases/: each
+# v<version>.md there names the commit of that version (its "Version X"
+# commit on main) and holds its notes. For each one not yet published, this
+# makes the tag at that commit and the release, with the release's files
+# built from that commit: stationplay-<version>.zip (unzipping to src),
+# stationplay.yaml and docker-compose.yml. A release already published is
+# left as it is. The newest version is marked the latest release.
+name: release
+
+on:
+  push:
+    branches: [main]
+    paths: [docs/releases/**, .github/workflows/release.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # (every version's commit)
+      - name: Publish what's new
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          newest=$(ls docs/releases/v*.md | sed 's|.*/v\(.*\)\.md|\1|' | sort -V | tail -1)
+          for version in $(ls docs/releases/v*.md | sed 's|.*/v\(.*\)\.md|\1|' | sort -V); do
+            tag="v$version"
+            file="docs/releases/$tag.md"
+            if gh release view "$tag" > /dev/null 2>&1; then
+              echo "$tag: already published"
+              continue
+            fi
+            commit=$(sed -n '2s/^commit: \([0-9a-f]\{40\}\)$/\1/p' "$file")
+            # Checks: the commit is on main, and is that version.
+            if [ -z "$commit" ] || ! git cat-file -e "$commit^{commit}" 2>/dev/null; then
+              echo "::error::$file: its second line must be 'commit: <a commit's full ID>'"; exit 1
+            fi
+            if ! git merge-base --is-ancestor "$commit" origin/main; then
+              echo "::error::$tag: commit $commit isn't on main"; exit 1
+            fi
+            if ! git show "$commit:app/__init__.py" | grep -q "^__version__ = \"$version\"$"; then
+              echo "::error::$tag: app/__init__.py at $commit isn't version $version"; exit 1
+            fi
+            if git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
+              if [ "$(git rev-parse "$tag^{commit}")" != "$commit" ]; then
+                echo "::error::$tag already exists, at another commit"; exit 1
+              fi
+            fi
+            # The release's files, from that commit.
+            out="$RUNNER_TEMP/$tag"
+            mkdir -p "$out"
+            git archive --format=zip --prefix=src/ -o "$out/stationplay-$version.zip" "$commit"
+            git show "$commit:stationplay.yaml" > "$out/stationplay.yaml"
+            git show "$commit:docker-compose.yml" > "$out/docker-compose.yml"
+            # The notes: everything after the commit's lines.
+            tail -n +4 "$file" | sed '/./,$!d' > "$out/notes.md"
+            latest=false
+            if [ "$version" = "$newest" ]; then latest=true; fi
+            gh release create "$tag" --target "$commit" --title "StationPlay $version" \
+              --notes-file "$out/notes.md" --latest="$latest" \
+              "$out/stationplay-$version.zip" "$out/stationplay.yaml" "$out/docker-compose.yml"
+            echo "::notice::Published $tag"
+          done
