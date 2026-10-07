@@ -170,13 +170,18 @@ seconds, within its memory budget), and after a stall, a good 8 seconds
 before carrying on, so a slow patch is one pause rather than many. Waits
 after a seek, or before the first picture, aren't stalls.
 
-Only trouble that lasts counts: 4 stalls within 3 minutes, 20 seconds of
-them in all, or one of 15 seconds; or frames the device couldn't draw in
-time, through most of a minute (not one hiccup). Then a short test says
-where the trouble is: frames not drawn in time are the device's; for a file
-not arriving in time, a 3-second connection test (`/api/v1/speed-test`)
-against what the file needs (`bitrateKbps` in the play answer) says whether
-it's the connection, or StationPlay reading the file (its disk, or Plex).
+Only trouble that lasts counts. The first 45 seconds are the buffer's and
+the decoder's (only a single 20-second stall counts then), and waits under
+a second are hiccups. After that: 4 stalls within 3 minutes, 20 seconds of
+them in all, or one of 20 seconds; or frames the device couldn't draw in
+time, through most of a minute. Then short tests say where the trouble is:
+frames not drawn in time are the device's; for a file not arriving in time,
+a 3-second connection test (`/api/v1/speed-test`) against what the file
+needs (`bitrateKbps` in the play answer) says whether it's the connection;
+a fast connection with the file itself arriving slower than it needs (the
+player's own measure) says it's StationPlay reading the file (its disk, or
+Plex). Anything else the tests don't show, and nothing is switched on its
+own for it.
 
 Then a smaller version of the same title that the device can play, from
 where the viewer is, as the Admin chose (`whenSlow`, kept in `meta` as

@@ -463,12 +463,14 @@ that on. Movies have no markers, since where a movie's credits start is too
 often uncertain.
 
 When playing keeps stopping to load, let the player's buffer deal with it
-first. Only trouble that lasts counts (the Android app: 4 stalls within 3
-minutes, 20 seconds of them, one of 15 seconds, or frames not drawn in time
-through most of a minute). Then a short connection test (`/api/v1/speed-test`)
-against `bitrateKbps` says whether it's the connection, StationPlay reading
-the file, or the device. If a smaller version is `playable`, do as
-`whenSlow` says, from where the viewer is; otherwise, say so plainly.
+first. Only trouble that lasts counts (the Android app: nothing in the first
+45 seconds but one 20-second stall; then 4 stalls of a second or more within
+3 minutes, 20 seconds of them, or frames not drawn in time through most of a
+minute). Then short tests say where it is: a connection test
+(`/api/v1/speed-test`) against `bitrateKbps`, and how fast the file itself
+has been arriving. If a smaller version is `playable`, do as `whenSlow`
+says, from where the viewer is, but switch on its own only when the tests
+showed where the trouble is (otherwise offer it); with none, say so plainly.
 
 | Field | Type | What it is |
 |---|---|---|
