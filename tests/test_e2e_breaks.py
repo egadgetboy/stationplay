@@ -221,11 +221,12 @@ async def test_a_commercial_that_stops_short_is_covered_and_left_out(tmp_path, c
     out = tmp_path / "short.ts"
     out.write_bytes(data)
     assert_clean_stream(out)
-    assert "cut.mkv didn't play" in caplog.text
-    assert status["fillers"]["unplayable"] == [str(cut)]
-    assert not (tmp_path / "data" / "broken-files.json").exists()  # no program blamed
     got = runs(out)
     print(got)
+    # (On GitHub this has now and then found nothing wrong: what played says why.)
+    assert "cut.mkv didn't play" in caplog.text, (status["fillers"], got)
+    assert status["fillers"]["unplayable"] == [str(cut)]
+    assert not (tmp_path / "data" / "broken-files.json").exists()  # no program blamed
     colours = [c for c, _ in got]
     # Programs keep their places whatever happens in the breaks.
     programs = [(c, s) for c, s in got if c in ("yellow", "cyan")]
