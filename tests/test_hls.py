@@ -85,7 +85,7 @@ async def test_an_app_watches_a_station_as_hls(tmp_path, media, monkeypatch):
                 for name in pieces(playlist):
                     if name not in got:
                         piece = await client.get(f"/hls/7/{name}")
-                        assert piece.status_code == 200, name
+                        assert piece.status_code == 200, f"{name}: {piece.status_code}"
                         assert piece.headers["content-type"] == "video/mp2t"
                         got[name] = piece.content
                 await asyncio.sleep(1)
@@ -120,7 +120,7 @@ async def test_an_app_watches_a_station_as_hls(tmp_path, media, monkeypatch):
         for name in ordered[1:]:
             path = tmp_path / name
             path.write_bytes(got[name])
-            assert starts_on_a_keyframe(path), name
+            assert starts_on_a_keyframe(path), f"{name} doesn't start on a keyframe"
         joined = tmp_path / "joined.ts"
         joined.write_bytes(b"".join(got[name] for name in ordered))
         assert_clean_stream(joined)
