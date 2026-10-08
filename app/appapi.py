@@ -379,9 +379,18 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     async def picker_choose(body: PickerChoice, request: Request):
         device = this_device(request)
         try:
-            user, token = await ctx.devices.choose(device, body.id, body.pin, body.password)
+            user, token = await ctx.devices.choose(
+                device,
+                body.id,
+                body.pin,
+                body.password,
+                access.address(request.scope),
+                public=access.outside(request.scope),
+            )
         except devices.Refused as e:
             raise HTTPException(e.status, str(e)) from None
+        except access.Busy as e:
+            raise HTTPException(429, str(e)) from None
         log.info("%s is watching on %s", user.name, device.name)
         return {"token": token, "user": {"name": user.name, "role": user.role}}
 

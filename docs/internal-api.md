@@ -77,7 +77,8 @@ picking someone else ends it. A device key lasts until an Admin unlinks the
 device on the Access tab, which also signs out whoever is signed in on it:
 anything asked with its key then answers 401, and the app links again. An
 app shows the picker when it lists more than one person, or one with a
-PIN; otherwise it picks the one person itself.
+PIN; otherwise it picks the one person itself. (An Admin without a PIN
+gives their password only on a device others use too.)
 
 Apps that don't send `"picker": true` sign in as they always have, and get
 no `deviceKey`.
@@ -183,7 +184,8 @@ Asked with the device's key. Picks someone on its picker:
 {"id": 3, "pin": "1234"}
 ```
 
-`pin` when they have one; `password` instead, for an Admin with no PIN.
+`pin` when they have one; `password` instead, for an Admin with no PIN on
+a device others use too (its picker lists more than one person).
 
 | Field | Type | What it is |
 |---|---|---|
@@ -192,9 +194,10 @@ Asked with the device's key. Picks someone on its picker:
 | `user.name` | string | Their name |
 | `user.role` | string | `admin` or `user` |
 
-Answers 401 for a wrong PIN or password, 429 after 5 wrong PINs for that
-person in 15 minutes (on any device), and 404 for someone not on this
-device's picker.
+Answers 403 for a wrong PIN or password (with the sentence to show), 429
+after 5 wrong PINs for that person in 15 minutes (on any device), and 404
+for someone not on this device's picker. 401 always means the device isn't
+linked any more, here and on every picker address: link it again.
 
 ## POST /api/internal/picker/sign-in
 
@@ -216,9 +219,10 @@ device's picker from then on.
 | `user.name` | string | Their name |
 | `user.role` | string | `admin` or `user` |
 
-Answers 401 for a wrong name, code or password; 403 for someone who can't
+Answers 403 for a wrong name, code or password, or for someone who can't
 sign in by name (they have neither a password nor a PIN: pick them from
-the list); and 429 after 10 wrong tries on this device in 15 minutes.
+the list), with the sentence to show; and 429 after 10 wrong tries on this
+device in 15 minutes.
 
 ## POST /api/internal/picker/remove
 

@@ -67,6 +67,9 @@ CODE_LETTERS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 NAME_MOST = 120
 DEVICE_HEADER = "stationplay-device"
 WRONG_PIN = "That PIN isn't right"
+ADMIN_PASSWORD = (
+    "Enter your password: on a device others use too, an Admin needs a PIN or their password"
+)
 WRONG_SIGN_IN = "That name, code or password isn't right"
 
 
@@ -184,21 +187,30 @@ class Devices:
     # Picking someone ---------------------------------------------------------------
 
     async def choose(
-        self, device: Device, user_id: int, pin: str | None, password: str | None
+        self,
+        device: Device,
+        user_id: int,
+        pin: str | None,
+        password: str | None,
+        address: str = "",
+        public: bool = False,
     ) -> tuple[User, str]:
         """Signs in on a device as someone on its picker: their PIN if they
-        have one, or (an Admin without one) their password. The person and
-        the sign-in's token. Refused."""
+        have one, or (an Admin without one, on a device others use too) their
+        password. The person and the sign-in's token. Refused, or
+        access.Busy."""
         user = self.db.user(user_id)
         here = self.db.device_people().get(device.id, {})
         if user is None or not self.on_picker(device, user, here.get(user.id)):
             raise Refused("That person isn't on this device's list", 404)
         if user.has_pin:
             await self._check_pin(user, pin or "")
-        elif user.role == ADMIN:
-            stored = self.db.password_hash(user.id)
-            if not password or not await asyncio.to_thread(password_matches, password, stored):
-                raise Refused("Enter your password: an Admin always needs one here", 401)
+        elif user.role == ADMIN and len(self.people(device)) > 1:
+            right = password and await self.access.check_password(
+                user.name, password, address, public=public, known=True
+            )
+            if not right:
+                raise Refused(ADMIN_PASSWORD)
         return user, self.access.start_session(user, device.name, device.id)
 
     async def _check_pin(self, user: User, pin: str) -> None:
@@ -221,7 +233,7 @@ class Devices:
                 self.access.record(
                     logging.WARNING, f"Too many wrong PINs for {user.name}: they wait 15 minutes"
                 )
-            raise Refused(WRONG_PIN, 401)
+            raise Refused(WRONG_PIN)
         wrong.clear()
 
     async def sign_in_by_name(
@@ -250,7 +262,7 @@ class Devices:
                 device, name, code, password, address, public, secret
             )
         except Refused as e:
-            if e.status == 401:
+            if str(e) == WRONG_SIGN_IN:
                 wrong.append(now)
             raise
 
@@ -278,7 +290,7 @@ class Devices:
                     logging.WARNING,
                     f"Failed sign-in as {name[:40]!r} with an invite code on {device.name}",
                 )
-                raise Refused(WRONG_SIGN_IN, 401)
+                raise Refused(WRONG_SIGN_IN)
             self.db.end_invite(user.id)  # (once)
         else:
             user = await self.access.check_password(name, password or "", address, public=public)
@@ -286,7 +298,7 @@ class Devices:
                 self.access.record(
                     logging.WARNING, f"Failed sign-in as {name[:40]!r} on {device.name}"
                 )
-                raise Refused(WRONG_SIGN_IN, 401)
+                raise Refused(WRONG_SIGN_IN)
         if not self.signs_in_by_name(user):
             raise Refused(
                 f"{user.name} can't sign in by name. Choose them from this device's list, if "

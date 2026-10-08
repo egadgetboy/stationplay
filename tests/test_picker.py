@@ -82,7 +82,7 @@ def test_a_household_tv(app):
         assert tv.get("/api/v1/stations", headers=as_kids).status_code == 200
         ada_id = next(u["id"] for u in admin.get("/api/access/users").json() if u["name"] == "Ada")
         refused = tv.post("/api/internal/picker/choose", json={"id": ada_id}, headers=device(key))
-        assert refused.status_code == 401 and "password" in refused.json()["detail"]
+        assert refused.status_code == 403 and "password" in refused.json()["detail"]
         ada = tv.post(
             "/api/internal/picker/choose",
             json={"id": ada_id, "password": ADA["password"]},
@@ -98,7 +98,7 @@ def test_a_household_tv(app):
             json={"name": "Kids", "password": ""},
             headers=device(key),
         )
-        assert no.status_code == 401
+        assert no.status_code == 403
         tia_in = tv.post(
             "/api/internal/picker/sign-in",
             json={"name": "Tia", "password": "teen password"},
@@ -113,7 +113,7 @@ def test_a_household_tv(app):
                 json={"id": tia_id, "pin": "0000"},
                 headers=device(key),
             )
-            assert wrong.status_code == 401 and wrong.json()["detail"] == "That PIN isn't right"
+            assert wrong.status_code == 403 and wrong.json()["detail"] == "That PIN isn't right"
         waits = tv.post(
             "/api/internal/picker/choose", json={"id": tia_id, "pin": "4321"}, headers=device(key)
         )
@@ -164,7 +164,7 @@ def test_an_invite_code_works_once(app):
             json={"name": "Lu", "code": made["code"]},
             headers=device(key),
         )
-        assert again.status_code == 401
+        assert again.status_code == 403
         # A code is no use without a linked device.
         assert (
             TestClient(app)
@@ -223,6 +223,16 @@ def test_who_can_be_shown_where(app):
             admin.put(f"/api/access/users/{kids['id']}/picker", json={"pin": "12"}).json()["detail"]
             == "A PIN is 4 digits"
         )
+
+
+def test_an_admin_alone_on_a_device_needs_no_password_to_pick_themselves(app):
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        tv = TestClient(app)
+        key = tv.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]
+        [ada] = tv.get("/api/internal/picker", headers=device(key)).json()["people"]
+        picked = tv.post("/api/internal/picker/choose", json={"id": ada["id"]}, headers=device(key))
+        assert picked.status_code == 200
 
 
 def test_a_sign_in_from_a_picker_lasts_a_day_unused(app):
