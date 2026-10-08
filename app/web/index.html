@@ -699,7 +699,7 @@
         <dt>Admin</dt>
         <dd>Can do everything: manage every station and use Stats, Add to Plex (including backups), Broken files, Logs, and Access (who can sign in).</dd>
         <dt>User</dt>
-        <dd>Can watch the stations and library their Viewing Level allows (Adult, with no limits, to start), and see Stats. Can make new stations (as many as you allow below, 3 to start) and change or delete only the stations they made. Can add logos (uploaded, or a show’s logo from Plex) and Intro Bumper videos, but only Admins can delete them. On a Viewing Level with limits, they only watch. Can’t open Add to Plex, Broken files, Logs, or Access.</dd>
+        <dd>Can watch the stations and library their Viewing Level allows (Unrestricted, with no limits, to start), and see Stats. Can make new stations (as many as you allow below, 3 to start) and change or delete only the stations they made. Can add logos (uploaded, or a show’s logo from Plex) and Intro Bumper videos, but only Admins can delete them. On a Viewing Level with limits, they only watch. Can’t open Add to Plex, Broken files, Logs, or Access.</dd>
       </dl>
     </div>
     <div class="panel" style="margin-top:16px" id="userPanel" hidden><table class="users" id="userTable"></table></div>
@@ -1973,7 +1973,7 @@ const SETUP_PAGES = {
   },
 
   async viewing() {
-    const intro = h('p', { class: 'hint', style: 'margin:0' }, 'A Viewing Level says what each person can see in StationPlay’s apps and on this page: movies and shows up to a rating, whether unrated ones are shown, and which libraries. Adult, Teen, Kid and Young Child come with StationPlay; you can change them, or add your own, on the Access tab. Admins always see everything.');
+    const intro = h('p', { class: 'hint', style: 'margin:0' }, 'A Viewing Level says what each person can see in StationPlay’s apps and on this page: movies and shows up to a rating, whether unrated ones are shown, and which libraries. Everyone starts on Unrestricted, which shows everything. Teen, Kid and Young Child are there to start from: on the Access tab you can rename them, change them or remove them, and add levels of your own, such as “Adults” with no R-rated movies. Admins always see everything.');
     const [users, view] = me.required
       ? await Promise.all([api('/api/access/users').catch(() => []), api('/api/access/viewing').catch(() => null)])
       : [[], null];
@@ -5319,15 +5319,16 @@ function renderViewing() {
       h('td', { class: 'small', 'data-label': 'Libraries' }, librariesText(lv)),
       h('td', { 'data-label': 'People' }, String(lv.users)),
       h('td', {},
+        lv.builtin === 'unrestricted' ? h('span', { class: 'hint' }, 'Shows everything') : [
         h('button', { class: 'btn', type: 'button', onclick: () => editLevel(lv) }, 'Edit'),
-        lv.builtin ? null : [' ', h('button', { class: 'btn danger', type: 'button', onclick: async () => {
+        ' ', h('button', { class: 'btn danger', type: 'button', onclick: async () => {
           if (!confirm(`Remove the Viewing Level ${lv.name}?`)) return;
           try { await api(`/api/access/levels/${lv.id}`, { method: 'DELETE' }); toast(`${lv.name} removed`); }
           catch (err) { toast(err.message, true); }
           loadAccess();
         } }, 'Remove')])))));
   body.replaceChildren(
-    h('p', { style: 'margin:0' }, 'A Viewing Level says what its people can see in StationPlay’s apps and on this page: movies and shows up to a rating, whether unrated ones are shown, and which libraries. Everyone starts on Adult, which has no limits. Admins always see everything.'),
+    h('p', { style: 'margin:0' }, 'A Viewing Level says what its people can see in StationPlay’s apps and on this page: movies and shows up to a rating, whether unrated ones are shown, and which libraries. Everyone starts on Unrestricted, which shows everything and stays as it is. Teen, Kid and Young Child are there to start from: rename them, change them or remove them, and add as many levels of your own as you need, such as “Adults” with no R-rated movies or unrated titles. Admins always see everything.'),
     h('div', { class: 'limit-note' }, h('strong', {}, 'How it works'),
       h('ul', {},
         h('li', {}, h('strong', {}, 'Stations are all or nothing. '), 'Everyone watching a station sees the same stream, so a station is shown only if everything it plays is within the level. Choose Stations beside someone’s name to allow or block one for them anyway.'),

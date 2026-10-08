@@ -157,20 +157,31 @@ def test_levels_come_with_stationplay_and_can_be_changed(tmp_path):
     db = Database(tmp_path / "db.sqlite")
     v = viewing.Viewing(db, Titles(db))
     names = [lv.name for lv in v.levels()]
-    assert names == ["Adult", "Teen", "Kid", "Young Child"]
+    assert names == ["Unrestricted", "Teen", "Kid", "Young Child"]
     kid = next(lv for lv in v.levels() if lv.builtin == viewing.KID)
     assert (kid.movie_age, kid.tv_age, kid.unrated, kid.libraries) == (10, 10, False, None)
-    # Changed, kept, and not made again after a restart.
+    # Renamed and changed, kept, and not made again after a restart.
     v.save_level(kid.id, "Kids", 10, 7, False, ["1"])
     again = viewing.Viewing(db, Titles(db))
-    assert [lv.name for lv in again.levels()] == ["Adult", "Teen", "Kids", "Young Child"]
+    assert [lv.name for lv in again.levels()] == ["Unrestricted", "Teen", "Kids", "Young Child"]
     assert again.level(kid.id).libraries == frozenset({"1"})
+    # Unrestricted stays as it is.
+    free = again.level(None)
+    assert free.builtin == viewing.UNRESTRICTED and not free.limited
+    with pytest.raises(ValueError, match="stays as it is"):
+        again.save_level(free.id, "Adults", 13, 14, False, None)
+    with pytest.raises(ValueError, match="stays as it is"):
+        again.remove_level(free.id)
+    # Teen can be removed (no one's on it), and isn't made again.
+    teen = next(lv for lv in again.levels() if lv.builtin == viewing.TEEN)
+    again.remove_level(teen.id)
+    assert [lv.name for lv in viewing.Viewing(db, Titles(db)).levels()] == [
+        "Unrestricted", "Kids", "Young Child"
+    ]
     # An Admin's own: named once, and removed only when no one's on it.
     grand = again.save_level(None, "Grandparents", 13, 14, True, None)
     with pytest.raises(ValueError, match="already a Viewing Level called"):
         again.save_level(None, "grandparents", 0, 0, True, None)
-    with pytest.raises(ValueError, match="can be changed but not removed"):
-        again.remove_level(kid.id)
     ada = db.add_user("Ada", "x", USER, 0, None)
     again.set_user(ada, grand.id, None)
     with pytest.raises(ValueError, match="Choose another level for everyone on Grandparents"):
@@ -187,7 +198,7 @@ def test_what_someone_sees(tmp_path):
     kid = next(lv for lv in v.levels() if lv.builtin == viewing.KID)
     admin = db.add_user("Ada", "x", ADMIN, 0, None)
     bo = db.add_user("Bo", "x", USER, 0, None)
-    # Signing in off, an Admin, and anyone on Adult: everything.
+    # Signing in off, an Admin, and anyone on Unrestricted: everything.
     assert v.viewer(None).everything and v.viewer(admin).everything and v.viewer(bo).everything
     v.set_user(admin, kid.id, None)
     assert v.viewer(admin).everything  # (an Admin always)
@@ -195,3 +206,13 @@ def test_what_someone_sees(tmp_path):
     seen = v.viewer(bo)
     assert not seen.everything and seen.level.id == kid.id
     assert seen.sees(Judged(True, 10, "1", True)) and not seen.sees(Judged(True, 17, "1", True))
+
+
+def test_an_early_adult_level_becomes_unrestricted(tmp_path):
+    db = Database(tmp_path / "db.sqlite")
+    db.add_level("Adult", None, None, True, None, "adult")
+    db.add_level("Teen", 13, 14, False, None, "teen")
+    v = viewing.Viewing(db, Titles(db))
+    assert [(lv.name, lv.builtin) for lv in v.levels()] == [
+        ("Unrestricted", "unrestricted"), ("Teen", "teen")
+    ]

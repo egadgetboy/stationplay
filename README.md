@@ -813,11 +813,11 @@ When StationPlay is first installed, its page is open to anyone on your network.
 
 ### Viewing Levels
 
-Each person has a **Viewing Level**: what they can see in StationPlay's apps and on its page. Admins always see everything. Choose a person's level beside their name on the **Access** tab; edit the levels, or add your own (such as "Grandparents"), under **Viewing Levels**.
+Each person has a **Viewing Level**: what they can see in StationPlay's apps and on its page. Admins always see everything. Choose a person's level beside their name on the **Access** tab. Under **Viewing Levels**, rename, change or remove the levels StationPlay starts you with, and add as many of your own as you need, such as "Adults" with no R-rated movies or unrated titles, or "Grandparents".
 
 | Level | Movies up to | TV up to | Unrated titles |
 |---|---|---|---|
-| **Adult** (everyone, to start) | No limit | No limit | Shown |
+| **Unrestricted** (everyone, to start; stays as it is) | No limit | No limit | Shown |
 | **Teen** | PG-13 | TV-14 | Hidden |
 | **Kid** | PG | TV-PG | Hidden |
 | **Young Child** | G | TV-G | Hidden |

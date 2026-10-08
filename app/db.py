@@ -432,7 +432,7 @@ class User:
     created_ms: int
     signed_in_ms: int  # when they last signed in; 0 if never
     max_stations: int | None  # the most stations they may make as a User; None: no limit
-    level_id: int | None = None  # their Viewing Level (see viewing.py); None: Adult
+    level_id: int | None = None  # their Viewing Level (see viewing.py); None: Unrestricted
     has_pin: bool = False
     show_on: str = ""  # the pickers they're on (see devices); "": the server's default
     has_password: bool = True  # (a User may have none: they use only the apps' pickers)
@@ -624,7 +624,7 @@ _ADDED_COLUMNS = (
     # Added in 1.19: which of StationPlay's apps a sign-in is ('' for a
     # browser), on what device, as the app says.
     ("sessions", "app", "TEXT NOT NULL DEFAULT ''"),
-    # Added in 1.23: each user's Viewing Level (NULL: Adult), PIN (a hash; ''
+    # Added in 1.23: each user's Viewing Level (NULL: Unrestricted), PIN (a hash; ''
     # for none), and the pickers they're on ('': the server's default).
     ("users", "level_id", "INTEGER REFERENCES levels(id) ON DELETE SET NULL"),
     ("users", "pin", "TEXT NOT NULL DEFAULT ''"),
@@ -1222,8 +1222,19 @@ class Database:
                 (name, movie_age, tv_age, int(unrated), _json_or_null(libraries), level_id),
             )
 
+    def make_level_builtin(self, level_id: int, builtin: str, name: str) -> None:
+        """Marks a level as one StationPlay comes with (renamed to `name`,
+        unless another level has that name)."""
+        with self._lock, self._conn:
+            self._conn.execute("UPDATE levels SET builtin = ? WHERE id = ?", (builtin, level_id))
+            self._conn.execute(
+                "UPDATE levels SET name = ? WHERE id = ? AND NOT EXISTS "
+                "(SELECT 1 FROM levels WHERE name = ? COLLATE NOCASE AND id != ?)",
+                (name, level_id, name, level_id),
+            )
+
     def delete_level(self, level_id: int) -> None:
-        """Removes a level (its users go back to Adult)."""
+        """Removes a level (its users go back to Unrestricted)."""
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM levels WHERE id = ?", (level_id,))
 

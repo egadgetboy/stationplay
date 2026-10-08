@@ -1,11 +1,13 @@
 """What each user can see: Viewing Levels, and stations allowed or blocked
 for someone (see docs/users.md).
 
-Every user has a Viewing Level (Adult unless an Admin chooses another): the
-oldest age their movies and their TV may be rated for, whether unrated
-titles are shown, and which libraries they can see. Four come with
-StationPlay and can be changed; an Admin can add more. Admins see
-everything, as does everyone while signing in is off.
+Every user has a Viewing Level (Unrestricted unless an Admin chooses
+another): the oldest age their movies and their TV may be rated for,
+whether unrated titles are shown, and which libraries they can see.
+Unrestricted, with no limits, comes with StationPlay and stays as it is;
+so do Teen, Kid and Young Child, to start from, which an Admin can rename,
+change or remove like the levels they add. Admins see everything, as does
+everyone while signing in is off.
 
 A title is judged by its rating and library (titles.Judged), in this order:
 a library the level doesn't include hides it; then a rating above the
@@ -46,14 +48,19 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("stationplay.viewing")
 
-ADULT, TEEN, KID, YOUNG_CHILD = "adult", "teen", "kid", "young-child"
+UNRESTRICTED, TEEN, KID, YOUNG_CHILD = "unrestricted", "teen", "kid", "young-child"
 # The levels StationPlay comes with: (builtin, name, movies' age, TV's age,
-# unrated shown).
+# unrated shown). Unrestricted is always there, and stays as it is; the
+# others are made once, the first time, as a start.
 BUILT_IN = (
-    (ADULT, "Adult", None, None, True),
+    (UNRESTRICTED, "Unrestricted", None, None, True),
     (TEEN, "Teen", 13, 14, False),
     (KID, "Kid", 10, 10, False),
     (YOUNG_CHILD, "Young Child", 0, 0, False),
+)
+UNRESTRICTED_STAYS = (
+    "Unrestricted shows everything, and stays as it is. To set limits, change another level "
+    "or add one of your own."
 )
 LEVELS_MOST = 50
 NAME_MAX = 40
@@ -200,7 +207,7 @@ class Viewer:
         return self.everything or self.level.allows(judged)
 
 
-EVERYONE = Viewer(Level(0, "Adult", None, None, True, None, ADULT), everything=True)
+EVERYONE = Viewer(Level(0, "Unrestricted", None, None, True, None, UNRESTRICTED), everything=True)
 
 
 class Viewing:
@@ -214,11 +221,17 @@ class Viewing:
         self.reload()
 
     def _make_built_in(self) -> None:
-        have = {r["builtin"] for r in self.db.levels()}
-        names = {r["name"].casefold() for r in self.db.levels()}
+        rows = self.db.levels()
+        for r in rows:
+            if r["builtin"] == "adult":
+                # (1.23.0's test builds called Unrestricted "Adult".)
+                self.db.make_level_builtin(r["id"], UNRESTRICTED, "Unrestricted")
+        rows = self.db.levels()
+        have = {r["builtin"] for r in rows}
+        names = {r["name"].casefold() for r in rows}
         for builtin, name, movie_age, tv_age, unrated in BUILT_IN:
-            if builtin in have:
-                continue
+            if builtin in have or (rows and builtin != UNRESTRICTED):
+                continue  # (Teen and the others only the first time: they can be removed)
             # (An Admin's own level may already have the name.)
             while name.casefold() in names:
                 name += " (StationPlay)"
@@ -235,9 +248,9 @@ class Viewing:
         return list(self._levels.values())
 
     def level(self, level_id: int | None) -> Level:
-        """A level by its id; Adult for None (or one that's gone)."""
+        """A level by its id; Unrestricted for None (or one that's gone)."""
         found = self._levels.get(level_id) if level_id is not None else None
-        return found or next(lv for lv in self._levels.values() if lv.builtin == ADULT)
+        return found or next(lv for lv in self._levels.values() if lv.builtin == UNRESTRICTED)
 
     def save_level(
         self,
@@ -264,6 +277,8 @@ class Viewing:
             raise ValueError(f"StationPlay keeps at most {LEVELS_MOST} Viewing Levels")
         if level_id is not None and level_id not in self._levels:
             raise ValueError("That Viewing Level has been removed")
+        if level_id is not None and self._levels[level_id].builtin == UNRESTRICTED:
+            raise ValueError(UNRESTRICTED_STAYS)
         try:
             if level_id is None:
                 level_id = self.db.add_level(name, movie_age, tv_age, unrated, libraries)
@@ -275,25 +290,23 @@ class Viewing:
         return self._levels[level_id]
 
     def remove_level(self, level_id: int) -> None:
-        """Removes an Admin's own level, if no one's on it. ValueError."""
+        """Removes a level, if no one's on it (but never Unrestricted). ValueError."""
         level = self._levels.get(level_id)
         if level is None:
             return
-        if level.builtin:
-            raise ValueError(
-                f"{level.name} comes with StationPlay, so it can be changed but not removed"
-            )
+        if level.builtin == UNRESTRICTED:
+            raise ValueError(UNRESTRICTED_STAYS)
         if any(u.level_id == level_id for u in self.db.users()):
             raise ValueError(f"Choose another level for everyone on {level.name} first")
         self.db.delete_level(level_id)
         self.reload()
 
     def users_on(self) -> dict[int, int]:
-        """How many users each level has (Adult counts those with none)."""
-        adult = self.level(None).id
+        """How many users each level has (Unrestricted counts those with none)."""
+        unrestricted = self.level(None).id
         out: dict[int, int] = {}
         for u in self.db.users():
-            key = u.level_id if u.level_id in self._levels else adult
+            key = u.level_id if u.level_id in self._levels else unrestricted
             out[key] = out.get(key, 0) + 1
         return out
 
@@ -304,7 +317,7 @@ class Viewing:
         for them. ValueError."""
         if level_id is not None and level_id not in self._levels:
             raise ValueError("That Viewing Level has been removed")
-        if self.level(level_id).builtin == ADULT:
+        if self.level(level_id).builtin == UNRESTRICTED:
             level_id = None
         self.db.set_user_level(user.id, level_id)
         if stations is not None:
@@ -397,7 +410,7 @@ class LevelIn(BaseModel):
 
 
 class UserViewing(BaseModel):
-    """What's given changes: a level (null: Adult), and the stations allowed
+    """What's given changes: a level (null: Unrestricted), and the stations allowed
     (true) or blocked (false) for them, by id (any not listed are neither)."""
 
     level: int | None = None

@@ -163,7 +163,7 @@ def test_an_admin_can_allow_or_block_a_station_for_someone(app):
                 for s in phone.get("/api/v1/stations", headers=as_kit).json()["stations"]
             ]
 
-        # On Adult, with Late Night blocked.
+        # On Unrestricted, with Late Night blocked.
         admin.put(f"/api/access/users/{kit['id']}/viewing", json={"stations": {str(ids[5]): False}})
         assert numbers() == [3, 7, 9]
         # On Kid, with Mixed (one R movie) allowed after all.
@@ -201,7 +201,7 @@ def test_levels_are_kept_on_the_access_tab(app):
     with TestClient(app) as admin:
         admin.post("/api/access/users", json=ADA)
         state = admin.get("/api/access/viewing").json()
-        assert [lv["name"] for lv in state["levels"]] == ["Adult", "Teen", "Kid", "Young Child"]
+        assert [lv["name"] for lv in state["levels"]] == ["Unrestricted", "Teen", "Kid", "Young Child"]
         assert state["movieRatings"][0] == [0, "G"] and state["tvRatings"][-1] == [17, "TV-MA"]
         made = admin.post(
             "/api/access/levels",
@@ -217,8 +217,12 @@ def test_levels_are_kept_on_the_access_tab(app):
         assert made.json()["libraries"] == ["2"]
         bad = admin.post("/api/access/levels", json={"name": "Odd", "movieAge": 40})
         assert bad.status_code == 400 and bad.json()["detail"] == "Choose a rating from the list"
-        kid = kid_level(admin)
-        assert admin.delete(f"/api/access/levels/{kid}").status_code == 400
+        # Unrestricted stays as it is; the others can be removed.
+        free = next(lv for lv in state["levels"] if lv["name"] == "Unrestricted")
+        kept = admin.put(f"/api/access/levels/{free['id']}", json={"name": "Adults", "movieAge": 13})
+        assert kept.status_code == 400 and "stays as it is" in kept.json()["detail"]
+        assert admin.delete(f"/api/access/levels/{free['id']}").status_code == 400
+        assert admin.delete(f"/api/access/levels/{kid_level(admin)}").status_code == 204
         assert admin.delete(f"/api/access/levels/{made.json()['id']}").status_code == 204
         logs = admin.get("/api/logs?access_log=true").json()["text"]
         assert (
@@ -239,7 +243,7 @@ def test_with_no_limits_everything_is_as_it_was(app):
         assert len(phone.get("/api/v1/stations", headers=as_kit).json()["stations"]) == 4
         movies = phone.get("/api/internal/libraries/2", headers=as_kit).json()
         assert {c["key"] for c in movies["items"]} == {"300", "301"}
-        # A User on Adult still makes stations.
+        # A User on Unrestricted still makes stations.
         page = TestClient(app)
         page.post("/api/access/sign-in", json=KIT)
         made = page.post("/api/channels", json={"number": 11, "name": "Mine", "sources": [

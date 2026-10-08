@@ -48,19 +48,21 @@ see everything whatever their level says.
 
 | Level | Movies up to | TV up to | Unrated |
 |---|---|---|---|
-| Adult | No limit | No limit | Shown |
+| Unrestricted | No limit | No limit | Shown |
 | Teen | PG-13 | TV-14 | Hidden |
 | Kid | PG | TV-PG | Hidden |
 | Young Child | G | TV-G | Hidden |
 
-These four come with StationPlay and can be changed (a change applies to
-everyone on that level at once). An Admin can add levels of their own, such
-as "Grandparents". A level also says which **libraries** its users can see:
+**Unrestricted** is always there and stays as it is. Teen, Kid and Young
+Child are made once, the first time, to start from: an Admin can rename
+them, change them (a change applies to everyone on that level at once) or
+remove them, as they can the levels they add, as many as they need, such
+as "Adults" (no R-rated movies, no unrated titles) or "Grandparents". A level also says which **libraries** its users can see:
 all of them, or the ones chosen. That's how a show that's in both "TV
 Parents" and "TV Teens" is seen only through the library a user may see.
 
-New users start on Adult, so adding a user changes nothing until an Admin
-chooses a level.
+New users start on Unrestricted, so adding a user changes nothing until an
+Admin chooses a level.
 
 ### Ratings as ages
 
