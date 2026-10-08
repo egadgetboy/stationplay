@@ -1,6 +1,6 @@
 [project]
 name = "stationplay"
-version = "1.22.3"
+version = "1.22.4"
 description = "Custom, always-on TV stations in Plex, built from your own Plex library"
 requires-python = ">=3.11"
 license = "GPL-3.0-only"
