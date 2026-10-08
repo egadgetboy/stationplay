@@ -106,6 +106,7 @@ class PickerSignIn(BaseModel):
     name: str = Field(max_length=100)
     code: str | None = Field(default=None, max_length=20)
     password: str | None = Field(default=None, max_length=access.PASSWORD_MAX)
+    secret: str | None = Field(default=None, max_length=access.PASSWORD_MAX)  # (either)
 
 
 class LinkCheck(BaseModel):
@@ -395,6 +396,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 body.password,
                 access.address(request.scope),
                 public=access.outside(request.scope),
+                secret=body.secret,
             )
         except devices.Refused as e:
             raise HTTPException(e.status, str(e)) from None

@@ -154,7 +154,7 @@ def test_an_invite_code_works_once(app):
         assert len(made["code"]) == 9 and made["code"][4] == "-"
         signed = tv.post(
             "/api/internal/picker/sign-in",
-            json={"name": "Lu", "code": made["code"].lower()},
+            json={"name": "Lu", "secret": made["code"].lower()},  # (typed in one box)
             headers=device(key),
         )
         assert signed.status_code == 200, signed.text

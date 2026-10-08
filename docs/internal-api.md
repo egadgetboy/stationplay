@@ -205,7 +205,9 @@ by an Admin on the Access tab: it works once) or a password:
 {"name": "Tia", "code": "K7QM-4DPX"}
 ```
 
-Whoever signs in is on this device's picker from then on.
+Or `password`; or `secret`, for one box where either is typed: an invite
+code if it is one, otherwise a password. Whoever signs in is on this
+device's picker from then on.
 
 | Field | Type | What it is |
 |---|---|---|

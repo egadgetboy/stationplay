@@ -232,6 +232,7 @@ class Devices:
         password: str | None,
         address: str,
         public: bool = False,
+        secret: str | None = None,
     ) -> tuple[User, str]:
         """Signs in on a device by name, with an invite code or a password:
         the person (now on this device's picker) and the sign-in's token.
@@ -245,7 +246,9 @@ class Devices:
                 "Too many wrong sign-ins on this device. Try again in a few minutes.", 429
             )
         try:
-            return await self._sign_in_by_name(device, name, code, password, address, public)
+            return await self._sign_in_by_name(
+                device, name, code, password, address, public, secret
+            )
         except Refused as e:
             if e.status == 401:
                 wrong.append(now)
@@ -259,8 +262,15 @@ class Devices:
         password: str | None,
         address: str,
         public: bool,
+        secret: str | None,
     ) -> tuple[User, str]:
         found = self.db.user_named(plain(name))
+        if secret is not None and not code and password is None:
+            # (Typed in one box: an invite code if it is one, else a password.)
+            if found and looks_like_code(secret) and self._invite_matches(found[0], secret):
+                code = secret
+            else:
+                password = secret
         if code:
             user = found[0] if found else None
             if user is None or not self._invite_matches(user, code):
@@ -336,6 +346,11 @@ class Devices:
         if found is None or _now() >= found[1]:
             return False
         return secrets.compare_digest(access.session_hash(raw), found[0])
+
+
+def looks_like_code(text: str) -> bool:
+    raw = text.replace("-", "").replace(" ", "").upper()
+    return len(raw) == 8 and all(c in CODE_LETTERS for c in raw)
 
 
 def _now() -> int:
