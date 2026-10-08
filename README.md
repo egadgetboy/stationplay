@@ -1,5 +1,9 @@
 <p align="center"><img src="docs/logo.svg" alt="StationPlay" width="360"></p>
 
+> [!WARNING]
+> ## StationPlay is in alpha
+> It works, but it isn't finished. Features are still being added and changed, some of what this README describes is still on its way, and things may break between versions. Don't rely on it for anything important yet. Back up your data folder before you update, and please [report anything that goes wrong](https://github.com/egadgetboy/stationplay/issues).
+
 # StationPlay
 
 StationPlay turns your Plex library into always-on TV stations. Pick some shows or movies, give the station a number and a name, and it plays them around the clock like a broadcast channel. A program guide comes with it, and you can add commercials, station IDs, a corner logo, movie nights and Saturday-morning blocks if you like.
