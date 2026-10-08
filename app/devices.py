@@ -70,7 +70,11 @@ WRONG_PIN = "That PIN isn't right"
 ADMIN_PASSWORD = (
     "Enter your password: on a device others use too, an Admin needs a PIN or their password"
 )
-WRONG_SIGN_IN = "That name, code or password isn't right"
+# (The same whether or not there's anyone by that name: it isn't said who
+# has a sign-in, or had one.)
+WRONG_SIGN_IN = (
+    "That name, code or password isn't right. If you should have access here, ask an Admin."
+)
 
 
 class Refused(Exception):
@@ -301,8 +305,8 @@ class Devices:
                 raise Refused(WRONG_SIGN_IN)
         if not self.signs_in_by_name(user):
             raise Refused(
-                f"{user.name} can't sign in by name. Choose them from this device's list, if "
-                "they're on it.",
+                f"{user.name} can't sign in by name. If they should be on this device's list, "
+                "ask an Admin.",
             )
         self.note_signed_in(device, user)
         return user, self.access.start_session(user, device.name, device.id)
