@@ -3,6 +3,7 @@ overnight deep scan, against real damaged files."""
 
 from __future__ import annotations
 
+import json
 import logging
 import random
 import re
@@ -32,15 +33,39 @@ from .test_e2e import ff
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
 
 LENGTH_S = 150
-# Where files are scrambled (as a share of the file).
+# Where files are scrambled (as a share of their length), and (filled in by
+# the files fixture) the time of the picture each one starts in.
 BURSTS = {"one_glitch": [0.5], "two_glitches": [0.3, 0.7], "damaged": [0.22, 0.55, 0.9]}
+BURST_AT: dict[str, list[float]] = {}
+# The test files' picture: noise, the same every time (a random one, or
+# frames encoded differently on a machine with more processors, would put
+# the scrambled stretches somewhere else in the picture each run, and a
+# stretch that happened to land where the decoder could cover it up
+# wouldn't be found).
+NOISY = "testsrc2=s=640x360:r=24000/1001,noise=alls=4:allf=t:all_seed=7"
 
 
-def burst(data: bytearray, fraction: float, seed: int, size: int = 48 * 1024) -> None:
-    """Scrambles a stretch of the file, as a bad download or disk would."""
+def burst(data: bytearray, at: int, seed: int, size: int = 48 * 1024) -> None:
+    """Scrambles a stretch of the file from byte `at`, as a bad download or
+    disk would."""
     rng = random.Random(seed)
-    at = int(len(data) * fraction)
     data[at : at + size] = bytes(rng.randrange(256) for _ in range(size))
+
+
+def video_packets(path: Path) -> list[tuple[float, int, int]]:
+    """Each picture's time, where its data is in the file, and its size, in
+    order."""
+    probed = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries",
+         "packet=pts_time,pos,size", "-of", "json", str(path)],
+        capture_output=True, text=True, check=True,
+    ).stdout  # fmt: skip
+    packets = json.loads(probed).get("packets", [])
+    return sorted(
+        (float(p["pts_time"]), int(p["pos"]), int(p["size"]))
+        for p in packets
+        if "pts_time" in p and str(p.get("pos", "")).isdigit() and str(p.get("size", "")).isdigit()
+    )
 
 
 @pytest.fixture(scope="module")
@@ -48,17 +73,23 @@ def files(tmp_path_factory) -> dict[str, Path]:
     d = tmp_path_factory.mktemp("scan")
     clean = d / "clean.mkv"
     ff(
-        "-f", "lavfi", "-i", "testsrc2=s=640x360:r=24000/1001,noise=alls=4:allf=t",
+        "-f", "lavfi", "-i", NOISY,
         "-f", "lavfi", "-i", "sine=f=440:sample_rate=48000", "-t", str(LENGTH_S),
-        "-c:v", "libx264", "-preset", "ultrafast", "-b:v", "1500k", "-maxrate", "2M",
-        "-bufsize", "3M", "-c:a", "aac", "-shortest", str(clean),
+        "-c:v", "libx264", "-preset", "ultrafast", "-threads", "1", "-b:v", "1500k",
+        "-maxrate", "2M", "-bufsize", "3M", "-c:a", "aac", "-shortest", str(clean),
     )  # fmt: skip
     data = clean.read_bytes()
+    packets = video_packets(clean)
     out = {"clean": clean}
     for name, fractions in BURSTS.items():
         b = bytearray(data)
+        BURST_AT[name] = []
         for n, f in enumerate(fractions):
-            burst(b, f, n)
+            # (From the middle of a picture's data, so that picture breaks up,
+            # and the next few with it.)
+            t, pos, size = next(p for p in packets if p[0] >= f * LENGTH_S and p[2] >= 1500)
+            burst(b, pos + size // 2, n)
+            BURST_AT[name].append(t)
         out[name] = d / f"{name}.mkv"
         out[name].write_bytes(b)
     out["cut_short"] = d / "cut_short.mkv"
@@ -69,9 +100,10 @@ def files(tmp_path_factory) -> dict[str, Path]:
     # as in TV recordings and Blu-ray remuxes).
     out["recording"] = d / "recording.ts"
     ff(
-        "-f", "lavfi", "-i", "testsrc2=s=640x360:r=30000/1001,noise=alls=4:allf=t",
+        "-f", "lavfi", "-i", "testsrc2=s=640x360:r=30000/1001,noise=alls=4:allf=t:all_seed=7",
         "-f", "lavfi", "-i", "sine=f=440:sample_rate=48000", "-t", str(LENGTH_S),
-        "-c:v", "libx264", "-preset", "ultrafast", "-x264-params", "open-gop=1:keyint=300:bframes=3",
+        "-c:v", "libx264", "-preset", "ultrafast", "-threads", "1",
+        "-x264-params", "open-gop=1:keyint=300:bframes=3",
         "-b:v", "1500k", "-c:a", "aac", "-f", "mpegts", str(out["recording"]),
     )  # fmt: skip
     out["sound_stops"] = d / "sound_stops.mkv"
@@ -263,10 +295,10 @@ def test_the_deep_scan_finds_damage_throughout_a_file(tmp_path, files, monkeypat
             # skips there, or the picture or sound breaks up, or both).
             spots = sorted(at for _, at in glitches)
             near = 8  # (s: how far ahead of what's decoded ffmpeg's output is)
-            for f in BURSTS[name]:
-                assert any(abs(at - f * LENGTH_S) < near for at in spots), (f, glitches)
+            for t in BURST_AT[name]:
+                assert any(abs(at - t) < near for at in spots), (t, glitches)
             for at in spots:
-                assert any(abs(at - f * LENGTH_S) < near for f in BURSTS[name]), (at, glitches)
+                assert any(abs(at - t) < near for t in BURST_AT[name]), (at, glitches)
             assert len(re.findall(r"\d+:\d\d", reason)) >= places, reason
         assert scans["201"].deep == "ok" and scans["201"].note == ""
         assert scans["201"].glitches == [] and scans["201"].bad_minutes == []
@@ -1178,10 +1210,11 @@ def frame_files(tmp_path_factory) -> dict[str, Path]:
     d = tmp_path_factory.mktemp("frames")
     clean = d / "clean_b.mkv"
     ff(
-        "-f", "lavfi", "-i", "testsrc2=s=640x360:r=24000/1001,noise=alls=4:allf=t",
+        "-f", "lavfi", "-i", NOISY,
         "-f", "lavfi", "-i", "sine=f=440:sample_rate=48000", "-t", str(LENGTH_S),
-        "-c:v", "libx264", "-preset", "veryfast", "-x264-params", "keyint=96:bframes=3",
-        "-b:v", "1500k", "-c:a", "aac", "-shortest", str(clean),
+        "-c:v", "libx264", "-preset", "veryfast", "-threads", "1",
+        "-x264-params", "keyint=96:bframes=3", "-b:v", "1500k", "-c:a", "aac", "-shortest",
+        str(clean),
     )  # fmt: skip
     probed = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries",
