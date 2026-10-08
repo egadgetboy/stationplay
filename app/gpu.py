@@ -27,6 +27,11 @@ log = logging.getLogger(__name__)
 # After this many programs in a row fail on the GPU but play fine on the
 # CPU, the GPU is switched off until StationPlay restarts.
 GPU_STRIKES_LIMIT = 3
+# After this many copies for StationPlay's apps in a row fail on the GPU but
+# are made fine on the CPU, copies are converted on the CPU until StationPlay
+# restarts. The stations keep the GPU: a copy's trouble there (a GPU that
+# runs out of sessions, say) never takes it from them.
+COPY_STRIKES_LIMIT = 3
 SELF_TEST_SECONDS = 2.0
 
 MODES = {
@@ -174,6 +179,8 @@ class GpuManager:
     note: str = ""
     tested: list[dict] = field(default_factory=list)
     strikes: int = 0
+    copy_strikes: int = 0
+    copies_off: bool = False  # (copies on the CPU: see COPY_STRIKES_LIMIT)
     gpu_failures: int = 0
     cpu_rescues: int = 0
     _task: asyncio.Task | None = None
@@ -239,17 +246,20 @@ class GpuManager:
     def encoder_for(self, cpu_only: bool) -> Encoder:
         return CPU if cpu_only else self.active
 
-    # Called by channels as programs play ------------------------------------
+    def encoder_for_copies(self) -> Encoder:
+        """Where a copy's picture is converted (see converting.py)."""
+        return CPU if self.copies_off else self.active
 
-    def gpu_failed(self, reason: str, stalled: bool = False) -> None:
+    # Called by stations as programs play, and by copies as they're made -----
+
+    def gpu_failed(self, reason: str, stalled: bool = False, what: str = "that program") -> None:
+        """`what`: what carries on on the CPU, as the log names it."""
         self.gpu_failures += 1
         if stalled:
             # (The disk as likely as the GPU: a read held up stalls it too.)
-            log.warning(
-                "Playback stalled on the GPU (%s); continuing that program on the CPU", reason
-            )
+            log.warning("Playback stalled on the GPU (%s); continuing %s on the CPU", reason, what)
         else:
-            log.warning("GPU encoding failed (%s); continuing that program on the CPU", reason)
+            log.warning("GPU encoding failed (%s); continuing %s on the CPU", reason, what)
 
     def cpu_rescued(self) -> None:
         """A program that failed on the GPU played fine on the CPU."""
@@ -267,6 +277,25 @@ class GpuManager:
     def gpu_succeeded(self) -> None:
         self.strikes = 0
 
+    # Called by copies as they're made (see converting.py) -------------------
+
+    def copy_rescued(self) -> None:
+        """A copy that failed on the GPU was made fine on the CPU."""
+        self.cpu_rescues += 1
+        self.copy_strikes += 1
+        if self.copy_strikes >= COPY_STRIKES_LIMIT and not self.copies_off and self.active.is_gpu:
+            self.copies_off = True
+            log.error(
+                "Copies for StationPlay's apps are converted on the CPU from now on: %d in a "
+                "row failed on %s but were made fine on the CPU. Stations keep using it. "
+                "Restart StationPlay to try it again.",
+                self.copy_strikes,
+                self.active.label,
+            )
+
+    def copy_succeeded(self) -> None:
+        self.copy_strikes = 0
+
     def as_dict(self) -> dict:
         return {
             "requested": self.settings.hw_accel,
@@ -276,4 +305,5 @@ class GpuManager:
             "tested": self.tested,
             "gpuFailures": self.gpu_failures,
             "cpuRescues": self.cpu_rescues,
+            "copiesOnCpu": self.copies_off,
         }

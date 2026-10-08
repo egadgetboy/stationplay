@@ -764,7 +764,7 @@
       <div class="arr-body" id="appLimitsBody"></div>
     </details>
     <details class="panel arr" id="appLibrariesPanel">
-      <summary><strong>Your library in StationPlay’s apps</strong><span class="muted" id="appLibrariesSum"></span></summary>
+      <summary><strong>Media in StationPlay’s apps</strong><span class="muted" id="appLibrariesSum"></span></summary>
       <div class="arr-body" id="appLibrariesBody"></div>
     </details>
     <details class="panel arr" id="apiTokensPanel">
@@ -1696,7 +1696,7 @@ const SETUP_TITLES = {
   signIn: 'Who can use StationPlay',
   viewing: 'Who sees what',
   away: 'Watching away from home',
-  library: 'Your library in StationPlay’s apps',
+  library: 'Media in StationPlay’s apps',
   fileChecks: 'Checking files',
   plex: 'Adding StationPlay to Plex',
   done: 'All set',
@@ -2187,7 +2187,9 @@ function renderEncoding(e) {
   } else if (e.state === 'gpu') {
     const extra = e.gpuFailures
       ? ` ${plural(e.gpuFailures, 'program')} had a GPU problem and finished on the CPU.` : '';
-    content = chip('chip good', `${e.active}.${extra}`);
+    const copies = e.copiesOnCpu
+      ? ' Copies for StationPlay’s apps are converted on the CPU, since 3 in a row had a GPU problem (restart StationPlay to try the GPU again).' : '';
+    content = chip('chip good', `${e.active}.${extra}${copies}`);
   } else if (e.state === 'disabled') {
     content = chip('chip bad', e.note);
   } else {
@@ -4810,8 +4812,8 @@ async function loadAppLimits() {
     ...(tests ? [h('div', {}, h('strong', {}, 'Recent connection tests'), tests)] : []));
   paint();
 }
-// Your library in StationPlay's apps (see ondemand.py) --------------------------------
-// Your library in StationPlay's apps: its settings, in its panel on the
+// Media in StationPlay's apps (see ondemand.py) --------------------------------------
+// Media in StationPlay's apps: its settings, in its panel on the
 // Access tab and in the setup. `changed`: whether anything's been changed.
 function libraryFields(got, onEdit) {
   const boxes = new Map();
@@ -4840,7 +4842,7 @@ function libraryFields(got, onEdit) {
       h('p', { style: 'margin:0' }, 'Choose the libraries people can browse and watch on demand in StationPlay’s apps, beside your stations. None are shared until you choose. Stations don’t change, and neither do Plex, Jellyfin or other apps.'),
       h('div', { class: 'limit-note' }, h('strong', {}, 'How it works'),
         h('ul', {},
-          h('li', {}, h('strong', {}, 'The best picture and sound. '), 'A file plays as it is whenever the device can play it, including 4K and HDR. If it can’t, StationPlay makes a copy as it plays: repackaged, with the picture kept as it is (this costs next to nothing), or converted, with the picture made again (this takes a share of the server’s processor; at most 3 at once). Converted copies are 1080p at most, and HDR is made ordinary.'),
+          h('li', {}, h('strong', {}, 'The best picture and sound. '), 'A file plays as it is whenever the device can play it, including 4K and HDR. If it can’t, StationPlay makes a copy as it plays: repackaged, with the picture kept as it is (this costs next to nothing), or converted, with the picture made again (this takes a share of the server’s processor, so at most 3 at once; on a GPU it’s light on the processor, so up to 6). Converted copies are 1080p at most, and HDR is made ordinary.'),
           h('li', {}, h('strong', {}, 'Each person’s own place. '), 'The Resume row, where each program picks up and what’s been watched are kept for each person who signs in (shared by everyone while sign-in is off).'),
           h('li', {}, h('strong', {}, 'At home for now. '), 'Your library can be watched on your home network, or through a VPN such as Tailscale or WireGuard. Watching it through the public port comes later, with copies made to fit your upload speed.'),
           h('li', {}, h('strong', {}, 'Steady playing. '), 'The apps buffer ahead first. If playing still can’t keep up for a while, a short connection test says whether it’s the connection, StationPlay reading the file, or the device, and a smaller version of the title is used, as you choose below.'),

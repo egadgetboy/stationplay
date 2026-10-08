@@ -333,7 +333,7 @@ minutes counts on its first, and is said in StationPlay's log once. At most
 ## Your library
 
 When an Admin shares libraries with the apps (on the Access tab, under
-**Your library in StationPlay's apps**), the apps can browse them and play
+**Media in StationPlay's apps**), the apps can browse them and play
 their shows and movies on demand. Until then, `features` doesn't list
 `library`, and these addresses answer 404 ("No libraries are shared with
 StationPlay's apps"). For now, this is on the home network (or through a
@@ -585,8 +585,9 @@ holds only that one, so another track is another copy: ask again with it and
 If the device can't play the file as it is and no copy can be made (the app
 didn't send `device.hls`, or nothing it takes would show the file right),
 the answer is 422, with `detail` (a sentence to show) and `why` (a list of
-the reasons). StationPlay converts at most 3 copies at once (repackaging
-costs next to nothing): one more is answered 503 with `detail`.
+the reasons). StationPlay converts at most 3 copies at once, or 6 on a GPU
+(repackaging costs next to nothing): one more is answered 503 with
+`detail`.
 
 An Admin's limits on devices watching count programs played this way too
 (see Playing a station in `docs/api.md`): one more device is answered 503

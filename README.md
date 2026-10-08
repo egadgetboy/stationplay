@@ -200,7 +200,7 @@ Keep `--restart unless-stopped`: restoring a backup restarts StationPlay, and Do
 
 ### GPU encoding
 
-A GPU makes StationPlay much lighter on your server and lets more stations play at once, at 1080p too. StationPlay supports Intel and AMD graphics through VA-API (including the Quick Sync graphics built into most Intel Core CPUs) and NVIDIA graphics through NVENC. When the GPU supports a file's format, it decodes the file too.
+A GPU makes StationPlay much lighter on your server and lets more stations play at once, at 1080p too. StationPlay supports Intel and AMD graphics through VA-API (including the Quick Sync graphics built into most Intel Core CPUs) and NVIDIA graphics through NVENC. When the GPU supports a file's format, it decodes the file too. Copies converted for StationPlay's apps (see [Coming soon: StationPlay's own apps](#coming-soon-stationplays-own-apps)) are made on the GPU as well.
 
 At startup, StationPlay test-encodes a short clip with the exact command it uses for real programs. It uses the first GPU that passes (NVIDIA first, then each Intel/AMD device). If none passes, it encodes on the CPU. The **Video encoding** line on the **Add to Plex** tab shows which is in use, and why when it's the CPU.
 
@@ -220,7 +220,8 @@ To find the group number, run `ls -ln /dev/dri` on the host and look at the grou
 **Built-in safeguards:**
 
 - If a program fails on the GPU, the same program carries on from the same point on the CPU. The file isn't marked as broken unless it also fails on the CPU.
-- If 3 programs in a row fail on the GPU but play on the CPU, StationPlay stops using the GPU until it restarts.
+- A copy for StationPlay's apps works the same way: if it fails on the GPU, it carries on from the same point on the CPU and stays there, and the viewer sees nothing more than the usual wait.
+- If 3 programs in a row fail on the GPU but play on the CPU, StationPlay stops using the GPU until it restarts. Copies count separately: if 3 in a row fail on the GPU but are made fine on the CPU, only copies move to the CPU, and stations keep the GPU.
 - A program that stalls on the GPU also moves to the CPU, but a stall never counts against the GPU (a slow disk causes stalls too).
 - The "We'll be right back" card is always made on the CPU, so it works even if the GPU doesn't.
 
@@ -357,7 +358,7 @@ StationPlay's own apps are in development. They connect directly to your Station
 
 The server side is ready: StationPlay 1.19.0 and later include what the apps use. They read the stations and guide through [StationPlay's API](#stationplays-api), like any other client, and sign in, test connections and browse your library through addresses of their own, documented for the apps in [docs/internal-api.md](docs/internal-api.md).
 
-**Sharing your library with the apps.** Your library stays out of the apps until an Admin chooses which libraries to share, on the **Access** tab under **Your library in StationPlay's apps**. Stations, Plex, Jellyfin and other apps don't change either way. Each person who signs in has their own Resume row, resume points and watched list (while sign-in is off, everyone shares one). Programs played this way count toward the limit on devices watching at once. A title with several versions (4K and 1080p, say) is listed once, and each device plays the best version it can. If playing can't keep up for a while, even with the buffer, the app tests the connection to find out why, then offers a smaller version from where you are (or switches to it on its own, as you choose on the Access tab). A file plays as it is whenever the device can play it. If it can't, StationPlay makes a copy as it plays, which the app can seek anywhere in: repackaged, with the picture kept as it is and only the sound converted (this costs next to nothing), or converted, with the picture made again at up to 1080p in standard color (this takes a share of the server's processor, so at most 3 are converted at once). A copy also draws in subtitles the device can't show itself, and makes a smaller picture when the connection can't keep up with any version. For now, your library plays on your home network or through a VPN; watching it through the public port comes later. The design is in [docs/on-demand.md](docs/on-demand.md).
+**Sharing your library with the apps.** Your library stays out of the apps until an Admin chooses which libraries to share, on the **Access** tab under **Media in StationPlay's apps**. Stations, Plex, Jellyfin and other apps don't change either way. Each person who signs in has their own Resume row, resume points and watched list (while sign-in is off, everyone shares one). Programs played this way count toward the limit on devices watching at once. A title with several versions (4K and 1080p, say) is listed once, and each device plays the best version it can. If playing can't keep up for a while, even with the buffer, the app tests the connection to find out why, then offers a smaller version from where you are (or switches to it on its own, as you choose on the Access tab). A file plays as it is whenever the device can play it. If it can't, StationPlay makes a copy as it plays, which the app can seek anywhere in: repackaged, with the picture kept as it is and only the sound converted (this costs next to nothing), or converted, with the picture made again at up to 1080p in standard color (this takes a share of the server's processor, so at most 3 are converted at once, or 6 with a GPU, which converts them as it does stations and is light on the processor). A copy also draws in subtitles the device can't show itself, and makes a smaller picture when the connection can't keep up with any version. For now, your library plays on your home network or through a VPN; watching it through the public port comes later. The design is in [docs/on-demand.md](docs/on-demand.md).
 
 ## Reaching StationPlay from outside your home
 
@@ -438,7 +439,7 @@ The first time an Admin opens StationPlay's page, the setup asks a few questions
 4. **Who can use StationPlay:** **Anyone on my network**, or **Only people who sign in** (you become the first Admin right away; see [Who can use StationPlay](#who-can-use-stationplay)).
 5. **Who sees what:** each person's Viewing Level (see [Viewing Levels](#viewing-levels)).
 6. **Watching away from home:** whether StationPlay's own apps can watch your stations away from home, and the address they use then (see [Reaching StationPlay from outside your home](#reaching-stationplay-from-outside-your-home)).
-7. **Your library in StationPlay's apps:** which libraries the apps can browse and play on demand (see [Coming soon: StationPlay's own apps](#coming-soon-stationplays-own-apps)).
+7. **Media in StationPlay's apps:** which libraries the apps can browse and play on demand (see [Coming soon: StationPlay's own apps](#coming-soon-stationplays-own-apps)).
 8. **Checking files:** when the overnight deep scan runs.
 9. **Adding StationPlay to Plex:** the steps in Plex, the addresses to enter there, and whether Plex has StationPlay yet.
 10. **All set:** what's set now, and anything that still needs a look.

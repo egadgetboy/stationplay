@@ -48,8 +48,11 @@ NO_FILE = "StationPlay can't reach this program's file right now. Try again in a
 COPY_FAILED = "StationPlay couldn't make this ready to play here. Try again, or choose another."
 KEYFRAMES_WAIT_S = 20.0  # reading a file's index, at most
 # Copies with their picture converted at once, at most (each takes a share of
-# the server's processor; repackaging takes next to nothing).
+# the server's processor; repackaging takes next to nothing). A few more
+# while the stations' GPU is in use, which converts them (see converting.py):
+# a copy converted there is light on the processor.
 CONVERTING_MOST = 3
+CONVERTING_MOST_GPU = 6
 BUSY_CONVERTING = (
     "StationPlay is already converting as much as it can for other devices. Try again in a "
     "little while."
@@ -711,7 +714,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     ok=True, hdr="arib-std-b67" if media.hdr == catalog.HLG else "smpte2084"))  # fmt: skip
             if "h264" not in dev.video:
                 return refuse(["this device doesn't play H.264"])
-            if ctx.plays.copies() >= CONVERTING_MOST:
+            on_gpu = ctx.gpu is not None and ctx.gpu.encoder_for_copies().is_gpu
+            if ctx.plays.copies() >= (CONVERTING_MOST_GPU if on_gpu else CONVERTING_MOST):
                 raise HTTPException(503, BUSY_CONVERTING)
             height, kbps = converting.convert_size(
                 media, dev.video["h264"][1], body.maxKbps if smaller else None
@@ -783,7 +787,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 and (url := ctx.library.stream_url(e.key, f"/library/streams/{t.id}"))
             },
         )  # fmt: skip
-        session.copy = converting.Copy(settings.ffmpeg_path, source, plan, folder, first=task)
+        session.copy = converting.Copy(settings.ffmpeg_path, source, plan, folder, first=task,
+                                       gpu=ctx.gpu, name=describe(e))  # fmt: skip
         resume = ondemand.resume_at(ctx.db.progress_of(user_id, [e.key]).get(e.key))
         session.start_s = (body.startMs if body.startMs is not None else resume) / 1000
         label = app_label(body.app, body.deviceName)

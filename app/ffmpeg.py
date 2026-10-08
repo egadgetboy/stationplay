@@ -1027,10 +1027,11 @@ def _audio_filter(normalize: bool) -> str:
     return chain + ",apad"
 
 
-def _hw_input_args(encoder: Encoder) -> list[str]:
+def hw_input_args(encoder: Encoder) -> list[str]:
     """Hardware decoding for the program file. Decoded frames come back to
     system memory, and if the GPU can't decode a particular file's codec,
-    ffmpeg quietly decodes it on the CPU instead."""
+    ffmpeg quietly decodes it on the CPU instead. (Copies converted on the
+    GPU use it too: see converting.py.)"""
     if encoder.kind == "vaapi":
         return [
             "-init_hw_device", f"vaapi=gpu:{encoder.device}", "-filter_hw_device", "gpu",
@@ -1088,7 +1089,7 @@ def program_command(
             "-reconnect_delay_max",
             "10",
         ]
-    args += ["-fflags", "+genpts+discardcorrupt", *paced(burst_s), *_hw_input_args(encoder)]
+    args += ["-fflags", "+genpts+discardcorrupt", *paced(burst_s), *hw_input_args(encoder)]
     if subtitles is not None and subtitles.image and subtitles.forced_only:
         args += [f"-forced_subs_only:s:{subtitles.stream}", "1"]
     if offset_s > 0.05:

@@ -1,21 +1,30 @@
 """Copies StationPlay makes for a device that can't play a file as it is
 (converting.py, keyframes.py, and playing them through applibrary.py):
-where the pieces start, reading a file's keyframes from its index, and
-repackaged and converted copies played from the start and from anywhere."""
+where the pieces start, reading a file's keyframes from its index,
+repackaged and converted copies played from the start and from anywhere,
+and converting on the GPU, with the CPU behind it."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shutil
 import subprocess
+import sys
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app import converting
+from app import applibrary, converting
+from app import ffmpeg as ff
+from app import gpu as gpu_module
 from app.catalog import Media, Track
 from app.config import Settings
+from app.ffmpeg import CPU, Encoder, Subtitles
+from app.gpu import GpuManager
 from app.keyframes import keyframes
 from app.main import create_app
 from app.plex import PlexClient
@@ -343,3 +352,257 @@ async def test_odd_files_still_make_whole_pieces(tmp_path):
                 assert await copy.piece(4) is None and copy.end == 4
         finally:
             await copy.close()
+
+
+# Converting on the GPU ------------------------------------------------------------------
+
+VAAPI = Encoder("vaapi", "/dev/dri/renderD128")
+NVENC = Encoder("nvidia", "1")
+FAKE_GPU = str(Path(__file__).with_name("fake_gpu_ffmpeg.py"))
+
+
+def part_at(part: list[str], args: list[str]) -> int:
+    """Where `part` is in `args`, just as it is (-1: it isn't)."""
+    return next(
+        (i for i in range(len(args) - len(part) + 1) if args[i : i + len(part)] == part), -1
+    )
+
+
+def test_the_command_each_encoder_gets():
+    """The CPU's as before. A GPU's set up and encoding as the stations' are
+    (their proven command), but for the level and how often keyframes come;
+    the CPU's filters first, and keyframes forced where the pieces start."""
+    plan = replace(converted(4, 24.0), height=720, kbps=4_000, tone_map="tonemap=hable")
+    keys = ["-force_key_frames", "12.000,18.000"]  # (from piece 1: where pieces 2 and 3 start)
+    cpu = converting.command("ffmpeg", "/films/a.mkv", plan, 1)
+    assert cpu == converting.command("ffmpeg", "/films/a.mkv", plan, 1, encoder=CPU)
+    assert part_at(["-c:v", "libx264", "-preset", "veryfast", "-profile:v", "high",
+                    "-pix_fmt", "yuv420p", "-b:v", "4000k", "-maxrate", "4000k",
+                    "-bufsize", "8000k", "-sc_threshold", "0", *keys], cpu) > 0  # fmt: skip
+    assert not {"-init_hw_device", "-hwaccel", "-bf"} & set(cpu)
+    assert cpu[cpu.index("-vf") + 1].endswith(",tonemap=hable,format=yuv420p")
+    for encoder in (VAAPI, NVENC):
+        gpu = converting.command("ffmpeg", "/films/a.mkv", plan, 1, encoder=encoder)
+        # Set up as for the stations, before the file.
+        assert 0 < part_at(ff.hw_input_args(encoder), gpu) < gpu.index("-i")
+        # The stations' encoding at the copy's bitrate (VBR, with a most and
+        # a buffer), no B-frames; then the keyframes where pieces start.
+        station = ff._video_encoder_args(replace(Settings(), video_bitrate_kbps=4_000), encoder)
+        at = station.index("-level:v")
+        del station[at : at + 2]
+        station[station.index("-g") + 1] = str(converting.GPU_GOP)
+        assert part_at([*station, *keys], gpu) > 0, gpu
+        assert part_at(["-bf", "0"], gpu) > 0
+        chain = gpu[gpu.index("-vf") + 1]
+        if encoder is VAAPI:
+            # Up to the GPU once the CPU's filters are done (scaled, made
+            # ordinary), as the stations' picture goes.
+            assert chain.endswith(",tonemap=hable,format=yuv420p,format=nv12,hwupload")
+            assert part_at(["-init_hw_device", "vaapi=gpu:/dev/dri/renderD128",
+                            "-filter_hw_device", "gpu"], gpu) > 0  # fmt: skip
+            assert "-forced-idr" not in gpu  # (VA-API's forced keyframes are IDR ones)
+        else:
+            assert chain.endswith(",tonemap=hable,format=yuv420p") and "hwupload" not in chain
+            assert part_at(["-forced-idr", "1", "-gpu", "1", *keys], gpu) > 0
+            assert part_at(["-hwaccel", "cuda", "-hwaccel_device", "1"], gpu) > 0
+    # Subtitles are drawn in before the picture goes up to the GPU.
+    text = converting.command("ffmpeg", "/films/a.mkv", replace(plan, subtitles=Subtitles(
+        path="/data/subtitles.ass", styled=True)), 0, encoder=VAAPI)  # fmt: skip
+    chain = text[text.index("-vf") + 1]
+    assert chain.index(",subtitles=filename=") < chain.index(",format=nv12,hwupload")
+    assert chain.endswith(",format=nv12,hwupload")
+    assert part_at(["-force_key_frames", "6.000,12.000,18.000"], text) > 0
+    drawn = converting.command("ffmpeg", "/films/a.mkv", replace(plan, subtitles=Subtitles(
+        stream=2, image=True)), 0, encoder=VAAPI)  # fmt: skip
+    graph = drawn[drawn.index("-filter_complex") + 1]
+    assert graph.endswith("overlay=(W-w)/2:(H-h)/2:eof_action=pass:format=auto,format=yuv420p,"
+                          "format=nv12,hwupload[vout]")  # fmt: skip
+    assert part_at(["-map", "[vout]"], drawn) > 0
+    # A repackaged copy's picture isn't encoded at all: nothing changes.
+    kept = replace(plan, method=converting.REPACKAGE, picture="h264")
+    assert converting.command("ffmpeg", "/films/a.mkv", kept, 1, encoder=VAAPI) == (
+        converting.command("ffmpeg", "/films/a.mkv", kept, 1)
+    )
+
+
+# ffmpeg with a stand-in GPU (fake_gpu_ffmpeg.py: a GPU's command made on the
+# CPU, each run written down), and the trouble GPU_TROUBLE says on it: it
+# "fails" at once, makes "no keyframes" where the pieces start, or "stalls"
+# (nothing comes).
+STAND_IN_GPU = """\
+import os
+import sys
+
+args = sys.argv[1:]
+trouble = os.environ.get("GPU_TROUBLE", "")
+if "h264_vaapi" in args or "h264_nvenc" in args:
+    if trouble == "fails":
+        os.environ["FAKE_GPU_BROKEN"] = "1"
+    elif trouble == "no keyframes":
+        at = args.index("-force_key_frames")
+        args[at : at + 2] = ["-sc_threshold", "0"]
+    elif trouble == "stalls":
+        os.environ["REAL_FFMPEG"] = os.environ["STALLED_FFMPEG"]
+os.execv(sys.executable, [sys.executable, os.environ["FAKE_GPU"], *args])
+"""
+
+
+async def stand_in_gpu(tmp_path, monkeypatch, trouble: str) -> tuple[str, str, Path]:
+    """A file to copy, ffmpeg with a stand-in GPU (see STAND_IN_GPU), and
+    where its runs are written down."""
+    source = tmp_path / "movie.mkv"
+    await asyncio.to_thread(make, source, "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac")
+    ffmpeg = tmp_path / "ffmpeg"
+    ffmpeg.write_text(f"#!{sys.executable}\n{STAND_IN_GPU}")
+    stalled = tmp_path / "stalled"
+    stalled.write_text("#!/bin/sh\nexec sleep 30\n")
+    for script in (ffmpeg, stalled):
+        script.chmod(0o755)
+    runs = tmp_path / "runs"
+    for key, value in {
+        "FAKE_GPU": FAKE_GPU, "REAL_FFMPEG": shutil.which("ffmpeg") or "ffmpeg",
+        "FAKE_GPU_LOG": str(runs), "STALLED_FFMPEG": str(stalled), "GPU_TROUBLE": trouble,
+    }.items():  # fmt: skip
+        monkeypatch.setenv(key, value)
+    return str(source), str(ffmpeg), runs
+
+
+def runs_in(runs: Path) -> list[tuple[str, float]]:
+    """Each run: ("gpu" or "cpu", where it started)."""
+    return [(line.split()[0], float(line.split()[-1])) for line in runs.read_text().splitlines()]
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("encoder", [VAAPI, NVENC], ids=["vaapi", "nvenc"])
+@pytest.mark.parametrize(
+    ("trouble", "said", "counted"),
+    [
+        ("", "", (0, 0, 0)),  # (made fine on the GPU throughout: the strike before is cleared)
+        ("fails", "GPU encoding failed (ffmpeg 187: Failed to initialise VAAPI", (1, 1, 2)),
+        ("no keyframes", "GPU encoding failed (no keyframe where piece 2 starts)", (1, 1, 2)),
+        # (A stall may as well be the disk's, so it never counts against the GPU.)
+        ("stalls", "Playback stalled on the GPU (nothing came for 3 seconds)", (1, 0, 1)),
+    ],  # (counted: GPU failures, CPU rescues, and the copies' strikes; the stations' stay put)
+)
+async def test_the_gpu_never_makes_a_copy_fail(
+    tmp_path, monkeypatch, caplog, encoder, trouble, said, counted
+):
+    """A copy converted on the GPU that goes wrong there carries on from
+    where it was on the CPU, and stays there: its pieces are served, it
+    isn't counted as failing, and GpuManager hears of it as of a station's
+    program. Fine on the GPU, it's made there throughout."""
+    source, ffmpeg, runs = await stand_in_gpu(tmp_path, monkeypatch, trouble)
+    monkeypatch.setattr(converting, "STALL_S", 3.0)
+    caplog.set_level(logging.INFO)
+    gpu = GpuManager(Settings(), active=encoder, state="gpu", strikes=1, copy_strikes=1)
+    copy = converting.Copy(ffmpeg, source, converted(4, LENGTH_S), gpu=gpu, name="A Copy (2024)")
+    assert copy.encoder == encoder
+    try:
+        piece = await copy.piece(1)  # (the player starts 6 seconds in)
+        assert piece is not None
+        assert first_times(piece.read_bytes())[0] == pytest.approx(16.0, abs=0.05)
+        for n in (2, 3, 0):
+            assert await copy.piece(n) is not None, n
+    finally:
+        await copy.close()
+    made = runs_in(runs)
+    if trouble:
+        # On the GPU first; then on the CPU from where it was, and there on.
+        assert made[:2] == [("gpu", 6.0), ("cpu", 6.0)], made
+        assert {kind for kind, _ in made[1:]} == {"cpu"} and copy.encoder == CPU, made
+    else:
+        assert {kind for kind, _ in made} == {"gpu"}, made
+    assert copy.failures == 0 and not copy.broken
+    assert (gpu.gpu_failures, gpu.cpu_rescues, gpu.copy_strikes) == counted
+    assert gpu.strikes == 1 and gpu.state == "gpu" and not gpu.copies_off
+    lines = [r.getMessage() for r in caplog.records]
+    assert lines.count(f"Converting a copy of A Copy (2024) on {encoder.label}") == 1
+    moved = [m for m in lines if m.endswith("; continuing the copy of A Copy (2024) on the CPU")]
+    assert [m.startswith(said) for m in moved] == ([True] if trouble else []), moved
+
+
+@needs_ffmpeg
+async def test_only_making_where_the_gpu_failed_rescues_a_copy(tmp_path, monkeypatch):
+    """The CPU rescued a copy once it makes the piece the GPU failed at; a
+    piece further on, after a jump, proves nothing."""
+    source, ffmpeg, runs = await stand_in_gpu(tmp_path, monkeypatch, "fails")
+    gpu = GpuManager(Settings(), active=VAAPI, state="gpu")
+    copy = converting.Copy(ffmpeg, source, converted(4, LENGTH_S), gpu=gpu)
+    asked = 0
+
+    async def gone() -> bool:  # (the player leaves once piece 1 is being made)
+        nonlocal asked
+        asked += 1
+        return asked > 1
+
+    try:
+        assert await copy.piece(1, gone) is None
+        assert await copy.piece(3) is not None  # (a jump ahead: made on the CPU)
+        assert (gpu.gpu_failures, gpu.cpu_rescues) == (1, 0)
+        assert await copy.piece(1) is not None  # (and back)
+        assert (gpu.gpu_failures, gpu.cpu_rescues) == (1, 1)
+    finally:
+        await copy.close()
+    assert runs_in(runs) == [("gpu", 6.0), ("cpu", 18.0), ("cpu", 6.0)]
+    assert copy.failures == 0
+
+
+@needs_ffmpeg
+async def test_a_copy_leaves_a_gpu_turned_off_meanwhile(tmp_path, monkeypatch, caplog):
+    source, ffmpeg, runs = await stand_in_gpu(tmp_path, monkeypatch, "")
+    caplog.set_level(logging.INFO)
+    gpu = GpuManager(Settings(), active=VAAPI, state="gpu", strikes=1)
+    copy = converting.Copy(ffmpeg, source, converted(4, LENGTH_S), gpu=gpu, name="A Copy (2024)")
+    try:
+        assert await copy.piece(2) is not None
+        # Turned off, after programs failed on it (see gpu.py): the next run
+        # is on the CPU, with nothing counted for the copy.
+        gpu.state, gpu.active = "disabled", CPU
+        assert await copy.piece(0) is not None
+    finally:
+        await copy.close()
+    assert runs_in(runs) == [("gpu", 12.0), ("cpu", 0.0)]
+    assert copy.encoder == CPU and copy.failures == 0
+    assert (gpu.gpu_failures, gpu.cpu_rescues, gpu.strikes) == (0, 0, 1)
+    assert "The GPU was turned off; continuing the copy of A Copy (2024) on the CPU" in [
+        r.getMessage() for r in caplog.records
+    ]
+
+
+@needs_ffmpeg
+def test_three_converted_at_once_or_six_on_a_gpu(app):
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["2"]})
+        ctx = app.state.ctx
+        smaller = {"key": "400", "device": PHONE, "maxKbps": 1500, "fit": True}
+
+        def play() -> int:
+            answer = home.post("/api/internal/play", json=smaller)
+            if answer.status_code == 200:
+                assert answer.json()["method"] == "convert"
+                session = ctx.plays.get(answer.json()["session"])
+                assert session.copy.encoder == ctx.gpu.encoder_for_copies()
+            return answer.status_code
+
+        ctx.gpu = GpuManager(ctx.settings)  # (while it's tested at startup: the CPU)
+        most = applibrary.CONVERTING_MOST
+        assert [play() for _ in range(most + 1)] == [200] * most + [503]
+        ctx.gpu = GpuManager(ctx.settings, active=VAAPI, state="gpu")
+        more = applibrary.CONVERTING_MOST_GPU - most
+        assert [play() for _ in range(more + 1)] == [200] * more + [503]
+
+
+def test_copies_failing_on_the_gpu_never_take_it_from_the_stations(caplog):
+    """Copies in a row that fail on the GPU but are made fine on the CPU send
+    copies to the CPU, and only copies: the stations keep the GPU."""
+    gpu = GpuManager(Settings(), active=VAAPI, state="gpu")
+    for _ in range(gpu_module.COPY_STRIKES_LIMIT - 1):
+        gpu.copy_rescued()
+    gpu.copy_succeeded()  # (one made fine on the GPU clears them)
+    for _ in range(gpu_module.COPY_STRIKES_LIMIT):
+        assert gpu.encoder_for_copies() == VAAPI
+        gpu.copy_rescued()
+    assert gpu.encoder_for_copies() == CPU and gpu.copies_off
+    assert gpu.encoder_for(False) == VAAPI and gpu.state == "gpu" and gpu.strikes == 0
+    assert gpu.as_dict()["copiesOnCpu"] is True
+    assert any("Stations keep using it" in r.getMessage() for r in caplog.records)

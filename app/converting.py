@@ -15,6 +15,14 @@ keyframes.py), or for a converted one, keyframes made every PIECE_S seconds.
 Every piece has the program's own times in it, so pieces made by different
 runs line up.
 
+A converted picture is encoded where the stations' is: on the GPU while
+GpuManager has one in use (see gpu.py), otherwise on the CPU. If a run fails
+on the GPU, the copy carries on from there on the CPU and stays there; that
+isn't counted against the copy (see FAILURES_MOST), and GpuManager is told.
+Copies have strikes of their own there (gpu.COPY_STRIKES_LIMIT), so a
+copy's trouble on the GPU never takes it from the stations. A copy also
+moves to the CPU, with nothing counted, once the GPU is turned off.
+
 Pieces are made a little ahead of the player and no further (ffmpeg simply
 waits until they're wanted), kept a little behind it, and the rest deleted;
 all are deleted when the copy stops. A copy stops when its play session
@@ -34,10 +42,14 @@ import time
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import catalog
 from .catalog import Media, Track
-from .ffmpeg import SUBTITLE_STYLE, Subtitles, filter_path, redact
+from .ffmpeg import CPU, SUBTITLE_STYLE, Encoder, Subtitles, filter_path, hw_input_args, redact
+
+if TYPE_CHECKING:
+    from .gpu import GpuManager
 
 log = logging.getLogger(__name__)
 
@@ -69,6 +81,9 @@ READ_TIMEOUT_US = 30_000_000  # (reading a file from Plex: ffmpeg's -rw_timeout)
 CONVERT_HEIGHTS = ((2160, 20_000), (1440, 12_000), (1080, 8_000), (720, 4_000), (480, 2_000))
 CONVERT_MOST_HEIGHT = 1080
 LEAST_KBPS = 1_000
+# On a GPU, frames between keyframes at most, besides the keyframe where each
+# piece starts (as libx264 makes them on the CPU).
+GPU_GOP = 250
 AUDIO_KBPS = 192
 SURROUND_KBPS = 640
 # Sound kept as it is in a copy, when the device plays it (MPEG-TS carries these).
@@ -189,15 +204,22 @@ def piece_for(starts: tuple[float, ...], at_s: float) -> int:
 # The command -------------------------------------------------------------------------
 
 
-def command(ffmpeg: str, source: str, plan: Plan, first: int, video_index: int = 0) -> list[str]:
+def command(
+    ffmpeg: str, source: str, plan: Plan, first: int, video_index: int = 0, encoder: Encoder = CPU
+) -> list[str]:
     """ffmpeg making the copy from piece `first` on, as one MPEG-TS stream
-    on its output, with the program's own times (plus TS_OFFSET_S)."""
+    on its output, with the program's own times (plus TS_OFFSET_S). A
+    converted picture is encoded on `encoder`."""
     args = [ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error"]
     if source.startswith(("http://", "https://")):
         args += [
             "-reconnect", "1", "-reconnect_on_network_error", "1", "-reconnect_delay_max", "10",
             "-rw_timeout", str(READ_TIMEOUT_US),
         ]  # fmt: skip
+    if not plan.copies_picture:
+        # (On a GPU, set up as the stations set it up: it decodes the file
+        # too, where it can.)
+        args += hw_input_args(encoder)
     start = plan.starts[first] if first else 0.0
     if plan.copies_picture:
         # (Somewhere before the piece's keyframe: what's before it is left
@@ -222,7 +244,7 @@ def command(ffmpeg: str, source: str, plan: Plan, first: int, video_index: int =
             video += ["-bsf:v", "h264_mp4toannexb,dump_extra=freq=keyframe"]
         times = []
     else:
-        video = _converted_picture(plan, first, video_index)
+        video = _converted_picture(plan, first, video_index, encoder)
         # (Converted: its times from the program's start, whatever the file's
         # own first time, as the pieces were planned.)
         times = ["-start_at_zero"]
@@ -259,10 +281,14 @@ def command(ffmpeg: str, source: str, plan: Plan, first: int, video_index: int =
     ]  # fmt: skip
 
 
-def _converted_picture(plan: Plan, first: int, video_index: int) -> list[str]:
+def _converted_picture(plan: Plan, first: int, video_index: int, encoder: Encoder) -> list[str]:
     """Converting the picture: deinterlaced where needed, square pixels, at
     most plan.height lines, ordinary (not HDR), subtitles drawn in last, and
-    a keyframe at the start of every piece."""
+    a keyframe at the start of every piece. All of that is done on the CPU
+    with a GPU too, as for the stations: the GPU only decodes the file
+    (where it can) and encodes the picture."""
+    # (VA-API: the finished picture goes up to the GPU, as the stations' does.)
+    upload = ",format=nv12,hwupload" if encoder.kind == "vaapi" else ""
     steps = [
         "bwdif=mode=send_frame:deint=interlaced",
         "scale=w='trunc(iw*sar/2)*2':h=ih,setsar=1",
@@ -277,7 +303,8 @@ def _converted_picture(plan: Plan, first: int, video_index: int) -> list[str]:
         graph = (
             f"[0:V:{video_index}]{chain}[pic];"
             f"[0:s:{subs.stream}][pic]scale2ref=w=main_w:h=main_h[subs][base];"
-            "[base][subs]overlay=(W-w)/2:(H-h)/2:eof_action=pass:format=auto,format=yuv420p[vout]"
+            "[base][subs]overlay=(W-w)/2:(H-h)/2:eof_action=pass:format=auto,format=yuv420p"
+            f"{upload}[vout]"
         )
         video = ["-filter_complex", graph, "-map", "[vout]"]
     else:
@@ -289,17 +316,35 @@ def _converted_picture(plan: Plan, first: int, video_index: int) -> list[str]:
                 options += f":force_style='{SUBTITLE_STYLE}'"
             # (The frames carry the program's own times, as the subtitles do.)
             chain += f",subtitles={options}"
-        video = ["-map", f"0:V:{video_index}", "-vf", chain]
-    kbps = plan.kbps
+        video = ["-map", f"0:V:{video_index}", "-vf", chain + upload]
     # A keyframe where each piece after the first starts (the first frame is
     # one anyway).
     keys = ",".join(f"{t:.3f}" for t in plan.starts[first + 1 :]) or f"{plan.duration_s:.3f}"
+    return [*video, *_encoding(encoder, plan.kbps), "-force_key_frames", keys]
+
+
+def _encoding(encoder: Encoder, kbps: int) -> list[str]:
+    """H.264 High at `kbps`, at most, with two seconds' buffer. On the CPU,
+    libx264. On a GPU, the stations' settings for it (see
+    ffmpeg._video_encoder_args) but for two: no level set (the encoder
+    picks the one the copy's size and frame rate need, as libx264 does; a
+    copy keeps the file's frame rate), and a keyframe every GPU_GOP frames
+    at most, as libx264 makes them. No B-frames there, as for the stations.
+    The keyframes forced where pieces start are IDR frames on every
+    encoder: libx264's and VA-API's are, and NVENC's with -forced-idr."""
+    rate = ["-b:v", f"{kbps}k", "-maxrate", f"{kbps}k", "-bufsize", f"{kbps * 2}k"]
+    gop = ["-g", str(GPU_GOP), "-bf", "0"]
+    if encoder.kind == "vaapi":
+        return ["-c:v", "h264_vaapi", "-profile:v", "high", "-rc_mode", "VBR", *rate, *gop]
+    if encoder.kind == "nvidia":
+        return [
+            "-c:v", "h264_nvenc", "-preset", "p4", "-tune", "hq", "-profile:v", "high",
+            "-rc", "vbr", "-pix_fmt", "yuv420p", *rate, *gop, "-forced-idr", "1",
+            *(["-gpu", encoder.device] if encoder.device else []),
+        ]  # fmt: skip
     return [
-        *video,
         "-c:v", "libx264", "-preset", "veryfast", "-profile:v", "high",
-        "-pix_fmt", "yuv420p", "-b:v", f"{kbps}k", "-maxrate", f"{kbps}k",
-        "-bufsize", f"{kbps * 2}k", "-sc_threshold", "0",
-        "-force_key_frames", keys,
+        "-pix_fmt", "yuv420p", *rate, "-sc_threshold", "0",
     ]  # fmt: skip
 
 
@@ -357,10 +402,12 @@ def picture_copyable(media: Media, why_not: list[str], hls: frozenset[str]) -> b
 
 @dataclass
 class _Run:
-    """One ffmpeg making pieces from `first` on."""
+    """One ffmpeg making pieces from `first` on, a converted picture encoded
+    on `encoder`."""
 
     first: int
     proc: asyncio.subprocess.Process
+    encoder: Encoder = CPU
     task: asyncio.Task | None = None
     newest: int = -1  # the newest piece finished
     said: list[str] = field(default_factory=list)
@@ -384,15 +431,32 @@ class Copy:
         folder: Path | None = None,
         first: asyncio.Future | None = None,
         video_index: int = 0,
+        gpu: GpuManager | None = None,
+        name: str = "",
     ) -> None:
         """`folder`: where its pieces go (see new_folder; deleted when it
         stops). `first`: what has to be done before ffmpeg starts (subtitles
-        read out of the file, or fetched, to be drawn in), if anything."""
+        read out of the file, or fetched, to be drawn in), if anything.
+        `gpu`: the stations' GPU, to convert the picture on while it's in
+        use. `name`: the program, as the log names it."""
         self.ffmpeg = ffmpeg
         self.source = source
         self.plan = plan
         self.video_index = video_index
         self.first = first
+        self.gpu = gpu
+        self.name = name or "a program"
+        # Where a converted picture is encoded: on the GPU while it's in use
+        # as the copy starts; on the CPU from the first run that fails there,
+        # or once the GPU is turned off.
+        self.encoder = (
+            gpu.encoder_for_copies() if gpu is not None and plan.method == CONVERT else CPU
+        )
+        self._began = False  # (said in the log)
+        self._made_on_gpu = False  # (a piece: see stop)
+        # The piece a run on the GPU failed at (not a stall): once the CPU
+        # makes it, the CPU rescued the copy (see _finished).
+        self._rescue_at: int | None = None
         self.folder = folder or new_folder()
         self.ready: dict[int, Path] = {}  # pieces finished
         self.wanted = -1  # the furthest piece asked for
@@ -493,12 +557,27 @@ class Copy:
             return
         self.stopped = True
         self._end_run()
+        if self._made_on_gpu and self.encoder.is_gpu and self.gpu is not None:
+            self.gpu.copy_succeeded()  # (made on the GPU, and never failed there)
         self._poke()
         shutil.rmtree(self.folder, ignore_errors=True)
 
     async def _start(self, n: int) -> None:
         self._end_run()
-        args = command(self.ffmpeg, self.source, self.plan, n, self.video_index)
+        if (
+            self.encoder.is_gpu
+            and self.gpu is not None
+            and not self.gpu.encoder_for_copies().is_gpu
+        ):
+            self.encoder = CPU  # (the GPU was turned off meanwhile: see gpu.py)
+            if self._began:
+                log.info("The GPU was turned off; continuing the copy of %s on the CPU", self.name)
+        encoder = self.encoder
+        args = command(self.ffmpeg, self.source, self.plan, n, self.video_index, encoder)
+        if not self._began and not self.plan.copies_picture:
+            self._began = True
+            on = encoder.label if encoder.is_gpu else "the CPU"
+            log.info("Converting a copy of %s on %s", self.name, on)
         proc = await asyncio.create_subprocess_exec(
             *args,
             stdin=asyncio.subprocess.DEVNULL,
@@ -511,7 +590,7 @@ class Copy:
                 proc.kill()
             await proc.wait()
             return
-        run = _Run(first=n, proc=proc, newest=n - 1)
+        run = _Run(first=n, proc=proc, encoder=encoder, newest=n - 1)
         run.task = asyncio.create_task(self._cut(run))
         self._cutting.add(run.task)
         run.task.add_done_callback(self._cutting.discard)
@@ -533,10 +612,12 @@ class Copy:
         """Reads ffmpeg's stream and cuts it into pieces at their keyframes."""
         assert run.proc.stdout is not None and run.proc.stderr is not None
         errors = asyncio.create_task(_said(run.proc.stderr, run.said))
-        cutter = Cutter(self.plan.starts, run.first)
+        # (On a GPU, a keyframe missing where a piece starts is a failure.)
+        cutter = Cutter(self.plan.starts, run.first, strict=run.encoder.is_gpu)
         out = None
         current = -1
         failed = ""
+        stalled = False
         began = time.monotonic()
         try:
             while True:
@@ -551,7 +632,7 @@ class Copy:
                 try:
                     chunk = await asyncio.wait_for(run.proc.stdout.read(TS_PACKET * 2048), STALL_S)
                 except TimeoutError:
-                    failed = f"nothing came for {STALL_S:.0f} seconds"
+                    failed, stalled = f"nothing came for {STALL_S:.0f} seconds", True
                     return
                 if not chunk:
                     break
@@ -565,6 +646,9 @@ class Copy:
                         out.write(cutter.header)
                     if out is not None:
                         out.write(data)
+                if cutter.missed is not None:
+                    failed = f"no keyframe where piece {cutter.missed} starts"
+                    return
                 if current < 0 and time.monotonic() - began > STALL_S:
                     failed = "no piece started where it should"
                     return
@@ -598,14 +682,24 @@ class Copy:
                 with contextlib.suppress(ProcessLookupError):
                     run.proc.kill()
             if failed and mine and not self.stopped:
-                self._failed(failed)
+                self._failed(run, failed, stalled)
             self._poke()
             with contextlib.suppress(Exception):  # (gone, not left behind)
                 await asyncio.wait_for(run.proc.wait(), 10.0)
 
-    def _failed(self, why: str) -> None:
+    def _failed(self, run: _Run, why: str, stalled: bool = False) -> None:
         """A run failed: tried again after RETRY_S, and given up on after
-        FAILURES_MOST in a row."""
+        FAILURES_MOST in a row. On the GPU, it may be the GPU's fault rather
+        than the file's: the copy carries on from there on the CPU at once,
+        and only failures there count."""
+        if run.encoder.is_gpu:
+            self.encoder = CPU
+            # (A stall may as well be the disk's, so it never counts against
+            # the GPU: see _finished.)
+            self._rescue_at = None if stalled else max(run.first, run.newest + 1)
+            if self.gpu is not None:
+                self.gpu.gpu_failed(why, stalled=stalled, what=f"the copy of {self.name}")
+            return
         self.failures += 1
         self.failed_at = time.monotonic()
         if self.failures == 1:
@@ -626,6 +720,13 @@ class Copy:
             self.ready[n] = whole
             run.newest = max(run.newest, n)
             self.failures = 0
+            if run.encoder.is_gpu:
+                self._made_on_gpu = True
+            elif n == self._rescue_at and self.gpu is not None:
+                # (Made fine on the CPU where it failed on the GPU; a piece
+                # further on, after a jump, proves nothing.)
+                self._rescue_at = None
+                self.gpu.copy_rescued()
         self._poke()
 
     def _tidy(self) -> None:
@@ -648,12 +749,20 @@ class Cutter:
     feed it what ffmpeg writes, and it says which piece each part is for.
     What comes before the first piece's keyframe (ffmpeg starts at a
     keyframe before it) is left out. Each piece starts with the stream's
-    tables (PAT and PMT), so it plays on its own."""
+    tables (PAT and PMT), so it plays on its own.
 
-    def __init__(self, starts: tuple[float, ...], first: int) -> None:
+    `strict`, for a picture made on a GPU: a frame just after where a piece
+    starts, with no keyframe starting the piece before it, stops the cutting
+    there (`missed`: that piece), rather than the piece being left out and
+    its picture going with the one before. (Without B-frames, the frames
+    come in the order they're shown.)"""
+
+    def __init__(self, starts: tuple[float, ...], first: int, strict: bool = False) -> None:
         self.starts = starts
         self.first = first
+        self.strict = strict
         self.piece = -1  # the piece being written (-1: none yet)
+        self.missed: int | None = None  # (strict: the piece whose keyframe didn't come)
         self._rest = b""
         self._tables: dict[int, bytes] = {}
         self._pmt = -1
@@ -663,11 +772,14 @@ class Cutter:
         return self._tables.get(0, b"") + self._tables.get(self._pmt, b"")
 
     def feed(self, chunk: bytes) -> list[tuple[int, bytes]]:
+        if self.missed is not None:
+            return []
         data = self._rest + chunk
         whole = len(data) - len(data) % TS_PACKET
         self._rest = data[whole:]
         out: list[tuple[int, bytes]] = []
         run_start = 0
+        end = whole
         for at in range(0, whole, TS_PACKET):
             if data[at] != 0x47:
                 continue  # (out of step: skipped)
@@ -680,19 +792,34 @@ class Cutter:
                 continue
             if pid != VIDEO_PID or not b1 & 0x40:
                 continue
-            start = _keyframe_time(data[at : at + TS_PACKET])
-            if start is None:
-                continue
-            n = self._piece_starting(start - TS_OFFSET_S)
+            packet = data[at : at + TS_PACKET]
+            start = _keyframe_time(packet)
+            n = None if start is None else self._piece_starting(start - TS_OFFSET_S)
             if n is None or n == self.piece:
+                if self.strict and (missed := self._missed(packet)) is not None:
+                    self.missed, end = missed, at
+                    break
                 continue
             if self.piece >= 0 and at > run_start:
                 out.append((self.piece, data[run_start:at]))
             self.piece = n
             run_start = at
-        if self.piece >= 0 and whole > run_start:
-            out.append((self.piece, data[run_start:whole]))
+        if self.piece >= 0 and end > run_start:
+            out.append((self.piece, data[run_start:end]))
         return out
+
+    def _missed(self, packet: bytes) -> int | None:
+        """The next piece, if this frame (one not starting it) comes just
+        after where it starts: its keyframe should have come first. (A frame
+        later than that, after a gap in the picture, is let be, as without
+        `strict`; so is the first piece, which starts at the first keyframe
+        however late.)"""
+        n = max(self.first, self.piece + 1)
+        t = _frame_time(packet)
+        if n == 0 or n >= len(self.starts) or t is None:
+            return None
+        start = self.starts[n]
+        return n if start + MATCH_BEFORE_S < t - TS_OFFSET_S <= start + MATCH_AFTER_S else None
 
     def _piece_starting(self, t: float) -> int | None:
         """The piece a keyframe at `t` starts, if it starts one (from the
@@ -739,10 +866,16 @@ def _keyframe_time(packet: bytes) -> float | None:
     """A video packet starting a keyframe: its time (PTS) in seconds; None
     if it isn't one."""
     control = (packet[3] >> 4) & 3
-    at = 4
     if not control & 2 or packet[4] == 0 or not packet[5] & 0x40:  # (random access)
         return None
-    at = 5 + packet[4]
+    return _frame_time(packet)
+
+
+def _frame_time(packet: bytes) -> float | None:
+    """A video packet starting a frame: its time (PTS) in seconds; None if
+    it has none."""
+    control = (packet[3] >> 4) & 3
+    at = 5 + packet[4] if control & 2 else 4  # (after the adaptation field)
     if not control & 1 or at + 14 > TS_PACKET or packet[at : at + 3] != b"\x00\x00\x01":
         return None
     if not packet[at + 7] & 0x80:

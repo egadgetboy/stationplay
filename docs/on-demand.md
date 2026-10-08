@@ -39,10 +39,11 @@ library layer it builds on is in `docs/library.md`.
   subtitles drawn in, a smaller picture made to fit the connection, and
   night mode's sound; browsing narrowed by genre or to what's unwatched, and
   by letter; cast and crew, taglines, and others like a title.
+- **1.25.0:** copies converted on the GPU, as stations use it (see Copies).
 - **Later:** the Admin's quality cap away from home, and watching on demand
   through the public port (copies can then be made to fit an upload);
   fragmented MP4 copies, so Apple's player can have an HEVC picture as it
-  is; the GPU for converting, as stations use it.
+  is.
 
 The `features` an app sees (`GET /api/v1/server`) say what this server
 offers where the app is: `library` once a library is shared (and, in 1.21.0,
@@ -50,11 +51,11 @@ only at home); `convert` from 1.24.0.
 
 ## Sharing libraries
 
-The Access tab gets **Your library in StationPlay's apps**: a checkbox for
-each Plex library of shows or movies. None is checked at first. The choice
-is kept in `meta` as `app_libraries` (a JSON list of library keys), and
-changing it is written to the log. A shared library that's gone from Plex
-is simply skipped.
+The Access tab gets **Media in StationPlay's apps** (named for the apps'
+Media section from 1.25.0): a checkbox for each Plex library of shows or
+movies. None is checked at first. The choice is kept in `meta` as
+`app_libraries` (a JSON list of library keys), and changing it is written
+to the log. A shared library that's gone from Plex is simply skipped.
 
 Everyone who can use the apps sees the shared libraries (Admins and Users
 alike; while signing in is off, anyone on the home network), within their
@@ -170,7 +171,30 @@ the session ends; ffmpeg stops when nothing has asked for two minutes.
 - **Converted** otherwise, and for subtitles drawn in or a smaller picture:
   H.264 at most 1080p (or what fits the connection), an HDR picture made
   ordinary as the stations do it, a keyframe at the start of each piece.
-  At most 3 at once.
+  At most 3 at once, or 6 on a GPU.
+- **On the GPU** (1.25.0): while the stations' GPU is in use (VA-API or
+  NVENC, proven by its test at startup), a converted copy is made there,
+  set up as the stations' programs are (the GPU decodes the file too, where
+  it can) and encoded with their settings but for three: the copy's own
+  bitrate, the level its size and frame rate need, and keyframes as often
+  as libx264 makes them. Scaling, making the picture ordinary and drawing
+  in subtitles stay on the processor, as for the stations; then the
+  picture goes up to the GPU. A copy converted there is light on the
+  processor. Each piece still starts with an IDR keyframe exactly where the
+  playlist says, and there are no B-frames.
+- **The processor behind it.** If a copy goes wrong on the GPU (ffmpeg stops
+  with an error or writes nothing, a piece doesn't start with a keyframe
+  where it should, or nothing comes for a minute), it carries on from where
+  it was on the processor, and stays there. The viewer sees no more than
+  the usual wait, and it isn't counted against the copy. Once the
+  processor makes the piece the GPU failed at, that's a strike against the
+  GPU for copies (a stall isn't: a slow disk stalls too), and a copy made
+  fine on the GPU throughout clears them. After 3 strikes in a row, copies
+  are converted on the processor until StationPlay restarts; the stations
+  keep the GPU, since a copy's trouble there (a GPU out of encoding
+  sessions, say) says nothing about theirs. While the GPU is being tested
+  at startup, or once it's turned off, copies are converted on the
+  processor.
 - ffmpeg writes one MPEG-TS stream with the program's own times (moved on
   10 seconds), and StationPlay cuts it into the pieces itself at their
   keyframes, so pieces made by different runs line up exactly.
