@@ -1,8 +1,8 @@
 <p align="center"><img src="docs/logo.svg" alt="StationPlay" width="360"></p>
 
 > [!WARNING]
-> ## StationPlay is in alpha
-> It works, but it isn't finished. Features are still being added and changed, some of what this README describes is still on its way, and things may break between versions. Don't rely on it for anything important yet. Back up your data folder before you update, and please [report anything that goes wrong](https://github.com/egadgetboy/stationplay/issues).
+> ## StationPlay is in ALPHA
+> It works, but it is far from finished. Features are still being added and changed, some of what this README describes is still on its way, and things may break between versions. **TESTING ONLY - do not rely on it for anything yet!** Back up your data folder before you update.
 
 # StationPlay
 
