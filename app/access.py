@@ -93,7 +93,7 @@ RESET_FILE = "reset-access"
 LOG_KEEP = 2000
 # How many stations a User may make (counting those of theirs still there):
 # one of these, or None for any number.
-STATION_LIMITS = (1, 3, 5, 10, 25)
+STATION_LIMITS = (0, 1, 3, 5, 10, 25)  # (0: they only watch)
 NEW_USER_STATIONS = 3
 # Wrong passwords from one address, at most, in a while, before it has to wait.
 TRIES = 5
@@ -199,6 +199,25 @@ FOR_USERS = {
     "PUT": ("/api/channels/",),
     "DELETE": ("/api/channels/",),
 }  # fmt: skip
+# What a User on a limited Viewing Level may do (see viewing.py): watch what
+# they can see, in StationPlay's apps and on its page, and look after their
+# own sign-in. Nothing that shows the libraries as a whole, or makes or
+# changes stations.
+FOR_WATCHERS = {
+    "GET": (
+        "/api/channels", "/api/channels/", "/api/logos", "/api/status", "/logos/",
+        "/api/v1/stations", "/api/v1/guide", "/api/v1/status", "/api/access/link/",
+        "/api/internal/speed-test", "/api/internal/libraries", "/api/internal/libraries/",
+        "/api/internal/home", "/api/internal/search", "/api/internal/items/",
+        "/api/internal/art/",
+    ),
+    "POST": (
+        "/api/access/me/password", "/api/internal/sign-out", "/api/internal/speed-test",
+        "/api/access/link", "/api/internal/play", "/api/internal/progress",
+        "/api/internal/report",
+    ),
+}  # fmt: skip
+WATCHES_ONLY = "Your Viewing Level lets you watch, but not make or change stations"
 
 
 def hash_password(password: str) -> str:
@@ -319,9 +338,19 @@ class Access:
     _tries: dict[str, deque[tuple[float, str]]] = field(init=False, default_factory=dict)
     _public_tries: deque[tuple[float, str]] = field(init=False, default_factory=deque)
     _checking: int = field(init=False, default=0)
+    _watches_only: Callable[[User], bool] | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         self._users_exist = self.db.has_users()
+
+    def judge_watching_by(self, watches_only: Callable[[User], bool]) -> None:
+        """How to tell whether a User only watches (see watches_only)."""
+        self._watches_only = watches_only
+
+    def watches_only(self, user: User) -> bool:
+        """Whether a User only watches: they're on a limited Viewing Level
+        (see viewing.py)."""
+        return user.role != ADMIN and bool(self._watches_only and self._watches_only(user))
 
     @property
     def required(self) -> bool:
@@ -411,8 +440,14 @@ class Access:
         now = self.db.user(user.id)
         if now is None:
             raise NoRoom("Your account was removed, so you can't make stations")
-        if now.role == ADMIN or now.max_stations is None:
+        if now.role == ADMIN:
             return
+        if self.watches_only(now):
+            raise NoRoom(WATCHES_ONLY)
+        if now.max_stations is None:
+            return
+        if now.max_stations == 0:
+            raise NoRoom("You can watch stations, but an Admin hasn't let you make any")
         made = self.db.stations_made().get(now.id, 0)
         if made >= now.max_stations:
             raise NoRoom(
@@ -717,8 +752,8 @@ def signed_in(request: Request) -> User | None:
     return getattr(request.state, "user", None)
 
 
-def _for_users(path: str, method: str) -> bool:
-    allowed = FOR_USERS.get("GET" if method == "HEAD" else method, ())
+def _for_users(path: str, method: str, paths: dict[str, tuple[str, ...]] = FOR_USERS) -> bool:
+    allowed = paths.get("GET" if method == "HEAD" else method, ())
     return any(path == p or (p.endswith("/") and path.startswith(p)) for p in allowed)
 
 
@@ -788,6 +823,12 @@ class Gate:
             return 401, "Sign in to StationPlay"
         if user.role != ADMIN and not _for_users(path, scope["method"]):
             return 403, ADMINS_ONLY
+        if (
+            user.role != ADMIN
+            and self.access.watches_only(user)
+            and not _for_users(path, scope["method"], FOR_WATCHERS)
+        ):
+            return 403, WATCHES_ONLY
         return None
 
     def _api_token(self, scope: dict, token: str) -> tuple[int, str] | None:
@@ -971,6 +1012,8 @@ def _stations(n: int) -> str:
 
 
 def _stations_text(limit: int | None) -> str:
+    if limit == 0:
+        return "no stations: they only watch"
     return "any number of stations" if limit is None else f"up to {_stations(limit)}"
 
 

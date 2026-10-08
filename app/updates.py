@@ -261,9 +261,16 @@ class Updater:
         `skip_intros`, as they air without their intros and credits."""
         batches = await gather_all(self.ctx.library.items_for_source(s) for s in sources)
         items = dedupe([i for batch in batches for i in batch])
+        # (Their ratings, for who can see the station: see titles.py.)
+        self.ctx.titles.note(items)
+        self.ctx.titles.fill_soon(self.ask_about_titles)
         if skip_intros:
             items = await self.ctx.markers.trim(items)
         return items
+
+    async def ask_about_titles(self, keys: list[str]) -> dict[str, tuple[str, str]]:
+        """Shows' and movies' ratings and libraries, as Plex has them now."""
+        return {e.key: (e.content_rating, e.library) for e in await self.ctx.library.entries(keys)}
 
     def with_breaks(self, channel: Channel, items: list[Item]) -> list[Item]:
         """`items` with the station's commercials or trailers, and Station

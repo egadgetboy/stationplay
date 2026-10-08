@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import access, capacity, catalog, ondemand
+from . import access, capacity, catalog, ondemand, viewing
 from .appapi import APP_MAX, app_label, in_sentence, slot_program
 from .broadcaster import now_ms
 from .catalog import Entry, Track
@@ -30,6 +30,7 @@ from .sources import find_first, learn_mapping, local_candidates
 from .text import plain
 
 if TYPE_CHECKING:
+    from .db import User
     from .main import AppContext
 
 log = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ _SUBTITLE_TYPES = {
 # Asking Plex for a file on a player's behalf: how long to wait.
 PROXY_TIMEOUT = httpx.Timeout(30.0, read=120.0)
 SUBTITLES_MOST = 20 << 20  # a subtitle file's size, at most
+WHOLE_S = 120  # how long a whole library is kept, for someone who can't see all of it
 PROXIED_HEADERS = ("content-type", "content-length", "content-range", "accept-ranges",
                    "last-modified", "etag")  # fmt: skip
 
@@ -244,6 +246,71 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 log.warning("A StationPlay app couldn't be shown your library (%s)", e)
                 raise HTTPException(503, ondemand.UNREACHABLE) from None
 
+    # What each person can see (see viewing.py) ------------------------------
+
+    def viewer_of(request: Request) -> viewing.Viewer:
+        return ctx.viewing.viewer(access.signed_in(request))
+
+    async def shows_of(entries: list[Entry]) -> dict[str, Entry]:
+        """The shows of the episodes among `entries` (each asked about once,
+        and kept a while: see Catalog.entry)."""
+        keys = sorted({e.show_key for e in entries if e.kind == catalog.EPISODE and e.show_key})
+
+        async def one(key: str) -> Entry | None:
+            try:
+                return await cat.entry(key)
+            except NotShared:
+                return None
+
+        found = await asyncio.gather(*(one(k) for k in keys))
+        return {e.key: e for e in found if e is not None}
+
+    async def seen_only(viewer: viewing.Viewer, entries: list[Entry]) -> list[Entry]:
+        """Those of `entries` that `viewer` can see: shows and movies by
+        their own rating and library, episodes by their show's."""
+        if viewer.everything or not entries:
+            return entries
+        shows = await shows_of(entries)
+        return [
+            e for e in entries if viewer.sees(viewing.judge_entry(e, shows.get(e.show_key or "")))
+        ]
+
+    async def must_see(viewer: viewing.Viewer, entry: Entry) -> None:
+        """NotShared (the same answer as for what isn't shared, or doesn't
+        exist) unless `viewer` can see `entry`."""
+        if not await seen_only(viewer, [entry]):
+            raise NotShared(entry.key)
+
+    def library_seen(viewer: viewing.Viewer, key: str) -> bool:
+        libraries = viewer.level.libraries
+        return viewer.everything or libraries is None or key in libraries
+
+    # A whole library, for someone who can't see all of it: pages are made
+    # from what they can see. Asked for a page at a time, as when browsing,
+    # and kept a little while for the next page.
+    whole: dict[tuple[str, str], tuple[float, str, str, list[Entry]]] = {}
+
+    async def browse_seen(
+        viewer: viewing.Viewer, key: str, sort: str, start: int, size: int
+    ) -> tuple[str, str, int, list[Entry]]:
+        if not library_seen(viewer, key):
+            raise NotShared(key)
+        now = time.monotonic()
+        kept = whole.get((key, sort))
+        if kept is None or now - kept[0] > WHOLE_S:
+            title, kind, total, entries = await cat.browse(key, sort, 0, ondemand.PAGE_MOST)
+            while len(entries) < total:
+                _, _, total, more = await cat.browse(key, sort, len(entries), ondemand.PAGE_MOST)
+                if not more:
+                    break
+                entries += more
+            for stale in [k for k, v in whole.items() if now - v[0] > WHOLE_S]:
+                del whole[stale]
+            kept = whole[(key, sort)] = (now, title, kind, entries)
+        _, title, kind, entries = kept
+        seen = await seen_only(viewer, entries)
+        return title, kind, len(seen), seen[start : start + size]
+
     def unwatched_of(user_id: int, shows: list[Entry]) -> dict[str, int]:
         done = ctx.db.watched_in_shows(user_id, [s.key for s in shows])
         return {s.key: max(0, (s.episodes or 0) - len(done.get(s.key, ()))) for s in shows}
@@ -258,8 +325,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     @app.get("/api/internal/libraries")
     async def libraries(request: Request):
         shared_here(request)
+        viewer = viewer_of(request)
         with Asking():
-            return {"libraries": await cat.libraries()}
+            found = await cat.libraries()
+        return {"libraries": [lib for lib in found if library_seen(viewer, lib["key"])]}
 
     @app.get("/api/internal/libraries/{key}")
     async def library_page(key: str, request: Request):
@@ -272,8 +341,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             request.query_params.get("size"), ondemand.PAGE_DEFAULT, "size", 1, ondemand.PAGE_MOST
         )
         user_id, _ = person(request)
+        viewer = viewer_of(request)
         with Asking():
-            title, kind, total, page = await cat.browse(key, sort, start, size)
+            if viewer.everything:
+                title, kind, total, page = await cat.browse(key, sort, start, size)
+            else:
+                title, kind, total, page = await browse_seen(viewer, key, sort, start, size)
         return {
             "key": key,
             "title": title,
@@ -287,9 +360,18 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     async def home(request: Request):
         shared_here(request)
         user_id, _ = person(request)
+        viewer = viewer_of(request)
         with Asking():
             going = await ondemand.continue_watching(cat, ctx.db, user_id)
             added = await cat.recently_added()
+            if not viewer.everything:
+                seen = {e.key for e in await seen_only(viewer, [e for e, _ in going])}
+                going = [(e, start) for e, start in going if e.key in seen]
+                added = [
+                    (lib, await seen_only(viewer, entries))
+                    for lib, entries in added
+                    if library_seen(viewer, lib["key"])
+                ]
         progress = dict(ctx.db.progress_of(user_id, [e.key for e, _ in going]))
         for e, start in going:  # (where to start, as worked out)
             progress[e.key] = (start, progress.get(e.key, (0, False))[1])
@@ -302,11 +384,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             ],
         }
 
-    def on_now(words: str) -> list[dict]:
-        """The stations airing a show or movie whose title contains `words`
-        right now, with what's on."""
+    def on_now(words: str, user: User | None) -> list[dict]:
+        """The stations (that `user` can see) airing a show or movie whose
+        title contains `words` right now, with what's on."""
         wanted, now, out = words.casefold(), now_ms(), []
-        for channel in ctx.db.list_channels():
+        for channel in ctx.stations_for(user):
             station = ctx.station(channel.id)
             slot = station.locate(now)
             if slot is None:
@@ -335,21 +417,31 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if len(words) > ondemand.SEARCH_LONGEST:
             raise HTTPException(400, "That's too long to search for")
         user_id, _ = person(request)
+        user = access.signed_in(request)
+        viewer = viewer_of(request)
         found: list[Entry] = []
         if ctx.shared.on and not access.outside(request.scope):
             with Asking():
-                found = await cat.search(words)
-        return {"items": cards(user_id, found), "onNow": await asyncio.to_thread(on_now, words)}
+                found = await seen_only(viewer, await cat.search(words))
+            found = [e for e in found if library_seen(viewer, e.library)]
+        return {
+            "items": cards(user_id, found),
+            "onNow": await asyncio.to_thread(on_now, words, user),
+        }
 
     @app.get("/api/internal/items/{key}")
     async def item(key: str, request: Request):
         shared_here(request)
         user_id, _ = person(request)
+        viewer = viewer_of(request)
         with Asking():
             e = await cat.entry(key)
+            await must_see(viewer, e)
             if e.kind == catalog.SHOW:
-                episodes = await cat.episodes(key)
+                episodes = await seen_only(viewer, await cat.episodes(key))
                 upcoming = await ondemand.up_next(cat, ctx.db, user_id, key)
+                if upcoming is not None and not await seen_only(viewer, [upcoming[0]]):
+                    upcoming = None
         if e.kind == catalog.SHOW:
             done = ctx.db.watched_in_shows(user_id, [key]).get(key, set())
             seasons: dict[int, list[Entry]] = {}
@@ -395,11 +487,13 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         season_text = request.query_params.get("season")
         season = _whole(season_text, -1, "season", 0, 100_000) if season_text else None
         user_id, _ = person(request)
+        viewer = viewer_of(request)
         with Asking():
             e = await cat.entry(key)
+            await must_see(viewer, e)
             if e.kind != catalog.SHOW:
                 raise HTTPException(400, "That isn't a show")
-            found = await cat.episodes(key)
+            found = await seen_only(viewer, await cat.episodes(key))
         chosen = [x for x in found if season is None or x.season == season]
         return {"show": key, "season": season, "episodes": cards(user_id, chosen)}
 
@@ -410,8 +504,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if kind not in ondemand.PICTURE_KINDS:
             raise HTTPException(400, "kind must be poster, backdrop or thumb")
         width = ondemand.width_for(_whole(request.query_params.get("w"), 320, "w", 1, 10_000))
+        viewer = viewer_of(request)
         with Asking():
             await cat.check(key)  # (shared now, even if its picture was kept from before)
+            if not viewer.everything:
+                await must_see(viewer, await cat.entry(key))
         kept = ctx.app_pictures.get((key, kind, width))
         if kept is None:
             with Asking():
@@ -439,6 +536,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         user_id, name = person(request)
         with Asking():
             e = await cat.entry(body.key)
+            await must_see(viewer_of(request), e)
         if e.kind not in (catalog.EPISODE, catalog.MOVIE):
             raise HTTPException(400, NOT_PLAYABLE)
         if not e.media:
@@ -544,6 +642,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(400, "Send positionMs, or watched")
         with Asking():
             e = await cat.entry(body.key)
+            await must_see(viewer_of(request), e)
         if e.kind not in (catalog.EPISODE, catalog.MOVIE):
             raise HTTPException(400, NOT_PLAYABLE)
         if body.session:

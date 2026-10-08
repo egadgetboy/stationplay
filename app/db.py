@@ -224,6 +224,37 @@ CREATE TABLE IF NOT EXISTS progress (
     PRIMARY KEY (user_id, rating_key)
 );
 CREATE INDEX IF NOT EXISTS progress_by_time ON progress (user_id, updated_ms);
+-- Viewing Levels: what their users can see (see viewing.py). Ages are
+-- ratings read as ages (ratings.py); NULL: no limit. builtin names the four
+-- that come with StationPlay ('' for an Admin's own).
+CREATE TABLE IF NOT EXISTS levels (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+    movie_age    INTEGER,
+    tv_age       INTEGER,
+    unrated      INTEGER NOT NULL DEFAULT 1,  -- unrated titles shown
+    libraries    TEXT,                        -- JSON list of library keys; NULL: all
+    builtin      TEXT    NOT NULL DEFAULT ''
+);
+-- Stations allowed or blocked for a user, whatever their level says.
+CREATE TABLE IF NOT EXISTS user_stations (
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    channel_id   INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    allowed      INTEGER NOT NULL,            -- 1 allowed, 0 blocked
+    PRIMARY KEY (user_id, channel_id)
+);
+-- The rating and library of each show and movie on a station, and of an
+-- episode with a rating of its own (see titles.py): what decides who can
+-- see a station. checked_ms: when Plex was last asked about it directly (a
+-- show's rating comes only that way); 0 if never.
+CREATE TABLE IF NOT EXISTS titles (
+    key          TEXT PRIMARY KEY,
+    kind         TEXT    NOT NULL,     -- 'movie', 'show' or 'episode'
+    rating       TEXT    NOT NULL DEFAULT '',
+    library      TEXT    NOT NULL DEFAULT '',
+    seen_ms      INTEGER NOT NULL,
+    checked_ms   INTEGER NOT NULL DEFAULT 0
+);
 """
 
 Segments = tuple[tuple[int, int], ...]
@@ -376,6 +407,9 @@ class User:
     created_ms: int
     signed_in_ms: int  # when they last signed in; 0 if never
     max_stations: int | None  # the most stations they may make as a User; None: no limit
+    level_id: int | None = None  # their Viewing Level (see viewing.py); None: Adult
+    has_pin: bool = False
+    show_on: str = ""  # the pickers they're on (see devices); "": the server's default
 
 
 @dataclass
@@ -446,6 +480,10 @@ class Item:
     # commercial or trailer, and ("@id", ms) for the Station ID card. Their
     # time is included in duration_ms.
     breaks: Breaks | None = None
+    # The program's rating and library as Plex gave them when it was last
+    # asked (for titles.py; not kept with a station's eras).
+    rating: str | None = None
+    library: str | None = None
 
     @property
     def program_ms(self) -> int:
@@ -480,9 +518,11 @@ def show_key(item: Item) -> str:
     return item.show_key or f"movie:{item.rating_key}"
 
 
-# era_items columns, in Item's field order (the two stored as JSON last).
+# era_items columns, in Item's field order (the two stored as JSON last;
+# what's only passed on, never kept there, left out).
 _JSON_FIELDS = ("segments", "breaks")
-_ITEM_FIELDS = tuple(f.name for f in fields(Item) if f.name not in _JSON_FIELDS)
+_PASSED_ON = ("rating", "library")
+_ITEM_FIELDS = tuple(f.name for f in fields(Item) if f.name not in (*_JSON_FIELDS, *_PASSED_ON))
 _ITEM_COLUMNS = ", ".join((*_ITEM_FIELDS, *_JSON_FIELDS))
 # The columns a station's programs had before eras (the old channel_items).
 _OLD_ITEM_COLUMNS = (
@@ -558,6 +598,11 @@ _ADDED_COLUMNS = (
     # Added in 1.19: which of StationPlay's apps a sign-in is ('' for a
     # browser), on what device, as the app says.
     ("sessions", "app", "TEXT NOT NULL DEFAULT ''"),
+    # Added in 1.23: each user's Viewing Level (NULL: Adult), PIN (a hash; ''
+    # for none), and the pickers they're on ('': the server's default).
+    ("users", "level_id", "INTEGER REFERENCES levels(id) ON DELETE SET NULL"),
+    ("users", "pin", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "show_on", "TEXT NOT NULL DEFAULT ''"),
 )
 
 
@@ -695,6 +740,7 @@ class Database:
         # they're read on every schedule lookup.
         self._eras_cache: dict[int, list[Era]] = {}
         self._sets_cache: dict[int, dict[str, list[Item]]] = {}
+        self.sets_version = 0  # (bumped whenever any station's program sets change)
 
     def close(self) -> None:
         self._conn.close()
@@ -1082,10 +1128,99 @@ class Database:
         """A station's program sets are `sets` (any others go)."""
         with self._lock, self._conn:
             self._sets_cache.pop(channel_id, None)
+            self.sets_version += 1
             self._conn.execute("DELETE FROM program_sets WHERE channel_id = ?", (channel_id,))
             self._conn.executemany(
                 "INSERT INTO program_sets (channel_id, name, items) VALUES (?, ?, ?)",
                 [(channel_id, name, _items_json(items)) for name, items in sets.items()],
+            )
+
+    # The ratings of what's on the stations (see titles.py) ---------------------
+
+    def titles(self) -> list[sqlite3.Row]:
+        with self._lock:
+            return self._conn.execute("SELECT * FROM titles").fetchall()
+
+    def save_titles(self, rows: list[tuple[str, str, str, str, int, int]]) -> None:
+        """Titles as (key, kind, rating, library, seen_ms, checked_ms), each
+        replacing what was kept for its key."""
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "INSERT INTO titles (key, kind, rating, library, seen_ms, checked_ms) "
+                "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET kind = excluded.kind, "
+                "rating = excluded.rating, library = excluded.library, "
+                "seen_ms = excluded.seen_ms, checked_ms = excluded.checked_ms",
+                rows,
+            )
+
+    # Viewing Levels, and stations allowed or blocked for a user (see viewing.py)
+
+    def levels(self) -> list[sqlite3.Row]:
+        with self._lock:
+            return self._conn.execute("SELECT * FROM levels ORDER BY id").fetchall()
+
+    def add_level(
+        self,
+        name: str,
+        movie_age: int | None,
+        tv_age: int | None,
+        unrated: bool,
+        libraries: list[str] | None,
+        builtin: str = "",
+    ) -> int:
+        """Adds a level; sqlite3.IntegrityError if there's one by that name."""
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO levels (name, movie_age, tv_age, unrated, libraries, builtin) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (name, movie_age, tv_age, int(unrated), _json_or_null(libraries), builtin),
+            )
+        return int(cur.lastrowid or 0)
+
+    def update_level(
+        self,
+        level_id: int,
+        name: str,
+        movie_age: int | None,
+        tv_age: int | None,
+        unrated: bool,
+        libraries: list[str] | None,
+    ) -> None:
+        """sqlite3.IntegrityError if another level has that name."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE levels SET name = ?, movie_age = ?, tv_age = ?, unrated = ?, "
+                "libraries = ? WHERE id = ?",
+                (name, movie_age, tv_age, int(unrated), _json_or_null(libraries), level_id),
+            )
+
+    def delete_level(self, level_id: int) -> None:
+        """Removes a level (its users go back to Adult)."""
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM levels WHERE id = ?", (level_id,))
+
+    def set_user_level(self, user_id: int, level_id: int | None) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("UPDATE users SET level_id = ? WHERE id = ?", (level_id, user_id))
+
+    def user_stations(self) -> dict[int, dict[int, bool]]:
+        """Stations allowed (True) or blocked (False), by user and station."""
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM user_stations").fetchall()
+        out: dict[int, dict[int, bool]] = {}
+        for r in rows:
+            out.setdefault(r["user_id"], {})[r["channel_id"]] = bool(r["allowed"])
+        return out
+
+    def set_user_stations(self, user_id: int, stations: dict[int, bool]) -> None:
+        """The stations allowed or blocked for a user are `stations` (any
+        others are neither)."""
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM user_stations WHERE user_id = ?", (user_id,))
+            self._conn.executemany(
+                "INSERT INTO user_stations (user_id, channel_id, allowed) "
+                "SELECT ?, id, ? FROM channels WHERE id = ?",
+                [(user_id, int(allowed), channel_id) for channel_id, allowed in stations.items()],
             )
 
     def all_programs(self, channel_id: int) -> list[Item]:
@@ -1697,7 +1832,7 @@ def _json_dict(text: str | None) -> dict:
 def _user(row: sqlite3.Row) -> User:
     return User(
         row["id"], row["name"], row["role"], row["created_ms"], row["signed_in_ms"],
-        row["max_stations"],
+        row["max_stations"], row["level_id"], bool(row["pin"]), row["show_on"],
     )  # fmt: skip
 
 
@@ -1710,6 +1845,10 @@ def _token_row(row: sqlite3.Row) -> dict:
         "used_ms": row["used_ms"],
         "expires_ms": row["expires_ms"],
     }
+
+
+def _json_or_null(value: list | None) -> str | None:
+    return None if value is None else json.dumps(value)
 
 
 def _items_json(items: list[Item]) -> str:

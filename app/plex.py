@@ -1484,4 +1484,6 @@ def to_item(m: dict[str, Any]) -> Item | None:
         summary=m.get("summary"),
         file_path=part.file if part else None,
         part_key=part.key if part else None,
+        rating=str(m.get("contentRating") or "") or None,
+        library=str(m.get("librarySectionID") or "") or None,
     )

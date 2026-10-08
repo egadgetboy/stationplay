@@ -393,7 +393,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     )
     async def stations(request: Request):
         key = away_key(request)
-        channels = ctx.db.list_channels()
+        channels = ctx.stations_for(access.signed_in(request))
         now = now_ms()
 
         def on_now() -> list[tuple[dict | None, dict | None]]:  # (a big shuffle takes a moment)
@@ -518,6 +518,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         "at most 2 days, starting within 7 days of now.",
     )
     async def guide(
+        request: Request,
         start: int | None = Query(None, alias="from", description="Where it starts (ms)"),
         end: int | None = Query(None, alias="to", description="Where it ends (ms)"),
     ):
@@ -528,7 +529,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(400, "The guide can start at most 7 days from now")
         if not 0 < to_ms - from_ms <= GUIDE_MAX_MS:
             raise HTTPException(400, "The guide can cover at most 2 days, after its start")
-        channels = ctx.db.list_channels()
+        channels = ctx.stations_for(access.signed_in(request))
 
         def listing() -> list[dict]:  # (on a worker thread, as on_now)
             out = []

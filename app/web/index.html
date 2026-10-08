@@ -455,6 +455,7 @@
   .frow input[type=number] { width: 110px; }
   @media (max-width: 560px) { .frow { grid-template-columns: 1fr; } }
   .inline-add { display: flex; gap: 6px; }
+  .checks-col { display: grid; gap: 6px; margin-top: 8px; }
   .linkbtn { background: none; border: 0; padding: 0 0 0 6px; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }
   .mark-preview { position: relative; width: 100%; max-width: 360px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden;
     background: linear-gradient(135deg, #3b6ea5 0%, #7aa35a 45%, #d9a441 75%, #b5523b 100%); flex: none; }
@@ -477,6 +478,7 @@
   .arr > summary::before { content: "\25B8"; color: var(--ink-3); }
   .arr[open] > summary::before { content: "\25BE"; }
   .arr-body { display: grid; gap: 12px; margin-top: 10px; }
+  #addUserForm + .arr, #addUserForm + .arr[hidden] + .arr { margin-top: 16px; }
   .arr-body ul { margin: 0; padding-left: 20px; }
   .arr-app { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
   .arr-app .scan-set input { flex: 1 1 220px; min-width: 0; }
@@ -506,6 +508,8 @@
   .roles dd { margin: 0 0 4px; color: var(--ink-2); font-size: 14px; }
   .adduser { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; align-items: end; }
   table.users td { vertical-align: middle; }
+  table.users select { width: auto; }
+  .level-edit input[type=text] { max-width: 320px; }
   @media (max-width: 720px) {
     table.users thead { display: none; }
     table.users tr { display: block; border-bottom: 1px solid var(--line); padding: 8px 0; }
@@ -690,7 +694,7 @@
         <dt>Admin</dt>
         <dd>Can do everything: manage every station and use Stats, Add to Plex (including backups), Broken files, Logs, and Access (who can sign in).</dd>
         <dt>User</dt>
-        <dd>Can see every station, its guide, and Stats. Can make new stations (as many as you allow below, 3 to start) and change or delete only the stations they made. Can add logos (uploaded, or a show’s logo from Plex) and Intro Bumper videos, but only Admins can delete them. Can’t open Add to Plex, Broken files, Logs, or Access.</dd>
+        <dd>Can watch the stations and library their Viewing Level allows (Adult, with no limits, to start), and see Stats. Can make new stations (as many as you allow below, 3 to start) and change or delete only the stations they made. Can add logos (uploaded, or a show’s logo from Plex) and Intro Bumper videos, but only Admins can delete them. On a Viewing Level with limits, they only watch. Can’t open Add to Plex, Broken files, Logs, or Access.</dd>
       </dl>
     </div>
     <div class="panel" style="margin-top:16px" id="userPanel" hidden><table class="users" id="userTable"></table></div>
@@ -710,7 +714,11 @@
       </div>
       <span class="hint" id="addUserHint"></span>
     </form>
-    <details class="panel arr" style="margin-top:16px" id="limitsPanel">
+    <details class="panel arr" id="viewingPanel" hidden>
+      <summary><strong>Viewing Levels</strong><span class="muted" id="viewingSum"></span></summary>
+      <div class="arr-body" id="viewingBody"></div>
+    </details>
+    <details class="panel arr" id="limitsPanel">
       <summary><strong>Block stations for some Plex users</strong><span class="muted" id="limitsSum"></span></summary>
       <div class="arr-body" id="limitsBody"></div>
     </details>
@@ -789,6 +797,12 @@
     <p class="hint" id="signinNote" hidden></p>
   </form>
 </div>
+
+<dialog id="userStations">
+  <div class="dlg-head"><h3 id="userStationsTitle">Stations</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeUserStations" aria-label="Close">✕</button></div>
+  <div class="dlg-body" id="userStationsBody"></div>
+  <div class="dlg-foot"><span class="hint" id="userStationsStatus" role="alert" style="margin-right:auto"></span><button class="btn" type="button" id="cancelUserStations">Cancel</button><button class="btn primary" type="button" id="saveUserStations">Save</button></div>
+</dialog>
 
 <dialog id="account">
   <form id="accountForm">
@@ -5045,7 +5059,7 @@ $('#signOut').addEventListener('click', async () => {
 // The Access tab: who can sign in.
 function limitSelect(value, attrs = {}) {
   const select = h('select', attrs,
-    ...ACCESS.stationLimits.map(n => h('option', { value: String(n) }, String(n))),
+    ...ACCESS.stationLimits.map(n => h('option', { value: String(n) }, n === 0 ? 'None (watches only)' : String(n))),
     h('option', { value: '' }, 'Any number'));
   select.value = value == null ? '' : String(value);
   return select;
@@ -5054,10 +5068,13 @@ const limitOf = select => select.value === '' ? null : Number(select.value);
 $('#newUserStations').replaceWith(limitSelect(ACCESS.newUserStations, { id: 'newUserStations' }));
 const showNewUserStations = () => { $('#newUserStationsField').hidden = $('#newUserRole').value !== 'user'; };
 $('#newUserRole').addEventListener('change', showNewUserStations);
+let viewing = null;  // Viewing Levels, and each user's (see viewing.py on the server)
 async function loadAccess() {
   let users = [];
-  try { if (me.required) users = await api('/api/access/users'); }
-  catch (e) { $('#accessState').textContent = e.message; return; }
+  try {
+    if (me.required) [users, viewing] = await Promise.all([api('/api/access/users'), api('/api/access/viewing')]);
+  } catch (e) { $('#accessState').textContent = e.message; return; }
+  renderViewing();
   $('#accessState').textContent = me.required
     ? `Sign-in is on: ${plural(users.length, 'user')} can sign in, and everyone else sees only the sign-in page.`
     : 'StationPlay is open: anyone on your network who can reach this page can use it. (From the internet, it always asks people to sign in.) Add a user to require sign-in. The first user is always an Admin, and you’re signed in as that user right away.';
@@ -5068,7 +5085,7 @@ async function loadAccess() {
   $('#userPanel').hidden = !users.length;
   const admins = users.filter(u => u.role === 'admin').length;
   $('#userTable').replaceChildren(
-    h('thead', {}, h('tr', {}, h('th', {}, 'Name'), h('th', {}, 'Role'), h('th', {}, 'Stations'), h('th', {}, 'Last signed in'), h('th', {}, ''))),
+    h('thead', {}, h('tr', {}, h('th', {}, 'Name'), h('th', {}, 'Role'), h('th', {}, 'Viewing Level'), h('th', {}, 'Stations they make'), h('th', {}, 'Last signed in'), h('th', {}, ''))),
     h('tbody', {}, ...users.map(u => {
       const role = h('select', { 'aria-label': `${u.name}’s role`, disabled: u.role === 'admin' && admins === 1, onchange: async e => {
         try { await api(`/api/access/users/${u.id}`, { method: 'PUT', body: { role: e.target.value } }); toast(`${u.name} is now ${aRole(e.target.value)}`); }
@@ -5077,27 +5094,192 @@ async function loadAccess() {
         loadAccess();
       } }, h('option', { value: 'admin' }, 'Admin'), h('option', { value: 'user' }, 'User'));
       role.value = u.role;
-      // Users make as many stations as they may; Admins, any number.
-      const made = h('span', { class: 'hint' }, ` ${u.stationsMade} made`);
+      // Users make as many stations as they may (none on a level with
+      // limits: they only watch); Admins, any number.
+      const made = h('div', { class: 'hint' }, `${u.stationsMade} made`);
+      const mine = viewing?.users[u.id] || { level: null, stations: {} };
+      const level = viewing?.levels.find(lv => lv.id === mine.level);
+      const watchesOnly = u.role !== 'admin' && level && levelLimited(level);
       const stations = u.role === 'admin'
-        ? h('td', { class: 'small' }, 'Any number', made)
-        : h('td', {}, limitSelect(u.maxStations, { 'aria-label': `How many stations ${u.name} can make`, onchange: async e => {
+        ? h('td', { class: 'small', 'data-label': 'Stations they make' }, 'Any number', made)
+        : watchesOnly
+          ? h('td', { class: 'small', 'data-label': 'Stations they make' }, 'None (watches only)', u.stationsMade ? made : null)
+          : h('td', { 'data-label': 'Stations they make' }, limitSelect(u.maxStations, { 'aria-label': `How many stations ${u.name} can make`, onchange: async e => {
             const limit = limitOf(e.target);
             try { await api(`/api/access/users/${u.id}`, { method: 'PUT', body: { maxStations: limit } }); toast(`${u.name} can make ${limit == null ? 'any number of stations' : plural(limit, 'station')}`); }
             catch (err) { toast(err.message, true); }
             loadAccess();
           } }), made);
+      const set = Object.keys(mine.stations).length;
+      const levelCell = u.role === 'admin'
+        ? h('td', { class: 'small', 'data-label': 'Viewing Level' }, 'Sees everything')
+        : h('td', { 'data-label': 'Viewing Level' }, h('div', { class: 'inline-add' },
+            levelSelect(mine.level, { 'aria-label': `${u.name}’s Viewing Level`, onchange: async e => {
+              const id = Number(e.target.value);
+              const name = viewing.levels.find(lv => lv.id === id)?.name;
+              try { await api(`/api/access/users/${u.id}/viewing`, { method: 'PUT', body: { level: id } }); toast(`${u.name} is on ${name} now`); }
+              catch (err) { toast(err.message, true); }
+              loadAccess();
+            } }),
+            h('button', { class: 'btn', type: 'button', onclick: () => openUserStations(u) }, set ? `Stations (${set} set)` : 'Stations')));
       const actions = h('td', {},
         h('button', { class: 'btn', type: 'button', onclick: () => newPassword(u, actions) }, 'New password'), ' ',
         h('button', { class: 'btn danger', type: 'button', onclick: () => removeUser(u, users.length) }, 'Remove'));
       return h('tr', {},
         h('td', {}, h('strong', {}, u.name), u.id === me.user?.id ? h('span', { class: 'hint' }, ' (you)') : null),
         h('td', {}, role),
+        levelCell,
         stations,
         h('td', { class: 'small' }, u.signedInMs ? new Date(u.signedInMs).toLocaleString() : 'Never'),
         actions);
     })));
 }
+// Viewing Levels ----------------------------------------------------------------------
+const levelLimited = lv => lv.movieAge != null || lv.tvAge != null || !lv.unrated || lv.libraries != null;
+const ratingName = (list, age) => age == null ? 'No limit' : (list.find(([a]) => a === age)?.[1] || `Ages ${age} and up`);
+function levelSelect(value, attrs = {}) {
+  const select = h('select', attrs, ...(viewing?.levels || []).map(lv => h('option', { value: String(lv.id) }, lv.name)));
+  select.value = String(value);
+  return select;
+}
+let plexLibraries = null;  // (for choosing a level's libraries)
+function renderViewing() {
+  const panel = $('#viewingPanel');
+  panel.hidden = !me.required || !viewing;
+  if (panel.hidden) return;
+  const body = $('#viewingBody');
+  const limited = viewing.levels.filter(levelLimited).length;
+  $('#viewingSum').textContent = `${plural(viewing.levels.length, 'level')}${limited ? `, ${limited} with limits` : ''}`;
+  if (body.dataset.editing) return;  // (not while one is being changed)
+  const libraryNames = new Map((plexLibraries || []).map(l => [l.key, l.title]));
+  const librariesText = lv => lv.libraries == null ? 'All'
+    : lv.libraries.length ? lv.libraries.map(k => libraryNames.get(k) || `Library ${k}`).join(', ') : 'None';
+  const table = h('table', { class: 'users' },
+    h('thead', {}, h('tr', {}, h('th', {}, 'Level'), h('th', {}, 'Movies up to'), h('th', {}, 'TV up to'), h('th', {}, 'Unrated'), h('th', {}, 'Libraries'), h('th', {}, 'People'), h('th', {}, ''))),
+    h('tbody', {}, ...viewing.levels.map(lv => h('tr', {},
+      h('td', {}, h('strong', {}, lv.name)),
+      h('td', { 'data-label': 'Movies up to' }, ratingName(viewing.movieRatings, lv.movieAge)),
+      h('td', { 'data-label': 'TV up to' }, ratingName(viewing.tvRatings, lv.tvAge)),
+      h('td', { 'data-label': 'Unrated' }, lv.unrated ? 'Shown' : 'Hidden'),
+      h('td', { class: 'small', 'data-label': 'Libraries' }, librariesText(lv)),
+      h('td', { 'data-label': 'People' }, String(lv.users)),
+      h('td', {},
+        h('button', { class: 'btn', type: 'button', onclick: () => editLevel(lv) }, 'Edit'),
+        lv.builtin ? null : [' ', h('button', { class: 'btn danger', type: 'button', onclick: async () => {
+          if (!confirm(`Remove the Viewing Level ${lv.name}?`)) return;
+          try { await api(`/api/access/levels/${lv.id}`, { method: 'DELETE' }); toast(`${lv.name} removed`); }
+          catch (err) { toast(err.message, true); }
+          loadAccess();
+        } }, 'Remove')])))));
+  body.replaceChildren(
+    h('p', { style: 'margin:0' }, 'A Viewing Level says what its people can see in StationPlay’s apps and on this page: movies and shows up to a rating, whether unrated ones are shown, and which libraries. Everyone starts on Adult, which has no limits. Admins always see everything.'),
+    h('div', { class: 'limit-note' }, h('strong', {}, 'How it works'),
+      h('ul', {},
+        h('li', {}, h('strong', {}, 'Stations are all or nothing. '), 'Everyone watching a station sees the same stream, so a station is shown only if everything it plays is within the level. Choose Stations beside someone’s name to allow or block one for them anyway.'),
+        h('li', {}, h('strong', {}, 'Watching only. '), 'People on a level with limits watch what they can see, but can’t make stations.'),
+        h('li', {}, h('strong', {}, 'Plex and other apps. '), 'Plex, Jellyfin and IPTV apps don’t say who’s watching, so they show every station. To keep stations from some people in Plex, use Block stations for some Plex users, below.'))),
+    table,
+    h('div', {}, h('button', { class: 'btn', type: 'button', onclick: () => editLevel(null) }, 'Add a level')));
+}
+async function editLevel(lv) {
+  const body = $('#viewingBody');
+  if (!plexLibraries) {
+    try { plexLibraries = (await api('/api/libraries')).filter(l => l.type === 'show' || l.type === 'movie'); }
+    catch { plexLibraries = []; }
+  }
+  body.dataset.editing = '1';
+  const name = h('input', { type: 'text', maxlength: 40, value: lv?.name || '', placeholder: 'Grandparents', autocomplete: 'off', 'aria-label': 'Name' });
+  const ratingSelect = (list, age, label) => {
+    const select = h('select', { 'aria-label': label }, h('option', { value: '' }, 'No limit'), ...list.map(([a, n]) => h('option', { value: String(a) }, n)));
+    select.value = age == null ? '' : String(age);
+    if (age != null && !list.some(([a]) => a === age)) select.append(h('option', { value: String(age), selected: true }, `Ages ${age} and up`));
+    return select;
+  };
+  const movies = ratingSelect(viewing.movieRatings, lv ? lv.movieAge : 13, 'Movies up to');
+  const tv = ratingSelect(viewing.tvRatings, lv ? lv.tvAge : 14, 'TV up to');
+  const unrated = h('select', { 'aria-label': 'Unrated titles' }, h('option', { value: 'shown' }, 'Shown'), h('option', { value: 'hidden' }, 'Hidden'));
+  unrated.value = lv && lv.unrated ? 'shown' : (lv ? 'hidden' : 'hidden');
+  const every = h('input', { type: 'radio', name: 'levelLibraries', checked: !lv || lv.libraries == null });
+  const some = h('input', { type: 'radio', name: 'levelLibraries', checked: !!lv && lv.libraries != null });
+  const boxes = plexLibraries.map(l => [l.key, h('input', { type: 'checkbox', checked: !!lv?.libraries?.includes(l.key) })]);
+  const pick = h('div', { class: 'checks-col' }, ...boxes.map(([key, box]) => h('label', {}, box, ` ${plexLibraries.find(l => l.key === key).title}`)));
+  const showPick = () => { pick.hidden = !some.checked; };
+  every.addEventListener('change', showPick);
+  some.addEventListener('change', showPick);
+  showPick();
+  const result = h('span', { class: 'hint', role: 'alert' });
+  const done = () => { delete body.dataset.editing; renderViewing(); };
+  const save = async () => {
+    const chosen = {
+      name: name.value.trim(),
+      movieAge: movies.value === '' ? null : Number(movies.value),
+      tvAge: tv.value === '' ? null : Number(tv.value),
+      unrated: unrated.value === 'shown',
+      libraries: some.checked ? boxes.filter(([, b]) => b.checked).map(([k]) => k) : null,
+    };
+    try {
+      await api(lv ? `/api/access/levels/${lv.id}` : '/api/access/levels', { method: lv ? 'PUT' : 'POST', body: chosen });
+    } catch (err) { result.textContent = err.message; return; }
+    toast(lv ? `${chosen.name} saved` : `${chosen.name} added`);
+    delete body.dataset.editing;
+    loadAccess();
+  };
+  const row = (label, control, hint) => h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, label), h('div', { class: 'opt-ctl' }, control, hint ? h('span', { class: 'hint' }, hint) : null));
+  body.replaceChildren(h('div', { class: 'playback level-edit' },
+    h('strong', {}, lv ? `Edit ${lv.name}` : 'Add a level'),
+    row('Name', name),
+    row('Movies up to', movies),
+    row('TV up to', tv, 'An episode counts as its show’s rating, or its own if that’s stricter.'),
+    row('Unrated titles', unrated, 'Titles with no rating in Plex.'),
+    row('Libraries', h('div', {}, h('label', {}, every, ' Every library'), ' ', h('label', {}, some, ' Only these:'), pick)),
+    h('div', { class: 'scan-set' },
+      h('button', { class: 'btn primary', type: 'button', onclick: save }, lv ? 'Save' : 'Add'),
+      h('button', { class: 'btn', type: 'button', onclick: done }, 'Cancel'),
+      result)));
+  name.focus();
+}
+// A person's stations: as their level says, or allowed or blocked for them.
+let stationsFor = null;
+async function openUserStations(u) {
+  let got;
+  try { got = await api(`/api/access/users/${u.id}/stations`); }
+  catch (err) { toast(err.message, true); return; }
+  stationsFor = { user: u, picks: new Map() };
+  $('#userStationsTitle').textContent = `${u.name}’s stations`;
+  $('#userStationsStatus').textContent = '';
+  const said = s => s.chosen === 'allowed' ? `Allowed for ${u.name}.${s.why ? ` (${got.level} wouldn’t show it: ${s.why.toLowerCase()}.)` : ''}`
+    : s.chosen === 'blocked' ? `Blocked for ${u.name}.`
+    : s.levelSees ? `Shown: it’s within ${got.level}.` : `Hidden: ${s.why.charAt(0).toLowerCase()}${s.why.slice(1)}.`;
+  $('#userStationsBody').replaceChildren(
+    h('p', { style: 'margin:0' }, `${u.name} is on ${got.level}. A station is shown or hidden as ${got.level} says, unless you allow or block it for ${u.name} here.`),
+    got.stations.length ? h('table', { class: 'users' },
+      h('tbody', {}, ...got.stations.map(st => {
+        const hint = h('span', { class: 'hint' }, said(st));
+        const select = h('select', { 'aria-label': `Station ${st.number}`, onchange: e => {
+          stationsFor.picks.set(st.id, e.target.value);
+          hint.textContent = said({ ...st, chosen: e.target.value });
+        } }, h('option', { value: 'level' }, `As ${got.level} says`), h('option', { value: 'allowed' }, 'Allowed'), h('option', { value: 'blocked' }, 'Blocked'));
+        select.value = st.chosen;
+        stationsFor.picks.set(st.id, st.chosen);
+        return h('tr', {},
+          h('td', {}, h('strong', {}, st.number), ` ${st.name}`),
+          h('td', {}, select, h('div', {}, hint)));
+      }))) : h('p', { class: 'muted', style: 'margin:0' }, 'There are no stations yet.'));
+  $('#userStations').showModal();
+}
+const closeUserStations = () => { $('#userStations').close(); stationsFor = null; };
+$('#closeUserStations').addEventListener('click', closeUserStations);
+$('#cancelUserStations').addEventListener('click', closeUserStations);
+$('#saveUserStations').addEventListener('click', async () => {
+  if (!stationsFor) return;
+  const stations = {};
+  for (const [id, pick] of stationsFor.picks) if (pick !== 'level') stations[id] = pick === 'allowed';
+  try { await api(`/api/access/users/${stationsFor.user.id}/viewing`, { method: 'PUT', body: { stations } }); }
+  catch (err) { $('#userStationsStatus').textContent = err.message; return; }
+  toast(`${stationsFor.user.name}’s stations saved`);
+  closeUserStations();
+  loadAccess();
+});
 function newPassword(u, cell) {
   const input = h('input', { type: 'password', minlength: ACCESS.passwordMin, maxlength: ACCESS.passwordMax, autocomplete: 'new-password', placeholder: 'New password', 'aria-label': `New password for ${u.name}` });
   const save = async () => {

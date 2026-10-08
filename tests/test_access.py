@@ -317,8 +317,14 @@ def test_a_user_makes_only_as_many_stations_as_they_may(pat, app):
     assert pat.put(f"/api/access/users/{sid}", json={"maxStations": None}).status_code == 200
     assert pat.put(f"/api/access/users/{sid}", json={"role": "user"}).json()["maxStations"] is None
     assert station(sam, 15).status_code == 201
-    for bad in (0, 2, 26, -1):
+    for bad in (2, 26, -1):
         assert pat.put(f"/api/access/users/{sid}", json={"maxStations": bad}).status_code == 400
+    # None: they only watch.
+    assert pat.put(f"/api/access/users/{sid}", json={"maxStations": 0}).status_code == 200
+    refused = station(sam, 16)
+    assert refused.status_code == 403
+    assert refused.json()["detail"] == "You can watch stations, but an Admin hasn't let you make any"
+    pat.put(f"/api/access/users/{sid}", json={"maxStations": None})
     choosy = {"name": "Al", "password": "long enough", "maxStations": 7}
     assert pat.post("/api/access/users", json=choosy).status_code == 400
     assert sam.put(f"/api/access/users/{sid}", json={"maxStations": 25}).status_code == 403

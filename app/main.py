@@ -58,7 +58,9 @@ from . import (
     specials,
     stats,
     subtitles,
+    titles,
     upnext,
+    viewing,
 )
 from .arr import NAMES as ARR_NAMES
 from .arr import Arr, ArrError, clean_url
@@ -441,6 +443,8 @@ class AppContext:
     plays: ondemand.PlaySessions = field(default_factory=ondemand.PlaySessions)
     app_pictures: ondemand.PictureCache = field(default_factory=ondemand.PictureCache)
     stats: stats.Stats = field(init=False)  # how much each station is watched
+    titles: titles.Titles = field(init=False)  # the ratings of what's on the stations
+    viewing: viewing.Viewing = field(init=False)  # what each user can see
     # Your shows and movies, wherever they come from (see library.py).
     library: Library = field(init=False)
     updater: Updater = field(init=False)
@@ -461,6 +465,9 @@ class AppContext:
         self.shared = ondemand.Shared(self.db)
         self.catalog = ondemand.Catalog(self.library, self.shared)
         self.stats = stats.Stats(self.db)
+        self.titles = titles.Titles(self.db)
+        self.viewing = viewing.Viewing(self.db, self.titles)
+        self.access.judge_watching_by(self.viewing.watches_only)
         self.updater = Updater(self)
         self.markers = MarkerFinder(self.db, self.library)
         self.fillers = FillerLibrary(self)
@@ -479,6 +486,18 @@ class AppContext:
     def station(self, channel_id: int) -> StationSchedule:
         """What plays when on a station, across its eras."""
         return self.updater.station(channel_id)
+
+    def stations_for(self, user: User | None) -> list[Channel]:
+        """The stations `user` can see (all of them for an Admin, or while
+        signing in is off: see viewing.py)."""
+        channels = self.db.list_channels()
+        viewer = self.viewing.viewer(user)
+        if viewer.everything:
+            return channels
+        return [c for c in channels if self.viewing.sees_station(viewer, c.id)]
+
+    def sees_station(self, user: User | None, channel_id: int) -> bool:
+        return self.viewing.sees_station(self.viewing.viewer(user), channel_id)
 
     async def resolve_source(self, item: Item) -> ResolvedSource:
         return await resolve_source(self.settings, self.library, item, self.media_access)
@@ -644,6 +663,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     # Signing in, if it's on: in front of everything else (see access.py).
     app.add_middleware(access.Gate, access=ctx.access, public_port=settings.public_port)
     access.routes(app, ctx.access)
+    viewing.routes(app, ctx)  # (who sees what: Viewing Levels)
     appapi.routes(app, ctx)  # (for StationPlay's apps)
     applibrary.routes(app, ctx)  # (your library in them)
     stats.routes(app, ctx)
@@ -889,12 +909,17 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     # The same, away from home through the public port: each signed-in app's
     # streams at an address of their own (see away.py).
 
-    def away_user(key: str, *, recheck: bool = False) -> User:
+    def away_user(key: str, number: int, *, recheck: bool = False) -> User:
+        """Whose an address away from home is, while it's good and they can
+        see the station (see viewing.py)."""
         user = ctx.away.user_of(key, recheck=recheck)
         if user is None:
             raise HTTPException(
                 404, "That stream address has ended. Ask StationPlay for its stations again."
             )
+        channel = ctx.db.get_channel_by_number(number)
+        if channel is not None and not ctx.sees_station(user, channel.id):
+            raise HTTPException(404, f"There's no station {number}")
         return user
 
     def away_client(key: str, user: User) -> str:
@@ -903,7 +928,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.get("/hls/k/{key}/{number}/index.m3u8")
     async def hls_playlist_away(key: str, number: int, request: Request):
-        user = away_user(key, recheck=True)
+        user = away_user(key, number, recheck=True)
         ctx.away.watching(key, user, number, access.where(request.scope))
         return await hls_playlist_for(number, away_client(key, user), away_=True)
 
@@ -911,12 +936,12 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     async def logo_away(key: str, number: int):
         """The station's logo, for the app's guide (a picture can't sign in
         either)."""
-        away_user(key)
+        away_user(key, number)
         return await channel_icon(number)
 
     @app.get("/hls/k/{key}/{number}/{piece}")
     async def hls_piece_away(key: str, number: int, piece: str):
-        away_user(key)
+        away_user(key, number)
         return await hls_piece_of(number, piece)
 
     @app.post("/hls/k/{key}/{number}/leave", status_code=204)
@@ -1335,7 +1360,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             return {
                 "version": __version__,
                 "plex": {"ok": (await plex_status(find_dvr=False))["ok"]},
-                "streams": streams_now(),
+                "streams": streams_now(access.signed_in(request)),
                 "tuners": playback.load(ctx.db).tuners,
                 "fillers": {k: fillers[k] for k in ("commercials", "trailers")},
             }
@@ -1361,12 +1386,14 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             "fillers": ctx.fillers.as_dict(),
         }
 
-    def streams_now() -> list[dict]:
-        """The stations being sent to Plex (or another player) right now."""
+    def streams_now(user: User | None = None) -> list[dict]:
+        """The stations being sent to Plex (or another player) right now
+        (those `user` can see)."""
         streams = []
         now = now_ms()
+        viewer = ctx.viewing.viewer(user)
         for cid, b in ctx.broadcasters.items():
-            if not b.running:
+            if not b.running or not ctx.viewing.sees_station(viewer, cid):
                 continue
             channel = ctx.db.get_channel(cid)
             np = b.now_playing
@@ -1683,7 +1710,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 mine=user is not None and c.created_by == user.id,
                 madeBy=made_by(c),
             )
-            for c in ctx.db.list_channels()
+            for c in ctx.stations_for(user)
         ]
 
     def room_for_one_more(user: User | None) -> None:
@@ -2114,8 +2141,12 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         return Response(status_code=204)
 
     @app.get("/api/channels/{channel_id}/guide")
-    async def channel_guide(channel_id: int, hours: float = STATION_GUIDE_MAX_HOURS):
+    async def channel_guide(
+        channel_id: int, request: Request, hours: float = STATION_GUIDE_MAX_HOURS
+    ):
         channel_or_404(channel_id)
+        if not ctx.sees_station(access.signed_in(request), channel_id):
+            raise HTTPException(404)  # (as one that doesn't exist)
         broken = ctx.broken.keys()
         now = now_ms()
         until = now + int(max(0.5, min(hours, STATION_GUIDE_MAX_HOURS)) * 3600 * 1000)
