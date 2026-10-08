@@ -102,7 +102,7 @@ talk to. It needs no token.
 | `outside` | boolean | Whether the request came through StationPlay's public port |
 | `awayAddress` | string or null | The address StationPlay's apps use away from home (such as `https://tv.example.com`), when an Admin has turned that on; null otherwise |
 | `features` | list | What this server offers |
-| `features[]` | string | One of them: `hls` (stations as HLS), `speed-test` (connection tests for StationPlay's apps, from 1.20.0), `away` (StationPlay's apps away from home is on), `library` (libraries are shared with StationPlay's apps, and can be watched from here; from 1.21.0), `reports` (StationPlay's apps can send problem reports, from 1.22.1), `night` (each station has night mode's sound too, `nightHls`, from 1.24.0) |
+| `features[]` | string | One of them: `hls` (stations as HLS), `speed-test` (connection tests for StationPlay's apps, from 1.20.0), `away` (StationPlay's apps away from home is on), `library` (libraries are shared with StationPlay's apps, and can be watched from here; from 1.21.0), `reports` (StationPlay's apps can send problem reports, from 1.22.1), `night` (each station has night mode's sound too, `nightHls`, from 1.23.0) |
 
 ## GET /api/v1/stations
 
@@ -120,7 +120,7 @@ Every station, in number order, with what's on now and next.
 | `stations[].colors.light` | string | A lighter background |
 | `stations[].colors.accent` | string | The accent |
 | `stations[].hls` | string | The station as HLS, to play: at home `/hls/<number>/index.m3u8`, and from outside an address of the token's own (see Away from home) |
-| `stations[].nightHls` | string | The same with night mode's sound (from 1.24.0): `/hls/<number>/night/index.m3u8` at home. Loud scenes are quieter and quiet voices clearer; the picture is the same. It's made only while something plays it, from the same tuner, and an app that leaves says so at `.../night/leave` |
+| `stations[].nightHls` | string | The same with night mode's sound (from 1.23.0): `/hls/<number>/night/index.m3u8` at home. Loud scenes are quieter and quiet voices clearer; the picture is the same. It's made only while something plays it, from the same tuner, and an app that leaves says so at `.../night/leave` |
 | `stations[].now` | program or null | What's on now (null before the station's first program) |
 | `stations[].next` | program or null | What's on next |
 

@@ -113,7 +113,7 @@ class Station(_Shape):
     )
     nightHls: str = Field(
         description="The same with night mode's sound: loud scenes quieter and quiet voices "
-        "clearer, made by the server (the picture is the same). From 1.24.0"
+        "clearer, made by the server (the picture is the same). From 1.23.0"
     )
     now: Program | None = Field(description="What's on now")
     next: Program | None = Field(description="What's on next")
