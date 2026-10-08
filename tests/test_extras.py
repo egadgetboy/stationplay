@@ -341,6 +341,20 @@ def test_the_page_can_show_the_version(client):
     assert project["project"]["version"] == __version__  # one version everywhere
 
 
+def test_the_page_starts_in_the_appearance_this_browser_chose(client):
+    # Automatic (no cookie): the device's own setting.
+    assert '<html lang="en">' in client.get("/").text
+    client.cookies.set("stationplay_theme", "dark")
+    assert '<html lang="en" data-theme="dark">' in client.get("/").text
+    client.cookies.set("stationplay_theme", "light")
+    assert '<html lang="en" data-theme="light">' in client.get("/").text
+    # Anything else is Automatic, and never put in the page.
+    client.cookies.set("stationplay_theme", '"><script>alert(1)</script>')
+    page = client.get("/").text
+    assert '<html lang="en">' in page and "alert(1)" not in page
+    client.cookies.clear()
+
+
 def test_station_names_cant_break_the_playlist(client):
     s = station(client, 7, name='The "Best" TV\nEver')
     assert s["name"] == 'The "Best" TV Ever'  # (on one line: see text.py)

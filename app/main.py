@@ -53,6 +53,7 @@ from . import (
     ondemand,
     playback,
     replacing,
+    setup,
     smart,
     specials,
     stats,
@@ -126,6 +127,10 @@ PLEX_LOGO_WAIT_S = 60  # the longest a logo may take to come from Plex
 COLLECTION_KINDS = ("movie", "show", "season", "episode")
 # The most matches a filter can leave out.
 FILTER_EXCLUDE_MAX = 20_000
+# The page's appearance, if one is chosen in a browser (otherwise the
+# device's setting): kept in a cookie of that browser's own.
+THEME_COOKIE = "stationplay_theme"
+THEMES = ("light", "dark")
 # What the page may load and run: its own script (by the nonce each time it's
 # sent), from StationPlay only, and never inside another site's page.
 PAGE_POLICY = (
@@ -351,14 +356,19 @@ class AppLimitsIn(BaseModel):
 
 
 class PlaybackIn(BaseModel):
-    """New stations' picture size, the tuners, the welcome seen, and what
-    else new stations start with, by the editor's names (see playback.py);
-    what isn't given stays as it is."""
+    """New stations' picture size, the tuners, and what else new stations
+    start with, by the editor's names (see playback.py); what isn't given
+    stays as it is."""
 
     picture: str | None = None
     tuners: int | None = None
-    welcomed: bool | None = None
     newStation: dict[str, Any] | None = Field(default=None, max_length=20)
+
+
+class SetupIn(BaseModel):
+    """Questions in the setup that have been answered (see setup.py)."""
+
+    answered: list[str] = Field(default_factory=list, max_length=20)
 
 
 class ScanWindow(BaseModel):
@@ -547,6 +557,7 @@ class AtOnce:
 def create_app(settings: Settings | None = None, plex: PlexClient | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    up_since = time.monotonic()  # (for the setup's check on backups)
 
     def prepare_schedules() -> None:
         """Works out what airs on each station over the guide's span, so
@@ -563,6 +574,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     async def lifespan(app: FastAPI):
         log.info("StationPlay %s is starting", __version__)
         playback.start(ctx.db, settings)
+        setup.start(ctx.db, len(ctx.db.list_channels()), ctx.away.on, ctx.shared.on)
         await asyncio.to_thread(prepare_schedules)
         problem = await tone_mapping_problem(settings)
         ctx.tone_mapping = problem is None
@@ -1247,8 +1259,13 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.get("/", response_class=HTMLResponse)
     @app.get("/link", response_class=HTMLResponse)  # (where an app's code is entered)
-    async def index():
+    async def index(request: Request):
         page = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+        # Light or dark, as chosen in this browser (Appearance, at the foot of
+        # the page); otherwise the device's own setting. Set here, so the page
+        # is drawn in it from the start.
+        theme = request.cookies.get(THEME_COOKIE)
+        page = page.replace("__THEME__", f' data-theme="{theme}"' if theme in THEMES else "", 1)
         page = page.replace("__LOGO_VERSION__", str(ctx.logos.version))
         page = page.replace("__COLLECTION_LOGO__", COLLECTION_LOGO)
         pb = playback.load(ctx.db)
@@ -2374,7 +2391,6 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 ctx.db,
                 body.picture,
                 body.tuners,
-                body.welcomed,
                 chosen if body.newStation is not None else None,
             )
         except ValueError as e:
@@ -2395,6 +2411,45 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         if after.new_station != before.new_station:
             log.info("New stations' settings changed%s", f" (by {user.name})" if user else "")
         return playback_json()
+
+    # The setup: its questions, and its checks (see setup.py) ------------------
+
+    @app.get("/api/setup")
+    async def setup_get():
+        return setup.state(ctx.db, len(ctx.db.list_channels()))
+
+    @app.put("/api/setup")
+    async def setup_put(body: SetupIn):
+        try:
+            setup.mark(ctx.db, body.answered)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        return setup.state(ctx.db, len(ctx.db.list_channels()))
+
+    @app.get("/api/setup/checks")
+    async def setup_checks(offset: int | None = None, zone: str = ""):
+        """Whether what's set up is working. `offset` and `zone`: the
+        browser's clock (minutes ahead of UTC, and its time zone's name), to
+        compare StationPlay's with."""
+        if offset is not None and not -1080 <= offset <= 1080:
+            offset = None
+        plex_state, present = await asyncio.gather(plex_status(), media_dir_present())
+        plex_ok = bool(plex_state["ok"])
+        plex_pass = None
+        if plex_ok:
+            with contextlib.suppress(PlexError, TimeoutError):
+                plex_pass = await asyncio.wait_for(ctx.plex.plex_pass(), 5)
+        made = await asyncio.to_thread(backups.list_backups, settings.data_dir)
+        now = now_ms()
+        checks = [
+            setup.plex_check(plex_state, plex_pass),
+            await setup.media_check(ctx, plex_ok, present),
+            setup.encoding_check(ctx.gpu.as_dict(), ctx.tone_mapping, ctx.subtitling),
+            setup.clock_check(offset, zone[:80]),
+            setup.backups_check(made, time.monotonic() - up_since, now),
+            setup.dvr_check(plex_ok, ctx.updater.as_dict(), now),
+        ]
+        return {"checks": [c.as_dict() for c in checks]}
 
     @app.post("/api/playback/speed-test")
     async def playback_speed_test():

@@ -46,11 +46,13 @@ log = logging.getLogger(__name__)
 
 META_PICTURE = "default_picture"  # new stations' picture size
 META_TUNERS = "tuners"
-META_WELCOMED = "welcomed"  # the welcome's version last seen (see WELCOME)
 META_NEW_STATION = "new_station"  # what new stations start with, as chosen (JSON)
-# The welcome's version: it's shown again, once, when it gains new choices
-# ("1": 1.14's; "2": 1.15's, with what new stations start with, who can use
-# StationPlay, and the overnight file checks; "3": with which corner).
+# The welcome that came before the setup (until 1.22.3): the version of it
+# last seen, which the setup reads once, to know what's been answered (see
+# setup.start). "1": 1.14's; "2": 1.15's, with what new stations start with,
+# who can use StationPlay, and the overnight file checks; "3": with which
+# corner.
+META_WELCOMED = "welcomed"
 WELCOME = "3"
 # What new stations start with that's chosen here (besides the picture
 # size), by their stored names (see db.STATION_SETTINGS), and the choices.
@@ -79,8 +81,6 @@ HEADROOM = 0.7
 class Playback:
     picture: str  # new stations' picture size
     tuners: int
-    welcomed: bool  # (this version of the welcome)
-    welcomed_before: bool = False  # (an earlier one)
     # What else new stations start with, as chosen (stored names).
     new_station: dict[str, Any] = field(default_factory=dict)
 
@@ -91,8 +91,6 @@ class Playback:
             "tuners": self.tuners,
             "mostTuners": MOST_TUNERS,
             "announced": announced(self.tuners),
-            "welcomed": self.welcomed,
-            "welcomedBefore": self.welcomed_before,
             "newStation": {API_NAMES[k]: v for k, v in self.new_station.items()},
         }
 
@@ -133,12 +131,9 @@ def load(db: Database) -> Playback:
         chosen = json.loads(db.get_meta(META_NEW_STATION, "{}") or "{}")
     except ValueError:
         chosen = {}
-    seen = db.get_meta(META_WELCOMED, "")
     return Playback(
         picture if picture in ff.PICTURES else ff.STANDARD_PICTURE,
         max(1, min(MOST_TUNERS, tuners)),
-        seen == WELCOME,
-        bool(seen),
         {k: v for k, v in chosen.items() if _allowed(k, v)} if isinstance(chosen, dict) else {},
     )
 
@@ -147,7 +142,6 @@ def save(
     db: Database,
     picture: str | None = None,
     tuners: int | None = None,
-    welcomed: bool | None = None,
     new_station: dict[str, Any] | None = None,
 ) -> Playback:
     """Saves what's given (new_station by stored names: see
@@ -164,8 +158,6 @@ def save(
         if not all(_allowed(k, v) for k, v in new_station.items()):
             raise ValueError("Those aren't valid choices for new stations")
         db.set_meta(META_NEW_STATION, json.dumps({**load(db).new_station, **new_station}))
-    if welcomed is not None:
-        db.set_meta(META_WELCOMED, WELCOME if welcomed else "")
     return load(db)
 
 

@@ -47,9 +47,9 @@ def test_playback_settings_are_kept_and_checked(tmp_path):
     db = Database(tmp_path / "db.sqlite")
     playback.start(db, Settings())
     got = playback.load(db)
-    assert (got.picture, got.tuners, got.welcomed) == ("720p", 4, False)
-    got = playback.save(db, picture="1080p", tuners=6, welcomed=True)
-    assert (got.picture, got.tuners, got.welcomed) == ("1080p", 6, True)
+    assert (got.picture, got.tuners) == ("720p", 4)
+    got = playback.save(db, picture="1080p", tuners=6)
+    assert (got.picture, got.tuners) == ("1080p", 6)
     for bad in ({"picture": "4K"}, {"tuners": 0}, {"tuners": playback.MOST_TUNERS + 1}):
         with pytest.raises(ValueError):
             playback.save(db, **bad)
@@ -129,16 +129,16 @@ def test_new_stations_take_the_picture_size_set_for_them(client, monkeypatch):
     assert client.get("/api/status").json()["tuners"] == 2
 
 
-def test_new_stations_start_with_what_the_welcome_chose(client, monkeypatch):
+def test_new_stations_start_with_what_the_setup_chose(client, monkeypatch):
     monkeypatch.setattr(jobs, "CHECK_NEW_STATIONS", False)
     got = client.get("/api/playback").json()
-    assert got["newStation"] == {} and not got["welcomed"] and not got["welcomedBefore"]
+    assert got["newStation"] == {}
     chosen = {
         "subtitles": "forced", "breaks": 2, "stationId": True, "idSeconds": 5,
         "introSeconds": 0, "upNextSeconds": 3, "watermark": "clock", "watermarkPosition": "top-right",
     }  # fmt: skip
-    saved = client.put("/api/playback", json={"newStation": chosen, "welcomed": True}).json()
-    assert saved["newStation"] == chosen and saved["welcomed"]
+    saved = client.put("/api/playback", json={"newStation": chosen}).json()
+    assert saved["newStation"] == chosen
     made = station(client, 1).json()
     assert {k: made[k] for k in chosen} == chosen
     # What a station is given itself still counts.
@@ -163,14 +163,8 @@ def test_new_stations_start_with_what_the_welcome_chose(client, monkeypatch):
     assert again["newStation"] == {**chosen, "breaks": 1}
 
 
-def test_the_welcome_comes_back_once_when_it_has_new_choices(tmp_path):
+def test_odd_settings_for_new_stations_are_left_out(tmp_path):
     db = Database(tmp_path / "db.sqlite")
-    db.set_meta(playback.META_WELCOMED, "1")  # (1.14's)
-    got = playback.load(db)
-    assert not got.welcomed and got.welcomed_before
-    assert playback.save(db, welcomed=True).welcomed
-    assert db.get_meta(playback.META_WELCOMED) == playback.WELCOME
-    # Something odd in what new stations start with is left out.
     db.set_meta(playback.META_NEW_STATION, '{"breaks": 9, "subtitles": "always"}')
     assert playback.load(db).new_station == {"subtitles": "always"}
     db.set_meta(playback.META_NEW_STATION, "[not json")

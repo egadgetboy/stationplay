@@ -424,14 +424,23 @@ A Cloudflare Tunnel reaches StationPlay's page without opening any port. It's no
 
 ## First-time setup
 
-The first time an Admin opens StationPlay's page, it walks through four steps. Use **Back** and **Next**, or **Skip setup** to keep the defaults.
+The first time an Admin opens StationPlay's page, the setup asks a few questions and checks that everything is working. Use **Next** and **Back**, or the steps down the side. Each answer is saved when you go on to another step. **Skip setup** keeps everything else as it is.
 
-1. **How stations play:** the picture size for new stations and the number of tuners, with **Test this server** to help you choose.
-2. **New station settings:** what each new station starts with: subtitles, commercials and trailers, the Station ID card, the Intro Bumper, the Up Next Banner, and what goes in the corner. Stations you already have aren't changed.
-3. **Who can use StationPlay:** **Anyone on my network**, or **Only people who sign in** (you become the first Admin right away; see [Who can use StationPlay](#who-can-use-stationplay)).
-4. **Checking files and adding to Plex:** when the overnight deep scan runs, and how to add StationPlay to Plex.
+1. **Checking your server:** whether StationPlay can reach Plex (and whether the account that owns your Plex server has Plex Pass, which watching in Plex needs), whether it can read your media files from disk, how it encodes video, whether its clock matches your browser's, and its backups. Anything marked **Needs a look** or **Not working** says what to do. After changing StationPlay's app settings, restart it, then choose **Check again**.
+2. **How stations play:** the picture size for new stations and the number of tuners, with **Test this server** to help you choose.
+3. **New station settings:** what each new station starts with: subtitles, commercials and trailers, the Station ID card, the Intro Bumper, the Up Next Banner, and what goes in the corner. Stations you already have aren't changed.
+4. **Who can use StationPlay:** **Anyone on my network**, or **Only people who sign in** (you become the first Admin right away; see [Who can use StationPlay](#who-can-use-stationplay)).
+5. **Watching away from home:** whether StationPlay's own apps can watch your stations away from home, and the address they use then (see [Reaching StationPlay from outside your home](#reaching-stationplay-from-outside-your-home)).
+6. **Your library in StationPlay's apps:** which libraries the apps can browse and play on demand (see [Coming soon: StationPlay's own apps](#coming-soon-stationplays-own-apps)).
+7. **Checking files:** when the overnight deep scan runs.
+8. **Adding StationPlay to Plex:** the steps in Plex, the addresses to enter there, and whether Plex has StationPlay yet.
+9. **All set:** what's set now, and anything that still needs a look.
 
-Nothing is saved until **Finish**, except the first Admin. **Run setup again** on the **Add to Plex** tab opens it any time; that's the only place to change the settings for new stations. Picture size and tuners can also be changed on the **Add to Plex** tab. After an update that adds new choices, the setup opens once more, with your earlier choices filled in.
+**Run setup again** on the **Add to Plex** tab, or **Setup** at the foot of the page, opens it any time, with your current answers filled in. It's the only place to change the settings for new stations; everything else can be changed on its tab too.
+
+**After an update.** When a new version brings a question that needs an Admin's answer, such as a new feature to turn on or a new choice, the setup opens once by itself with just those questions (and the checks, if something needs a look). Everything else stays as you set it.
+
+**Light or dark.** StationPlay's page follows your device's light or dark setting. To keep it light or dark in one browser, choose **Light** or **Dark** under **Appearance** at the foot of the page; **Automatic** follows the device again. The choice is kept in that browser only, so each person and device can have their own.
 
 ## Making stations
 
@@ -933,6 +942,8 @@ The tests need ffmpeg on the `PATH` (the HDR and real-world tests also need ffmp
 
 `.github/workflows/image.yml` is optional: if you keep the code on GitHub, it runs the tests and publishes an x86-64 image to GitHub's container registry.
 
+**The setup's questions.** When a release adds something an Admin needs to answer (a feature that's off until they turn it on, or a new choice), it goes in the setup: a new question in `QUESTIONS` in `app/setup.py`, with its step on the page (`SETUP_PAGES` in `app/web/index.html`); or, for a question that gains a choice, its version raised by one. After the update, the setup opens once by itself with just that question.
+
 **Releases.** Each release's notes are in `docs/releases/v<version>.md`, whose first lines name the commit of that version (`commit: <its full ID>`). When one is added to `main`, `.github/workflows/release.yml` publishes it on GitHub: the tag at that commit, the notes, and the release's files built from that commit (`stationplay-<version>.zip`, `stationplay.yaml` and `docker-compose.yml`). It checks that the commit is on `main` and is that version, leaves releases already published alone, and marks the newest as the latest.
 
 ### The logo library
@@ -961,6 +972,7 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/ffmpeg.py` | ffmpeg and ffprobe commands |
 | `app/schedule.py` | Episode order, shuffle rules, and schedule and guide math |
 | `app/playback.py` | Picture sizes, tuners, the "All tuners in use" card, and the speed test |
+| `app/setup.py` | The setup: which questions an Admin is asked (all of them at first, then just the new ones after an update), and its checks |
 | `app/specials.py`, `app/marathons.py` | Marathons, Feature Presentations and blocks |
 | `app/smart.py` | Smart stations |
 | `app/subtitles.py` | Subtitles drawn into the picture |

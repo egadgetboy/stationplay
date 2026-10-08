@@ -974,6 +974,28 @@ class PlexClient:
         if resp.status_code >= 400:
             raise PlexError(f"Plex returned HTTP {resp.status_code} for {path}", resp.status_code)
 
+    async def newest_files(self, most: int = 3) -> list[str]:
+        """The newest file in each library of shows or movies (up to
+        `most`), where Plex has it: for checking StationPlay can read them."""
+        out: list[str] = []
+        for section in await self.sections():
+            data = await self._get(
+                f"/library/sections/{section['key']}/all",
+                {
+                    "type": TYPE_EPISODE if section["type"] == "show" else TYPE_MOVIE,
+                    "sort": "addedAt:desc",
+                    "X-Plex-Container-Start": 0,
+                    "X-Plex-Container-Size": 1,
+                },
+            )
+            for m in data.get("Metadata") or []:
+                part = first_part(m)
+                if part and part.file:
+                    out.append(part.file)
+            if len(out) >= most:
+                break
+        return out
+
     async def current_part(self, rating_key: str) -> MediaPart | None:
         """The file Plex currently has for an item.
 
