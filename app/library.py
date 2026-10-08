@@ -186,11 +186,16 @@ class Library:
     # For StationPlay's apps (see docs/on-demand.md) ------------------------
 
     async def browse(
-        self, library: str, kind: str, sort: str, start: int, size: int
+        self, library: str, kind: str, sort: str, start: int, size: int, genre: str | None = None
     ) -> tuple[int, list[Entry]]:
         """A page of a library's shows or movies (sort: "title", "added" or
-        "released"): (how many in all, the page)."""
-        return await self._plex_for(library).browse(library, kind, sort, start, size)
+        "released"; `genre`: only those with it, by its id from `genres`):
+        (how many in all, the page)."""
+        return await self._plex_for(library).browse(library, kind, sort, start, size, genre)
+
+    async def genres(self, library: str, kind: str) -> list[dict[str, str]]:
+        """A library's genres: [{"id", "title"}] (none if it has none)."""
+        return await self._plex_for(library).choices(library, "genre", kind)
 
     async def recently_added(self, library: str, kind: str, count: int) -> list[Entry]:
         return await self._plex_for(library).recently_added(library, kind, count)

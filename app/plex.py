@@ -1011,9 +1011,10 @@ class PlexClient:
     # For StationPlay's apps (see docs/on-demand.md) -------------------------
 
     async def browse(
-        self, section: str, kind: str, sort: str, start: int, size: int
+        self, section: str, kind: str, sort: str, start: int, size: int, genre: str | None = None
     ) -> tuple[int, list[Entry]]:
-        """A page of a library's shows or movies: (how many in all, the page)."""
+        """A page of a library's shows or movies: (how many in all, the page).
+        `genre`: only those with this genre (its id, as `choices` gives it)."""
         data = await self._get(
             f"/library/sections/{section}/all",
             {
@@ -1021,6 +1022,7 @@ class PlexClient:
                 "sort": _SORTS[sort],
                 "X-Plex-Container-Start": start,
                 "X-Plex-Container-Size": size,
+                **({"genre": genre} if genre else {}),
             },
         )
         page = [e for m in data.get("Metadata") or [] if (e := to_entry(m, section))]
@@ -1188,7 +1190,37 @@ def to_entry(m: dict[str, Any], section: str = "", details: bool = False) -> Ent
         intro=intro,
         credits=credits,
         media=media,
+        sort_title=str(m.get("titleSort") or ""),
+        tagline=str(m.get("tagline") or "") if details else "",
+        cast=_roles(m) if details else (),
+        directors=_names(m, "Director") if details else (),
+        writers=_names(m, "Writer") if details else (),
     )
+
+
+# Of a show's or movie's people, at most this many are told.
+CAST_MOST = 20
+CREW_MOST = 5
+
+
+def _roles(m: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    """Who's in it, as billed: (name, the part they play)."""
+    out = [
+        (str(r["tag"]).strip(), str(r.get("role") or "").strip())
+        for r in m.get("Role") or []
+        if isinstance(r, dict) and str(r.get("tag") or "").strip()
+    ]
+    return tuple(out[:CAST_MOST])
+
+
+def _names(m: dict[str, Any], field: str) -> tuple[str, ...]:
+    """Its directors or writers, in Plex's order, each once."""
+    out: list[str] = []
+    for t in m.get(field) or []:
+        name = str(t.get("tag") or "").strip() if isinstance(t, dict) else ""
+        if name and name not in out:
+            out.append(name)
+    return tuple(out[:CREW_MOST])
 
 
 def _int(value: Any) -> int | None:

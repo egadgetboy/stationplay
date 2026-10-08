@@ -15,6 +15,7 @@ import json
 import logging
 import secrets
 import time
+import unicodedata
 from collections import OrderedDict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -49,6 +50,14 @@ ENTRIES_KEPT = 500  # shows', movies' and episodes' details
 ENTRY_S = 600.0
 SHOWS_KEPT = 50  # shows' lists of episodes
 EPISODES_S = 120.0
+# Whole libraries (as sorted, and for one genre), for filtering, jumping to
+# a letter and finding others like a title: kept this long, this many.
+WHOLE_S = 120.0
+WHOLES_KEPT = 8
+WHOLE_PAGE = 500  # asked for this many at a time
+GENRES_S = 600.0
+GENRE_LONGEST = 100
+RELATED_MOST = 12
 
 # Lists: shows or movies per page (and at most), search results and home rows.
 PAGE_DEFAULT = 50
@@ -163,6 +172,8 @@ class Catalog:
         self._where: OrderedDict[str, str] = OrderedDict()  # key -> its library
         self._entries: OrderedDict[str, tuple[float, Entry]] = OrderedDict()
         self._episodes: OrderedDict[str, tuple[float, list[Entry]]] = OrderedDict()
+        self._wholes: OrderedDict[tuple[str, str, str], tuple[float, list[Entry]]] = OrderedDict()
+        self._genres: dict[str, tuple[float, list[dict[str, str]]]] = {}
         self._turns = asyncio.Semaphore(LIBRARY_AT_ONCE)
 
     def learn(self, entries: Iterable[Entry]) -> None:
@@ -256,6 +267,54 @@ class Catalog:
         self.learn(page)
         return title, kind, total, page
 
+    async def genres(self, library: str) -> list[dict[str, str]]:
+        """A shared library's genres, A to Z: [{"id", "title"}]."""
+        _, kind = await self.library_kind(library)
+        now = time.monotonic()
+        kept = self._genres.get(library)
+        if kept is None or now - kept[0] > GENRES_S:
+            async with self._turns:
+                found = await self.library.genres(library, kind)
+            named = [
+                {"id": g["id"], "title": plain(g["title"])} for g in found if plain(g["title"])
+            ]
+            named.sort(key=lambda g: g["title"].casefold())
+            kept = self._genres[library] = (now, named)
+        return kept[1]
+
+    async def whole(self, library: str, sort: str, genre: str = "") -> tuple[str, str, list[Entry]]:
+        """All of a shared library's shows or movies, sorted (and only those
+        with `genre`, by its name): (its title, kind, them). Kept a little
+        while, so paging through it, or filtering it, asks the library once."""
+        title, kind = await self.library_kind(library)
+        now = time.monotonic()
+        key = (library, sort, genre)
+        kept = self._wholes.get(key)
+        if kept is not None and now - kept[0] < WHOLE_S:
+            self._wholes.move_to_end(key)
+            return title, kind, kept[1]
+        genre_id = None
+        if genre:
+            wanted = genre.casefold()
+            found = [g["id"] for g in await self.genres(library) if g["title"].casefold() == wanted]
+            if not found:
+                return title, kind, []  # (no such genre here)
+            genre_id = found[0]
+        entries: list[Entry] = []
+        while True:
+            async with self._turns:
+                total, page = await self.library.browse(
+                    library, kind, sort, len(entries), WHOLE_PAGE, genre_id
+                )
+            entries += page
+            if not page or len(entries) >= total:
+                break
+        self.learn(entries)
+        self._wholes[key] = (now, entries)
+        while len(self._wholes) > WHOLES_KEPT:
+            self._wholes.popitem(last=False)
+        return title, kind, entries
+
     async def recently_added(self) -> list[tuple[dict[str, str], list[Entry]]]:
         """Each shared library's newest shows or movies."""
         libs = await self.libraries()
@@ -298,6 +357,56 @@ class Catalog:
             found = await self.library.entries(keys)
         self.learn(found)
         return [e for e in found if self.shared_library(e)]
+
+
+# Jumping to a letter, and others like a title ----------------------------------------
+
+_ARTICLES = ("the ", "a ", "an ")
+
+
+def letter_of(e: Entry) -> str:
+    """The letter a show or movie is listed under, as the library sorts it
+    ("The Orbit Room" under O; "Élan" under E); "#" for a digit or anything
+    else."""
+    title = (e.sort_title or e.title).strip()
+    if not e.sort_title:
+        lowered = title.casefold()
+        for article in _ARTICLES:
+            if lowered.startswith(article) and len(title) > len(article):
+                title = title[len(article) :].lstrip()
+                break
+    first = unicodedata.normalize("NFKD", title[:1])[:1].upper()
+    return first if "A" <= first <= "Z" else "#"
+
+
+def letters(entries: list[Entry]) -> list[dict[str, Any]]:
+    """Where each letter starts among `entries` (sorted by title), for
+    jumping to it: [{"letter", "start"}], each letter once."""
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for i, e in enumerate(entries):
+        letter = letter_of(e)
+        if letter not in seen:
+            seen.add(letter)
+            out.append({"letter": letter, "start": i})
+    return out
+
+
+def related(entry: Entry, pool: Iterable[Entry], most: int = RELATED_MOST) -> list[Entry]:
+    """Others like `entry` (a show or movie) among `pool`: those sharing the
+    most of its genres first, then the nearest in years, then by title.
+    None without genres to go by."""
+    mine = {g.casefold() for g in entry.genres}
+    if not mine:
+        return []
+    scored = []
+    for e in pool:
+        shared = len(mine & {g.casefold() for g in e.genres})
+        if e.key != entry.key and e.kind == entry.kind and shared:
+            apart = abs((e.year or 0) - (entry.year or 0)) if e.year and entry.year else 1000
+            scored.append((-shared, apart, e.title.casefold(), e))
+    scored.sort(key=lambda s: s[:3])
+    return [s[3] for s in scored[:most]]
 
 
 # Can a device play a file as it is? --------------------------------------------------
@@ -590,6 +699,10 @@ class PlaySession:
     away: bool
     # Subtitle files of their own: track id -> (where they're fetched, codec).
     subtitles: dict[str, tuple[str, str]] = field(default_factory=dict)
+    # A copy StationPlay makes of it (converting.Copy), if it doesn't play
+    # as it is; and where the player starts it.
+    copy: Any = None
+    start_s: float = 0.0
     started: float = field(default_factory=time.monotonic)
     seen: float = field(default_factory=time.monotonic)
     checked: float = field(default_factory=time.monotonic)
@@ -608,7 +721,7 @@ class PlaySessions:
         self._tidy()
         while len(self._sessions) >= SESSIONS_MOST:
             oldest = min(self._sessions.values(), key=lambda s: s.seen)
-            del self._sessions[oldest.id]
+            self.end(oldest.id)
         session = PlaySession(id=secrets.token_urlsafe(SESSION_ID_BYTES), **details)
         self._sessions[session.id] = session
         return session
@@ -620,13 +733,29 @@ class PlaySessions:
             return None
         now = time.monotonic()
         if now - session.seen > SESSION_IDLE_S:
-            del self._sessions[session_id]
+            self.end(session_id)
             return None
         session.seen = now
         return session
 
     def end(self, session_id: str) -> PlaySession | None:
-        return self._sessions.pop(session_id, None)
+        """Ends a session (and stops its copy being made)."""
+        session = self._sessions.pop(session_id, None)
+        if session is not None and session.copy is not None:
+            session.copy.stop()
+        return session
+
+    def end_all(self) -> None:
+        for session_id in list(self._sessions):
+            self.end(session_id)
+
+    def copies(self) -> int:
+        """Copies being converted (their pictures made) now."""
+        return sum(
+            1
+            for s in self._sessions.values()
+            if s.copy is not None and not s.copy.plan.copies_picture and not s.copy.stopped
+        )
 
     def watching(self) -> dict[str, bool]:
         """The devices playing something now: client -> away from home."""
@@ -641,7 +770,7 @@ class PlaySessions:
         now = time.monotonic()
         for s in list(self._sessions.values()):
             if now - s.seen > SESSION_IDLE_S:
-                del self._sessions[s.id]
+                self.end(s.id)
 
     def __len__(self) -> int:
         return len(self._sessions)

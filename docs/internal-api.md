@@ -368,18 +368,27 @@ The shared libraries, in the library's own order.
 
 One shared library's shows or movies, a page at a time: `?start=` (0 if it
 isn't given) and `?size=` (1 to 200; 50 if it isn't given), sorted by
-`?sort=`: `title` (the default), `added` (newest first) or `released`
-(newest first).
+`?sort=`: `title` (the default; titles without a leading "The", "A" or
+"An", as the library sorts them), `added` (newest first) or `released`
+(newest first). Narrowed (from 1.24.0) by `?genre=` (one of its `genres`)
+and `?unwatched=1` (only movies this person hasn't watched, and shows with
+episodes they haven't watched); a genre the library hasn't any of leaves
+nothing.
 
 | Field | Type | What it is |
 |---|---|---|
 | `key` | string | The library's key |
 | `title` | string | Its name |
 | `kind` | string | `show` or `movie` |
-| `total` | number | How many shows or movies it has in all |
+| `total` | number | How many shows or movies it has in all, as narrowed |
 | `start` | number | Where this page starts |
 | `items` | list | This page |
 | `items[]` | card | One show or movie |
+| `genres` | list | The library's genres, A to Z (from 1.24.0), to narrow it by |
+| `genres[]` | string | One genre |
+| `letters` | list | Sorted by `title`: where each letter starts in the whole list, as narrowed, for jumping to it (`[]` for the other sorts; from 1.24.0) |
+| `letters[].letter` | string | `A` to `Z`, or `#` for titles starting with a digit or anything else |
+| `letters[].start` | number | Where its first show or movie is (a `start` to ask for) |
 
 ## GET /api/internal/home
 
@@ -434,12 +443,20 @@ A show's, movie's or episode's details: its card's fields, and more.
 | `showKey` | string or null | (An episode) as in a card |
 | `thumb` | string or null | (An episode) as in a card |
 | `summary` | string | What it's about (may be empty) |
+| `tagline` | string or null | Its tagline, a line said on its poster (from 1.24.0) |
 | `genres` | list | Its genres (its first few) |
 | `genres[]` | string | One genre |
 | `contentRating` | string or null | Its rating, such as `TV-PG` |
 | `studio` | string or null | Its studio, or a show's network |
 | `released` | string or null | When it first came out, as `YYYY-MM-DD` |
 | `backdrop` | string or null | A wide picture for behind the details (an episode's is its show's) |
+| `cast` | list | Who's in it, as billed (up to 20; from 1.24.0) |
+| `cast[].name` | string | Their name |
+| `cast[].role` | string | The part they play ("" if the library doesn't say) |
+| `directors` | list | Who directed it (up to 5; from 1.24.0) |
+| `directors[]` | string | A name |
+| `writers` | list | Who wrote it (up to 5; from 1.24.0) |
+| `writers[]` | string | A name |
 | `seasons` | list | (A show) its seasons, in order, specials last |
 | `seasons[].season` | number or null | The season's number (0: specials; null for episodes without one, which are listed with all of a show's episodes) |
 | `seasons[].title` | string | "Season 1", "Specials" |
@@ -479,6 +496,18 @@ A show's, movie's or episode's details: its card's fields, and more.
 | `versions[].bitrateKbps` | number or null | What it needs, in kilobits a second |
 
 Its `picture`, `audio` and `subtitles` are its best version's.
+
+## GET /api/internal/items/{key}/related
+
+Up to 12 other shows or movies like this one, from its own library (an
+episode's are its show's), for More like this: those sharing the most of
+its genres first, then the nearest in years. Empty when it has no genres.
+From 1.24.0.
+
+| Field | Type | What it is |
+|---|---|---|
+| `items` | list | Others like it |
+| `items[]` | card | One show or movie |
 
 ## GET /api/internal/items/{key}/episodes
 
@@ -526,9 +555,38 @@ the smallest the device can play. A file plays as it is when the
 device can play its file type, its picture's format at its size and bit
 depth, its HDR (Dolby Vision profile 5 needs `dv`; other profiles also play
 as the HDR10, HLG or ordinary picture beneath), and the sound of its default
-track. If it can't, the answer is 422, with
-`detail` (a sentence to show) and `why` (a list of the reasons): StationPlay
-doesn't convert files for the apps yet.
+track (or of `audio`, if it's sent).
+
+When it can't, StationPlay 1.24.0 makes a copy it can (`features` lists
+`convert`), for an app that says it takes one: `device.hls` lists what its
+player takes in an HLS playlist, `ts` (MPEG-TS pieces with H.264), `ts-hevc`
+(MPEG-TS pieces with HEVC) and `fmp4` (fragmented MP4 pieces; not made yet).
+A copy is **repackaged** (`repackage`: the picture as it is, its sound
+converted where the device needs it) when the device plays the picture and
+its pieces carry it, or else **converted** (`convert`: the picture made
+H.264, at most 1080p, ordinary rather than HDR). A copy is also made, with
+`device.hls`, when the app sends:
+
+- `subtitle`: the ID of a subtitle track to draw into the picture (for a
+  track the player can't show itself: picture subtitles on a player without
+  them, and any track inside the file while a copy plays). The copy is
+  converted.
+- `fit: true` with `maxKbps`: a smaller picture made to fit the connection,
+  when no version keeps up. The copy is converted.
+- `night: true`: night mode's sound (as the stations' `nightHls`), for an
+  app that can't make it itself.
+
+Send `startMs` too: where the player will start (by default, where this
+person stopped). A copy's playlist says to start there, and StationPlay
+starts making it there. `audio` (a sound track's ID) plays that track; a copy
+holds only that one, so another track is another copy: ask again with it and
+`startMs` where the viewer is, and `POST` the old one's `leave`.
+
+If the device can't play the file as it is and no copy can be made (the app
+didn't send `device.hls`, or nothing it takes would show the file right),
+the answer is 422, with `detail` (a sentence to show) and `why` (a list of
+the reasons). StationPlay converts at most 3 copies at once (repackaging
+costs next to nothing): one more is answered 503 with `detail`.
 
 An Admin's limits on devices watching count programs played this way too
 (see Playing a station in `docs/api.md`): one more device is answered 503
@@ -556,12 +614,16 @@ so plainly.
 | Field | Type | What it is |
 |---|---|---|
 | `session` | string | This playing's ID (for progress reports) |
-| `method` | string | How it plays: `direct` (the file as it is) |
-| `url` | string | What the player plays (it needs no token), such as `/play/<session>/file.mkv`. Ranges are answered, so the player can seek |
+| `method` | string | How it plays: `direct` (the file as it is), `repackage` or `convert` (a copy; from 1.24.0) |
+| `url` | string | What the player plays (it needs no token): the file, such as `/play/<session>/file.mkv`, whose ranges are answered so the player can seek; or a copy's HLS playlist, `/play/<session>/index.m3u8`, listing the whole program from its start (a jump far ahead takes a few seconds more to start) |
+| `why` | list or null | Why a copy is made (null for `direct`) |
+| `why[]` | string | One reason, such as "its sound's format (DTS)" |
+| `audioTrack` | string or null | The sound track in a copy (null for `direct`, where the player chooses among `audio`) |
+| `drawnSubtitle` | string or null | The subtitle track drawn into a copy's picture, if any |
 | `leave` | string | Where to `POST` when the player stops |
 | `resumeMs` | number | Where this person stopped last time (0: the start). Offer to resume there, or start over |
 | `durationMs` | number or null | How long it is |
-| `bitrateKbps` | number or null | What the file needs, in kilobits a second: to tell, when playing keeps stopping to load, whether the connection is too slow for it (see `/api/internal/speed-test`) |
+| `bitrateKbps` | number or null | What the file (or a converted copy) needs, in kilobits a second: to tell, when playing keeps stopping to load, whether the connection is too slow for it (see `/api/internal/speed-test`) |
 | `version` | string or null | The version playing |
 | `versions` | list | Its versions, the best first, as in its details |
 | `versions[].id` | string | As in its details |

@@ -102,7 +102,7 @@ talk to. It needs no token.
 | `outside` | boolean | Whether the request came through StationPlay's public port |
 | `awayAddress` | string or null | The address StationPlay's apps use away from home (such as `https://tv.example.com`), when an Admin has turned that on; null otherwise |
 | `features` | list | What this server offers |
-| `features[]` | string | One of them: `hls` (stations as HLS), `speed-test` (connection tests for StationPlay's apps, from 1.20.0), `away` (StationPlay's apps away from home is on), `library` (libraries are shared with StationPlay's apps, and can be watched from here; from 1.21.0), `reports` (StationPlay's apps can send problem reports, from 1.22.1), `night` (each station has night mode's sound too, `nightHls`, from 1.23.0), `problems` (StationPlay's apps send the problems they run into, from 1.23.0) |
+| `features[]` | string | One of them: `hls` (stations as HLS), `speed-test` (connection tests for StationPlay's apps, from 1.20.0), `away` (StationPlay's apps away from home is on), `library` (libraries are shared with StationPlay's apps, and can be watched from here; from 1.21.0), `reports` (StationPlay's apps can send problem reports, from 1.22.1), `night` (each station has night mode's sound too, `nightHls`, from 1.23.0), `problems` (StationPlay's apps send the problems they run into, from 1.23.0), `convert` (StationPlay makes copies of what a device can't play as it is, from 1.24.0; wherever `library` is offered) |
 
 ## GET /api/v1/stations
 

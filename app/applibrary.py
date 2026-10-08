@@ -9,6 +9,7 @@ The deciding is in ondemand.py; this is the asking and answering.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 from pathlib import Path
@@ -20,10 +21,11 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import access, capacity, catalog, ondemand, viewing
+from . import access, capacity, catalog, converting, keyframes, ondemand, subtitles, viewing
 from .appapi import APP_MAX, app_label, in_sentence, slot_program
 from .broadcaster import now_ms
-from .catalog import Entry, Track
+from .catalog import Entry, Media, Track
+from .ffmpeg import ProbeResult, Subtitles, to_sdr
 from .library import LibraryError
 from .ondemand import NotShared
 from .sources import find_first, learn_mapping, local_candidates
@@ -43,6 +45,13 @@ AT_HOME = (
 PLAY_ENDED = "That program's address has ended. Choose it again to play it."
 NOT_PLAYABLE = "Choose an episode or a movie to play"
 NO_FILE = "StationPlay can't reach this program's file right now. Try again in a moment."
+# Copies with their picture converted at once, at most (each takes a share of
+# the server's processor; repackaging takes next to nothing).
+CONVERTING_MOST = 3
+BUSY_CONVERTING = (
+    "StationPlay is already converting as much as it can for other devices. Try again in a "
+    "little while."
+)
 
 # A file's type, for players that go by it.
 _TYPES = {
@@ -55,7 +64,6 @@ _SUBTITLE_TYPES = {
 # Asking Plex for a file on a player's behalf: how long to wait.
 PROXY_TIMEOUT = httpx.Timeout(30.0, read=120.0)
 SUBTITLES_MOST = 20 << 20  # a subtitle file's size, at most
-WHOLE_S = 120  # how long a whole library is kept, for someone who can't see all of it
 PROXIED_HEADERS = ("content-type", "content-length", "content-range", "accept-ranges",
                    "last-modified", "etag")  # fmt: skip
 
@@ -72,6 +80,9 @@ class Abilities(BaseModel):
     video: list[VideoAbility] = Field(default_factory=list, max_length=40)
     hdr: list[str] = Field(default_factory=list, max_length=10)
     audio: list[str] = Field(default_factory=list, max_length=40)
+    hls: list[str] = Field(
+        default_factory=list, max_length=10
+    )  # (copies it takes: see converting.py)
 
 
 class PlayAsk(BaseModel):
@@ -81,6 +92,11 @@ class PlayAsk(BaseModel):
     maxKbps: int | None = Field(default=None, ge=100, le=10_000_000)
     app: str = Field(default="", max_length=APP_MAX)
     deviceName: str = Field(default="", max_length=APP_MAX)
+    startMs: int | None = Field(default=None, ge=0, le=7 * 86_400_000)
+    audio: str | None = Field(default=None, max_length=40)
+    subtitle: str | None = Field(default=None, max_length=40)
+    fit: bool = False
+    night: bool = False
 
 
 class ProgressReport(BaseModel):
@@ -143,11 +159,17 @@ def details(e: Entry) -> dict:
     """What a details page adds to a card."""
     return {
         "summary": plain(e.summary),
+        "tagline": plain(e.tagline) or None,
         "genres": [plain(g) for g in e.genres],
         "contentRating": plain(e.content_rating) or None,
         "studio": plain(e.studio) or None,
         "released": e.released or None,
         "backdrop": art(e.key, "backdrop") if e.has_art else None,
+        "cast": [
+            {"name": name, "role": plain(role)} for who, role in e.cast if (name := plain(who))
+        ],
+        "directors": [name for who in e.directors if (name := plain(who))],
+        "writers": [name for who in e.writers if (name := plain(who))],
     }
 
 
@@ -285,32 +307,6 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         libraries = viewer.level.libraries
         return viewer.everything or libraries is None or key in libraries
 
-    # A whole library, for someone who can't see all of it: pages are made
-    # from what they can see. Asked for a page at a time, as when browsing,
-    # and kept a little while for the next page.
-    whole: dict[tuple[str, str], tuple[float, str, str, list[Entry]]] = {}
-
-    async def browse_seen(
-        viewer: viewing.Viewer, key: str, sort: str, start: int, size: int
-    ) -> tuple[str, str, int, list[Entry]]:
-        if not library_seen(viewer, key):
-            raise NotShared(key)
-        now = time.monotonic()
-        kept = whole.get((key, sort))
-        if kept is None or now - kept[0] > WHOLE_S:
-            title, kind, total, entries = await cat.browse(key, sort, 0, ondemand.PAGE_MOST)
-            while len(entries) < total:
-                _, _, total, more = await cat.browse(key, sort, len(entries), ondemand.PAGE_MOST)
-                if not more:
-                    break
-                entries += more
-            for stale in [k for k, v in whole.items() if now - v[0] > WHOLE_S]:
-                del whole[stale]
-            kept = whole[(key, sort)] = (now, title, kind, entries)
-        _, title, kind, entries = kept
-        seen = await seen_only(viewer, entries)
-        return title, kind, len(seen), seen[start : start + size]
-
     def unwatched_of(user_id: int, shows: list[Entry]) -> dict[str, int]:
         done = ctx.db.watched_in_shows(user_id, [s.key for s in shows])
         return {s.key: max(0, (s.episodes or 0) - len(done.get(s.key, ()))) for s in shows}
@@ -330,30 +326,52 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             found = await cat.libraries()
         return {"libraries": [lib for lib in found if library_seen(viewer, lib["key"])]}
 
+    def unwatched_only(user_id: int, entries: list[Entry]) -> list[Entry]:
+        """Those of `entries` this person hasn't finished: movies not watched,
+        and shows with episodes not watched."""
+        shows = [e for e in entries if e.kind == catalog.SHOW]
+        left = unwatched_of(user_id, shows)
+        done = ctx.db.progress_of(user_id, [e.key for e in entries if e.kind != catalog.SHOW])
+        return [
+            e
+            for e in entries
+            if (
+                left.get(e.key, 1) > 0 if e.kind == catalog.SHOW else not done.get(e.key, (0, 0))[1]
+            )
+        ]
+
     @app.get("/api/internal/libraries/{key}")
     async def library_page(key: str, request: Request):
         shared_here(request)
-        sort = request.query_params.get("sort", "title")
+        q = request.query_params
+        sort = q.get("sort", "title")
         if sort not in ("title", "added", "released"):
             raise HTTPException(400, "sort must be title, added or released")
-        start = _whole(request.query_params.get("start"), 0, "start", 0, 1_000_000)
-        size = _whole(
-            request.query_params.get("size"), ondemand.PAGE_DEFAULT, "size", 1, ondemand.PAGE_MOST
-        )
+        start = _whole(q.get("start"), 0, "start", 0, 1_000_000)
+        size = _whole(q.get("size"), ondemand.PAGE_DEFAULT, "size", 1, ondemand.PAGE_MOST)
+        genre = " ".join(plain(q.get("genre", "")).split())
+        if len(genre) > ondemand.GENRE_LONGEST:
+            raise HTTPException(400, "That isn't one of this library's genres")
+        unwatched = q.get("unwatched", "") in ("1", "true")
         user_id, _ = person(request)
         viewer = viewer_of(request)
         with Asking():
-            if viewer.everything:
-                title, kind, total, page = await cat.browse(key, sort, start, size)
-            else:
-                title, kind, total, page = await browse_seen(viewer, key, sort, start, size)
+            if not library_seen(viewer, key):
+                raise NotShared(key)
+            title, kind, entries = await cat.whole(key, sort, genre)
+            genres = await cat.genres(key)
+            entries = await seen_only(viewer, entries)
+        if unwatched:
+            entries = unwatched_only(user_id, entries)
         return {
             "key": key,
             "title": title,
             "kind": kind,
-            "total": total,
+            "total": len(entries),
             "start": start,
-            "items": cards(user_id, page),
+            "items": cards(user_id, entries[start : start + size]),
+            "genres": [g["title"] for g in genres],
+            "letters": ondemand.letters(entries) if sort == "title" else [],
         }
 
     @app.get("/api/internal/home")
@@ -481,6 +499,24 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         )
         return out
 
+    @app.get("/api/internal/items/{key}/related")
+    async def related_to(key: str, request: Request):
+        """Others like a show or movie, from its own library (an episode's:
+        its show's)."""
+        shared_here(request)
+        user_id, _ = person(request)
+        viewer = viewer_of(request)
+        with Asking():
+            e = await cat.entry(key)
+            await must_see(viewer, e)
+            if e.kind == catalog.EPISODE and e.show_key:
+                e = await cat.entry(e.show_key)
+            found: list[Entry] = []
+            if e.library and library_seen(viewer, e.library) and e.genres:
+                _, _, pool = await cat.whole(e.library, "title")
+                found = ondemand.related(e, await seen_only(viewer, pool))
+        return {"items": cards(user_id, found)}
+
     @app.get("/api/internal/items/{key}/episodes")
     async def episodes_of(key: str, request: Request):
         shared_here(request)
@@ -530,6 +566,241 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     # Playing ---------------------------------------------------------------
 
+    async def source_of(e: Entry, media: Media) -> tuple[str | None, str | None]:
+        """Where a version's file is read from: (its path, where StationPlay
+        can read it itself; otherwise Plex's address for it)."""
+        path = None
+        if media.file:
+            found, _timed_out = await find_first(
+                local_candidates(settings, ctx.media_access, media.file)
+            )
+            if found is not None:
+                learn_mapping(ctx.media_access, found)
+                path = found.path
+        stream = (
+            ctx.library.stream_url(e.key, media.part_key)
+            if path is None and media.part_key and ctx.library.configured
+            else None
+        )
+        return path, stream
+
+    def reader(path: str | None, stream: str | None) -> keyframes.Reader:
+        """Reads part of a file: from disk, or from Plex a range at a time."""
+
+        async def from_disk(offset: int, size: int) -> bytes:
+            def read() -> bytes:
+                with open(path or "", "rb") as f:
+                    f.seek(offset)
+                    return f.read(size)
+
+            return await asyncio.to_thread(read)
+
+        async def from_plex(offset: int, size: int) -> bytes:
+            try:
+                got = await proxy().get(
+                    stream or "",
+                    headers={
+                        "range": f"bytes={offset}-{offset + size - 1}",
+                        "accept-encoding": "identity",
+                    },
+                )
+            except httpx.HTTPError:
+                return b""
+            return got.content if got.status_code == 206 else b""
+
+        return from_disk if path else from_plex
+
+    async def fetch_subtitles(url: str, target: Path) -> bool:
+        """A subtitle file of its own, fetched from Plex to be drawn in."""
+        try:
+            got = await proxy().get(url)
+            got.raise_for_status()
+            if len(got.content) > SUBTITLES_MOST:
+                return False
+            await asyncio.to_thread(target.write_bytes, got.content)
+        except (httpx.HTTPError, OSError) as e:
+            log.warning("Couldn't fetch a subtitle file to draw in (%s)", type(e).__name__)
+            return False
+        return True
+
+    async def play_copy(body: PlayAsk, request: Request, e: Entry, dev: ondemand.Device,
+                        hls: frozenset[str]) -> Any:  # fmt: skip
+        """Playing a copy StationPlay makes (see converting.py), for a device
+        that can't play the file as it is, or for subtitles drawn in, a
+        smaller picture made to fit, or night mode's sound."""
+        user_id, name = person(request)
+        versions = [m for m in ondemand.best_first(e.media) if m.id] or list(e.media)
+        asked = [m for m in versions if body.version and m.id == body.version]
+        smaller = body.fit and body.maxKbps is not None
+
+        def refuse(why: list[str]) -> JSONResponse:
+            log.info("StationPlay can't make a copy of %s for an app (%s)", describe(e),
+                     ondemand.and_list(why))  # fmt: skip
+            return JSONResponse({"detail": cant_copy(why), "why": why}, status_code=422)
+
+        # The version: the one asked for; or the best one whose picture can
+        # be kept; or for converting, the smallest that's still big enough.
+        media = asked[0] if asked else None
+        if media is None:
+            keepable = [m for m in versions
+                        if converting.picture_copyable(m, ondemand.unplayable(m, dev), hls)]  # fmt: skip
+            if keepable and not (body.subtitle or smaller):
+                media = keepable[0]
+            else:
+                tall = [m for m in versions if m.height >= converting.CONVERT_MOST_HEIGHT]
+                media = tall[-1] if tall else versions[0]
+        if media.parts > 1:
+            return refuse([f"it's split into {media.parts} files"])
+        why = ondemand.unplayable(media, dev)
+        sound = converting.audio_track(media, body.audio)
+        if sound is not None and sound.codec and sound.codec not in dev.audio:
+            label = f"its sound's format ({ondemand.label(sound.codec)})"
+            if label not in why:
+                why.append(label)
+        shown = next((t for t in media.subtitles if t.id == body.subtitle), None)
+        if shown is not None:
+            why.append("its subtitles, drawn into the picture")
+        if smaller:
+            why.append("a smaller picture, to fit the connection")
+        if body.night:
+            why.append("night mode's sound")
+        duration_s = (media.duration_ms or e.duration_ms or 0) / 1000
+        if duration_s <= 0:
+            return refuse(["how long it is isn't known"])
+        path, stream = await source_of(e, media)
+        source = path or stream
+        if source is None:
+            raise HTTPException(503, NO_FILE)
+        # Keeping the picture as it is, where it can be (its keyframes
+        # known from the file's index); otherwise converting it.
+        starts: tuple[float, ...] = ()
+        if converting.picture_copyable(media, why, hls) and shown is None and not smaller:
+            found = await keyframes.keyframes(reader(path, stream), media.container)
+            if found:
+                starts = converting.pieces_at(found, duration_s)
+        if starts:
+            method, height, kbps, tone_map = converting.REPACKAGE, 0, 0, ""
+        else:
+            method, tone_map = converting.CONVERT, ""
+            if ondemand.needs_dolby_vision(media):
+                return refuse(["its Dolby Vision profile 5 picture"])
+            if media.hdr:
+                if not ctx.tone_mapping:
+                    return refuse([f"its {ondemand.hdr_label(media)} picture"])
+                tone_map = to_sdr(ProbeResult(
+                    ok=True, hdr="arib-std-b67" if media.hdr == catalog.HLG else "smpte2084"))  # fmt: skip
+            if "h264" not in dev.video:
+                return refuse(["this device doesn't play H.264"])
+            if ctx.plays.copies() >= CONVERTING_MOST:
+                raise HTTPException(503, BUSY_CONVERTING)
+            height, kbps = converting.convert_size(
+                media, dev.video["h264"][1], body.maxKbps if smaller else None
+            )
+            starts = converting.pieces_every(duration_s)
+        audio_codec, channels = converting.sound_for(sound, dev.audio, body.night)
+        # Subtitles drawn in: a picture track as it is; text in the file,
+        # read out first; a file of its own, fetched first.
+        drawn: Subtitles | None = None
+        first: Any = None
+        fetch_from: str | None = None  # (a subtitle file of its own, fetched to be drawn in)
+        if shown is not None:
+            inside = [t for t in sorted(media.subtitles, key=lambda t: t.index or 0)
+                      if not t.external]  # fmt: skip
+            nth = next((i for i, t in enumerate(inside) if t.id == shown.id), None)
+            styled = shown.codec == "ass"
+            if converting.picture_subtitles(shown) and nth is not None:
+                drawn = Subtitles(stream=nth, image=True)
+            elif not ctx.subtitling:
+                return refuse(["its subtitles (StationPlay can't draw text subtitles)"])
+            elif shown.external:
+                fetch_from = ctx.library.stream_url(e.key, f"/library/streams/{shown.id}")
+                if fetch_from is None or not shown.id.isdigit():
+                    return refuse(["its subtitles"])
+            elif nth is not None:
+                key = f"{source.split('?')[0]}|{nth}|{media.size}|{media.id}"
+                job = subtitles.Extraction(source, nth, settings.data_dir / subtitles.FOLDER
+                                           / f"app-{hashlib.sha1(key.encode()).hexdigest()[:24]}.ass",
+                                           styled)  # fmt: skip
+                await asyncio.to_thread(job.target.parent.mkdir, parents=True, exist_ok=True)
+                drawn = job.ready()
+                if not job.target.exists():
+                    first = subtitles.extract(settings, job)
+            else:
+                return refuse(["its subtitles"])
+        client = request.client.host if request.client else "?"
+        if (over := ctx.capacity.refusal(ctx.app_watchers(), client, False)) is not None:
+            limit, most = over
+            return JSONResponse(
+                {"detail": capacity.refused_because(limit, most), "limit": limit, "most": most},
+                status_code=503,
+            )
+        folder = converting.new_folder()
+        if fetch_from is not None and shown is not None:
+            target = (
+                folder
+                / f"subtitles.{shown.codec if shown.codec in ('srt', 'ass', 'vtt') else 'srt'}"
+            )
+            drawn = Subtitles(path=str(target), styled=shown.codec == "ass")
+            first = fetch_subtitles(fetch_from, target)
+        plan = converting.Plan(
+            method=method, why=tuple(why), starts=starts, duration_s=duration_s, audio=sound,
+            audio_codec=audio_codec, audio_channels=channels, night=body.night, height=height,
+            kbps=kbps, tone_map=tone_map, subtitles=drawn, drawn=shown.id if shown else None,
+        )  # fmt: skip
+        token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
+        task = asyncio.ensure_future(first) if first is not None else None
+        session = ctx.plays.start(
+            user_id=user_id, user=name,
+            sign_in=access.session_hash(token) if name and token else None,
+            entry=e, media=media, path=path, plex=stream, client=client, away=False,
+            subtitles={
+                t.id: (url, t.codec)
+                for t in media.subtitles
+                if t.external and t.id.isdigit()
+                and (url := ctx.library.stream_url(e.key, f"/library/streams/{t.id}"))
+            },
+        )  # fmt: skip
+        session.copy = converting.Copy(settings.ffmpeg_path, source, plan, folder, first=task)
+        resume = ondemand.resume_at(ctx.db.progress_of(user_id, [e.key]).get(e.key))
+        session.start_s = (body.startMs if body.startMs is not None else resume) / 1000
+        label = app_label(body.app, body.deviceName)
+        log.info(
+            "%s started %s in %s, %s (%s)%s",
+            name or "Someone",
+            describe(e),
+            in_sentence(label),
+            "repackaged" if method == converting.REPACKAGE else f"converted to {height}p",
+            ondemand.and_list(why),
+            "" if path else " (from Plex)",
+        )
+        here = f"/play/{session.id}"
+        return {
+            "session": session.id,
+            "method": method,
+            "url": f"{here}/index.m3u8",
+            "why": why,
+            "audioTrack": sound.id if sound else None,
+            "drawnSubtitle": shown.id if shown else None,
+            "leave": f"{here}/leave",
+            "resumeMs": resume,
+            "durationMs": media.duration_ms or e.duration_ms,
+            "bitrateKbps": plan.kbps_needed or media.bitrate_kbps,
+            "version": media.id or None,
+            "versions": playable_versions(e, dev, body.maxKbps),
+            "whenSlow": ctx.shared.when_slow["home"],
+            "markers": _markers(e),
+            "audio": tracks(media.audio, True),
+            "subtitles": [
+                {
+                    **t,
+                    "url": f"{here}/subtitles/{t['id']}.{t['codec']}"
+                    if t["external"] and t["id"] in session.subtitles
+                    else None,
+                }
+                for t in tracks(media.subtitles, False)
+            ],
+        }
+
     @app.post("/api/internal/play")
     async def play(body: PlayAsk, request: Request):
         shared_here(request)
@@ -548,6 +819,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             body.device.audio,
         )
         media, why = ondemand.choose(e, dev, body.version, body.maxKbps)
+        hls = frozenset(h.strip().lower() for h in body.device.hls)
+        sound = converting.audio_track(media, body.audio) if media is not None else None
+        as_it_is = (
+            media is not None
+            and not (body.subtitle or body.fit or body.night)
+            and (sound is None or not sound.codec or sound.codec in dev.audio)
+        )
+        if not as_it_is and "ts" in hls:
+            return await play_copy(body, request, e, dev, hls)
         if media is None:
             log.info(
                 "A StationPlay app can't play %s as it is (%s)", describe(e), ondemand.and_list(why)
@@ -614,6 +894,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "session": session.id,
             "method": "direct",
             "url": f"{here}/file.{media.container or 'mkv'}",
+            "why": None,
+            "audioTrack": None,
+            "drawnSubtitle": None,
             "leave": f"{here}/leave",
             "resumeMs": ondemand.resume_at(ctx.db.progress_of(user_id, [e.key]).get(e.key)),
             "durationMs": media.duration_ms or e.duration_ms,
@@ -704,6 +987,30 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 }
             )
         return await _from_plex(proxy(), session.plex, request, kind)
+
+    @app.get("/play/{session_id}/index.m3u8")
+    async def copy_playlist(session_id: str):
+        session = session_or_404(session_id)
+        if session.copy is None:
+            raise HTTPException(404, PLAY_ENDED)
+        return Response(
+            session.copy.playlist(session.start_s),
+            media_type="application/vnd.apple.mpegurl",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/play/{session_id}/piece-{n}.ts")
+    async def copy_piece(session_id: str, n: int):
+        session = session_or_404(session_id)
+        if session.copy is None:
+            raise HTTPException(404, PLAY_ENDED)
+        found = await session.copy.piece(n)
+        if found is None:
+            if session.copy.stopped:
+                raise HTTPException(404, PLAY_ENDED)
+            raise HTTPException(503, "That part isn't ready yet. Try again in a moment.")
+        ctx.plays.get(session_id)  # (still watching)
+        return FileResponse(found, media_type="video/mp2t", headers={"Cache-Control": "no-store"})
 
     @app.get("/play/{session_id}/subtitles/{track}.{ext}")
     async def play_subtitles(session_id: str, track: str, ext: str):
@@ -797,6 +1104,14 @@ def _whole(text: str | None, otherwise: int, name: str, low: int, high: int) -> 
     if not low <= value <= high:
         raise HTTPException(400, f"{name} must be from {low} to {high}")
     return value
+
+
+def cant_copy(why: list[str]) -> str:
+    """Why StationPlay can't make a copy for a device, in a sentence."""
+    return (
+        f"This device can't play this file as it is ({ondemand.and_list(why)}), and StationPlay "
+        "can't make a copy of it that the device can."
+    )
 
 
 def _slow_words(choice: str) -> str:

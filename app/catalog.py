@@ -156,3 +156,9 @@ class Entry:
     intro: tuple[int, int] | None = None  # [start, end) in ms, when asked for
     credits: tuple[int, int] | None = None
     media: tuple[Media, ...] = field(default=())  # (episodes and movies, when asked for)
+    sort_title: str = ""  # how the source sorts it ("Orbit Room, The"), "" if as its title
+    # (When asked for in detail:)
+    tagline: str = ""
+    cast: tuple[tuple[str, str], ...] = ()  # (name, role) as billed
+    directors: tuple[str, ...] = ()
+    writers: tuple[str, ...] = ()

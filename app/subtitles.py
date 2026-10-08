@@ -300,14 +300,14 @@ async def _extract(settings: Settings, job: Extraction) -> bool:
             _failed[job.target] = time.time()
             log.warning(
                 "Couldn't extract the subtitles from %s; it plays without them (%s)",
-                job.source,
+                ff.redact(job.source),  # (Plex's address for a file has its token)
                 e or "it took too long",
             )
             return False
         finally:
             with contextlib.suppress(OSError):
                 part.unlink(missing_ok=True)
-    log.info("Extracted the subtitles from %s", os.path.basename(job.source))
+    log.info("Extracted the subtitles from %s", os.path.basename(ff.redact(job.source)))
     return True
 
 

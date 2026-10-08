@@ -9,7 +9,7 @@ from urllib.parse import parse_qs
 
 import httpx
 
-from .fakeplex import TYPES, FakePlex
+from .fakeplex import ALL_FIELDS, TYPES, FakePlex
 
 
 class LibraryPlex(FakePlex):
@@ -23,6 +23,9 @@ class LibraryPlex(FakePlex):
         self.subtitle_files: dict[str, bytes] = {}  # external subtitles, by stream id
         self.released: dict[str, str] = {}  # originallyAvailableAt, by rating key
         self.versions: dict[str, list[tuple[dict, list[dict]]]] = {}  # more versions, by rating key
+        # What's said of a show or movie asked about alone: Role, Director,
+        # Writer, tagline..., by rating key.
+        self.more: dict[str, dict] = {}
 
     def describe(
         self,
@@ -87,7 +90,7 @@ class LibraryPlex(FakePlex):
                        if e.get("grandparentRatingKey") == key}  # fmt: skip
             return {**show, "librarySectionID": int(self.shows[key]["_section"]),
                     "childCount": len(seasons), "summary": f"{show['title']} summary",
-                    "art": f"/library/metadata/{key}/art/1"}  # fmt: skip
+                    "art": f"/library/metadata/{key}/art/1", **self.more.get(key, {})}  # fmt: skip
         if key not in self.episodes:
             return None
         raw = self.episodes[key]
@@ -96,6 +99,7 @@ class LibraryPlex(FakePlex):
         entry["thumb"] = f"/library/metadata/{key}/thumb/1"
         if key in self.released:
             entry["originallyAvailableAt"] = self.released[key]
+        entry.update(self.more.get(key, {}))
         if key in self.media:
             media = entry["Media"][0]
             entry["Media"] = [{**media, **self.media[key],
@@ -158,8 +162,16 @@ class LibraryPlex(FakePlex):
             entries = self._entries(parts[2], type_num)
             words = params.get("title", "").casefold()
             entries = [e for e in entries if words in e["title"].casefold()]
+            for field in ALL_FIELDS:  # (genre=87 and the like, as Plex filters)
+                if field in params:
+                    wanted = set(params[field].split(","))
+                    entries = [
+                        e
+                        for e in entries
+                        if wanted & {str(t["id"]) for t in e.get("_" + field, [])}
+                    ]
             if params.get("sort") == "titleSort":
-                entries.sort(key=lambda e: e["title"].casefold())
+                entries.sort(key=lambda e: str(e.get("titleSort") or e["title"]).casefold())
             else:
                 entries.sort(key=lambda e: self.released.get(e["ratingKey"], ""), reverse=True)
             start = int(params.get("X-Plex-Container-Start", 0))

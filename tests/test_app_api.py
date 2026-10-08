@@ -118,6 +118,15 @@ def app(tmp_path):
     fp.add_movie(
         "300", "A Movie", "/x/movie.mkv", 90 * 60_000, year=1999, section="2", genres=["Drama"]
     )
+    fp.add_movie("301", "The Other One", "/x/other.mkv", 60 * 60_000, year=2001, section="2",
+                 genres=["Drama", "Comedy"])  # fmt: skip
+    fp.episodes["301"]["titleSort"] = "Other One"
+    fp.more["300"] = {
+        "tagline": "One of a kind.",
+        "Role": [{"tag": "Ada Lund", "role": "Kit"}, {"tag": "Bo Hale"}],
+        "Director": [{"tag": "Cy Marsh"}],
+        "Writer": [{"tag": "Cy Marsh"}, {"tag": "Di Pell"}],
+    }
     fp.describe("300", colorTrc="smpte2084", bitDepth=10, video="hevc", width=3840, height=2160)
     fp.add_subtitles("300", "pgs", "English")
     fp.add_subtitles("300", "srt", "Spanish", external=b"1\n00:00:01,000 --> 00:00:02,000\nHola\n")
@@ -285,7 +294,9 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         )
         assert home.put("/api/app-libraries", json={"libraries": ["1", "2"]}).status_code == 200
         features = check.answer(phone.get("/api/v1/server"), "GET /api/v1/server")["features"]
-        assert features == ["hls", "speed-test", "reports", "night", "problems", "library"]
+        assert features == [
+            "hls", "speed-test", "reports", "night", "problems", "library", "convert"
+        ]  # fmt: skip
         libs = check.answer(
             phone.get("/api/internal/libraries", headers=sam), "GET /api/internal/libraries"
         )
@@ -300,6 +311,13 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
             "GET /api/internal/libraries/{key}",
         )
         assert movies["items"][0]["poster"] == "/api/internal/art/300?kind=poster"
+        comedies = check.answer(
+            phone.get("/api/internal/libraries/2?genre=Comedy", headers=sam),
+            "GET /api/internal/libraries/{key}",
+        )
+        assert [x["key"] for x in comedies["items"]] == ["301"]
+        assert comedies["genres"] == ["Comedy", "Drama"]
+        assert comedies["letters"] == [{"letter": "O", "start": 0}]  # ("The Other One")
         show = check.answer(
             phone.get("/api/internal/items/100", headers=sam), "GET /api/internal/items/{key}"
         )
@@ -319,6 +337,17 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
             "intro": [60_000, 120_000], "credits": [1_200_000, 1_320_000], "creditsToEnd": True
         }  # fmt: skip
         assert movie["picture"] == {"size": "4K", "hdr": "HDR10"}
+        assert movie["tagline"] == "One of a kind."
+        assert movie["cast"] == [
+            {"name": "Ada Lund", "role": "Kit"},
+            {"name": "Bo Hale", "role": ""},
+        ]
+        assert (movie["directors"], movie["writers"]) == (["Cy Marsh"], ["Cy Marsh", "Di Pell"])
+        like = check.answer(
+            phone.get("/api/internal/items/300/related", headers=sam),
+            "GET /api/internal/items/{key}/related",
+        )
+        assert [x["key"] for x in like["items"]] == ["301"]
         assert [v["name"] for v in movie["versions"]] == ["4K · HDR10", "1080p"]
         listed = check.answer(
             phone.get("/api/internal/items/100/episodes?season=1", headers=sam),
@@ -368,6 +397,19 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         )
         assert played["markers"]["intro"] == [60_000, 120_000]
         assert phone.post(played["leave"]).status_code == 204
+        # A copy (StationPlay 1.24.0): a smaller picture made to fit.
+        phone_device = {**tv, "video": [{"codec": "h264", "width": 1920, "height": 1080}],
+                        "hls": ["ts"]}  # fmt: skip
+        copied = check.answer(
+            phone.post("/api/internal/play", headers=sam,
+                       json={"key": "201", "device": phone_device, "maxKbps": 3000, "fit": True}),
+            "POST /api/internal/play",
+        )  # fmt: skip
+        assert (copied["method"], copied["why"]) == (
+            "convert", ["a smaller picture, to fit the connection"]
+        )  # fmt: skip
+        assert copied["url"].endswith("/index.m3u8") and copied["bitrateKbps"] <= 2000
+        assert phone.post(copied["leave"]).status_code == 204
 
         # A device that has signed in before keeps its device token.
         again = phone.post("/api/internal/sign-in", json={**SAM, "device": signed["device"]})

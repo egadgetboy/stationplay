@@ -636,6 +636,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         for task in background:
             task.cancel()
         await ctx.hls_streams.stop_all("StationPlay is shutting down")
+        ctx.plays.end_all()  # (and the copies being made for them)
         for b in list(ctx.broadcasters.values()):
             await b.stop("StationPlay is shutting down")
         await ctx.plex.close()

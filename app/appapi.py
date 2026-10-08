@@ -257,6 +257,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 *(["away"] if away else []),
                 # (Your library: at home, or through a VPN, for now.)
                 *(["library"] if ctx.shared.on and not access.outside(request.scope) else []),
+                # (Copies of what a device can't play as it is: see converting.py.)
+                *(["convert"] if ctx.shared.on and not access.outside(request.scope) else []),
             ],
         }
 

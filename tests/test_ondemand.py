@@ -414,6 +414,48 @@ def test_browsing_a_library(app, plex):
         assert len(plex.requests) == asked
 
 
+def test_narrowing_a_library_jumping_to_a_letter_and_others_like_it(app, plex):
+    plex.add_movie("303", "Élan", "/films/elan.mkv", 80 * 60_000, year=1990, section="2",
+                   genres=["Drama", "Comedy"])  # fmt: skip
+    plex.add_movie("304", "9 Lives", "/films/9.mkv", 80 * 60_000, year=2005, section="2",
+                   genres=["Comedy"])  # fmt: skip
+    plex.add_movie("305", "A Drama", "/films/drama.mkv", 80 * 60_000, year=1995, section="2",
+                   genres=["Drama"])  # fmt: skip
+    # (As Plex sorts them: without "The" or "A".)
+    plex.episodes["305"]["titleSort"] = "Drama"
+    plex.episodes["300"]["titleSort"] = "Movie"
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
+        page = home.get("/api/internal/libraries/2").json()
+        assert [m["title"] for m in page["items"]] == [
+            "9 Lives", "Another Movie", "A Drama", "The Movie", "Élan"
+        ]  # fmt: skip
+        assert page["genres"] == ["Comedy", "Drama"]
+        assert [(x["letter"], x["start"]) for x in page["letters"]] == [
+            ("#", 0), ("A", 1), ("D", 2), ("M", 3), ("E", 4)
+        ]  # fmt: skip
+        assert home.get("/api/internal/libraries/2?sort=added").json()["letters"] == []
+        comedies = home.get("/api/internal/libraries/2?genre=comedy").json()
+        assert [m["key"] for m in comedies["items"]] == ["304", "303"]
+        assert comedies["letters"] == [{"letter": "#", "start": 0}, {"letter": "E", "start": 1}]
+        home.post("/api/internal/progress", json={"key": "304", "watched": True})
+        left = home.get("/api/internal/libraries/2?genre=Comedy&unwatched=1").json()
+        assert (left["total"], [m["key"] for m in left["items"]]) == (1, ["303"])
+        shows = home.get("/api/internal/libraries/1?unwatched=1").json()
+        assert [s["key"] for s in shows["items"]] == ["100"]
+        none = home.get("/api/internal/libraries/2?genre=Westerns")
+        assert none.status_code == 200 and (none.json()["total"], none.json()["items"]) == (0, [])
+        assert home.get("/api/internal/libraries/2?genre=" + "x" * 101).status_code == 400
+        # Others like it: the most genres in common, then the nearest in years.
+        like = home.get("/api/internal/items/303/related").json()["items"]
+        assert [m["key"] for m in like] == ["305", "304"]
+        assert [m["key"] for m in home.get("/api/internal/items/305/related").json()["items"]] == [
+            "303"
+        ]
+        assert home.get("/api/internal/items/301/related").json() == {"items": []}  # (no genres)
+        assert home.get("/api/internal/items/999/related").status_code == 404
+
+
 def test_playing_a_file_as_it_is(app, plex, tmp_path, caplog):
     caplog.set_level(logging.INFO)
     with TestClient(app) as home:

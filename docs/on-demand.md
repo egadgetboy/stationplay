@@ -15,7 +15,8 @@ library layer it builds on is in `docs/library.md`.
    library. Every key an app asks about is checked against that.
 3. **The best picture and sound first.** A file plays as it is whenever the
    device can play it (direct play). Repackaging and converting come only
-   when it can't (1.24.0).
+   when it can't, repackaging (the picture kept as it is) before
+   converting (1.24.0).
 4. **Each person's own place.** Where someone stopped, what they've
    watched, and what's next are kept per StationPlay user.
 5. **Lean.** Plex stays the catalog (Phase 3 adds folders). StationPlay
@@ -33,11 +34,15 @@ library layer it builds on is in `docs/library.md`.
   markers fit the file. The apps' own addresses move to `/api/internal`.
 - **1.23.0:** Viewing Levels: each person sees only what their level
   allows, in the library as everywhere else (see `docs/users.md`).
-- **1.24.0:** repackaging and converting (HLS, with seeking), choosing
-  audio and subtitle tracks when converting (picture subtitles drawn in),
-  and the Admin's quality cap away from home. Watching on demand through
-  the public port arrives here, since files can then be made to fit an
-  upload.
+- **1.24.0:** copies of what a device can't play as it is, repackaged or
+  converted (HLS, with seeking: see Copies), with the sound track chosen,
+  subtitles drawn in, a smaller picture made to fit the connection, and
+  night mode's sound; browsing narrowed by genre or to what's unwatched, and
+  by letter; cast and crew, taglines, and others like a title.
+- **Later:** the Admin's quality cap away from home, and watching on demand
+  through the public port (copies can then be made to fit an upload);
+  fragmented MP4 copies, so Apple's player can have an HEVC picture as it
+  is; the GPU for converting, as stations use it.
 
 The `features` an app sees (`GET /api/v1/server`) say what this server
 offers where the app is: `library` once a library is shared (and, in 1.21.0,
@@ -69,11 +74,12 @@ so nothing can be learned by guessing keys.
 | Address | What it answers |
 |---|---|
 | `GET /libraries` | The shared libraries: key, title, kind (`show` or `movie`) |
-| `GET /libraries/{key}` | One library's shows or movies, a page at a time (`start`, `size` up to 200), sorted by `title`, `added` (newest first) or `released` (newest first) |
+| `GET /libraries/{key}` | One library's shows or movies, a page at a time (`start`, `size` up to 200), sorted by `title`, `added` (newest first) or `released` (newest first), narrowed by `genre` or `unwatched`, with its genres and where each letter starts |
 | `GET /home` | The Resume row for this person, and each shared library's recently added |
 | `GET /search?q=` | Shows and movies whose titles contain the words, across shared libraries; and stations airing one now |
 | `GET /items/{key}` | A show's or movie's or episode's details |
 | `GET /items/{key}/episodes?season=` | A show's episodes: one season's, or all of them |
+| `GET /items/{key}/related` | Others like a show or movie: sharing its genres, then the nearest in years |
 | `GET /art/{key}?kind=&w=` | A picture: `poster` (2:3), `backdrop` (16:9) or `thumb` (an episode's still) |
 | `POST /play` | Starts playing a program: answers how and where |
 | `POST /progress` | Where someone is in a program, or marks it watched or not |
@@ -110,18 +116,19 @@ never from guesses:
   `dv`; profiles 7 and 8 play as HDR10), and the default audio track's
   codec. An HDR file on a device without HDR needs converting, since
   playing it as it is would look washed out.
-- Otherwise it needs converting. In 1.21.0 that answers 422 with a
-  sentence saying why, such as "This device can't play this file as it is:
-  its Dolby Vision profile 5 picture. StationPlay can't convert video for
-  its apps yet."
+- Otherwise it needs a copy (see Copies), for an app that takes one
+  (`device.hls`). For an app that doesn't, or when no copy would show it
+  right, it answers 422 with a sentence saying why, such as "This device
+  can't play this file as it is (its Dolby Vision profile 5 picture), and
+  StationPlay can't make a copy of it that the device can."
 
 The answer is a play session:
 
 | Field | What it is |
 |---|---|
 | `session` | The session's ID |
-| `method` | `direct` (1.24.0 adds `repackage` and `convert`) |
-| `url` | Where the player gets it: `/play/<session>/file.<container>` |
+| `method` | `direct`, `repackage` or `convert` |
+| `url` | Where the player gets it: `/play/<session>/file.<container>`, or a copy's playlist, `/play/<session>/index.m3u8` |
 | `resumeMs` | Where this person stopped last time (0: the start) |
 | `durationMs` | How long it is |
 | `markers` | `intro` and `credits`, each `[startMs, endMs]` or null, and `creditsToEnd` (the Skip intro and Skip credits buttons; episodes only) |
@@ -140,6 +147,36 @@ A session counts as a device watching, for the Admin's limits (see
 `capacity.py`), from its start until 3 minutes after it was last heard from
 (a file request or a progress report). One more device than the limits
 allow is answered 503 with `limit` and `most`, as for stations.
+
+## Copies
+
+A device that can't play a file as it is gets a copy StationPlay makes as
+it's played (`converting.py`): HLS, its playlist listing the whole program
+from its start in pieces of about 6 seconds, so the player shows the whole
+length and seeks anywhere. The pieces are made as they're asked for, by one
+ffmpeg from where the player is (again from wherever it jumps to), a few
+pieces ahead of the player and no further, and deleted behind it and when
+the session ends; ffmpeg stops when nothing has asked for two minutes.
+
+- **Repackaged** when the device plays the picture as it is and the pieces
+  can carry it (H.264; HEVC for a player that takes HEVC in MPEG-TS
+  pieces): the picture is copied, costing next to nothing, and the sound
+  converted if the device can't play it (AAC, or Dolby Digital 5.1 where
+  the device plays it and the sound has more than two channels). Each
+  piece starts at one of the picture's keyframes, read up front from the
+  file's own index (a Matroska file's Cues, an MP4's sample tables:
+  `keyframes.py`), without reading the file; a file without one is
+  converted.
+- **Converted** otherwise, and for subtitles drawn in or a smaller picture:
+  H.264 at most 1080p (or what fits the connection), an HDR picture made
+  ordinary as the stations do it, a keyframe at the start of each piece.
+  At most 3 at once.
+- ffmpeg writes one MPEG-TS stream with the program's own times (moved on
+  10 seconds), and StationPlay cuts it into the pieces itself at their
+  keyframes, so pieces made by different runs line up exactly.
+- Subtitles drawn in: a picture track (PGS, VobSub) laid over the picture;
+  text in the file read out into a file of its own first, once (as the
+  stations do); a subtitle file of its own fetched first.
 
 ## Skip intro and Skip credits
 
