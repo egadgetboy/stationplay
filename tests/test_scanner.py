@@ -1134,8 +1134,9 @@ def test_sound_damage_is_judged_by_whats_lost(tmp_path, sound_files, monkeypatch
         problem, reason = got["ac3"]
         assert problem == "damaged"
         assert reason.startswith("Deep scan: the sound (Dolby Digital) drops out around "), reason
-        at = sc._seconds(reason.rsplit(" around ", 1)[1])
-        assert abs(at - SCRAMBLED_S) < 8, reason
+        # (Where it's heard: around one time, or a few, "0:53 and 1:02".)
+        times = [sc._seconds(t) for t in re.findall(r"\d+:\d\d(?::\d\d)?", reason)]
+        assert times and any(abs(at - SCRAMBLED_S) < 8 for at in times), reason
         scans = ctx.db.scans()
         assert scans["202"].deep == "ok" and scans["203"].deep == "ok"
         assert scans["202"].glitches == [] and scans["203"].glitches == []
