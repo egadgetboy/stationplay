@@ -456,6 +456,11 @@
   @media (max-width: 560px) { .frow { grid-template-columns: 1fr; } }
   .inline-add { display: flex; gap: 6px; }
   .checks-col { display: grid; gap: 6px; margin-top: 8px; }
+  .panel-pad { padding: 14px 16px; }
+  #showOnDefault { width: auto; }
+  .choice { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+  .choice input { margin-top: 3px; }
+  .choice input:disabled + span { opacity: .55; }
   .linkbtn { background: none; border: 0; padding: 0 0 0 6px; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }
   .mark-preview { position: relative; width: 100%; max-width: 360px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden;
     background: linear-gradient(135deg, #3b6ea5 0%, #7aa35a 45%, #d9a441 75%, #b5523b 100%); flex: none; }
@@ -699,15 +704,22 @@
     </div>
     <div class="panel" style="margin-top:16px" id="userPanel" hidden><table class="users" id="userTable"></table></div>
     <div class="panel" style="margin-top:16px" id="appsPanel" hidden>
-      <strong>Signed-in apps</strong>
-      <p class="hint" style="margin:4px 0 8px">StationPlay’s apps that are signed in, on which device and as whom. Signing one out ends its sign-in at once, away from home too. A sign-in also ends after 30 days unused, when its person gets a new password, or when they’re removed.</p>
+      <div class="panel-pad"><strong>Signed-in apps</strong>
+      <p class="hint" style="margin:4px 0 0">StationPlay’s apps that are signed in, on which device and as whom. Signing one out ends its sign-in at once, away from home too. A sign-in also ends after 30 days unused, when its person gets a new password, or when they’re removed.</p></div>
       <table class="users" id="appsTable"></table>
+    </div>
+    <div class="panel" style="margin-top:16px" id="devicesPanel" hidden>
+      <div class="panel-pad"><strong>Linked devices</strong>
+      <p class="hint" style="margin:4px 0 0">TVs, phones and tablets with StationPlay’s apps that show Who’s tuning in?, so the people who use them pick themselves. Unlinking one signs it out at once; it can be linked again by signing in on it.</p></div>
+      <table class="users" id="devicesTable"></table>
+      <div class="panel-pad scan-set"><label for="showOnDefault" class="small"><strong>New people show on</strong></label><select id="showOnDefault"><option value="all">Every device (a household)</option><option value="signed-in">Only where they sign in (a larger server)</option></select></div>
     </div>
     <form class="panel setup" style="margin-top:16px" id="addUserForm">
       <strong id="addUserTitle">Add a user</strong>
       <div class="adduser">
         <div class="field"><label for="newUserName">Name</label><input type="text" id="newUserName" maxlength="40" autocomplete="off" required></div>
         <div class="field"><label for="newUserPassword">Password</label><input type="password" id="newUserPassword" minlength="__PASSWORD_MIN__" maxlength="__PASSWORD_MAX__" autocomplete="new-password" required></div>
+        <div class="field" id="newUserPinField"><label for="newUserPin">PIN (optional)</label><input type="text" id="newUserPin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off" placeholder="4 digits"></div>
         <div class="field"><label for="newUserRole">Role</label><select id="newUserRole"><option value="user">User</option><option value="admin">Admin</option></select></div>
         <div class="field" id="newUserStationsField"><label for="newUserStations">Stations they can make</label><select id="newUserStations"></select></div>
         <button class="btn primary" type="submit">Add</button>
@@ -797,6 +809,12 @@
     <p class="hint" id="signinNote" hidden></p>
   </form>
 </div>
+
+<dialog id="userDevices">
+  <div class="dlg-head"><h3 id="userDevicesTitle">Devices</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeUserDevices" aria-label="Close">✕</button></div>
+  <div class="dlg-body" id="userDevicesBody"></div>
+  <div class="dlg-foot"><span class="hint" id="userDevicesStatus" role="alert" style="margin-right:auto"></span><button class="btn" type="button" id="doneUserDevices">Done</button></div>
+</dialog>
 
 <dialog id="userStations">
   <div class="dlg-head"><h3 id="userStationsTitle">Stations</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeUserStations" aria-label="Close">✕</button></div>
@@ -5066,15 +5084,24 @@ function limitSelect(value, attrs = {}) {
 }
 const limitOf = select => select.value === '' ? null : Number(select.value);
 $('#newUserStations').replaceWith(limitSelect(ACCESS.newUserStations, { id: 'newUserStations' }));
-const showNewUserStations = () => { $('#newUserStationsField').hidden = $('#newUserRole').value !== 'user'; };
+const showNewUserStations = () => {
+  const user = $('#newUserRole').value === 'user';
+  $('#newUserStationsField').hidden = !user;
+  // A User may have no password: they use only the apps' Who's tuning in?
+  $('#newUserPassword').required = !user || !me.required;
+  $('#newUserPassword').placeholder = user && me.required ? 'Optional for a User' : '';
+  $('#newUserPinField').hidden = !me.required;
+};
 $('#newUserRole').addEventListener('change', showNewUserStations);
 let viewing = null;  // Viewing Levels, and each user's (see viewing.py on the server)
+let linked = null;  // linked devices (see devices.py on the server)
 async function loadAccess() {
   let users = [];
   try {
-    if (me.required) [users, viewing] = await Promise.all([api('/api/access/users'), api('/api/access/viewing')]);
+    if (me.required) [users, viewing, linked] = await Promise.all([api('/api/access/users'), api('/api/access/viewing'), api('/api/access/devices')]);
   } catch (e) { $('#accessState').textContent = e.message; return; }
   renderViewing();
+  renderDevices();
   $('#accessState').textContent = me.required
     ? `Sign-in is on: ${plural(users.length, 'user')} can sign in, and everyone else sees only the sign-in page.`
     : 'StationPlay is open: anyone on your network who can reach this page can use it. (From the internet, it always asks people to sign in.) Add a user to require sign-in. The first user is always an Admin, and you’re signed in as that user right away.';
@@ -5123,7 +5150,8 @@ async function loadAccess() {
             } }),
             h('button', { class: 'btn', type: 'button', onclick: () => openUserStations(u) }, set ? `Stations (${set} set)` : 'Stations')));
       const actions = h('td', {},
-        h('button', { class: 'btn', type: 'button', onclick: () => newPassword(u, actions) }, 'New password'), ' ',
+        h('button', { class: 'btn', type: 'button', onclick: () => openUserDevices(u) }, 'Devices'), ' ',
+        h('button', { class: 'btn', type: 'button', onclick: () => newPassword(u, actions) }, u.hasPassword ? 'New password' : 'Add a password'), ' ',
         h('button', { class: 'btn danger', type: 'button', onclick: () => removeUser(u, users.length) }, 'Remove'));
       return h('tr', {},
         h('td', {}, h('strong', {}, u.name), u.id === me.user?.id ? h('span', { class: 'hint' }, ' (you)') : null),
@@ -5134,6 +5162,99 @@ async function loadAccess() {
         actions);
     })));
 }
+// Linked devices, and Who's tuning in? on them -----------------------------------------
+const when = ms => new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+function renderDevices() {
+  const panel = $('#devicesPanel');
+  panel.hidden = !me.required || !linked;
+  if (panel.hidden) return;
+  $('#showOnDefault').value = linked.default;
+  $('#devicesTable').replaceChildren(...(linked.devices.length ? [
+    h('thead', {}, h('tr', {}, h('th', {}, 'Device'), h('th', {}, 'On its list'), h('th', {}, 'Linked'), h('th', {}, 'Last used'), h('th', {}, ''))),
+    h('tbody', {}, ...linked.devices.map(d => h('tr', {},
+      h('td', {}, h('strong', {}, d.name)),
+      h('td', { class: 'small', 'data-label': 'On its list' }, d.people.length ? d.people.join(', ') : 'No one'),
+      h('td', { class: 'small', 'data-label': 'Linked' }, d.linkedBy ? `By ${d.linkedBy}, ${when(d.linkedMs)}` : when(d.linkedMs)),
+      h('td', { class: 'small', 'data-label': 'Last used' }, when(d.seenMs)),
+      h('td', {}, h('button', { class: 'btn danger', type: 'button', onclick: async () => {
+        if (!confirm(`Unlink ${d.name}? It’s signed out at once, and needs someone to sign in on it again.`)) return;
+        try { await api(`/api/access/devices/${d.id}`, { method: 'DELETE' }); toast(`${d.name} is unlinked`); }
+        catch (err) { toast(err.message, true); }
+        loadAccess();
+      } }, 'Unlink')))))]
+    : [h('tbody', {}, h('tr', {}, h('td', { class: 'muted small' }, 'No devices are linked yet. One is linked when someone signs in on a StationPlay app that shows Who’s tuning in?')))]));
+}
+$('#showOnDefault').addEventListener('change', async e => {
+  try { await api('/api/access/devices/default', { method: 'PUT', body: { showOn: e.target.value } }); toast('Saved. People you add from now on start this way.'); }
+  catch (err) { toast(err.message, true); }
+  loadAccess();
+});
+// Someone's devices: where they show, their PIN, and an invite code.
+let devicesFor = null;
+function openUserDevices(u) {
+  devicesFor = u;
+  $('#userDevicesTitle').textContent = `${u.name} on devices`;
+  $('#userDevicesStatus').textContent = '';
+  paintUserDevices();
+  $('#userDevices').showModal();
+}
+async function savePicker(body, said) {
+  const u = devicesFor;
+  try { await api(`/api/access/users/${u.id}/picker`, { method: 'PUT', body }); }
+  catch (err) { $('#userDevicesStatus').textContent = err.message; return false; }
+  const [users, devices] = await Promise.all([api('/api/access/users'), api('/api/access/devices')]);
+  linked = devices;
+  devicesFor = users.find(x => x.id === u.id) || u;
+  $('#userDevicesStatus').textContent = said;
+  paintUserDevices();
+  return true;
+}
+function paintUserDevices() {
+  const u = devicesFor;
+  const byName = u.hasPassword || u.pin;
+  const chosen = new Set((linked.chosen || {})[u.id] || []);
+  const radio = (value, label, hint, disabled = false) => {
+    const input = h('input', { type: 'radio', name: 'showOn', value, checked: u.showOn === value, disabled, onchange: () => {
+      if (value === 'selected') { devicesFor = { ...u, showOn: 'selected' }; paintUserDevices(); return; }
+      savePicker({ showOn: value }, 'Saved');
+    } });
+    return h('label', { class: 'choice' }, input, h('span', {}, h('strong', {}, label), h('span', { class: 'hint' }, hint)));
+  };
+  const boxes = linked.devices.map(d => [d.id, h('input', { type: 'checkbox', checked: chosen.has(d.id) })]);
+  const pick = u.showOn === 'selected' ? h('div', { class: 'checks-col', style: 'margin-left:26px' },
+    ...(boxes.length ? boxes.map(([id, box]) => h('label', {}, box, ` ${linked.devices.find(d => d.id === id).name}`)) : [h('span', { class: 'muted small' }, 'No devices are linked yet.')]),
+    boxes.length ? h('div', {}, h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ showOn: 'selected', devices: boxes.filter(([, b]) => b.checked).map(([id]) => id) }, 'Saved') }, 'Save devices')) : null) : null;
+  const pin = h('input', { type: 'text', inputmode: 'numeric', pattern: '[0-9]{4}', maxlength: 4, placeholder: '4 digits', autocomplete: 'off', 'aria-label': 'New PIN' });
+  const invite = h('div', { class: 'small' });
+  $('#userDevicesBody').replaceChildren(...[
+    h('div', { class: 'playback' },
+      h('strong', {}, 'Show on'),
+      radio('all', 'Every device', ' On the list of every linked device. Suits a household.'),
+      radio('selected', 'Chosen devices', ' Only on the devices you choose, such as the Kids’ Tablet.'),
+      pick,
+      radio('signed-in', 'Only where they sign in', byName ? ' On no list until they sign in on a device, by name.' : ' Needs a password or a PIN, to sign in by name.', !byName)),
+    h('div', { class: 'playback' },
+      h('strong', {}, 'PIN'),
+      h('p', { class: 'hint', style: 'margin:0' }, u.pin
+        ? `${u.name} has a PIN: a device asks for it when they pick themselves.`
+        : `${u.name} has no PIN, so anyone using a device they’re on can pick them. ${u.role === 'admin' ? 'As an Admin, they give their password instead.' : ''}`),
+      h('div', { class: 'scan-set' }, pin,
+        h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ pin: pin.value.trim() }, 'PIN saved') }, u.pin ? 'Change PIN' : 'Set PIN'),
+        u.pin ? h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ pin: '' }, 'PIN removed') }, 'Remove PIN') : null)),
+    byName ? h('div', { class: 'playback' },
+      h('strong', {}, 'Invite code'),
+      h('p', { class: 'hint', style: 'margin:0' }, `For signing in on a device the first time without a password: ${u.name} chooses Sign in on Who’s tuning in? and enters their name and the code. It works once, for 7 days.`),
+      h('div', {}, h('button', { class: 'btn', type: 'button', onclick: async () => {
+        try {
+          const got = await api(`/api/access/users/${u.id}/invite`, { method: 'POST' });
+          invite.replaceChildren(h('code', { style: 'font-size:18px' }, got.code), ` · works until ${when(got.expiresMs)}`);
+        } catch (err) { $('#userDevicesStatus').textContent = err.message; }
+      } }, 'Make an invite code')),
+      invite) : null].filter(Boolean));
+}
+const closeUserDevices = () => { $('#userDevices').close(); devicesFor = null; loadAccess(); };
+$('#closeUserDevices').addEventListener('click', closeUserDevices);
+$('#doneUserDevices').addEventListener('click', closeUserDevices);
 // Viewing Levels ----------------------------------------------------------------------
 const levelLimited = lv => lv.movieAge != null || lv.tvAge != null || !lv.unrated || lv.libraries != null;
 const ratingName = (list, age) => age == null ? 'No limit' : (list.find(([a]) => a === age)?.[1] || `Ages ${age} and up`);
@@ -5308,14 +5429,15 @@ $('#addUserForm').addEventListener('submit', async e => {
   e.preventDefault();
   const name = $('#newUserName').value.trim();
   try {
-    await api('/api/access/users', { method: 'POST', body: { name, password: $('#newUserPassword').value, role: $('#newUserRole').value, maxStations: limitOf($('#newUserStations')) } });
+    const pin = $('#newUserPin').value.trim();
+    await api('/api/access/users', { method: 'POST', body: { name, password: $('#newUserPassword').value, role: $('#newUserRole').value, maxStations: limitOf($('#newUserStations')), ...(pin ? { pin } : {}) } });
   } catch (err) { $('#addUserHint').textContent = err.message; return; }
   $('#addUserForm').reset();
   $('#newUserStations').value = String(ACCESS.newUserStations);
   $('#addUserHint').textContent = '';
   const first = !me.required;
   await loadMe();
-  toast(first ? `Sign-in is on, and you’re signed in as ${name}` : `${name} can sign in now`);
+  toast(first ? `Sign-in is on, and you’re signed in as ${name}` : `${name} is added`);
   loadAccess();
   loadChannels();
 });

@@ -22,7 +22,8 @@ If you find it useful, you can [buy me a coffee](https://buymeacoffee.com/egadge
 - [How stations play](#how-stations-play)
 - [Station features](#station-features): logos, corner logo, Up Next Banner, Station ID card, commercials, Intro Bumper, subtitles, specials
 - [Keeping stations on the air](#keeping-stations-on-the-air): safeguards, the Broken files list, file checks, Sonarr and Radarr
-- [Who can use StationPlay](#who-can-use-stationplay) · [Stats](#stats) · [StationPlay's API](#stationplays-api) · [Settings](#settings) · [Troubleshooting](#troubleshooting) · [Development](#development)
+- [Who can use StationPlay](#who-can-use-stationplay): [Viewing Levels](#viewing-levels) · [Linked devices and Who's tuning in?](#linked-devices-and-whos-tuning-in)
+- [Stats](#stats) · [StationPlay's API](#stationplays-api) · [Settings](#settings) · [Troubleshooting](#troubleshooting) · [Development](#development)
 - [Contributing](#contributing) · [Forks and credit](#forks-and-credit) · [License](#license)
 
 ## What you need
@@ -801,13 +802,45 @@ When StationPlay is first installed, its page is open to anyone on your network.
 | Role | Can do |
 |---|---|
 | **Admin** | Everything. |
-| **User** | See every station, its guide and the Stats tab. Make stations (3 by default; an Admin can choose 1, 3, 5, 10, 25 or no limit) and change or delete only their own. Add logos and Intro Bumper videos (only Admins delete them). Can't open **Add to Plex**, **Broken files**, **Logs** or **Access**. |
+| **User** | Watch the stations and library their Viewing Level allows, and see the Stats tab. Make stations (3 by default; an Admin can choose none, 1, 3, 5, 10, 25 or no limit) and change or delete only their own; on a Viewing Level with limits, they only watch. Add logos and Intro Bumper videos (only Admins delete them). Can't open **Add to Plex**, **Broken files**, **Logs** or **Access**. |
 
 - There's always at least one Admin. Removing the last user turns sign-in off again.
 - Stations made before sign-in was turned on, or by a removed user, can be changed only by Admins.
 - An Admin can change roles and set new passwords on the **Access** tab. Your name at the top of the page lets you change your own password or sign out. A new password signs that person out everywhere else.
 - A sign-in lasts 30 days after it was last used. After 5 wrong passwords from one address within 15 minutes, that address has to wait. Passwords are stored only as salted hashes.
 - Plex and IPTV apps never need a password, just like a real HDHomeRun: the tuner, guide, streams, logos and playlist stay open on your network.
+
+### Viewing Levels
+
+Each person has a **Viewing Level**: what they can see in StationPlay's apps and on its page. Admins always see everything. Choose a person's level beside their name on the **Access** tab; edit the levels, or add your own (such as "Grandparents"), under **Viewing Levels**.
+
+| Level | Movies up to | TV up to | Unrated titles |
+|---|---|---|---|
+| **Adult** (everyone, to start) | No limit | No limit | Shown |
+| **Teen** | PG-13 | TV-14 | Hidden |
+| **Kid** | PG | TV-PG | Hidden |
+| **Young Child** | G | TV-G | Hidden |
+
+- **Ratings.** Plex's content ratings are read as ages, US and other countries' alike (such as `gb/15` or `de/12`). An episode counts as its show's rating, or its own if that's stricter. A title with no rating, or one StationPlay doesn't recognize, counts as unrated.
+- **Libraries.** A level can also be limited to some libraries. That's how a show that's in both "TV Parents" and "TV Teens" is seen only through the library a person's level includes.
+- **Stations are all or nothing.** Everyone watching a station sees the same stream, so a station is shown only if everything it plays is within the person's level. Choose **Stations** beside someone's name to allow or block a station for them anyway; it also says why each one is shown or hidden.
+- **Nothing hidden shows.** What someone can't see isn't in any list, search, guide, Resume row or "on now" for them, and its address answers as though it doesn't exist.
+- **Watching only.** People on a level with limits watch what they can see but can't make stations, since the station editor shows your libraries as a whole.
+- **Plex and other apps.** Plex, Jellyfin and IPTV apps don't say who's watching, so they show every station. To keep stations from some people in Plex, see **Blocking stations for some Plex users**, below.
+
+StationPlay learns the ratings of what's on each station as it checks Plex for updates. Until it knows a station's ratings, that station is hidden from anyone with limits.
+
+### Linked devices and Who's tuning in?
+
+StationPlay's apps can share one device among several people, such as the living room TV. The first time someone signs in on the device (with their password, or a code entered on StationPlay's page), it's **linked**. From then on, it opens on **Who's tuning in?**, and whoever is watching picks themselves.
+
+- **Who's on the list.** Choose **Devices** beside a person's name: **Every device** (a household), **Chosen devices** (such as the Kids' Tablet), or **Only where they sign in** (a larger server). New people start as **New people show on** says, under **Linked devices**.
+- **PINs.** A person can have a 4-digit PIN, which the device asks for when they pick themselves. An Admin without a PIN gives their password. Five wrong PINs for someone means a 15-minute wait for them, on every device.
+- **No password needed.** A User can have no password, such as a "Kids" user who only picks themselves on the TV. Someone with neither a password nor a PIN can't sign in by name, so they're shown on every device or chosen devices only.
+- **Sign in on a new device.** Choose **Sign in** on Who's tuning in?, then enter your name and your password, or an **invite code** an Admin made for you under **Devices** (it works once, for 7 days). After that, you're on that device's list. Anyone can take themselves off a device's list.
+- **Unlinking.** **Linked devices** on the **Access** tab lists each device and who's on its list. **Unlink** signs it out at once.
+
+A sign-in from Who's tuning in? lasts a day from when it was last used, so a shared device goes back to the list rather than staying signed in as someone.
 
 **Access log.** On the **Logs** tab, check **Access** to see sign-ins, failed sign-ins, sign-outs and changes to users. The newest 2,000 entries are kept across restarts.
 
@@ -1000,6 +1033,8 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/bumpers.py` | Intro Bumper videos you upload |
 | `app/backups.py` | Backups and restores |
 | `app/access.py` | Sign-in, Admins and Users, and the access log |
+| `app/viewing.py`, `app/ratings.py`, `app/titles.py` | Viewing Levels: what each person can see, ratings read as ages, and the ratings of what's on each station |
+| `app/devices.py` | Linked devices, Who's tuning in?, PINs and invite codes |
 | `app/stats.py`, `app/watching.py` | Viewing stats, and matching Plex sessions to stations |
 | `app/limits.py` | Blocking stations for some Plex users |
 | `app/logos.py`, `app/logos/` | The logo library and your own logos |
@@ -1008,7 +1043,7 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/web/index.html` | The web page |
 | `tests/` | Unit and end-to-end tests |
 | `Dockerfile`, `stationplay.yaml`, `docker-compose.yml` | The image, the TrueNAS app, and the Compose file |
-| `docs/` | StationPlay's logo; StationPlay's API (`api.md`, `openapi-v1.json`); the apps' own addresses (`internal-api.md`); the designs of the library (`library.md`) and of watching it on demand (`on-demand.md`); each release's notes (`releases/`) |
+| `docs/` | StationPlay's logo; StationPlay's API (`api.md`, `openapi-v1.json`); the apps' own addresses (`internal-api.md`); the designs of the library (`library.md`), of watching it on demand (`on-demand.md`), and of who sees what (`users.md`); each release's notes (`releases/`) |
 
 ## Contributing
 

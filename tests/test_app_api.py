@@ -418,6 +418,46 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         assert tv.get("/api/v1/stations", headers=bearer(linked["token"])).status_code == 401
         assert home.delete(f"/api/access/apps/{den['id']}").status_code == 404
 
+        # A TV with a picker: linked with a code, then whoever's watching
+        # picks themselves, or signs in by name (see test_picker.py).
+        started = check.answer(
+            tv.post(
+                "/api/internal/link",
+                json={"app": "StationPlay for Roku", "deviceName": "Den Roku", "picker": True},
+            ),
+            "POST /api/internal/link",
+        )
+        assert home.post("/api/access/link", json={"code": started["code"]}).status_code == 200
+        linked = check.answer(
+            tv.post("/api/internal/link/check", json={"poll": started["poll"]}),
+            "POST /api/internal/link/check",
+        )
+        key = {"StationPlay-Device": linked["deviceKey"]}
+        listed = check.answer(
+            tv.get("/api/internal/picker", headers=key), "GET /api/internal/picker"
+        )
+        assert listed["device"] == "StationPlay for Roku on Den Roku"
+        assert [(p["name"], p["admin"]) for p in listed["people"]] == [
+            ("Pat", True),
+            ("Sam", False),
+        ]
+        sam_id = next(p["id"] for p in listed["people"] if p["name"] == "Sam")
+        picked = check.answer(
+            tv.post("/api/internal/picker/choose", json={"id": sam_id}, headers=key),
+            "POST /api/internal/picker/choose",
+        )
+        assert picked["user"] == {"name": "Sam", "role": "user"}
+        signed = check.answer(
+            tv.post("/api/internal/picker/sign-in", json=SAM, headers=key),
+            "POST /api/internal/picker/sign-in",
+        )
+        removed = check.answer(
+            tv.post("/api/internal/picker/remove", headers={**key, **bearer(signed["token"])}),
+            "POST /api/internal/picker/remove",
+        )
+        assert removed == {"ok": True}
+        check.answer(tv.get("/api/internal/picker"), "GET /api/internal/picker", 401)
+
         # From the internet, only over HTTPS.
         plain_http = TestClient(app, base_url=f"http://testserver:{PUBLIC_PORT}")
         refused = plain_http.post("/api/internal/sign-in", json=PAT)

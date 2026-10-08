@@ -42,6 +42,7 @@ from . import (
     away,
     backups,
     capacity,
+    devices,
     hdhr,
     hls,
     intro,
@@ -434,6 +435,7 @@ class AppContext:
     limits: limits.Limits = field(init=False)  # stations kept from some Plex users
     bumpers: BumperLibrary = field(init=False)  # Intro Bumpers you've uploaded
     access: access.Access = field(init=False)  # who can sign in
+    devices: devices.Devices = field(init=False)  # the apps linked, and their pickers
     away: away.Away = field(init=False)  # StationPlay's apps away from home
     capacity: capacity.Capacity = field(init=False)  # how many apps may watch at once
     # Your library in StationPlay's apps (see ondemand.py): which libraries
@@ -460,6 +462,8 @@ class AppContext:
         self.library = Library(lambda: self.plex)
         self.bumpers = BumperLibrary(self.settings.data_dir / "bumpers")
         self.access = access.Access(self.db)
+        self.devices = devices.Devices(self.db, self.access)
+        self.access.picker = self.devices
         self.away = away.Away(self.db, self.access)
         self.capacity = capacity.Capacity(self.db)
         self.shared = ondemand.Shared(self.db)
@@ -664,6 +668,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     app.add_middleware(access.Gate, access=ctx.access, public_port=settings.public_port)
     access.routes(app, ctx.access)
     viewing.routes(app, ctx)  # (who sees what: Viewing Levels)
+    devices.routes(app, ctx)  # (linked devices, and their pickers)
     appapi.routes(app, ctx)  # (for StationPlay's apps)
     applibrary.routes(app, ctx)  # (your library in them)
     stats.routes(app, ctx)

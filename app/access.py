@@ -87,6 +87,7 @@ DEVICE_DAYS = 400
 DEVICES_KEPT = 20
 SESSIONS_KEPT = 20  # browsers signed in as one user at once, at most (the newest)
 SEEN_EVERY_MS = 5 * 60_000  # how often a session's "last seen" is saved
+PICKED_MS = 24 * 3600_000  # a sign-in from a linked device's picker lasts this long unused
 PASSWORD_MIN, PASSWORD_MAX = 8, 200
 NAME = re.compile(r"[\w .@-]{1,40}")
 RESET_FILE = "reset-access"
@@ -163,6 +164,8 @@ OPEN = (
     PAGE
     | {"/api/access/sign-in", "/api/access/sign-out"}
     | {"/api/internal/sign-in", "/api/internal/link", "/api/internal/link/check"}
+    # (A linked device's picker: its key, not a sign-in, says who may ask.)
+    | {"/api/internal/picker", "/api/internal/picker/choose", "/api/internal/picker/sign-in"}
     | FOR_PLEX
 )
 # Programs played on demand in StationPlay's apps: each at an address of its
@@ -195,6 +198,7 @@ FOR_USERS = {
         "/api/logos/plex", "/api/bumpers", "/api/smart/split", "/api/smart/stations",
         "/api/internal/sign-out", "/api/internal/speed-test", "/api/access/link",
         "/api/internal/play", "/api/internal/progress", "/api/internal/report",
+        "/api/internal/picker/remove",
     ),
     "PUT": ("/api/channels/",),
     "DELETE": ("/api/channels/",),
@@ -214,7 +218,7 @@ FOR_WATCHERS = {
     "POST": (
         "/api/access/me/password", "/api/internal/sign-out", "/api/internal/speed-test",
         "/api/access/link", "/api/internal/play", "/api/internal/progress",
-        "/api/internal/report",
+        "/api/internal/report", "/api/internal/picker/remove",
     ),
 }  # fmt: skip
 WATCHES_ONLY = "Your Viewing Level lets you watch, but not make or change stations"
@@ -339,6 +343,9 @@ class Access:
     _public_tries: deque[tuple[float, str]] = field(init=False, default_factory=deque)
     _checking: int = field(init=False, default=0)
     _watches_only: Callable[[User], bool] | None = field(init=False, default=None)
+    # Someone's PIN and where they're shown on the apps' pickers (devices.py,
+    # which sets this).
+    picker: Any = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         self._users_exist = self.db.has_users()
@@ -393,15 +400,19 @@ class Access:
         max_stations: int | None = NEW_USER_STATIONS,
     ) -> User:
         """Adds a user, if `by` may (anyone while signing in is off; then an
-        Admin). The first user is always an Admin. ValueError if the name,
-        password or station limit won't do; NotAllowed."""
+        Admin). The first user is always an Admin. A User may have no password
+        (""): they use only the apps' pickers (see devices.py). ValueError if
+        the name, password or station limit won't do; NotAllowed."""
         name = plain(name)
         _check_name(name)
-        _check_password(password)
         if role not in ROLES:
             raise ValueError("The role must be Admin or User")
+        if password or role == ADMIN or not self._users_exist:
+            if not password:
+                raise ValueError("An Admin needs a password")
+            _check_password(password)
         _check_limit(max_stations)
-        hashed = await asyncio.to_thread(hash_password, password)
+        hashed = await asyncio.to_thread(hash_password, password) if password else ""
         if self._users_exist and not self.is_admin(by):
             raise NotAllowed
         if not self._users_exist:
@@ -482,6 +493,8 @@ class Access:
         current = self.db.user(user.id)
         if current is None:
             raise ValueError("That user has been removed")
+        if role == ADMIN and password is None and not current.has_password:
+            raise ValueError(f"Give {current.name} a password before making them an Admin")
         if current.role == ADMIN and role not in (None, ADMIN) and self._last_admin(current):
             raise ValueError(
                 "StationPlay needs at least one Admin. Make someone else an Admin first."
@@ -526,8 +539,11 @@ class Access:
             found = self.db.user_named(name)
             # An unknown name takes the same work as a known one, so how long
             # it takes doesn't tell anyone whether there's a user by that name.
-            stored = found[1] if found else _DUMMY_HASH
+            # (Someone without a password, who signs in only from a picker,
+            # takes the same work, and is never signed in this way.)
+            stored = found[1] if found and found[1] else _DUMMY_HASH
             right = await asyncio.to_thread(password_matches, password, stored)
+            right = right and bool(found and found[1])
         finally:
             self._checking -= 1
         if not (found and right):
@@ -554,11 +570,12 @@ class Access:
         while len(self._tries) >= ADDRESSES_KEPT:
             del self._tries[next(iter(self._tries))]
 
-    def start_session(self, user: User, app: str = "") -> str:
+    def start_session(self, user: User, app: str = "", device_id: int | None = None) -> str:
         """A new token for a browser (or `app`, one of StationPlay's: which,
-        on what device) that's signed in as `user`."""
+        on what device; `device_id`: a linked device, from its picker: see
+        devices.py) that's signed in as `user`."""
         token = secrets.token_urlsafe(32)
-        self.db.add_session(_token_hash(token), user.id, _now(), SESSIONS_KEPT, app)
+        self.db.add_session(_token_hash(token), user.id, _now(), SESSIONS_KEPT, app, device_id)
         return token
 
     def remember_device(self, user: User) -> str:
@@ -590,7 +607,9 @@ class Access:
         if found is None:
             token = self._api_token_hashed(hashed)
             return token.as_user() if token else None
-        user, seen_ms = found
+        user, seen_ms, device_id = found
+        if device_id is not None and now - seen_ms > PICKED_MS:
+            return None  # (a sign-in from a device's picker lasts a day unused)
         if now - seen_ms > SEEN_EVERY_MS:
             self.db.seen(hashed, now)
         return user
@@ -969,9 +988,14 @@ class SignIn(BaseModel):
 
 class NewUser(BaseModel):
     name: str = Field(max_length=100)
-    password: str = Field(max_length=PASSWORD_MAX)
+    password: str = Field(default="", max_length=PASSWORD_MAX)  # ("": a User with none)
     role: str = USER
     maxStations: int | None = NEW_USER_STATIONS  # (null: no limit)
+    # On the apps' pickers (see devices.py): a PIN, and where they're shown
+    # ("default": the server's default), and the devices for "selected".
+    pin: str | None = Field(default=None, max_length=10)
+    showOn: str = "default"
+    devices: list[int] | None = Field(default=None, max_length=1000)
 
 
 class UserChange(BaseModel):
@@ -992,6 +1016,7 @@ def _user_json(user: User, made: dict[int, int]) -> dict:
     return {
         "id": user.id, "name": user.name, "role": user.role, "signedInMs": user.signed_in_ms,
         "maxStations": user.max_stations, "stationsMade": made.get(user.id, 0),
+        "hasPassword": user.has_password, "pin": user.has_pin, "showOn": user.show_on or "all",
     }  # fmt: skip
 
 
@@ -1120,6 +1145,15 @@ def routes(app: FastAPI, access: Access) -> None:
         by = signed_in(request)
         with _refusing():
             user = await access.add_user(body.name, body.password, body.role, by, body.maxStations)
+            if access.picker is not None:
+                try:
+                    if body.pin:
+                        await access.picker.set_pin(user, body.pin)
+                    access.picker.set_show_on(user, body.showOn, body.devices)
+                except ValueError:
+                    access.remove_user(user)  # (all or nothing)
+                    raise
+            user = access.db.user(user.id) or user
         if by is None:
             # The first user (signing in was off): whoever turned signing in
             # on is signed in as its first Admin.

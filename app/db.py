@@ -243,6 +243,31 @@ CREATE TABLE IF NOT EXISTS user_stations (
     allowed      INTEGER NOT NULL,            -- 1 allowed, 0 blocked
     PRIMARY KEY (user_id, channel_id)
 );
+-- StationPlay's apps linked to this server (see devices.py), by a hash of
+-- the key each keeps: what each is, when it was linked and last used, and
+-- who linked it (their name, kept if they're removed).
+CREATE TABLE IF NOT EXISTS linked_devices (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    key_hash     TEXT    NOT NULL UNIQUE,
+    name         TEXT    NOT NULL,
+    created_ms   INTEGER NOT NULL,
+    seen_ms      INTEGER NOT NULL,
+    linked_by    TEXT    NOT NULL DEFAULT ''
+);
+-- Who's on a device's picker other than as everyone on every device is:
+-- signed in there, or chosen for it by an Admin; or who took themselves off.
+CREATE TABLE IF NOT EXISTS device_people (
+    device_id    INTEGER NOT NULL REFERENCES linked_devices(id) ON DELETE CASCADE,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    how          TEXT    NOT NULL,            -- 'signed-in', 'chosen' or 'removed'
+    PRIMARY KEY (device_id, user_id)
+);
+-- Invite codes (see devices.py): one at a time for each user, by a hash.
+CREATE TABLE IF NOT EXISTS invites (
+    user_id      INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    code_hash    TEXT    NOT NULL,
+    expires_ms   INTEGER NOT NULL
+);
 -- The rating and library of each show and movie on a station, and of an
 -- episode with a rating of its own (see titles.py): what decides who can
 -- see a station. checked_ms: when Plex was last asked about it directly (a
@@ -410,6 +435,7 @@ class User:
     level_id: int | None = None  # their Viewing Level (see viewing.py); None: Adult
     has_pin: bool = False
     show_on: str = ""  # the pickers they're on (see devices); "": the server's default
+    has_password: bool = True  # (a User may have none: they use only the apps' pickers)
 
 
 @dataclass
@@ -603,6 +629,8 @@ _ADDED_COLUMNS = (
     ("users", "level_id", "INTEGER REFERENCES levels(id) ON DELETE SET NULL"),
     ("users", "pin", "TEXT NOT NULL DEFAULT ''"),
     ("users", "show_on", "TEXT NOT NULL DEFAULT ''"),
+    # ...and which linked device a sign-in was made on, from its picker.
+    ("sessions", "device_id", "INTEGER REFERENCES linked_devices(id) ON DELETE CASCADE"),
 )
 
 
@@ -1534,15 +1562,25 @@ class Database:
         return out
 
     def add_session(
-        self, token_hash: str, user_id: int, now: int, keep: int, app: str = ""
+        self,
+        token_hash: str,
+        user_id: int,
+        now: int,
+        keep: int,
+        app: str = "",
+        device_id: int | None = None,
     ) -> None:
-        """Signs a browser (or `app`, one of StationPlay's) in as a user,
-        keeping only their `keep` newest sign-ins (the rest are signed out)."""
+        """Signs a browser (or `app`, one of StationPlay's; on a linked
+        device, from its picker: `device_id`) in as a user, keeping only their
+        `keep` newest sign-ins (the rest are signed out). On a linked device,
+        whoever was signed in there before is signed out."""
         with self._lock, self._conn:
+            if device_id is not None:
+                self._conn.execute("DELETE FROM sessions WHERE device_id = ?", (device_id,))
             self._conn.execute(
-                "INSERT INTO sessions (token_hash, user_id, created_ms, seen_ms, app) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (token_hash, user_id, now, now, app),
+                "INSERT INTO sessions (token_hash, user_id, created_ms, seen_ms, app, device_id) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (token_hash, user_id, now, now, app, device_id),
             )
             self._conn.execute(
                 "DELETE FROM sessions WHERE user_id = ? AND token_hash NOT IN ("
@@ -1552,16 +1590,16 @@ class Database:
             )
             self._conn.execute("UPDATE users SET signed_in_ms = ? WHERE id = ?", (now, user_id))
 
-    def session_user(self, token_hash: str, since_ms: int) -> tuple[User, int] | None:
+    def session_user(self, token_hash: str, since_ms: int) -> tuple[User, int, int | None] | None:
         """Who's signed in with this token, if they were seen since `since_ms`,
-        and when they were last seen."""
+        when they were last seen, and the linked device it's on (if any)."""
         with self._lock:
             row = self._conn.execute(
-                "SELECT users.*, sessions.seen_ms FROM sessions JOIN users "
+                "SELECT users.*, sessions.seen_ms, sessions.device_id FROM sessions JOIN users "
                 "ON users.id = sessions.user_id WHERE token_hash = ? AND seen_ms >= ?",
                 (token_hash, since_ms),
             ).fetchone()
-        return (_user(row), row["seen_ms"]) if row else None
+        return (_user(row), row["seen_ms"], row["device_id"]) if row else None
 
     def seen(self, token_hash: str, now: int) -> None:
         with self._lock, self._conn:
@@ -1599,7 +1637,8 @@ class Database:
             rows = self._conn.execute(
                 "SELECT sessions.rowid AS id, users.name AS user, sessions.app, "
                 "sessions.created_ms, sessions.seen_ms FROM sessions JOIN users "
-                "ON users.id = sessions.user_id WHERE sessions.app != '' AND seen_ms >= ? "
+                "ON users.id = sessions.user_id WHERE sessions.app != '' "
+                "AND sessions.device_id IS NULL AND seen_ms >= ? "
                 "ORDER BY sessions.seen_ms DESC",
                 (since_ms,),
             ).fetchall()
@@ -1617,6 +1656,135 @@ class Database:
                 return None
             self._conn.execute("DELETE FROM sessions WHERE rowid = ?", (session_id,))
         return f"{row['app']} ({row['user']})"
+
+    # Linked devices and their pickers (see devices.py) ----------------------------
+
+    def add_linked_device(self, key_hash: str, name: str, now: int, linked_by: str) -> int:
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO linked_devices (key_hash, name, created_ms, seen_ms, linked_by) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (key_hash, name, now, now, linked_by),
+            )
+        return int(cur.lastrowid or 0)
+
+    def linked_device(self, key_hash: str) -> sqlite3.Row | None:
+        with self._lock:
+            return self._conn.execute(
+                "SELECT * FROM linked_devices WHERE key_hash = ?", (key_hash,)
+            ).fetchone()
+
+    def linked_devices(self) -> list[sqlite3.Row]:
+        with self._lock:
+            return self._conn.execute(
+                "SELECT * FROM linked_devices ORDER BY seen_ms DESC"
+            ).fetchall()
+
+    def device_seen(self, device_id: int, now: int, name: str | None = None) -> None:
+        with self._lock, self._conn:
+            if name:
+                self._conn.execute(
+                    "UPDATE linked_devices SET seen_ms = ?, name = ? WHERE id = ?",
+                    (now, name, device_id),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE linked_devices SET seen_ms = ? WHERE id = ?", (now, device_id)
+                )
+
+    def unlink_device(self, device_id: int) -> str | None:
+        """Unlinks a device (and signs out whoever's signed in on it): its
+        name, or None if there's no such device."""
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT name FROM linked_devices WHERE id = ?", (device_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            self._conn.execute("DELETE FROM sessions WHERE device_id = ?", (device_id,))
+            self._conn.execute("DELETE FROM linked_devices WHERE id = ?", (device_id,))
+        return str(row["name"])
+
+    def device_people(self) -> dict[int, dict[int, str]]:
+        """How each person is on each device's picker, other than as
+        everyone on every device is: by device, then person."""
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM device_people").fetchall()
+        out: dict[int, dict[int, str]] = {}
+        for r in rows:
+            out.setdefault(r["device_id"], {})[r["user_id"]] = r["how"]
+        return out
+
+    def set_device_person(self, device_id: int, user_id: int, how: str | None) -> None:
+        """How a person is on a device's picker (None: only as their Show
+        on says)."""
+        with self._lock, self._conn:
+            if how is None:
+                self._conn.execute(
+                    "DELETE FROM device_people WHERE device_id = ? AND user_id = ?",
+                    (device_id, user_id),
+                )
+            else:
+                self._conn.execute(
+                    "INSERT INTO device_people (device_id, user_id, how) VALUES (?, ?, ?) "
+                    "ON CONFLICT (device_id, user_id) DO UPDATE SET how = excluded.how",
+                    (device_id, user_id, how),
+                )
+
+    def set_chosen_devices(self, user_id: int, device_ids: list[int]) -> None:
+        """The devices an Admin chose for someone (Selected devices) are
+        these: any other they were chosen for, they're no longer on (unless
+        they signed in there)."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "DELETE FROM device_people WHERE user_id = ? AND how = 'chosen'", (user_id,)
+            )
+            self._conn.executemany(
+                "INSERT INTO device_people (device_id, user_id, how) "
+                "SELECT id, ?, 'chosen' FROM linked_devices WHERE id = ? "
+                "ON CONFLICT (device_id, user_id) DO UPDATE SET how = 'chosen'",
+                [(user_id, d) for d in device_ids],
+            )
+
+    def set_pin(self, user_id: int, pin_hash: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("UPDATE users SET pin = ? WHERE id = ?", (pin_hash, user_id))
+
+    def pin_hash(self, user_id: int) -> str:
+        with self._lock:
+            row = self._conn.execute("SELECT pin FROM users WHERE id = ?", (user_id,)).fetchone()
+        return str(row["pin"]) if row else ""
+
+    def password_hash(self, user_id: int) -> str:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT password FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+        return str(row["password"]) if row else ""
+
+    def set_show_on(self, user_id: int, show_on: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("UPDATE users SET show_on = ? WHERE id = ?", (show_on, user_id))
+
+    def set_invite(self, user_id: int, code_hash: str, expires_ms: int) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO invites (user_id, code_hash, expires_ms) VALUES (?, ?, ?) "
+                "ON CONFLICT (user_id) DO UPDATE SET code_hash = excluded.code_hash, "
+                "expires_ms = excluded.expires_ms",
+                (user_id, code_hash, expires_ms),
+            )
+
+    def invite(self, user_id: int) -> tuple[str, int] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT code_hash, expires_ms FROM invites WHERE user_id = ?", (user_id,)
+            ).fetchone()
+        return (row["code_hash"], row["expires_ms"]) if row else None
+
+    def end_invite(self, user_id: int) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM invites WHERE user_id = ?", (user_id,))
 
     def end_session(self, token_hash: str) -> None:
         with self._lock, self._conn:
@@ -1833,6 +2001,7 @@ def _user(row: sqlite3.Row) -> User:
     return User(
         row["id"], row["name"], row["role"], row["created_ms"], row["signed_in_ms"],
         row["max_stations"], row["level_id"], bool(row["pin"]), row["show_on"],
+        bool(row["password"]),
     )  # fmt: skip
 
 

@@ -48,6 +48,11 @@ class Pending:
     expires: float
     user: User | None = None  # who linked it, once someone has
     token: str | None = None  # its sign-in, until it collects it
+    # An app with a picker (see devices.py): the device key it already has,
+    # if any, and a new one made for it when it's linked, until it collects it.
+    picker: bool = False
+    device_key: str | None = None
+    new_key: str | None = None
 
 
 @dataclass
@@ -56,8 +61,11 @@ class Links:
     _starts: dict[str, deque[float]] = field(default_factory=dict)  # by address
     _wrong: dict[int, deque[float]] = field(default_factory=dict)  # by user id
 
-    def start(self, app: str, address: str) -> tuple[str, str]:
-        """A new code for an app, and the secret it checks back with."""
+    def start(
+        self, app: str, address: str, picker: bool = False, device_key: str | None = None
+    ) -> tuple[str, str]:
+        """A new code for an app (one with a picker, and the device key it
+        has: see devices.py), and the secret it checks back with."""
         now = time.monotonic()
         self._forget_old(now)
         starts = _recent(self._starts.setdefault(address, deque()), now)
@@ -68,7 +76,9 @@ class Links:
         while code in self._pending:
             code = "".join(secrets.choice(ALPHABET) for _ in range(CODE_LENGTH))
         poll = secrets.token_urlsafe(32)
-        self._pending[code] = Pending(code, _hash(poll), app, address, now + LINK_S)
+        self._pending[code] = Pending(
+            code, _hash(poll), app, address, now + LINK_S, picker=picker, device_key=device_key
+        )
         return show(code), poll
 
     def find(self, typed: str, user: User) -> Pending:
@@ -85,9 +95,10 @@ class Links:
             raise LookupError("That code isn't right, or it has run out. Check the code on the TV.")
         return found
 
-    def link(self, pending: Pending, user: User, token: str) -> None:
-        """Gives a waiting app its sign-in, as `user`."""
-        pending.user, pending.token = user, token
+    def link(self, pending: Pending, user: User, token: str, new_key: str | None = None) -> None:
+        """Gives a waiting app its sign-in, as `user` (and a new device
+        key, for an app with a picker that didn't have one)."""
+        pending.user, pending.token, pending.new_key = user, token, new_key
 
     def check(self, poll: str) -> Pending | None:
         """The link an app is waiting on (by its secret), while it lasts. Its

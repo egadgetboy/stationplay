@@ -24,7 +24,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import __version__, access, api, capacity, hdhr, intro, links, specials
+from . import __version__, access, api, capacity, devices, hdhr, intro, links, specials
 from .broadcaster import now_ms
 from .text import plain
 
@@ -83,11 +83,29 @@ class AppSignIn(BaseModel):
     device: str | None = Field(default=None, max_length=100)
     app: str = Field(default="", max_length=APP_MAX)
     deviceName: str = Field(default="", max_length=APP_MAX)
+    # An app with a picker (see devices.py): it's linked as a device, and
+    # sends the key it has, if any.
+    picker: bool = False
+    deviceKey: str | None = Field(default=None, max_length=100)
 
 
 class LinkStart(BaseModel):
     app: str = Field(default="", max_length=APP_MAX)
     deviceName: str = Field(default="", max_length=APP_MAX)
+    picker: bool = False
+    deviceKey: str | None = Field(default=None, max_length=100)
+
+
+class PickerChoice(BaseModel):
+    id: int
+    pin: str | None = Field(default=None, max_length=10)
+    password: str | None = Field(default=None, max_length=access.PASSWORD_MAX)
+
+
+class PickerSignIn(BaseModel):
+    name: str = Field(max_length=100)
+    code: str | None = Field(default=None, max_length=20)
+    password: str | None = Field(default=None, max_length=access.PASSWORD_MAX)
 
 
 class LinkCheck(BaseModel):
@@ -251,14 +269,34 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             )
             raise HTTPException(401, "That name or password isn't right")
         label = app_label(body.app, body.deviceName)
-        token = ctx.access.start_session(user, label)
         device = None if known else ctx.access.remember_device(user)
+        if body.picker:
+            linked, new_key = linked_device(body.deviceKey, label, user)
+            token = ctx.access.start_session(user, linked.name, linked.id)
+        else:
+            new_key, token = None, ctx.access.start_session(user, label)
         ctx.access.record(
             logging.INFO,
             f"{user.name} ({access.role_name(user.role)}) signed in to {in_sentence(label)} "
-            f"from {access.where(request.scope)}",
+            f"from {access.where(request.scope)}" + (" (and linked it)" if new_key else ""),
         )
-        return {"token": token, "device": device, "user": {"name": user.name, "role": user.role}}
+        return {
+            "token": token,
+            "device": device,
+            "deviceKey": new_key,
+            "user": {"name": user.name, "role": user.role},
+        }
+
+    def linked_device(key: str | None, label: str, user: User) -> tuple[devices.Device, str | None]:
+        """The device an app with a picker is: the one its key says, or a
+        new one, linked now (and its key). Whoever signed in is on its
+        picker from now on."""
+        found = ctx.devices.device(key, label)
+        new_key = None
+        if found is None:
+            found, new_key = ctx.devices.link(label, user)
+        ctx.devices.note_signed_in(found, user)
+        return found, new_key
 
     # Signing in with a code (see links.py) --------------------------------
 
@@ -268,7 +306,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(400, "Signing in to StationPlay is off, so there's no need to")
         try:
             code, poll = ctx.links.start(
-                app_label(body.app, body.deviceName), access.address(request.scope)
+                app_label(body.app, body.deviceName),
+                access.address(request.scope),
+                body.picker,
+                body.deviceKey,
             )
         except links.Refused as e:
             raise HTTPException(429, str(e)) from None
@@ -288,7 +329,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if pending.token is None or pending.user is None:
             return JSONResponse({"detail": "Waiting for the code to be entered"}, 202)
         user = pending.user
-        return {"token": pending.token, "user": {"name": user.name, "role": user.role}}
+        return {
+            "token": pending.token,
+            "deviceKey": pending.new_key,
+            "user": {"name": user.name, "role": user.role},
+        }
 
     @app.post("/api/internal/sign-out")
     async def sign_out(request: Request):
@@ -301,6 +346,78 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 logging.INFO,
                 f"{user.name} signed out of a StationPlay app from {access.where(request.scope)}",
             )
+        return {"ok": True}
+
+    # Who's tuning in? A linked device's picker (see devices.py) ------------
+
+    def this_device(request: Request) -> devices.Device:
+        if not ctx.access.required:
+            raise HTTPException(400, "Signing in to StationPlay is off, so there's no need to")
+        found = ctx.devices.device(request.headers.get(devices.DEVICE_HEADER))
+        if found is None:
+            raise HTTPException(401, "This device isn't linked to StationPlay. Sign in again.")
+        return found
+
+    def person_json(user: User) -> dict[str, Any]:
+        return {
+            "id": user.id,
+            "name": user.name,
+            "pin": user.has_pin,
+            "admin": user.role == access.ADMIN,
+        }
+
+    @app.get("/api/internal/picker")
+    async def picker(request: Request):
+        device = this_device(request)
+        return {
+            "device": device.name,
+            "people": [person_json(u) for u in ctx.devices.people(device)],
+        }
+
+    @app.post("/api/internal/picker/choose")
+    async def picker_choose(body: PickerChoice, request: Request):
+        device = this_device(request)
+        try:
+            user, token = await ctx.devices.choose(device, body.id, body.pin, body.password)
+        except devices.Refused as e:
+            raise HTTPException(e.status, str(e)) from None
+        log.info("%s is watching on %s", user.name, device.name)
+        return {"token": token, "user": {"name": user.name, "role": user.role}}
+
+    @app.post("/api/internal/picker/sign-in")
+    async def picker_sign_in(body: PickerSignIn, request: Request):
+        device = this_device(request)
+        try:
+            user, token = await ctx.devices.sign_in_by_name(
+                device,
+                body.name,
+                body.code,
+                body.password,
+                access.address(request.scope),
+                public=access.outside(request.scope),
+            )
+        except devices.Refused as e:
+            raise HTTPException(e.status, str(e)) from None
+        except access.Busy as e:
+            raise HTTPException(429, str(e)) from None
+        ctx.access.record(
+            logging.INFO,
+            f"{user.name} ({access.role_name(user.role)}) signed in on {device.name} "
+            f"from {access.where(request.scope)}",
+        )
+        return {"token": token, "user": {"name": user.name, "role": user.role}}
+
+    @app.post("/api/internal/picker/remove")
+    async def picker_remove(request: Request):
+        device = this_device(request)
+        user = access.signed_in(request)
+        if user is None:
+            raise HTTPException(401, "Sign in to StationPlay")
+        ctx.devices.remove(device, user)
+        token = access.bearer(request.scope)
+        if token:
+            ctx.access.end_session(token)
+        ctx.access.record(logging.INFO, f"{user.name} took themselves off {device.name}")
         return {"ok": True}
 
     # On StationPlay's page: entering an app's code, and the apps signed in.
@@ -326,7 +443,13 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     @app.post("/api/access/link")
     async def link_app(body: LinkCode, request: Request):
         user, pending = linking(body.code, request)
-        ctx.links.link(pending, user, ctx.access.start_session(user, pending.app))
+        if pending.picker:
+            linked, new_key = linked_device(pending.device_key, pending.app, user)
+            ctx.links.link(
+                pending, user, ctx.access.start_session(user, linked.name, linked.id), new_key
+            )
+        else:
+            ctx.links.link(pending, user, ctx.access.start_session(user, pending.app))
         ctx.access.record(
             logging.INFO,
             f"{user.name} ({access.role_name(user.role)}) linked {in_sentence(pending.app)} "

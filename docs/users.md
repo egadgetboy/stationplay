@@ -116,9 +116,13 @@ hidden.
   so deciding whether a user sees a station is a few comparisons.
 - **`levels`**: name, movie age, TV age, unrated shown or not, libraries
   (all, or a list).
-- **`users`** gains: level, PIN (a hash, or none), Show on (see below), and
-  whether they can sign in by name.
+- **`users`** gains: level, PIN (a hash, or none), and Show on (see below).
+  A User may have no password: they use only the pickers.
 - **`user_stations`**: a station allowed or blocked for a user.
+- **`linked_devices`**, **`device_people`** and **`invites`**: the linked
+  devices (by a hash of each one's key), who's on each picker other than
+  as Show on says (signed in there, chosen by an Admin, or taken off), and
+  each person's invite code (a hash), while it lasts.
 
 The library in the apps (browsing, search, details, pictures, playing)
 already asks Plex about each title, which sends its rating and library, so
@@ -142,8 +146,10 @@ use it. Who's on it is each user's **Show on**:
 - **Only where signed in:** on no picker until that person signs in on a
   device; then on that device's picker.
 
-New users get the server's default, which an Admin sets: All devices (a
-household) or Only where signed in (a larger server).
+New users get the server's default as it is when they're added, which an
+Admin sets: All devices (a household) or Only where signed in (a larger
+server). Changing it doesn't move anyone already added; people added before
+there were pickers are on every device.
 
 The picker always has **Sign in**: the person enters their name and, the
 first time on that device, their invite code or password; after that they
@@ -163,6 +169,17 @@ Safety rules:
   15-minute wait for that user, on every device.
 - The picker exists only on a device already linked. A stranger who
   installs an app never sees a name.
+
+## The addresses
+
+The apps' own (`docs/internal-api.md`): `"picker": true` on signing in or
+asking for a code links the device and returns its `deviceKey`;
+`GET /api/internal/picker`, `POST /api/internal/picker/choose`,
+`POST /api/internal/picker/sign-in` and `POST /api/internal/picker/remove`
+are asked with the key, in the `StationPlay-Device` header. The Access
+tab's: `/api/access/viewing`, `/api/access/levels`,
+`/api/access/users/{id}/viewing` and `/stations`, `/api/access/devices`,
+`/api/access/users/{id}/picker` and `/invite`.
 
 ## Streams
 

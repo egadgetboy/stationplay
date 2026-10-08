@@ -56,6 +56,32 @@ address within 15 minutes, signing in from there waits (HTTP 429).
 
 When signing in is off, nothing needs a token on the home network.
 
+### Linked devices, and Who's tuning in?
+
+An app that shows a picker of the people who use the device (a household's
+TV, say: see `docs/users.md`) says so when it signs in or asks for a code,
+with `"picker": true`. The device is then **linked**: the first time, the
+answer carries a `deviceKey`, which the app keeps (where only it can read
+it) and sends with every picker request, as a header:
+
+```
+StationPlay-Device: <deviceKey>
+```
+
+From then on, the app opens on the picker (`GET /api/internal/picker`), and
+whoever is using it picks themselves (`POST /api/internal/picker/choose`,
+with their PIN if they have one), or signs in by name
+(`POST /api/internal/picker/sign-in`). Either gives a token for that
+person, as signing in does, which lasts a day from when it was last used;
+picking someone else ends it. A device key lasts until an Admin unlinks the
+device on the Access tab, which also signs out whoever is signed in on it:
+anything asked with its key then answers 401, and the app links again. An
+app shows the picker when it lists more than one person, or one with a
+PIN; otherwise it picks the one person itself.
+
+Apps that don't send `"picker": true` sign in as they always have, and get
+no `deviceKey`.
+
 On the public port, only `GET /api/v1/server` answers until signing in is
 on. API tokens (`docs/api.md`) don't work here: these addresses are for
 the apps' own sign-ins.
@@ -66,8 +92,12 @@ Open to anyone: starts signing in with a code. Send which app this is, and
 the device's own name, as the Access tab will list it:
 
 ```json
-{"app": "StationPlay for Roku", "deviceName": "Living Room Roku"}
+{"app": "StationPlay for Roku", "deviceName": "Living Room Roku", "picker": true,
+ "deviceKey": "..."}
 ```
+
+`picker` and `deviceKey` are optional: an app with a picker, and the
+`deviceKey` it already has, if any (see Linked devices, above).
 
 Show `code`, and where to enter it: StationPlay's page at `linkAt` (an app
 that knows the page's address shows it whole, such as
@@ -95,6 +125,7 @@ again), and once it's linked, the sign-in, just once:
 | Field | Type | What it is |
 |---|---|---|
 | `token` | string | Send it as `Authorization: Bearer <token>` |
+| `deviceKey` | string or null | For an app with a picker: the device's key, to keep; null when the one sent is still good, or for an app without one |
 | `user` | object | Who linked it |
 | `user.name` | string | Their name |
 | `user.role` | string | `admin` or `user` |
@@ -112,17 +143,90 @@ Open to anyone. Send:
 which keeps it signing in while too many wrong passwords from the internet
 hold everyone else back (as a browser that has signed in before does). `app`
 and `deviceName` are optional too: how the Access tab lists this sign-in.
+So are `picker` and `deviceKey`, for an app with a picker (see Linked
+devices, above).
 
 | Field | Type | What it is |
 |---|---|---|
 | `token` | string | Send it as `Authorization: Bearer <token>` |
 | `device` | string or null | Keep it, and send it when signing in again; null when the `device` sent is still good |
+| `deviceKey` | string or null | For an app with a picker: the device's key, to keep; null when the one sent is still good, or for an app without one |
 | `user` | object | Who signed in |
 | `user.name` | string | Their name |
 | `user.role` | string | `admin` or `user` |
 
 Answers 401 for a wrong name or password, 429 while signing in waits, and
 400 when signing in is off.
+
+## GET /api/internal/picker
+
+Asked with the device's key (`StationPlay-Device`; see Linked devices). Who
+can be picked on this device, by name:
+
+| Field | Type | What it is |
+|---|---|---|
+| `device` | string | This device, as the Access tab lists it |
+| `people` | list | Who's on its picker |
+| `people[].id` | number | Who they are, for `POST /api/internal/picker/choose` |
+| `people[].name` | string | Their name |
+| `people[].pin` | boolean | Whether picking them asks for their PIN |
+| `people[].admin` | boolean | Whether they're an Admin (picking an Admin with no PIN asks for their password) |
+
+Answers 401 when the key isn't good (the device was unlinked: link it
+again), and 400 when signing in is off.
+
+## POST /api/internal/picker/choose
+
+Asked with the device's key. Picks someone on its picker:
+
+```json
+{"id": 3, "pin": "1234"}
+```
+
+`pin` when they have one; `password` instead, for an Admin with no PIN.
+
+| Field | Type | What it is |
+|---|---|---|
+| `token` | string | Send it as `Authorization: Bearer <token>` |
+| `user` | object | Who was picked |
+| `user.name` | string | Their name |
+| `user.role` | string | `admin` or `user` |
+
+Answers 401 for a wrong PIN or password, 429 after 5 wrong PINs for that
+person in 15 minutes (on any device), and 404 for someone not on this
+device's picker.
+
+## POST /api/internal/picker/sign-in
+
+Asked with the device's key. Signs in by name, with an invite code (made
+by an Admin on the Access tab: it works once) or a password:
+
+```json
+{"name": "Tia", "code": "K7QM-4DPX"}
+```
+
+Whoever signs in is on this device's picker from then on.
+
+| Field | Type | What it is |
+|---|---|---|
+| `token` | string | Send it as `Authorization: Bearer <token>` |
+| `user` | object | Who signed in |
+| `user.name` | string | Their name |
+| `user.role` | string | `admin` or `user` |
+
+Answers 401 for a wrong name, code or password; 403 for someone who can't
+sign in by name (they have neither a password nor a PIN: pick them from
+the list); and 429 after 10 wrong tries on this device in 15 minutes.
+
+## POST /api/internal/picker/remove
+
+Asked with the device's key and the token of whoever is signed in on it:
+takes them off this device's picker, and signs them out. Answers
+`{"ok": true}`.
+
+| Field | Type | What it is |
+|---|---|---|
+| `ok` | boolean | Always true |
 
 ## POST /api/internal/sign-out
 
