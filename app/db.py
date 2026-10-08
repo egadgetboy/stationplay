@@ -280,6 +280,25 @@ CREATE TABLE IF NOT EXISTS titles (
     seen_ms      INTEGER NOT NULL,
     checked_ms   INTEGER NOT NULL DEFAULT 0
 );
+-- Problems StationPlay's apps ran into, sent by the apps themselves (see
+-- problems.py): the same one again soon after counts on the same row.
+CREATE TABLE IF NOT EXISTS problems (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    first_ms     INTEGER NOT NULL,
+    last_ms      INTEGER NOT NULL,
+    times        INTEGER NOT NULL DEFAULT 1,
+    kind         TEXT    NOT NULL,
+    station      INTEGER,             -- the station's number, if it was one
+    title        TEXT    NOT NULL DEFAULT '',
+    detail       TEXT    NOT NULL DEFAULT '',
+    app          TEXT    NOT NULL DEFAULT '',
+    version      TEXT    NOT NULL DEFAULT '',
+    device       TEXT    NOT NULL DEFAULT '',  -- the kind of device: model, and its system
+    device_name  TEXT    NOT NULL DEFAULT '',
+    user_id      INTEGER,
+    away         INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS problems_by_last ON problems (last_ms);
 """
 
 Segments = tuple[tuple[int, int], ...]
@@ -1870,6 +1889,58 @@ class Database:
                 (limit,),
             ).fetchall()
         return [(r["time_ms"], r["level"], r["message"]) for r in reversed(rows)]
+
+    # Problems the apps ran into (see problems.py) ------------------------------
+
+    def add_problem(
+        self, at_ms: int, fields: dict[str, Any], same_since_ms: int, keep: int
+    ) -> bool:
+        """Notes a problem: on the row for the same one (the same kind, station,
+        title, detail, app and device) last seen since `same_since_ms`, counted
+        again; otherwise a new row (keeping the newest `keep`). True if it's
+        new."""
+        keys = ("kind", "station", "title", "detail", "app", "version", "device", "device_name")
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT id FROM problems WHERE last_ms >= ? AND "
+                + " AND ".join(f"{k} IS ?" for k in keys)
+                + " ORDER BY id DESC LIMIT 1",
+                (same_since_ms, *(fields[k] for k in keys)),
+            ).fetchone()
+            if row is not None:
+                self._conn.execute(
+                    "UPDATE problems SET last_ms = ?, times = times + 1 WHERE id = ?",
+                    (at_ms, row["id"]),
+                )
+                return False
+            cur = self._conn.execute(
+                "INSERT INTO problems (first_ms, last_ms, user_id, away, "
+                + ", ".join(keys)
+                + ") VALUES (?, ?, ?, ?, "
+                + ", ".join("?" for _ in keys)
+                + ")",
+                (at_ms, at_ms, fields["user_id"], int(fields["away"]), *(fields[k] for k in keys)),
+            )
+            self._conn.execute(
+                "DELETE FROM problems WHERE id <= ?", (int(cur.lastrowid or 0) - keep,)
+            )
+            return True
+
+    def problems_since(self, since_ms: int) -> list[dict[str, Any]]:
+        """The problems last seen since `since_ms`, newest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM problems WHERE last_ms >= ? ORDER BY last_ms DESC", (since_ms,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def forget_problems(self, before_ms: int | None = None) -> None:
+        """Forgets the problems last seen before `before_ms` (None: all of them)."""
+        with self._lock, self._conn:
+            if before_ms is None:
+                self._conn.execute("DELETE FROM problems")
+            else:
+                self._conn.execute("DELETE FROM problems WHERE last_ms < ?", (before_ms,))
 
     # Viewing (see stats.py) ---------------------------------------------------
 

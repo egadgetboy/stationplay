@@ -248,7 +248,7 @@ async def test_night_mode_sound_is_made_beside_the_station(tmp_path, media, monk
     app leaves (the usual one carries on), and tidies up."""
     monkeypatch.setattr(hls, "IDLE_S", 3.0)
     monkeypatch.setattr(hls, "IDLE_CHECK_S", 0.5)
-    base, app, settings, srv, task = await start_server(tmp_path, two_episode_show(media))
+    base, app, _settings, srv, task = await start_server(tmp_path, two_episode_show(media))
     try:
         channel = await make_channel(base, 7)
         await make_channel(base, 8)
@@ -380,7 +380,7 @@ async def test_an_app_away_from_home_watches_through_the_public_port(tmp_path, m
             auth = await sign_in()
             server = (await phone.get("/api/v1/server", headers=auth)).json()
             assert server["outside"] and server["awayAddress"] is None
-            assert server["features"] == ["hls", "speed-test", "reports", "night"]
+            assert server["features"] == ["hls", "speed-test", "reports", "night", "problems"]
             # Off: from outside, nothing to play.
             assert await hls_of(auth) == "/hls/7/index.m3u8"
             assert (await phone.get("/hls/7/index.m3u8")).status_code == 404
@@ -393,7 +393,7 @@ async def test_an_app_away_from_home_watches_through_the_public_port(tmp_path, m
             assert on.status_code == 200 and on.json()["address"] == "https://tv.example.com"
             server = (await phone.get("/api/v1/server", headers=auth)).json()
             assert server["awayAddress"] == "https://tv.example.com"
-            assert server["features"] == ["hls", "speed-test", "reports", "night", "away"]
+            assert server["features"] == ["hls", "speed-test", "reports", "night", "problems", "away"]
             at_home = (await inside.get("/api/v1/server")).json()
             assert not at_home["outside"] and at_home["awayAddress"] == "https://tv.example.com"
             assert (await inside.get("/api/v1/stations")).json()["stations"][0]["hls"] == (

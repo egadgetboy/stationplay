@@ -915,6 +915,8 @@ Picture sizes and the number of tuners are set on the page. Versions before 1.14
 
 Start with the **Logs** tab: it shows the newest 200 entries. Check **Warnings** or **Errors** to filter, and use **Copy** to paste them into a message. `docker logs stationplay` (or the app's logs in TrueNAS) has everything.
 
+**Problems in the apps.** At the top of the **Logs** tab, StationPlay's apps say when something goes wrong as they play: a station that doesn't start or stops, something from your library that doesn't play, playing that can't keep up, or the app closing unexpectedly. Each problem shows how often it happened, on how many devices and for whom, and on what kinds of device (the app, its version, the device's model and system), marked **One kind of device** when that's all it's been on. So a problem on every kind of device points to StationPlay or the file, and one on a single kind of device points to that device or its app. They're kept 30 days; **Clear** forgets them (the log keeps its own). For more about one device, its **Send a report to StationPlay** (in the app's Options) adds what the app did lately.
+
 **Installing and starting**
 
 - **The app keeps restarting, and the log says it can't write to `/data`.** The data folder isn't owned by the user StationPlay runs as. The message shows the `chown` command to run: fill in your data folder's path, run it, then restart the app.

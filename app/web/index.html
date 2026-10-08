@@ -568,6 +568,13 @@
   .logline.ERROR .lvl { color: var(--bad); }
   .logline .msg { word-break: break-word; white-space: pre-wrap; }  /* (an app's report runs over lines) */
   @media (max-width: 720px) { .logline { grid-template-columns: 1fr; gap: 2px; } }
+  .problems { padding: 16px 18px; margin-bottom: 18px; }
+  .problems-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .problems-head h3 { margin: 0; font-size: 16px; }
+  .problem { border-top: 1px solid var(--line); padding: 10px 0; }
+  .problem p { margin: 3px 0; }
+  .problem-on { font-size: 14px; color: var(--ink-2); }
+  .problem-on .pill { font-size: 12px; padding: 2px 8px; margin-right: 4px; }
   .checks { display: flex; gap: 14px; align-items: center; }
   .checks label { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; cursor: pointer; }
   .checks input { accent-color: var(--accent); width: 16px; height: 16px; }
@@ -661,6 +668,20 @@
         <label title="Sign-ins, sign-outs, and changes to who can sign in"><input type="checkbox" id="logAccess"> Access</label>
       </div>
       <button class="btn" id="copyLogs">Copy</button>
+    </div>
+    <div class="panel problems" id="problemsPanel">
+      <div class="problems-head">
+        <h3>Problems in the apps</h3>
+        <div class="spacer"></div>
+        <div class="seg" role="group" aria-label="Time period" id="problemDays">
+          <button type="button" data-days="1" aria-pressed="false">Today</button>
+          <button type="button" data-days="7" aria-pressed="true">7 days</button>
+          <button type="button" data-days="30" aria-pressed="false">30 days</button>
+        </div>
+        <button class="btn" id="clearProblems">Clear</button>
+      </div>
+      <p class="muted small">StationPlay’s apps say here when something goes wrong as they play: a station that doesn’t start or stops, something from your library that doesn’t play, playing that can’t keep up, or the app closing unexpectedly. Each says which app, and on what kind of device, so you can tell whether a problem is one device’s or everyone’s.</p>
+      <div id="problemList"></div>
     </div>
     <p class="muted small">The latest 200 entries, newest at the bottom. Select Warnings, Errors, or both to see only those. Select Access to see who signed in and from where. The access history is kept when StationPlay restarts.</p>
     <div class="panel logs" id="logList"></div>
@@ -1506,7 +1527,7 @@ function showTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
   for (const id of TABS) $('#tab-' + id).hidden = id !== name;
   if (name === 'broken') { loadArr().then(loadBroken); loadScan(); }
-  if (name === 'logs') loadLogs(true);
+  if (name === 'logs') { loadLogs(true); loadProblems(); }
   if (name === 'setup') { loadBackups(); renderPlaybackPanel(); }
   if (name === 'stats') loadStats();
   if (name === 'access') { loadAccess(); loadApps(); loadLimits(); loadAway(); loadAppLimits(); loadAppLibraries(); loadApiTokens(); }
@@ -2233,6 +2254,44 @@ async function loadLogs(scrollToEnd = false) {
 $('#logWarn').addEventListener('change', () => loadLogs(true));
 $('#logErr').addEventListener('change', () => loadLogs(true));
 $('#logAccess').addEventListener('change', () => loadLogs(true));
+// What the apps ran into (see problems.py on the server).
+let problemDays = 7;
+async function loadProblems() {
+  const list = $('#problemList');
+  let data;
+  try { data = await api(`/api/problems?days=${problemDays}`); }
+  catch (e) { list.replaceChildren(h('p', { class: 'muted' }, e.message)); return; }
+  const at = ms => new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const period = problemDays === 1 ? 'today' : `in the last ${problemDays} days`;
+  $('#clearProblems').disabled = !data.problems.length;
+  list.replaceChildren(...(data.problems.length ? data.problems.map(p => {
+    const times = p.times === 1 ? 'once' : `${p.times} times`;
+    const devices = p.devices === 1 ? 'on 1 device' : `on ${p.devices} devices`;
+    const who = p.people.length ? ` · ${p.people.join(', ')}` : '';
+    const where = p.only
+      ? h('p', { class: 'problem-on' }, h('span', { class: 'pill' }, 'One kind of device'), ` Only on ${p.on[0].device}`)
+      : h('p', { class: 'problem-on' }, h('span', { class: 'pill' }, `${p.on.length} kinds of device`), ' ',
+          p.on.slice(0, 4).map(o => `${o.device} (${o.times})`).join(' · ') + (p.on.length > 4 ? ` · and ${p.on.length - 4} more` : ''));
+    return h('div', { class: 'problem' },
+      h('p', { class: 'problem-what' }, h('strong', {}, p.label), h('span', { class: 'muted small' },
+        ` ${times} ${devices}${who}${p.away ? ' · some away from home' : ''} · last ${at(p.lastMs)}`)),
+      where,
+      p.details.length ? h('p', { class: 'muted small' }, `What the app said: ${p.details.join('; ')}`) : null);
+  }) : [h('p', { class: 'muted' }, `No problems from the apps ${period}.`)]));
+}
+$('#problemDays').addEventListener('click', e => {
+  const b = e.target.closest('button[data-days]');
+  if (!b) return;
+  problemDays = Number(b.dataset.days);
+  [...$('#problemDays').children].forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  loadProblems();
+});
+$('#clearProblems').addEventListener('click', async () => {
+  if (!confirm('Clear every problem the apps sent? They’re also in the log, which keeps them.')) return;
+  try { await api('/api/problems', { method: 'DELETE' }); }
+  catch (e) { toast(e.message, true); return; }
+  loadProblems();
+});
 $('#copyLogs').addEventListener('click', async () => {
   if (!logText) { toast('Nothing to copy'); return; }
   toast(await copyText(logText) ? 'Logs copied' : 'Couldn’t copy. Select the text and copy it instead.', false);

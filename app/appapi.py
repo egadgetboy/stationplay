@@ -24,7 +24,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import __version__, access, api, capacity, devices, hdhr, intro, links, specials
+from . import __version__, access, api, capacity, devices, hdhr, intro, links, problems, specials
 from .broadcaster import now_ms
 from .text import plain
 
@@ -43,7 +43,7 @@ PREFIX = "/api/v1/"
 # OpenAPI, no promise it stays the same; see docs/internal-api.md).
 INTERNAL = "/api/internal/"
 HEADER = (b"stationplay-api", str(VERSION).encode())
-FEATURES = ("hls", "speed-test", "reports", "night")
+FEATURES = ("hls", "speed-test", "reports", "night", "problems")
 
 GUIDE_DEFAULT_MS = 6 * 3600_000
 GUIDE_MAX_MS = 2 * 86_400_000
@@ -132,6 +132,19 @@ REPORT_EVERY_S = 30  # one from each address at most this often
 class Report(BaseModel):
     text: str = Field(max_length=REPORT_MAX * 8)  # (what is kept: report_text)
     app: str = Field(default="", max_length=APP_MAX)
+    deviceName: str = Field(default="", max_length=APP_MAX)
+
+
+class Problem(BaseModel):
+    """A problem an app ran into, sent as it happens (see problems.py)."""
+
+    kind: str = Field(max_length=40)
+    detail: str = Field(default="", max_length=problems.TEXT_MOST * 4)
+    station: int | None = None
+    title: str = Field(default="", max_length=problems.NAME_MOST * 4)
+    app: str = Field(default="", max_length=APP_MAX)
+    version: str = Field(default="", max_length=APP_MAX)
+    device: str = Field(default="", max_length=problems.NAME_MOST * 4)
     deviceName: str = Field(default="", max_length=APP_MAX)
 
 
@@ -646,6 +659,27 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         user = access.signed_in(request)
         by = f" ({user.name})" if user else ""
         log.warning("Report from %s%s:\n%s", app_label(body.app, body.deviceName), by, text)
+        return {"ok": True}
+
+    @app.post("/api/internal/problem")
+    async def problem(body: Problem, request: Request):
+        """A problem an app ran into, as it happened (from 1.23.0, when
+        `features` lists `problems`): kept for the Logs tab, with which app
+        and what kind of device, so an Admin can tell whose problem it is."""
+        user = access.signed_in(request)
+        sent = problems.Sent(
+            body.kind, body.detail, body.station, body.title, body.app, body.version,
+            body.device, body.deviceName,
+        )  # fmt: skip
+        try:
+            ctx.problems.note(
+                sent,
+                user.id if user else None,
+                access.outside(request.scope),
+                access.address(request.scope),
+            )
+        except problems.Refused as e:
+            raise HTTPException(e.status, str(e)) from None
         return {"ok": True}
 
     @app.get(

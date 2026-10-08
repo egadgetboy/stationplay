@@ -53,6 +53,7 @@ from . import (
     marathons,
     ondemand,
     playback,
+    problems,
     replacing,
     setup,
     smart,
@@ -447,6 +448,7 @@ class AppContext:
     stats: stats.Stats = field(init=False)  # how much each station is watched
     titles: titles.Titles = field(init=False)  # the ratings of what's on the stations
     viewing: viewing.Viewing = field(init=False)  # what each user can see
+    problems: problems.Problems = field(init=False)  # what the apps ran into
     # Your shows and movies, wherever they come from (see library.py).
     library: Library = field(init=False)
     updater: Updater = field(init=False)
@@ -471,6 +473,7 @@ class AppContext:
         self.stats = stats.Stats(self.db)
         self.titles = titles.Titles(self.db)
         self.viewing = viewing.Viewing(self.db, self.titles)
+        self.problems = problems.Problems(self.db)
         self.access.judge_watching_by(self.viewing.watches_only)
         self.updater = Updater(self)
         self.markers = MarkerFinder(self.db, self.library)
@@ -2341,6 +2344,18 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             ]
             entries = sorted(entries, key=lambda e: e["time"])[-limit:]
         return {"entries": entries, "text": logbuffer.as_text(entries)}
+
+    @app.get("/api/problems")
+    async def recent_problems(days: int = 7):
+        """What StationPlay's apps ran into lately (see problems.py), for the
+        Logs tab: each problem, how often, and on what kinds of device."""
+        names = {u.id: u.name for u in ctx.db.users()}
+        return ctx.problems.summary(max(1, min(days, problems.KEEP_DAYS)), names)
+
+    @app.delete("/api/problems", status_code=204)
+    async def clear_problems():
+        ctx.problems.forget()
+        log.info("The apps' problems were cleared")
 
     # Backups ---------------------------------------------------------------
 

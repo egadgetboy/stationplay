@@ -164,7 +164,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         )
         server = check.answer(home.get("/api/v1/server"), "GET /api/v1/server")
         assert server["api"] == 1 and not server["signIn"] and server["notSetUp"] is None
-        assert server["features"] == ["hls", "speed-test", "reports", "night"]
+        assert server["features"] == ["hls", "speed-test", "reports", "night", "problems"]
         # From the internet, until signing in is on, there's nothing to do.
         outside = check.answer(internet.get("/api/v1/server"), "GET /api/v1/server")
         assert outside["signIn"] and "home network" in outside["notSetUp"]
@@ -251,6 +251,20 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         assert check.answer(reported, "POST /api/internal/report") == {"ok": True}
         again = phone.post("/api/internal/report", headers=sam, json={"text": "Again"})
         check.answer(again, "POST /api/internal/report", 429)
+        # A problem the app ran into, as it happened (see test_problems.py).
+        problem = phone.post(
+            "/api/internal/problem",
+            headers=sam,
+            json={"kind": "station-failed", "station": 5, "detail": "It didn't answer in time",
+                  "app": "StationPlay for Android", "version": "0.1.0",
+                  "device": "Pixel 8, Android 15", "deviceName": "Pixel"},
+        )  # fmt: skip
+        assert check.answer(problem, "POST /api/internal/problem") == {"ok": True}
+        check.answer(
+            phone.post("/api/internal/problem", headers=sam, json={"kind": "nope"}),
+            "POST /api/internal/problem",
+            400,
+        )
         [entry] = [
             e["message"]
             for e in home.get("/api/logs?levels=WARNING").json()["entries"]
@@ -271,7 +285,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         )
         assert home.put("/api/app-libraries", json={"libraries": ["1", "2"]}).status_code == 200
         features = check.answer(phone.get("/api/v1/server"), "GET /api/v1/server")["features"]
-        assert features == ["hls", "speed-test", "reports", "night", "library"]
+        assert features == ["hls", "speed-test", "reports", "night", "problems", "library"]
         libs = check.answer(
             phone.get("/api/internal/libraries", headers=sam), "GET /api/internal/libraries"
         )

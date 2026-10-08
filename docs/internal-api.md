@@ -289,6 +289,47 @@ another is answered 429. An empty one is answered 400.
 |---|---|---|
 | `ok` | boolean | Always true |
 
+## POST /api/internal/problem
+
+A problem the app ran into, sent by the app itself as it happens (from
+1.23.0, when `features` lists `problems`): kept for the Logs tab, where an
+Admin sees each problem with how often, on how many devices, and on what
+kinds of device, so they can tell whether it's one device's, one kind of
+device's, or everyone's. Send what's known:
+
+```json
+{"kind": "station-stopped", "station": 5, "detail": "The picture stopped...",
+ "app": "StationPlay for Roku", "version": "0.5.0",
+ "device": "Roku Ultra 4850X, Roku OS 14.0", "deviceName": "Den"}
+```
+
+`kind` says when the app sends it:
+
+- `station-failed`: a station didn't start (with `station`). Not when every
+  tuner is in use or a limit was reached: those are said to the person.
+- `station-stopped`: a station stopped playing, and tuning in again didn't
+  bring it back (`station`).
+- `library-failed`: something from the library didn't play (`title`, as
+  it's shown).
+- `library-stopped`: playing from the library stopped and couldn't go on
+  (`title`).
+- `kept-up`: playing couldn't keep up, so a smaller version played
+  (`title`, or `station`).
+- `crashed`: the app closed unexpectedly last time (sent when it opens
+  again; `detail` is the crash's first line).
+
+`detail` is what the app saw, in a sentence (at most 300 characters kept);
+`device` is the kind of device, its model and its system, as a problem
+report's `Device:` line has it. Never a token, a password or a stream's
+private address. The same problem from the same app and device within 10
+minutes counts on its first, and is said in StationPlay's log once. At most
+30 in 10 minutes from one app on one device: more are answered 429. A
+`kind` StationPlay doesn't know is answered 400.
+
+| Field | Type | What it is |
+|---|---|---|
+| `ok` | boolean | Always true |
+
 ## Your library
 
 When an Admin shares libraries with the apps (on the Access tab, under

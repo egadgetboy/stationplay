@@ -198,7 +198,7 @@ FOR_USERS = {
         "/api/logos/plex", "/api/bumpers", "/api/smart/split", "/api/smart/stations",
         "/api/internal/sign-out", "/api/internal/speed-test", "/api/access/link",
         "/api/internal/play", "/api/internal/progress", "/api/internal/report",
-        "/api/internal/picker/remove",
+        "/api/internal/problem", "/api/internal/picker/remove",
     ),
     "PUT": ("/api/channels/",),
     "DELETE": ("/api/channels/",),
@@ -218,7 +218,7 @@ FOR_WATCHERS = {
     "POST": (
         "/api/access/me/password", "/api/internal/sign-out", "/api/internal/speed-test",
         "/api/access/link", "/api/internal/play", "/api/internal/progress",
-        "/api/internal/report", "/api/internal/picker/remove",
+        "/api/internal/report", "/api/internal/problem", "/api/internal/picker/remove",
     ),
 }  # fmt: skip
 WATCHES_ONLY = "Your Viewing Level lets you watch, but not make or change stations"
