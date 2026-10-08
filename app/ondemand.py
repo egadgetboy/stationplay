@@ -750,11 +750,12 @@ class PlaySessions:
             self.end(session_id)
 
     def copies(self) -> int:
-        """Copies being converted (their pictures made) now."""
+        """Copies being converted (their pictures made) now, or asked for
+        lately."""
         return sum(
             1
             for s in self._sessions.values()
-            if s.copy is not None and not s.copy.plan.copies_picture and not s.copy.stopped
+            if s.copy is not None and not s.copy.plan.copies_picture and s.copy.active
         )
 
     def watching(self) -> dict[str, bool]:

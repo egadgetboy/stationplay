@@ -5,6 +5,7 @@ repackaged and converted copies played from the start and from anywhere."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 import subprocess
@@ -204,7 +205,7 @@ def test_a_repackaged_copy_plays_from_the_start_and_from_anywhere(app):
         first = home.get(f"{here}/piece-0.ts")  # (and back to the start)
         assert first_times(first.content)[0] == pytest.approx(converting.TS_OFFSET_S, abs=0.05)
         assert picture_of(first.content)["codec_name"] == "h264"
-        assert home.get(f"{here}/piece-9.ts").status_code == 503
+        assert home.get(f"{here}/piece-9.ts").status_code == 404  # (past its end)
         assert home.post(answer["leave"]).status_code == 204
         assert home.get(f"{here}/piece-1.ts").status_code == 404
 
@@ -250,3 +251,95 @@ def test_what_cant_be_copied_says_why(app):
         assert refused.status_code == 422
         assert refused.json()["why"] == ["its Dolby Vision profile 5 picture"]
         assert "can't make a copy" in refused.json()["detail"]
+
+
+# Making copies: restarts, jumps back, failures and odd files ------------------------------
+
+
+def converted(starts: int, length_s: float) -> converting.Plan:
+    return converting.Plan(
+        method=converting.CONVERT, why=(), starts=converting.pieces_every(length_s)[:starts],
+        duration_s=length_s, audio=None, audio_codec="aac", height=180, kbps=800,
+    )  # fmt: skip
+
+
+async def test_only_the_newest_request_starts_ffmpeg_again(tmp_path, monkeypatch):
+    """Two players' requests far apart don't keep restarting each other's
+    ffmpeg: the older one waits out its time."""
+    monkeypatch.setattr(converting, "WAIT_S", 2.0)
+    starts = tmp_path / "starts"
+    fake = tmp_path / "ffmpeg"
+    fake.write_text(f"#!/bin/sh\necho start >> {starts}\nexec sleep 30\n")
+    fake.chmod(0o755)
+    copy = converting.Copy(str(fake), "file.mkv", converted(20, 120.0))
+    try:
+        first, far = await asyncio.gather(copy.piece(0), copy.piece(15))
+        assert (first, far) == (None, None)
+        assert len(starts.read_text().split()) <= 2
+    finally:
+        await copy.close()
+
+
+async def test_a_copy_that_cant_be_made_is_given_up_on(tmp_path):
+    copy = converting.Copy("ffmpeg", str(tmp_path / "gone.mkv"), converted(3, 18.0))
+    try:
+        for _ in range(converting.FAILURES_MOST + 1):
+            assert await copy.piece(0) is None
+        assert copy.broken and copy.failures == converting.FAILURES_MOST
+        assert await copy.piece(1) is None  # (at once)
+        assert not copy.active
+    finally:
+        await copy.close()
+
+
+@needs_ffmpeg
+async def test_jumping_back_past_whats_kept_makes_it_again(tmp_path):
+    source = tmp_path / "long.mkv"
+    await asyncio.to_thread(
+        subprocess.run,
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+         "testsrc2=size=320x180:rate=24:duration=60", "-c:v", "libx264", "-preset",
+         "ultrafast", str(source)],
+        check=True,
+    )  # fmt: skip
+    copy = converting.Copy("ffmpeg", str(source), converted(10, 60.0))
+    try:
+        for n in range(9):
+            assert await copy.piece(n) is not None, n
+        assert 1 not in copy.ready  # (deleted, well behind)
+        again = await copy.piece(1)
+        assert again is not None
+        assert first_times(again.read_bytes())[0] == pytest.approx(16.0, abs=0.05)
+    finally:
+        await copy.close()
+
+
+@needs_ffmpeg
+async def test_odd_files_still_make_whole_pieces(tmp_path):
+    """An MPEG-TS recording (its times starting at 1.4 seconds), a picture
+    starting late, and a picture shorter than the file's planned length."""
+    ts = tmp_path / "recording.ts"
+    await asyncio.to_thread(make, ts, "-c:v", "mpeg2video", "-c:a", "ac3")
+    late = tmp_path / "late.mkv"
+    await asyncio.to_thread(
+        subprocess.run,
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+         "testsrc2=size=320x180:rate=24:duration=20", "-f", "lavfi", "-i",
+         "sine=duration=20", "-filter_complex", "[0:v]setpts=PTS+0.6/TB[v]", "-map", "[v]",
+         "-map", "1", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(late)],
+        check=True,
+    )  # fmt: skip
+    for source, length in ((ts, LENGTH_S), (late, LENGTH_S), (late, 30.0)):
+        copy = converting.Copy("ffmpeg", str(source), converted(10, length))
+        try:
+            for n in (0, 2):
+                piece = await copy.piece(n)
+                assert piece is not None, (source.name, n)
+                assert first_times(piece.read_bytes())[0] == pytest.approx(
+                    max(n * 6.0, 0.6 if source == late and n == 0 else 0) + 10, abs=0.1
+                ), (source.name, n)
+            if length > LENGTH_S:
+                assert await copy.piece(3) is not None  # (the last, to the file's end)
+                assert await copy.piece(4) is None and copy.end == 4
+        finally:
+            await copy.close()

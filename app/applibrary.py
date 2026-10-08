@@ -45,6 +45,8 @@ AT_HOME = (
 PLAY_ENDED = "That program's address has ended. Choose it again to play it."
 NOT_PLAYABLE = "Choose an episode or a movie to play"
 NO_FILE = "StationPlay can't reach this program's file right now. Try again in a moment."
+COPY_FAILED = "StationPlay couldn't make this ready to play here. Try again, or choose another."
+KEYFRAMES_WAIT_S = 20.0  # reading a file's index, at most
 # Copies with their picture converted at once, at most (each takes a share of
 # the server's processor; repackaging takes next to nothing).
 CONVERTING_MOST = 3
@@ -593,20 +595,33 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     f.seek(offset)
                     return f.read(size)
 
-            return await asyncio.to_thread(read)
+            try:
+                return await asyncio.to_thread(read)
+            except OSError:
+                return b""
 
         async def from_plex(offset: int, size: int) -> bytes:
+            asked = {"range": f"bytes={offset}-{offset + size - 1}", "accept-encoding": "identity"}
+            client = proxy()
             try:
-                got = await proxy().get(
-                    stream or "",
-                    headers={
-                        "range": f"bytes={offset}-{offset + size - 1}",
-                        "accept-encoding": "identity",
-                    },
+                got = await client.send(
+                    client.build_request("GET", stream or "", headers=asked), stream=True
                 )
             except httpx.HTTPError:
                 return b""
-            return got.content if got.status_code == 206 else b""
+            try:
+                if got.status_code != 206:  # (never the whole file, for a part of it)
+                    return b""
+                data = bytearray()
+                async for part in got.aiter_bytes():
+                    data += part
+                    if len(data) >= size:
+                        break
+                return bytes(data[:size])
+            except httpx.HTTPError:
+                return b""
+            finally:
+                await got.aclose()
 
         return from_disk if path else from_plex
 
@@ -675,7 +690,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         # known from the file's index); otherwise converting it.
         starts: tuple[float, ...] = ()
         if converting.picture_copyable(media, why, hls) and shown is None and not smaller:
-            found = await keyframes.keyframes(reader(path, stream), media.container)
+            try:
+                found = await asyncio.wait_for(
+                    keyframes.keyframes(reader(path, stream), media.container), KEYFRAMES_WAIT_S
+                )
+            except TimeoutError:
+                found = None
             if found:
                 starts = converting.pieces_at(found, duration_s)
         if starts:
@@ -710,6 +730,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             styled = shown.codec == "ass"
             if converting.picture_subtitles(shown) and nth is not None:
                 drawn = Subtitles(stream=nth, image=True)
+            elif converting.picture_subtitles(shown):
+                return refuse(["its subtitles (a picture subtitle file of its own)"])
             elif not ctx.subtitling:
                 return refuse(["its subtitles (StationPlay can't draw text subtitles)"])
             elif shown.external:
@@ -744,7 +766,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             first = fetch_subtitles(fetch_from, target)
         plan = converting.Plan(
             method=method, why=tuple(why), starts=starts, duration_s=duration_s, audio=sound,
-            audio_codec=audio_codec, audio_channels=channels, night=body.night, height=height,
+            audio_codec=audio_codec, audio_channels=channels, picture=media.video,
+            night=body.night, height=height,
             kbps=kbps, tone_map=tone_map, subtitles=drawn, drawn=shown.id if shown else None,
         )  # fmt: skip
         token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
@@ -1000,14 +1023,16 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         )
 
     @app.get("/play/{session_id}/piece-{n}.ts")
-    async def copy_piece(session_id: str, n: int):
+    async def copy_piece(session_id: str, n: int, request: Request):
         session = session_or_404(session_id)
         if session.copy is None:
             raise HTTPException(404, PLAY_ENDED)
-        found = await session.copy.piece(n)
+        found = await session.copy.piece(n, request.is_disconnected)
         if found is None:
             if session.copy.stopped:
                 raise HTTPException(404, PLAY_ENDED)
+            if session.copy.broken or n >= session.copy.end:
+                raise HTTPException(404, COPY_FAILED)
             raise HTTPException(503, "That part isn't ready yet. Try again in a moment.")
         ctx.plays.get(session_id)  # (still watching)
         return FileResponse(found, media_type="video/mp2t", headers={"Cache-Control": "no-store"})

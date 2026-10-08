@@ -11,6 +11,7 @@ the picture is converted instead.
 
 from __future__ import annotations
 
+import asyncio
 import struct
 from collections.abc import Awaitable, Callable
 
@@ -19,6 +20,8 @@ Reader = Callable[[int, int], Awaitable[bytes]]
 
 INDEX_MOST = 64 << 20  # an index bigger than this isn't read
 KEYFRAMES_MOST = 500_000
+SAMPLES_MOST = 20_000_000  # (frames: over 90 hours at 60 a second)
+ELEMENTS_MOST = 1000  # a Matroska file's elements looked through before its first cluster
 HEAD_READ = 256 << 10
 
 # Matroska's element IDs (with their length bits, as written).
@@ -58,7 +61,7 @@ async def keyframes(read: Reader, container: str) -> list[float] | None:
             found = await _mp4(read)
         else:
             return None
-    except (_Unknown, struct.error, IndexError, ValueError, OverflowError):
+    except (_Unknown, struct.error, IndexError, KeyError, ValueError, OverflowError, OSError):
         return None
     times = sorted({round(t, 6) for t in found if t >= 0})
     return times if times and len(times) <= KEYFRAMES_MOST else None
@@ -99,8 +102,8 @@ def _children(data: bytes, start: int, end: int):
     at = start
     while at < end:
         ident, begin, size = _element(data, at)
-        if size < 0:
-            raise _Unknown("an element of unknown size inside another")
+        if size < 0 or begin + size > end:
+            raise _Unknown("an element of unknown size inside another, or too big for it")
         yield ident, begin, size
         at = begin + size
 
@@ -120,51 +123,60 @@ async def _matroska(read: Reader) -> list[float]:
     scale = 1_000_000
     video_track: int | None = None
     cues_at: int | None = None
-    # The segment's first elements, up to its first cluster: what's in them
-    # is in the head read, or read on its own.
+    have_info = False
+    # The segment's first elements, up to its first cluster (each read where
+    # it is, and only those needed read whole), until all that's needed is
+    # known.
     at = segment
-    while True:
-        if at + 12 > len(head):
-            head += await read(len(head), HEAD_READ)
-            if at + 12 > len(head):
-                break
-        ident, begin, size = _element(head, at)
+    for _ in range(ELEMENTS_MOST):
+        top = head[at : at + 12] if at + 12 <= len(head) else await read(at, 12)
+        if len(top) < 2:
+            break
+        ident, begin, size = _element(top, 0)
         if ident == _CLUSTER or size < 0:
             break
-        if ident in (_SEEK_HEAD, _INFO, _TRACKS) and size > INDEX_MOST:
-            raise _Unknown("an element too big")
-        if ident in (_SEEK_HEAD, _INFO, _TRACKS) and begin + size > len(head):
-            head += await read(len(head), begin + size - len(head))
-        if ident == _SEEK_HEAD:
-            for kind, seek_begin, seek_size in _children(head, begin, begin + size):
-                if kind != _SEEK:
-                    continue
-                target = position = None
-                for field, b, n in _children(head, seek_begin, seek_begin + seek_size):
-                    if field == _SEEK_ID:
-                        target = _uint(head, b, n)
-                    elif field == _SEEK_POSITION:
-                        position = _uint(head, b, n)
-                if target == _CUES and position is not None:
-                    cues_at = segment + position
-        elif ident == _INFO:
-            for field, b, n in _children(head, begin, begin + size):
-                if field == _TIMESTAMP_SCALE:
-                    scale = _uint(head, b, n) or scale
-        elif ident == _TRACKS:
-            for kind, b, n in _children(head, begin, begin + size):
-                if kind != _TRACK_ENTRY:
-                    continue
-                number = kind_of = None
-                for field, fb, fn in _children(head, b, b + n):
-                    if field == _TRACK_NUMBER:
-                        number = _uint(head, fb, fn)
-                    elif field == _TRACK_TYPE:
-                        kind_of = _uint(head, fb, fn)
-                if kind_of == _VIDEO_TRACK and number is not None and video_track is None:
-                    video_track = number
+        begin += at
+        if ident in (_SEEK_HEAD, _INFO, _TRACKS):
+            if size > INDEX_MOST:
+                raise _Unknown("an element too big")
+            body = (
+                head[begin : begin + size] if begin + size <= len(head) else await read(begin, size)
+            )
+            if len(body) < size:
+                raise _Unknown("an element cut short")
+            if ident == _SEEK_HEAD:
+                for kind, seek_begin, seek_size in _children(body, 0, size):
+                    if kind != _SEEK:
+                        continue
+                    target = position = None
+                    for field, fb, fn in _children(body, seek_begin, seek_begin + seek_size):
+                        if field == _SEEK_ID:
+                            target = _uint(body, fb, fn)
+                        elif field == _SEEK_POSITION:
+                            position = _uint(body, fb, fn)
+                    if target == _CUES and position is not None:
+                        cues_at = segment + position
+            elif ident == _INFO:
+                have_info = True
+                for field, fb, fn in _children(body, 0, size):
+                    if field == _TIMESTAMP_SCALE:
+                        scale = _uint(body, fb, fn) or scale
+            else:
+                for kind, tb, tn in _children(body, 0, size):
+                    if kind != _TRACK_ENTRY:
+                        continue
+                    number = kind_of = None
+                    for field, fb, fn in _children(body, tb, tb + tn):
+                        if field == _TRACK_NUMBER:
+                            number = _uint(body, fb, fn)
+                        elif field == _TRACK_TYPE:
+                            kind_of = _uint(body, fb, fn)
+                    if kind_of == _VIDEO_TRACK and number is not None and video_track is None:
+                        video_track = number
         elif ident == _CUES:
             cues_at = at
+        if have_info and video_track is not None and cues_at is not None:
+            break
         at = begin + size
     if video_track is None or cues_at is None:
         raise _Unknown("no picture, or no index")
@@ -175,6 +187,12 @@ async def _matroska(read: Reader) -> list[float]:
     cues = await read(cues_at + begin, size)
     if len(cues) < size:
         raise _Unknown("the index is cut short")
+    return await asyncio.to_thread(_cue_times, cues, scale, video_track)
+
+
+def _cue_times(cues: bytes, scale: int, video_track: int) -> list[float]:
+    """The picture's keyframe times from a Matroska file's Cues."""
+    size = len(cues)
     out = []
     for kind, b, n in _children(cues, 0, size):
         if kind != _CUE_POINT:
@@ -259,6 +277,11 @@ async def _mp4(read: Reader) -> list[float]:
         at = end
     if moov is None:
         raise _Unknown("no index")
+    return await asyncio.to_thread(_moov_keyframes, moov)
+
+
+def _moov_keyframes(moov: bytes) -> list[float]:
+    """The picture's keyframe times from an MP4's index (its moov box)."""
     mvhd = _find(moov, 0, len(moov), b"mvhd")
     if mvhd is None:
         raise _Unknown("no movie header")
@@ -277,7 +300,8 @@ async def _mp4(read: Reader) -> list[float]:
 def _track_keyframes(moov: bytes, start: int, end: int, movie_scale: int) -> list[float]:
     """A picture track's keyframe times, as players show them: each frame's
     composition offset added, and its edit list followed (where the track
-    starts being shown, and any wait before it)."""
+    starts being shown, and any wait before it). The tables are walked a run
+    of samples at a time, never a sample at a time."""
     mdhd = _find(moov, start, end, b"mdia", b"mdhd")
     stbl = _find(moov, start, end, b"mdia", b"minf", b"stbl")
     if mdhd is None or stbl is None:
@@ -286,42 +310,60 @@ def _track_keyframes(moov: bytes, start: int, end: int, movie_scale: int) -> lis
     scale = struct.unpack(">I", moov[mdhd[0] + (20 if version == 1 else 12) :][:4])[0]
     if not scale:
         raise _Unknown("no timescale")
-    stss = _find(moov, *stbl, b"stss")
     stts = _find(moov, *stbl, b"stts")
     if stts is None:
         raise _Unknown("no sample times")
-    # Each sample's decoding time.
+    # Runs of samples of the same length: (first sample, its decoding time,
+    # how many, each one's length).
     count = struct.unpack(">I", moov[stts[0] + 4 : stts[0] + 8])[0]
-    decode: list[int] = []
-    t = 0
+    if count > SAMPLES_MOST or stts[0] + 8 + 8 * count > stts[1]:
+        raise _Unknown("broken sample times")
+    runs = []
+    sample, t = 1, 0
     for i in range(count):
         n, delta = struct.unpack(">II", moov[stts[0] + 8 + 8 * i : stts[0] + 16 + 8 * i])
-        if len(decode) + n > KEYFRAMES_MOST * 1000:
+        runs.append((sample, t, n, delta))
+        sample += n
+        t += n * delta
+        if sample > SAMPLES_MOST:
             raise _Unknown("too many samples")
-        for _ in range(n):
-            decode.append(t)
-            t += delta
+    samples = sample - 1
+    stss = _find(moov, *stbl, b"stss")
     if stss is None:  # (every sample a keyframe)
-        keys = list(range(1, len(decode) + 1))
+        if samples > KEYFRAMES_MOST:
+            raise _Unknown("too many keyframes")
+        keys = list(range(1, samples + 1))
     else:
         count = struct.unpack(">I", moov[stss[0] + 4 : stss[0] + 8])[0]
-        keys = list(struct.unpack(f">{count}I", moov[stss[0] + 8 : stss[0] + 8 + 4 * count]))
+        if count > KEYFRAMES_MOST or stss[0] + 8 + 4 * count > stss[1]:
+            raise _Unknown("broken keyframes")
+        listed = struct.unpack(f">{count}I", moov[stss[0] + 8 : stss[0] + 8 + 4 * count])
+        keys = sorted({k for k in listed if 0 < k <= samples})
+    decode: dict[int, int] = {}
+    at = 0
+    for first, start_t, n, delta in runs:
+        while at < len(keys) and keys[at] < first + n:
+            decode[keys[at]] = start_t + (keys[at] - first) * delta
+            at += 1
     # Composition offsets, where frames are shown in another order.
-    shown = {}
+    shown: dict[int, int] = {}
     ctts = _find(moov, *stbl, b"ctts")
     if ctts is not None:
         version = moov[ctts[0]]
         count = struct.unpack(">I", moov[ctts[0] + 4 : ctts[0] + 8])[0]
+        if count > SAMPLES_MOST or ctts[0] + 8 + 8 * count > ctts[1]:
+            raise _Unknown("broken composition offsets")
         sample = 1
-        wanted = set(keys)
+        at = 0
+        signed = ">Ii" if version == 1 else ">II"
         for i in range(count):
-            n, offset = struct.unpack(
-                ">Ii" if version == 1 else ">II", moov[ctts[0] + 8 + 8 * i : ctts[0] + 16 + 8 * i]
-            )
-            for s in range(sample, sample + n):
-                if s in wanted:
-                    shown[s] = offset
+            n, offset = struct.unpack(signed, moov[ctts[0] + 8 + 8 * i : ctts[0] + 16 + 8 * i])
+            while at < len(keys) and keys[at] < sample + n:
+                shown[keys[at]] = offset
+                at += 1
             sample += n
+            if sample - 1 > samples:
+                raise _Unknown("composition offsets past the samples")
     # The edit list: where the track begins being shown, after any wait.
     first_shown = 0
     wait_s = 0.0
@@ -330,7 +372,7 @@ def _track_keyframes(moov: bytes, start: int, end: int, movie_scale: int) -> lis
         version = moov[elst[0]]
         count = struct.unpack(">I", moov[elst[0] + 4 : elst[0] + 8])[0]
         at = elst[0] + 8
-        for _ in range(count):
+        for _ in range(min(count, 100)):
             if version == 1:
                 duration, media_time = struct.unpack(">Qq", moov[at : at + 16])
                 at += 20
@@ -342,8 +384,4 @@ def _track_keyframes(moov: bytes, start: int, end: int, movie_scale: int) -> lis
                 break
             if movie_scale:  # (an empty edit: a wait before the track starts)
                 wait_s += duration / movie_scale
-    return [
-        wait_s + (decode[k - 1] + shown.get(k, 0) - first_shown) / scale
-        for k in keys
-        if 0 < k <= len(decode)
-    ]
+    return [wait_s + (decode[k] + shown.get(k, 0) - first_shown) / scale for k in keys]

@@ -31,7 +31,7 @@ import math
 import shutil
 import tempfile
 import time
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -57,6 +57,14 @@ BEHIND = 4  # pieces kept behind the furthest one asked for
 JUMP = 3  # a piece this far past the newest made starts ffmpeg again there
 WAIT_S = 45.0  # how long a player waits for a piece being made
 IDLE_S = 120.0  # ffmpeg stops when nothing has asked for a piece in this long
+# A run that writes nothing, or nothing that starts a piece, for this long
+# has stalled (a share gone quiet, say): it's stopped, as having failed.
+STALL_S = 60.0
+# After a run fails, the next waits this long; after this many in a row, the
+# copy is given up on (the file can't be read, say).
+RETRY_S = 2.0
+FAILURES_MOST = 3
+READ_TIMEOUT_US = 30_000_000  # (reading a file from Plex: ffmpeg's -rw_timeout)
 # Converting the picture: H.264 High, at most this big, at these bitrates.
 CONVERT_HEIGHTS = ((2160, 20_000), (1440, 12_000), (1080, 8_000), (720, 4_000), (480, 2_000))
 CONVERT_MOST_HEIGHT = 1080
@@ -88,6 +96,7 @@ class Plan:
     duration_s: float
     audio: Track | None  # the sound track in the copy
     audio_codec: str  # "copy", "aac" or "ac3"
+    picture: str = ""  # the file's picture's format ("h264", "hevc")
     audio_channels: int = 2
     night: bool = False
     # Converting the picture:
@@ -186,13 +195,9 @@ def command(ffmpeg: str, source: str, plan: Plan, first: int, video_index: int =
     args = [ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error"]
     if source.startswith(("http://", "https://")):
         args += [
-            "-reconnect",
-            "1",
-            "-reconnect_on_network_error",
-            "1",
-            "-reconnect_delay_max",
-            "10",
-        ]
+            "-reconnect", "1", "-reconnect_on_network_error", "1", "-reconnect_delay_max", "10",
+            "-rw_timeout", str(READ_TIMEOUT_US),
+        ]  # fmt: skip
     start = plan.starts[first] if first else 0.0
     if plan.copies_picture:
         # (Somewhere before the piece's keyframe: what's before it is left
@@ -211,8 +216,16 @@ def command(ffmpeg: str, source: str, plan: Plan, first: int, video_index: int =
     )
     if plan.copies_picture:
         video = ["-map", f"0:V:{video_index}", "-c:v", "copy"]
+        if plan.picture == "h264":
+            # (The picture's setup before every keyframe, not only the IDR
+            # ones: a piece starting at any keyframe plays on its own.)
+            video += ["-bsf:v", "h264_mp4toannexb,dump_extra=freq=keyframe"]
+        times = []
     else:
-        video = _converted_picture(plan, video_index)
+        video = _converted_picture(plan, first, video_index)
+        # (Converted: its times from the program's start, whatever the file's
+        # own first time, as the pieces were planned.)
+        times = ["-start_at_zero"]
     if plan.night:
         from .hls import NIGHT_SOUND  # (hls.py's, the stations' night sound)
 
@@ -239,13 +252,14 @@ def command(ffmpeg: str, source: str, plan: Plan, first: int, video_index: int =
         "-sn", "-dn", "-map_metadata", "-1", "-map_chapters", "-1",
         # The program's own times, moved on by TS_OFFSET_S, whatever ffmpeg
         # starts from: pieces from different runs line up.
-        "-copyts", "-avoid_negative_ts", "disabled", "-muxdelay", "0", "-muxpreload", "0",
+        "-copyts", *times,
+        "-avoid_negative_ts", "disabled", "-muxdelay", "0", "-muxpreload", "0",
         "-output_ts_offset", f"{TS_OFFSET_S:g}",
         "-f", "mpegts", "-mpegts_start_pid", str(VIDEO_PID), "pipe:1",
     ]  # fmt: skip
 
 
-def _converted_picture(plan: Plan, video_index: int) -> list[str]:
+def _converted_picture(plan: Plan, first: int, video_index: int) -> list[str]:
     """Converting the picture: deinterlaced where needed, square pixels, at
     most plan.height lines, ordinary (not HDR), subtitles drawn in last, and
     a keyframe at the start of every piece."""
@@ -277,14 +291,15 @@ def _converted_picture(plan: Plan, video_index: int) -> list[str]:
             chain += f",subtitles={options}"
         video = ["-map", f"0:V:{video_index}", "-vf", chain]
     kbps = plan.kbps
+    # A keyframe where each piece after the first starts (the first frame is
+    # one anyway).
+    keys = ",".join(f"{t:.3f}" for t in plan.starts[first + 1 :]) or f"{plan.duration_s:.3f}"
     return [
         *video,
         "-c:v", "libx264", "-preset", "veryfast", "-profile:v", "high",
         "-pix_fmt", "yuv420p", "-b:v", f"{kbps}k", "-maxrate", f"{kbps}k",
         "-bufsize", f"{kbps * 2}k", "-sc_threshold", "0",
-        # (A keyframe every PIECE_S seconds from the start, which is where a
-        # piece starts: ffmpeg's t counts from it.)
-        "-force_key_frames", f"expr:gte(t,n_forced*{PIECE_S:g})",
+        "-force_key_frames", keys,
     ]  # fmt: skip
 
 
@@ -383,63 +398,94 @@ class Copy:
         self.wanted = -1  # the furthest piece asked for
         self.asked = time.monotonic()
         self.stopped = False
+        self.broken = False  # (given up on: see FAILURES_MOST)
+        self.end = len(plan.starts)  # pieces from here on aren't coming (the file ended sooner)
+        self.failures = 0
+        self.failed_at = 0.0
+        self._asks = 0  # (only the newest request starts ffmpeg again)
         self._run: _Run | None = None
+        self._cutting: set[asyncio.Task] = set()  # (every run's, until it's gone)
         self._news = asyncio.Event()  # (set and replaced whenever anything changes)
         self._lock = asyncio.Lock()
+
+    @property
+    def active(self) -> bool:
+        """Being made, or asked for lately (what counts toward the limit on
+        converting at once)."""
+        if self.stopped or self.broken:
+            return False
+        run = self._run
+        return (run is not None and not run.done) or time.monotonic() - self.asked < IDLE_S
 
     def playlist(self, start_s: float = 0.0) -> str:
         return playlist(self.plan, start_s)
 
-    async def piece(self, n: int) -> Path | None:
-        """Piece `n`, once it's made (None if it can't be, in WAIT_S)."""
-        if self.stopped or not 0 <= n < len(self.plan.starts):
+    async def piece(self, n: int, gone: Callable[[], Awaitable[bool]] | None = None) -> Path | None:
+        """Piece `n`, once it's made; None if it can't be in WAIT_S, or the
+        player has gone (`gone`), or the copy has stopped or given up."""
+        if self.stopped or self.broken or not 0 <= n < self.end:
             return None
+        self._asks += 1
+        mine = self._asks
         self.asked = time.monotonic()
         # (Further on, or a jump back: what's wanted is from here.)
         self.wanted = max(self.wanted, n) if n >= self.wanted - BEHIND else n
         self._poke()
         deadline = time.monotonic() + WAIT_S
-        if self.first is not None:
-            if not self.first.done():
+        first = self.first
+        if first is not None:
+            if not first.done():
                 with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(asyncio.shield(self.first), WAIT_S)
-                if not self.first.done():
+                    await asyncio.wait_for(asyncio.shield(first), WAIT_S)
+                if not first.done():
                     return None
-            ok = (
-                not self.first.cancelled()
-                and self.first.exception() is None
-                and self.first.result()
-            )
-            self.first = None
-            if not ok and self.plan.subtitles is not None:
-                # (They couldn't be had: it plays without them.)
-                self.plan = replace(self.plan, subtitles=None, drawn=None)
-        while not self.stopped:
+            if self.first is first:
+                self.first = None
+                ok = not first.cancelled() and first.exception() is None and first.result()
+                if not ok and self.plan.subtitles is not None:
+                    # (They couldn't be had: it plays without them.)
+                    self.plan = replace(self.plan, subtitles=None, drawn=None)
+        while not self.stopped and not self.broken:
             news = self._news
             found = self.ready.get(n)
             if found is not None and found.exists():
                 self._tidy()
                 return found
+            if n >= self.end or time.monotonic() >= deadline:
+                return None
+            if gone is not None and await gone():
+                return None
             async with self._lock:
                 run = self._run
                 coming = (
                     run is not None
                     and not run.done
-                    and run.first <= n <= max(run.newest, run.first) + JUMP
+                    and max(run.first, run.newest + 1) <= n <= max(run.newest, run.first) + JUMP
                 )
-                if not coming:
+                # (Only the newest request starts ffmpeg again, and not
+                # straight after a failure.)
+                if (
+                    not coming
+                    and mine == self._asks
+                    and time.monotonic() - self.failed_at >= RETRY_S
+                    and not self.stopped
+                ):
                     await self._start(n)
                     continue
             left = deadline - time.monotonic()
-            if left <= 0:
-                return None
             with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(news.wait(), min(left, 2.0))
+                await asyncio.wait_for(news.wait(), max(0.05, min(left, 1.0)))
         return None
 
     def _poke(self) -> None:
         news, self._news = self._news, asyncio.Event()
         news.set()
+
+    async def close(self) -> None:
+        """Stops it (see stop), and waits for its ffmpegs to be gone."""
+        self.stop()
+        if self._cutting:
+            await asyncio.wait(set(self._cutting), timeout=10.0)
 
     def stop(self) -> None:
         """Stops making it, and deletes its pieces."""
@@ -460,8 +506,15 @@ class Copy:
             stderr=asyncio.subprocess.PIPE,
             limit=1 << 20,
         )
+        if self.stopped:  # (stopped while it was starting)
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            await proc.wait()
+            return
         run = _Run(first=n, proc=proc, newest=n - 1)
         run.task = asyncio.create_task(self._cut(run))
+        self._cutting.add(run.task)
+        run.task.add_done_callback(self._cutting.discard)
         self._run = run
         self.wanted = max(self.wanted, n)
 
@@ -483,6 +536,8 @@ class Copy:
         cutter = Cutter(self.plan.starts, run.first)
         out = None
         current = -1
+        failed = ""
+        began = time.monotonic()
         try:
             while True:
                 # Ahead enough: wait (ffmpeg waits too, its output unread),
@@ -493,7 +548,11 @@ class Copy:
                     news = self._news
                     with contextlib.suppress(TimeoutError):
                         await asyncio.wait_for(news.wait(), 5.0)
-                chunk = await run.proc.stdout.read(TS_PACKET * 2048)
+                try:
+                    chunk = await asyncio.wait_for(run.proc.stdout.read(TS_PACKET * 2048), STALL_S)
+                except TimeoutError:
+                    failed = f"nothing came for {STALL_S:.0f} seconds"
+                    return
                 if not chunk:
                     break
                 for n, data in cutter.feed(chunk):
@@ -506,34 +565,58 @@ class Copy:
                         out.write(cutter.header)
                     if out is not None:
                         out.write(data)
+                if current < 0 and time.monotonic() - began > STALL_S:
+                    failed = "no piece started where it should"
+                    return
             code = await run.proc.wait()
             if out is not None:
                 out.close()
                 out = None
-                # (The last piece is whole only if ffmpeg reached the end.)
-                if code == 0 and current == len(self.plan.starts) - 1:
+                if code == 0 and current >= 0:
+                    # (The end of the file: the piece being made is whole, and
+                    # if the file ended before its planned length, no more
+                    # are coming.)
                     self._finished(run, current)
-            if code != 0 and not self.stopped and not run.done:
-                await errors
-                log.warning(
-                    "Making a copy for a StationPlay app stopped (ffmpeg %s): %s",
-                    code,
-                    redact(" ".join(run.said[-3:]))[-300:] or "nothing said",
+                    self.end = min(self.end, current + 1)
+            if code != 0 or current < 0:
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(asyncio.shield(errors), 5.0)
+                failed = f"ffmpeg {code}: " + (
+                    redact(" ".join(run.said[-3:]))[-300:] or "nothing said"
                 )
         except asyncio.CancelledError:
             raise
-        except OSError as e:
-            if not self.stopped:
-                log.warning("Making a copy for a StationPlay app stopped: %s", e)
+        except (OSError, TimeoutError) as e:
+            failed = str(e) or type(e).__name__
         finally:
             if out is not None:
                 out.close()
             errors.cancel()
+            mine = self._run is run and not run.done
             run.done = True
             if run.proc.returncode is None:
                 with contextlib.suppress(ProcessLookupError):
                     run.proc.kill()
+            if failed and mine and not self.stopped:
+                self._failed(failed)
             self._poke()
+            with contextlib.suppress(Exception):  # (gone, not left behind)
+                await asyncio.wait_for(run.proc.wait(), 10.0)
+
+    def _failed(self, why: str) -> None:
+        """A run failed: tried again after RETRY_S, and given up on after
+        FAILURES_MOST in a row."""
+        self.failures += 1
+        self.failed_at = time.monotonic()
+        if self.failures == 1:
+            log.warning("Making a copy for a StationPlay app stopped (%s)", why)
+        if self.failures >= FAILURES_MOST:
+            self.broken = True
+            log.warning(
+                "StationPlay gave up making a copy for an app after %d tries (%s)",
+                self.failures,
+                why,
+            )
 
     def _finished(self, run: _Run, n: int) -> None:
         part = self.folder / f"piece-{n}.ts.part"
@@ -542,6 +625,7 @@ class Copy:
             part.replace(whole)
             self.ready[n] = whole
             run.newest = max(run.newest, n)
+            self.failures = 0
         self._poke()
 
     def _tidy(self) -> None:
@@ -620,8 +704,13 @@ class Cutter:
                 return n
             if start > t:
                 break
-        # (The first piece also starts at the program's start, whatever its first keyframe.)
-        if self.piece < 0 and self.first == 0 and t <= self.starts[0] + MATCH_AFTER_S:
+        # (The first piece starts at the program's start, whatever its first
+        # keyframe's time: the first before the second piece's.)
+        if (
+            self.piece < 0
+            and self.first == 0
+            and (len(self.starts) == 1 or t < self.starts[1] - MATCH_BEFORE_S)
+        ):
             return 0
         return None
 
