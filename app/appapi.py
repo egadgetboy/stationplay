@@ -43,7 +43,7 @@ PREFIX = "/api/v1/"
 # OpenAPI, no promise it stays the same; see docs/internal-api.md).
 INTERNAL = "/api/internal/"
 HEADER = (b"stationplay-api", str(VERSION).encode())
-FEATURES = ("hls", "speed-test", "reports")
+FEATURES = ("hls", "speed-test", "reports", "night")
 
 GUIDE_DEFAULT_MS = 6 * 3600_000
 GUIDE_MAX_MS = 2 * 86_400_000
@@ -510,6 +510,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         HLS at the app's own address."""
         return f"/hls/k/{key}/{number}/index.m3u8" if key else f"/hls/{number}/index.m3u8"
 
+    def night_address(number: int, key: str | None) -> str:
+        """The same, with night mode's sound (see hls.py)."""
+        return hls_address(number, key).replace("/index.m3u8", "/night/index.m3u8")
+
     def logo_address(channel: Channel, key: str | None) -> str:
         """A station's logo: at home, where Plex gets it; from outside, at
         the app's own address (with the same version, which changes with it)."""
@@ -555,6 +559,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     "logo": logo_address(c, key),
                     "colors": palette,
                     "hls": hls_address(c.number, key),
+                    "nightHls": night_address(c.number, key),
                     "now": now_on,
                     "next": next_on,
                 }

@@ -827,12 +827,15 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     # StationPlay's apps (and AirPlay and Chromecast): stations as HLS ---------
 
-    async def hls_playlist_for(number: int, client: str, away_: bool = False) -> Response:
+    async def hls_playlist_for(
+        number: int, client: str, away_: bool = False, night: bool = False
+    ) -> Response:
         """A station's HLS playlist, for an app (`client`: which, for its
-        stream's list of who's watching; `away_`: away from home). The first
-        ask starts the station's stream for apps (see hls.py), and waits until
-        a player has enough to start on. One more device than an Admin's
-        limits allow is turned away (see capacity.py)."""
+        stream's list of who's watching; `away_`: away from home; `night`:
+        with night mode's sound). The first ask starts the station's stream
+        for apps (see hls.py), and waits until a player has enough to start
+        on. One more device than an Admin's limits allow is turned away (see
+        capacity.py)."""
         channel = ctx.db.get_channel_by_number(number)
         if channel is None:
             raise HTTPException(404, f"There's no station {number}")
@@ -852,7 +855,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 status_code=503,
                 headers=hls.HEADERS,
             )
-        stream = ctx.hls_streams.get(channel.id)
+        stream = ctx.hls_streams.get(channel.id, night)
         if stream is None:
             b = ctx.broadcaster(channel.id)
             on_now = playback.all_in_use(ctx, b)
@@ -872,7 +875,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                     headers=hls.HEADERS,
                 )
             playback.make_room(ctx, b)
-            stream = ctx.hls_streams.start(b, channel.number)
+            stream = ctx.hls_streams.start(b, channel.number, night)
         stream.asked_by(client, away_)
         playlist = await stream.playlist()
         if playlist is None:
@@ -883,9 +886,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             )
         return Response(playlist, media_type="application/vnd.apple.mpegurl", headers=hls.HEADERS)
 
-    async def hls_piece_of(number: int, piece: str) -> Response:
+    async def hls_piece_of(number: int, piece: str, night: bool = False) -> Response:
         channel = ctx.db.get_channel_by_number(number)
-        stream = ctx.hls_streams.get(channel.id) if channel else None
+        stream = ctx.hls_streams.get(channel.id, night) if channel else None
         if stream is None:
             raise HTTPException(404, "That station isn't being sent to apps")
         data = await stream.piece(piece)
@@ -894,11 +897,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         stream.asked_by(None)
         return Response(data, media_type="video/mp2t", headers=hls.HEADERS)
 
-    def hls_left(number: int, client: str) -> Response:
+    def hls_left(number: int, client: str, night: bool = False) -> Response:
         """An app tuned away from a station: its stream for apps stops now if
         no other app is watching it (see hls.py)."""
         channel = ctx.db.get_channel_by_number(number)
-        stream = ctx.hls_streams.get(channel.id) if channel else None
+        stream = ctx.hls_streams.get(channel.id, night) if channel else None
         if stream is not None:
             stream.left_by(client)
         return Response(status_code=204, headers=hls.HEADERS)
@@ -916,6 +919,21 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     @app.post("/hls/{number}/leave", status_code=204)
     async def hls_leave(number: int, request: Request):
         return hls_left(number, request.client.host if request.client else "?")
+
+    # Night mode's sound (see hls.py), beside each station's own.
+
+    @app.get("/hls/{number}/night/index.m3u8")
+    async def hls_night_playlist(number: int, request: Request):
+        client = request.client.host if request.client else "?"
+        return await hls_playlist_for(number, client, night=True)
+
+    @app.get("/hls/{number}/night/{piece}")
+    async def hls_night_piece(number: int, piece: str):
+        return await hls_piece_of(number, piece, night=True)
+
+    @app.post("/hls/{number}/night/leave", status_code=204)
+    async def hls_night_leave(number: int, request: Request):
+        return hls_left(number, request.client.host if request.client else "?", night=True)
 
     # The same, away from home through the public port: each signed-in app's
     # streams at an address of their own (see away.py).
@@ -961,6 +979,24 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         if user is None:
             return Response(status_code=204, headers=hls.HEADERS)
         return hls_left(number, away_client(key, user))
+
+    @app.get("/hls/k/{key}/{number}/night/index.m3u8")
+    async def hls_night_playlist_away(key: str, number: int, request: Request):
+        user = away_user(key, number, recheck=True)
+        ctx.away.watching(key, user, number, access.where(request.scope))
+        return await hls_playlist_for(number, away_client(key, user), away_=True, night=True)
+
+    @app.get("/hls/k/{key}/{number}/night/{piece}")
+    async def hls_night_piece_away(key: str, number: int, piece: str):
+        away_user(key, number)
+        return await hls_piece_of(number, piece, night=True)
+
+    @app.post("/hls/k/{key}/{number}/night/leave", status_code=204)
+    async def hls_night_leave_away(key: str, number: int):
+        user = ctx.away.user_of(key, recheck=False)
+        if user is None:
+            return Response(status_code=204, headers=hls.HEADERS)
+        return hls_left(number, away_client(key, user), night=True)
 
     @app.options("/hls/{rest:path}")
     async def hls_preflight():
@@ -1408,10 +1444,12 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 continue
             channel = ctx.db.get_channel(cid)
             np = b.now_playing
-            # (The apps watching a station share one viewer: count them.)
+            # (The apps watching a station share one viewer, and those with
+            # night mode's sound another: count the apps.)
             viewers = len(b.viewers)
-            if (for_apps := ctx.hls_streams.get(cid)) is not None:
-                viewers += for_apps.watching() - 1
+            for night in (False, True):
+                if (for_apps := ctx.hls_streams.get(cid, night)) is not None:
+                    viewers += for_apps.watching() - 1
             # What's on screen: the stream runs a few seconds ahead of it.
             slot = ctx.station(cid).locate(now)
             on_between = between(slot, now) if slot else None

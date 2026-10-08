@@ -111,6 +111,10 @@ class Station(_Shape):
         description="Where to play it (HLS): an address on the server. From the internet (with "
         "watching away from home on), an address of the token's own, which needs no token itself"
     )
+    nightHls: str = Field(
+        description="The same with night mode's sound: loud scenes quieter and quiet voices "
+        "clearer, made by the server (the picture is the same). From 1.24.0"
+    )
     now: Program | None = Field(description="What's on now")
     next: Program | None = Field(description="What's on next")
 

@@ -226,6 +226,107 @@ async def test_an_app_that_tunes_away_frees_its_tuner(tmp_path, media):
         await task
 
 
+def streams_of(path) -> list[tuple[str, str, int]]:
+    """A piece's streams: (kind, codec, channels)."""
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name,channels",
+         "-of", "json", str(path)],
+        capture_output=True, text=True, check=True,
+    ).stdout  # fmt: skip
+    return [
+        (st["codec_type"], st["codec_name"], int(st.get("channels") or 0))
+        for st in json.loads(out).get("streams", [])
+    ]
+
+
+async def test_night_mode_sound_is_made_beside_the_station(tmp_path, media, monkeypatch):
+    """Night mode for apps that can't change the sound themselves: a second
+    stream of the same station, made while it's asked for, on the station's
+    one tuner, with the picture copied and only the sound made over. Through
+    program changes, with Plex, an app with the usual sound and an app with
+    night mode's all watching at once, it plays cleanly; it stops when its
+    app leaves (the usual one carries on), and tidies up."""
+    monkeypatch.setattr(hls, "IDLE_S", 3.0)
+    monkeypatch.setattr(hls, "IDLE_CHECK_S", 0.5)
+    base, app, settings, srv, task = await start_server(tmp_path, two_episode_show(media))
+    try:
+        channel = await make_channel(base, 7)
+        await make_channel(base, 8)
+        ctx = app.state.ctx
+        elsewhere = httpx.AsyncHTTPTransport(local_address="127.0.0.2")
+        async with (
+            httpx.AsyncClient(base_url=base, timeout=60) as client,
+            httpx.AsyncClient(base_url=base, timeout=60, transport=elsewhere) as usual_app,
+        ):
+            assert (await client.put("/api/playback", json={"tuners": 1})).status_code == 200
+            stations = (await client.get("/api/v1/stations")).json()["stations"]
+            assert stations[0]["nightHls"] == "/hls/7/night/index.m3u8"
+            assert "night" in (await client.get("/api/v1/server")).json()["features"]
+
+            async def watch() -> dict[str, bytes]:
+                """Night mode's stream, played along for two and a half
+                programs, while the usual one is watched too."""
+                first = await client.get("/hls/7/night/index.m3u8")
+                assert first.status_code == 200, first.text
+                assert (await usual_app.get("/hls/7/index.m3u8")).status_code == 200
+                got: dict[str, bytes] = {}
+                playlist = first.text
+                deadline = time.monotonic() + 2.5 * CLIP_S
+                while time.monotonic() < deadline:
+                    for name in pieces(playlist):
+                        if name not in got:
+                            piece = await client.get(f"/hls/7/night/{name}")
+                            assert piece.status_code == 200, f"{name}: {piece.status_code}"
+                            got[name] = piece.content
+                    await asyncio.sleep(1)
+                    playlist = (await client.get("/hls/7/night/index.m3u8")).text
+                    assert (await usual_app.get("/hls/7/index.m3u8")).status_code == 200
+                return got
+
+            plex, got = await asyncio.gather(record(f"{base}/stream/7", 2.5 * CLIP_S + 4), watch())
+            assert len(plex) > 100_000
+
+            # One station, on one tuner (Plex has gone now): the app with the
+            # usual sound and the one with night mode's are two viewers of it.
+            assert [b.channel_id for b in ctx.broadcasters.values() if b.running] == [channel["id"]]
+            b = ctx.broadcasters[channel["id"]]
+            status = (await client.get("/api/status")).json()
+            assert [st["viewers"] for st in status["streams"]] == [2]
+            # Another station's night mode would need a second tuner.
+            busy = await client.get("/hls/8/night/index.m3u8")
+            assert busy.status_code == 503 and busy.json()["onNow"] == [7]
+            for odd in ("..%2Fstationplay.db", "index.m3u8.tmp", "s999999.ts"):
+                assert (await client.get(f"/hls/7/night/{odd}")).status_code in (404, 405), odd
+
+            # Night mode's app leaves: its stream stops, the usual one doesn't.
+            night = ctx.hls_streams.get(channel["id"], night=True)
+            assert night is not None
+            folder = night.folder
+            assert (await usual_app.post("/hls/7/night/leave")).status_code == 204  # (not its)
+            assert ctx.hls_streams.get(channel["id"], night=True) is night
+            assert (await client.post("/hls/7/night/leave")).status_code == 204
+            await night.wait()
+            assert ctx.hls_streams.get(channel["id"], night=True) is None
+            assert not folder.exists()
+            assert ctx.hls_streams.get(channel["id"]) is not None and b.running
+
+        # Every piece: the picture as it was (copied), and the sound made over
+        # as stereo AAC; together, they play cleanly across the program changes.
+        ordered = sorted(got, key=lambda name: int(name[1:-3]))
+        assert len(ordered) >= (2.5 * CLIP_S) / hls.PIECE_S - 2
+        for name in ordered:
+            (tmp_path / name).write_bytes(got[name])
+            kinds = streams_of(tmp_path / name)
+            assert ("video", "h264", 0) in kinds and ("audio", "aac", 2) in kinds, (name, kinds)
+        joined = tmp_path / "night.ts"
+        joined.write_bytes(b"".join(got[name] for name in ordered))
+        assert_clean_stream(joined)
+    finally:
+        await app.state.ctx.hls_streams.stop_all("the test is over")
+        srv.should_exit = True
+        await task
+
+
 async def start_with_public_port(tmp_path, plex: FakePlex):
     """StationPlay on its home-network port and its public one: (the home
     network's address, the internet's), and the app, server and its task."""
@@ -279,7 +380,7 @@ async def test_an_app_away_from_home_watches_through_the_public_port(tmp_path, m
             auth = await sign_in()
             server = (await phone.get("/api/v1/server", headers=auth)).json()
             assert server["outside"] and server["awayAddress"] is None
-            assert server["features"] == ["hls", "speed-test", "reports"]
+            assert server["features"] == ["hls", "speed-test", "reports", "night"]
             # Off: from outside, nothing to play.
             assert await hls_of(auth) == "/hls/7/index.m3u8"
             assert (await phone.get("/hls/7/index.m3u8")).status_code == 404
@@ -292,7 +393,7 @@ async def test_an_app_away_from_home_watches_through_the_public_port(tmp_path, m
             assert on.status_code == 200 and on.json()["address"] == "https://tv.example.com"
             server = (await phone.get("/api/v1/server", headers=auth)).json()
             assert server["awayAddress"] == "https://tv.example.com"
-            assert server["features"] == ["hls", "speed-test", "reports", "away"]
+            assert server["features"] == ["hls", "speed-test", "reports", "night", "away"]
             at_home = (await inside.get("/api/v1/server")).json()
             assert not at_home["outside"] and at_home["awayAddress"] == "https://tv.example.com"
             assert (await inside.get("/api/v1/stations")).json()["stations"][0]["hls"] == (
@@ -323,6 +424,16 @@ async def test_an_app_away_from_home_watches_through_the_public_port(tmp_path, m
             assert (await phone.get("/hls/k/not-a-key/7/index.m3u8")).status_code == 404
             assert (await phone.post(hls_url.replace("index.m3u8", "leave"))).status_code == 204
             assert app.state.ctx.hls_streams.get(1) is None
+            # Night mode's sound, at the app's own address too.
+            night_url = station["nightHls"]
+            assert night_url == hls_url.replace("index.m3u8", "night/index.m3u8")
+            night = await phone.get(night_url)
+            assert night.status_code == 200, night.text
+            piece = await phone.get(night_url.replace("index.m3u8", pieces(night.text)[0]))
+            assert piece.status_code == 200 and len(piece.content) > 10_000
+            assert (await phone.get("/hls/k/not-a-key/7/night/index.m3u8")).status_code == 404
+            assert (await phone.post(night_url.replace("index.m3u8", "leave"))).status_code == 204
+            assert app.state.ctx.hls_streams.get(1, night=True) is None
 
             log = (await inside.get("/api/logs?access_log=true")).json()["text"]
             assert "Pat is watching station 7 away from home, from 203.0.113.7" in log

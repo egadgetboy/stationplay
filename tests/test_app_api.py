@@ -164,7 +164,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         )
         server = check.answer(home.get("/api/v1/server"), "GET /api/v1/server")
         assert server["api"] == 1 and not server["signIn"] and server["notSetUp"] is None
-        assert server["features"] == ["hls", "speed-test", "reports"]
+        assert server["features"] == ["hls", "speed-test", "reports", "night"]
         # From the internet, until signing in is on, there's nothing to do.
         outside = check.answer(internet.get("/api/v1/server"), "GET /api/v1/server")
         assert outside["signIn"] and "home network" in outside["notSetUp"]
@@ -271,7 +271,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         )
         assert home.put("/api/app-libraries", json={"libraries": ["1", "2"]}).status_code == 200
         features = check.answer(phone.get("/api/v1/server"), "GET /api/v1/server")["features"]
-        assert features == ["hls", "speed-test", "reports", "library"]
+        assert features == ["hls", "speed-test", "reports", "night", "library"]
         libs = check.answer(
             phone.get("/api/internal/libraries", headers=sam), "GET /api/internal/libraries"
         )

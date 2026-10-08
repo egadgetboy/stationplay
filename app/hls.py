@@ -15,6 +15,14 @@ however it's watched.
 
 The pieces are files in a folder of their own under the system's temporary
 folder, deleted as they fall out of the playlist and when the stream stops.
+
+Night mode, for apps that can't change the sound themselves (Apple's player,
+a Roku): a second HLS stream of the same station, made only while an app
+asks for it, with the picture copied as it is and only the sound made over:
+loud scenes brought down and quiet voices up (NIGHT_SOUND, the same as the
+Android app does it on the device). It watches the station as one more
+viewer too, so it needs no tuner of its own; everyone else keeps the usual
+sound. Making sound costs little.
 """
 
 from __future__ import annotations
@@ -50,6 +58,18 @@ READY_WAIT_S = 25.0
 IDLE_S = 30.0
 # How often that's checked.
 IDLE_CHECK_S = 2.0
+# Night mode's sound: anything over -24 dB turned down (4 dB louder in is 1
+# dB louder out, easing in over 6 dB), followed quickly as it gets louder (5
+# ms) and slowly as it gets quieter (250 ms), every channel together; then
+# everything up 8 dB, and a limiter keeping it under -1 dB. (aresample
+# keeps the sound on the picture's time if a piece is ever missing.)
+NIGHT_SOUND = (
+    "aresample=async=1000,"
+    "acompressor=threshold=0.0631:ratio=4:knee=2:attack=5:release=250:makeup=2.512:"
+    "link=maximum:detection=peak,"
+    "alimiter=limit=0.891:attack=5:release=60:level=disabled"
+)
+NIGHT_AUDIO_KBPS = 160
 PLAYLIST = "index.m3u8"
 PIECE = re.compile(r"s\d{1,9}\.ts")
 # What every answer to a player carries: Chromecasts fetch HLS the way a web
@@ -57,14 +77,23 @@ PIECE = re.compile(r"s\d{1,9}\.ts")
 HEADERS = {"Access-Control-Allow-Origin": "*", "Cache-Control": "no-cache, no-store"}
 
 
-def command(ffmpeg: str, folder: Path) -> list[str]:
+def command(ffmpeg: str, folder: Path, night: bool = False) -> list[str]:
     """ffmpeg reading the station's stream on its input and writing it as HLS
-    in `folder`. (It starts at the first keyframe it sees, and writes each
-    file under another name first, so a player never reads half of one.)"""
+    in `folder`; for night mode, with its sound made over (the picture still
+    copied). (It starts at the first keyframe it sees, and writes each file
+    under another name first, so a player never reads half of one.)"""
+    if night:
+        streams = [
+            "-map", "0:v?", "-map", "0:a:0?", "-c:v", "copy",
+            "-af", NIGHT_SOUND,
+            "-c:a", "aac", "-b:a", f"{NIGHT_AUDIO_KBPS}k", "-ac", "2", "-ar", "48000",
+        ]  # fmt: skip
+    else:
+        streams = ["-map", "0", "-c", "copy"]
     return [
         ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error",
         "-f", "mpegts", "-i", "pipe:0",
-        "-map", "0", "-c", "copy",
+        *streams,
         "-f", "hls",
         "-hls_time", str(PIECE_S),
         "-hls_list_size", str(LISTED),
@@ -76,13 +105,18 @@ def command(ffmpeg: str, folder: Path) -> list[str]:
 
 
 class HlsStream:
-    """One station's HLS, for as long as apps are watching it."""
+    """One station's HLS (`night`: with night mode's sound), for as long as
+    apps are watching it."""
 
-    def __init__(self, streams: HlsStreams, b: Broadcaster, number: int) -> None:
+    def __init__(self, streams: HlsStreams, b: Broadcaster, number: int, night: bool = False) -> None:
         self.streams = streams
         self.b = b
         self.number = number
-        self.folder = Path(tempfile.mkdtemp(prefix=f"stationplay-hls-{number}-"))
+        self.night = night
+        # (How the log names it: "station 5", or "station 5 with night mode's sound".)
+        self.label = f"station {number}" + (" with night mode's sound" if night else "")
+        kind = "night-" if night else ""
+        self.folder = Path(tempfile.mkdtemp(prefix=f"stationplay-hls-{kind}{number}-"))
         self.last_asked = time.monotonic()
         # Who's been watching (by address), and when each last asked; and
         # which of them are away from home.
@@ -93,8 +127,10 @@ class HlsStream:
         self._stopping = False
         self._left = False
         self._proc: asyncio.subprocess.Process | None = None
-        self._viewer: Viewer = b.subscribe(f"app viewers on {number}")
-        self._task = asyncio.create_task(self._run(), name=f"hls-{number}")
+        self._viewer: Viewer = b.subscribe(
+            f"night-mode app viewers on {number}" if night else f"app viewers on {number}"
+        )
+        self._task = asyncio.create_task(self._run(), name=f"hls-{kind}{number}")
 
     def asked_by(self, client: str | None, away: bool = False) -> None:
         """A player asked for the playlist or a piece."""
@@ -103,7 +139,7 @@ class HlsStream:
         if client is None:
             return
         if client not in self.clients:
-            log.info("An app on %s is watching station %d", client, self.number)
+            log.info("An app on %s is watching %s", client, self.label)
         self.clients[client] = now
         if away:
             self.away.add(client)
@@ -115,7 +151,7 @@ class HlsStream:
         self.away.discard(client)
         if self.clients.pop(client, None) is None:
             return
-        log.info("An app on %s stopped watching station %d", client, self.number)
+        log.info("An app on %s stopped watching %s", client, self.label)
         if self.watching() == 0:
             self.stop("the last app watching it tuned away")
 
@@ -182,7 +218,7 @@ class HlsStream:
         listening: asyncio.Task | None = None
         try:
             self._proc = proc = await asyncio.create_subprocess_exec(
-                *command(self.b.ctx.settings.ffmpeg_path, self.folder),
+                *command(self.b.ctx.settings.ffmpeg_path, self.folder, self.night),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
@@ -205,10 +241,10 @@ class HlsStream:
                     await asyncio.wait_for(self._proc.wait(), 5)  # type: ignore[union-attr]
                 last = " / ".join(said) or "no message"
                 self.ended_because = f"ffmpeg stopped making it ({last})"
-                log.warning("Station %d's stream for apps stopped: %s", self.number, last)
+                log.warning("The stream for apps of %s stopped: %s", self.label, last)
         except OSError as e:
             self.ended_because = f"ffmpeg couldn't start ({e})"
-            log.error("Station %d's stream for apps couldn't start: %s", self.number, e)
+            log.error("The stream for apps of %s couldn't start: %s", self.label, e)
         finally:
             self.ended = True
             idle.cancel()
@@ -218,7 +254,7 @@ class HlsStream:
                 listening.cancel()
             await asyncio.to_thread(shutil.rmtree, self.folder, True)
             self.streams.forget(self)
-            log.info("Stopped station %d's stream for apps: %s", self.number, self.ended_because)
+            log.info("Stopped the stream for apps of %s: %s", self.label, self.ended_because)
 
     async def _end_ffmpeg(self) -> None:
         proc = self._proc
@@ -243,27 +279,36 @@ class HlsStream:
 
 
 class HlsStreams:
-    """The stations being sent as HLS, by station."""
+    """The stations being sent as HLS, by station (and night mode's, beside
+    them)."""
 
     def __init__(self) -> None:
-        self._by_station: dict[int, HlsStream] = {}
+        self._by_station: dict[tuple[int, bool], HlsStream] = {}
 
-    def get(self, channel_id: int) -> HlsStream | None:
-        stream = self._by_station.get(channel_id)
+    def get(self, channel_id: int, night: bool = False) -> HlsStream | None:
+        stream = self._by_station.get((channel_id, night))
         return None if stream is None or stream.over else stream
 
-    def start(self, b: Broadcaster, number: int) -> HlsStream:
-        stream = self._by_station[b.channel_id] = HlsStream(self, b, number)
-        log.info("Started station %d's stream for apps", number)
+    def start(self, b: Broadcaster, number: int, night: bool = False) -> HlsStream:
+        stream = self._by_station[(b.channel_id, night)] = HlsStream(self, b, number, night)
+        log.info("Started the stream for apps of %s", stream.label)
         return stream
 
     def forget(self, stream: HlsStream) -> None:
-        if self._by_station.get(stream.b.channel_id) is stream:
-            del self._by_station[stream.b.channel_id]
+        key = (stream.b.channel_id, stream.night)
+        if self._by_station.get(key) is stream:
+            del self._by_station[key]
 
     def watching(self, channel_id: int) -> int:
-        stream = self.get(channel_id)
-        return stream.watching() if stream else 0
+        """How many apps are watching a station, night mode or not."""
+        return len(
+            {
+                client
+                for night in (False, True)
+                if (stream := self.get(channel_id, night)) is not None
+                for client in stream.watchers()
+            }
+        )
 
     def watchers(self) -> dict[str, bool]:
         """Every device watching any station through the apps (see
