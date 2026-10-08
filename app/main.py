@@ -597,7 +597,13 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     async def lifespan(app: FastAPI):
         log.info("StationPlay %s is starting", __version__)
         playback.start(ctx.db, settings)
-        setup.start(ctx.db, len(ctx.db.list_channels()), ctx.away.on, ctx.shared.on)
+        setup.start(
+            ctx.db,
+            len(ctx.db.list_channels()),
+            ctx.away.on,
+            ctx.shared.on,
+            any(u.role != access.ADMIN for u in ctx.db.users()),
+        )
         await asyncio.to_thread(prepare_schedules)
         problem = await tone_mapping_problem(settings)
         ctx.tone_mapping = problem is None

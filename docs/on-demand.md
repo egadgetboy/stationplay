@@ -15,7 +15,7 @@ library layer it builds on is in `docs/library.md`.
    library. Every key an app asks about is checked against that.
 3. **The best picture and sound first.** A file plays as it is whenever the
    device can play it (direct play). Repackaging and converting come only
-   when it can't (1.23.0).
+   when it can't (1.24.0).
 4. **Each person's own place.** Where someone stopped, what they've
    watched, and what's next are kept per StationPlay user.
 5. **Lean.** Plex stays the catalog (Phase 3 adds folders). StationPlay
@@ -31,7 +31,9 @@ library layer it builds on is in `docs/library.md`.
   up with, one chosen when playing, and a smaller one when playing can't
   keep up); Skip intro and Skip credits for episodes only, where Plex's
   markers fit the file. The apps' own addresses move to `/api/internal`.
-- **1.23.0:** repackaging and converting (HLS, with seeking), choosing
+- **1.23.0:** Viewing Levels: each person sees only what their level
+  allows, in the library as everywhere else (see `docs/users.md`).
+- **1.24.0:** repackaging and converting (HLS, with seeking), choosing
   audio and subtitle tracks when converting (picture subtitles drawn in),
   and the Admin's quality cap away from home. Watching on demand through
   the public port arrives here, since files can then be made to fit an
@@ -39,7 +41,7 @@ library layer it builds on is in `docs/library.md`.
 
 The `features` an app sees (`GET /api/v1/server`) say what this server
 offers where the app is: `library` once a library is shared (and, in 1.21.0,
-only at home); `convert` from 1.23.0.
+only at home); `convert` from 1.24.0.
 
 ## Sharing libraries
 
@@ -50,8 +52,8 @@ changing it is written to the log. A shared library that's gone from Plex
 is simply skipped.
 
 Everyone who can use the apps sees the shared libraries (Admins and Users
-alike; while signing in is off, anyone on the home network). Kids' profiles,
-which see less, come with profiles.
+alike; while signing in is off, anyone on the home network), within their
+Viewing Level (from 1.23.0: see `docs/users.md`).
 
 ## Is it shared?
 
@@ -118,7 +120,7 @@ The answer is a play session:
 | Field | What it is |
 |---|---|
 | `session` | The session's ID |
-| `method` | `direct` (1.23.0 adds `repackage` and `convert`) |
+| `method` | `direct` (1.24.0 adds `repackage` and `convert`) |
 | `url` | Where the player gets it: `/play/<session>/file.<container>` |
 | `resumeMs` | Where this person stopped last time (0: the start) |
 | `durationMs` | How long it is |

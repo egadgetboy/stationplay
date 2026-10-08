@@ -45,6 +45,7 @@ QUESTIONS: dict[str, int] = {
     "playback": 1,  # how stations play: the picture size and the tuners
     "newStation": 1,  # what new stations start with
     "signIn": 1,  # who can use StationPlay
+    "viewing": 1,  # who sees what: Viewing Levels (1.23)
     "away": 1,  # StationPlay's apps away from home
     "library": 1,  # your library in StationPlay's apps
     "fileChecks": 1,  # the overnight deep scan
@@ -85,14 +86,19 @@ def mark(db: Any, questions: list[str]) -> list[str]:
     return pending(db)
 
 
-def start(db: Any, stations: int, away_on: bool, sharing: bool) -> None:
+def start(db: Any, stations: int, away_on: bool, sharing: bool, others: bool = False) -> None:
     """At startup, the first time with this setup: what a StationPlay set up
     before it has already answered. A new one (no stations, no welcome seen)
     is asked everything. Otherwise, what the welcome asked counts as answered;
     so do the apps away from home, and your library in the apps, if they're
     already on. The rest (for StationPlay set up before them, perhaps
-    without anyone noticing them) are asked once."""
+    without anyone noticing them) are asked once.
+
+    Who sees what is asked of a StationPlay set up before it only if there
+    are people to choose for (`others`: Users, not Admins)."""
     if db.get_meta(META_ANSWERED):
+        if not others and "viewing" in pending(db):
+            mark(db, ["viewing"])
         return
     welcomed = db.get_meta(playback.META_WELCOMED, "")
     if not welcomed and not stations:
@@ -102,6 +108,8 @@ def start(db: Any, stations: int, away_on: bool, sharing: bool) -> None:
         done.append("away")
     if sharing:
         done.append("library")
+    if not others:
+        done.append("viewing")
     mark(db, done)
     still = pending(db)
     if still:

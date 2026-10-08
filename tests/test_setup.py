@@ -43,7 +43,7 @@ def test_a_new_stationplay_asks_everything_and_each_answer_once(tmp_path):
             "fresh": True,
         }
         left = c.put("/api/setup", json={"answered": ["playback", "newStation"]}).json()
-        assert left["pending"] == ["signIn", "away", "library", "fileChecks", "plex"]
+        assert left["pending"] == ["signIn", "viewing", "away", "library", "fileChecks", "plex"]
         assert not left["fresh"]
         assert c.put("/api/setup", json={"answered": ["nightMode"]}).status_code == 400
         c.put("/api/setup", json={"answered": left["pending"]})
@@ -64,31 +64,44 @@ def test_a_question_that_changes_is_asked_again(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("welcomed", "stations", "away_on", "sharing", "left"),
+    ("welcomed", "stations", "away_on", "sharing", "others", "left"),
     [
         # A new StationPlay: everything.
-        ("", 0, False, False, list(setup.QUESTIONS)),
+        ("", 0, False, False, False, list(setup.QUESTIONS)),
         # Set up with the last welcome: the apps' questions, new to the setup.
-        (playback.WELCOME, 3, False, False, ["away", "library"]),
+        (playback.WELCOME, 3, False, False, False, ["away", "library"]),
         # ...unless they're already on.
-        (playback.WELCOME, 3, True, True, []),
+        (playback.WELCOME, 3, True, True, False, []),
         # An earlier welcome: what new stations start with, again.
-        ("2", 3, False, True, ["newStation", "away"]),
+        ("2", 3, False, True, False, ["newStation", "away"]),
         # Stations made without a welcome seen.
-        ("", 2, True, False, ["newStation", "library"]),
+        ("", 2, True, False, False, ["newStation", "library"]),
+        # With Users (not Admins): who sees what, too.
+        (playback.WELCOME, 3, True, True, True, ["viewing"]),
     ],
 )
 def test_a_stationplay_set_up_before_is_asked_only_whats_new(
-    tmp_path, welcomed, stations, away_on, sharing, left
+    tmp_path, welcomed, stations, away_on, sharing, others, left
 ):
     db = Database(tmp_path / "db.sqlite")
     if welcomed:
         db.set_meta(playback.META_WELCOMED, welcomed)
-    setup.start(db, stations, away_on, sharing)
+    setup.start(db, stations, away_on, sharing, others)
     assert setup.pending(db) == left
     # Once: what's answered since then stays answered.
     setup.mark(db, left)
     setup.start(db, stations, False, False)
+    assert setup.pending(db) == []
+
+
+def test_who_sees_what_is_asked_after_an_update_only_with_people_to_choose_for(tmp_path):
+    db = Database(tmp_path / "db.sqlite")
+    answered_before = {q: v for q, v in setup.QUESTIONS.items() if q != "viewing"}
+    db.set_meta(setup.META_ANSWERED, json.dumps(answered_before))
+    setup.start(db, 3, False, False, others=True)
+    assert setup.pending(db) == ["viewing"]
+    db.set_meta(setup.META_ANSWERED, json.dumps(answered_before))
+    setup.start(db, 3, False, False, others=False)
     assert setup.pending(db) == []
 
 

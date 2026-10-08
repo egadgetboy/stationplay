@@ -431,11 +431,12 @@ The first time an Admin opens StationPlay's page, the setup asks a few questions
 2. **How stations play:** the picture size for new stations and the number of tuners, with **Test this server** to help you choose.
 3. **New station settings:** what each new station starts with: subtitles, commercials and trailers, the Station ID card, the Intro Bumper, the Up Next Banner, and what goes in the corner. Stations you already have aren't changed.
 4. **Who can use StationPlay:** **Anyone on my network**, or **Only people who sign in** (you become the first Admin right away; see [Who can use StationPlay](#who-can-use-stationplay)).
-5. **Watching away from home:** whether StationPlay's own apps can watch your stations away from home, and the address they use then (see [Reaching StationPlay from outside your home](#reaching-stationplay-from-outside-your-home)).
-6. **Your library in StationPlay's apps:** which libraries the apps can browse and play on demand (see [Coming soon: StationPlay's own apps](#coming-soon-stationplays-own-apps)).
-7. **Checking files:** when the overnight deep scan runs.
-8. **Adding StationPlay to Plex:** the steps in Plex, the addresses to enter there, and whether Plex has StationPlay yet.
-9. **All set:** what's set now, and anything that still needs a look.
+5. **Who sees what:** each person's Viewing Level (see [Viewing Levels](#viewing-levels)).
+6. **Watching away from home:** whether StationPlay's own apps can watch your stations away from home, and the address they use then (see [Reaching StationPlay from outside your home](#reaching-stationplay-from-outside-your-home)).
+7. **Your library in StationPlay's apps:** which libraries the apps can browse and play on demand (see [Coming soon: StationPlay's own apps](#coming-soon-stationplays-own-apps)).
+8. **Checking files:** when the overnight deep scan runs.
+9. **Adding StationPlay to Plex:** the steps in Plex, the addresses to enter there, and whether Plex has StationPlay yet.
+10. **All set:** what's set now, and anything that still needs a look.
 
 **Run setup again** on the **Add to Plex** tab, or **Setup** at the foot of the page, opens it any time, with your current answers filled in. It's the only place to change the settings for new stations; everything else can be changed on its tab too.
 

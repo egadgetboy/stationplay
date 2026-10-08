@@ -1673,6 +1673,7 @@ const SETUP_TITLES = {
   playback: 'How stations play',
   newStation: 'New station settings',
   signIn: 'Who can use StationPlay',
+  viewing: 'Who sees what',
   away: 'Watching away from home',
   library: 'Your library in StationPlay’s apps',
   fileChecks: 'Checking files',
@@ -1971,6 +1972,36 @@ const SETUP_PAGES = {
     } };
   },
 
+  async viewing() {
+    const intro = h('p', { class: 'hint', style: 'margin:0' }, 'A Viewing Level says what each person can see in StationPlay’s apps and on this page: movies and shows up to a rating, whether unrated ones are shown, and which libraries. Adult, Teen, Kid and Young Child come with StationPlay; you can change them, or add your own, on the Access tab. Admins always see everything.');
+    const [users, view] = me.required
+      ? await Promise.all([api('/api/access/users').catch(() => []), api('/api/access/viewing').catch(() => null)])
+      : [[], null];
+    const people = users.filter(u => u.role !== 'admin');
+    if (!view || !people.length) {
+      return { node: h('div', { class: 'playback' }, intro,
+        h('p', { style: 'margin:0' }, me.required
+          ? 'Everyone who signs in now is an Admin. When you add people on the Access tab, choose a Viewing Level for each there, and the devices they’re on: on a shared TV, StationPlay’s apps ask Who’s tuning in?, and each person picks themselves.'
+          : 'Viewing Levels come with signing in: choose Only people who sign in under Who can use StationPlay, then add people on the Access tab.')) };
+    }
+    viewing = view;
+    const picks = new Map();
+    const rows = people.map(u => {
+      const select = levelSelect(view.users[u.id]?.level, { 'aria-label': `${u.name}’s Viewing Level` });
+      picks.set(u.id, [select, select.value]);
+      return h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, u.name), h('div', { class: 'opt-ctl' }, select));
+    });
+    return { node: h('div', { class: 'playback' }, intro, ...rows,
+      h('p', { class: 'hint', style: 'margin:0' }, 'On the Access tab, Stations beside someone’s name allows or blocks a station for them, and Devices chooses which devices they’re on and gives them a PIN.')),
+    save: async () => {
+      for (const [id, [select, was]] of picks) {
+        if (select.value === was) continue;
+        try { await api(`/api/access/users/${id}/viewing`, { method: 'PUT', body: { level: Number(select.value) } }); }
+        catch (e) { return e.message; }
+      }
+    } };
+  },
+
   async away() {
     const got = await api('/api/away');
     const fields = awayFields(got, () => {}, 'setupAway');
@@ -2037,14 +2068,17 @@ const SETUP_PAGES = {
   async done({ checks, why }) {
     const look = (checks || []).filter(needsLook);
     // What's set now, in a few words each.
-    const [pb, away, libs, scan] = await Promise.all([
+    const [pb, away, libs, scan, view] = await Promise.all([
       api('/api/playback'), api('/api/away'), api('/api/app-libraries').catch(() => null), api('/api/scan'),
+      me.required ? api('/api/access/viewing').catch(() => null) : null,
     ]);
+    const limited = view ? Object.values(view.users).filter(u => { const lv = view.levels.find(l => l.id === u.level); return lv && levelLimited(lv); }).length : 0;
     const shared = libs ? libs.libraries.filter(l => libs.shared.includes(l.key)).map(l => l.title) : [];
     const w = scan.window;
     const set = [
       ['playback', `${pb.picture} for new stations, ${plural(pb.tuners, 'tuner')}`],
       ['signIn', me.required ? 'Only people who sign in' : 'Anyone on your network'],
+      ...(view ? [['viewing', limited ? `${limited === 1 ? '1 person' : `${limited} people`} on a level with limits` : 'Everyone sees everything']] : []),
       ['away', away.on ? `On, at ${away.address}` : 'Off'],
       ['library', shared.length ? `Shared: ${shared.join(', ')}` : 'Not shared'],
       ['fileChecks', w.on ? `Deep scan every night from ${clock(w.start)} to ${clock(w.end)}` : 'Quick checks only (the deep scan is off)'],
