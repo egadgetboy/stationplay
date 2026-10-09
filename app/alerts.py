@@ -9,9 +9,9 @@ only once things have been right a while too, so none comes and goes:
 
   plex        Plex can't be reached (or won't take StationPlay's token): 3
               checks in a row, a minute apart. Fixed after 2 that reach it.
-  data-full   The data folder's disk has less than 1 GB free, or under 2%:
-              3 checks in a row. Fixed once it has 1.25 GB and 2.5% free,
-              twice.
+  data-full   The data folder's disk has less than 2 GB free: 3 checks in
+              a row. Fixed once it has 3 GB free, twice. (A size, never a
+              share: 2% of a large pool is still hundreds of GB.)
   data-write  Writing to the data folder fails: 2 checks in a row. Fixed
               after 2 that write.
   station     A station fails to start 3 times within 10 minutes: its stream
@@ -71,8 +71,7 @@ PLEX_WAIT_S = 10.0  # the longest Plex is waited for, in a check
 FIXED_KEPT_S = 24 * 3600.0  # alerts fixed this long ago are still listed
 FIXED_MOST = 100
 # The data folder: low under either of these; fine again over both of these.
-LOW_BYTES, LOW_SHARE = 1024**3, 0.02
-ROOM_BYTES, ROOM_SHARE = 1.25 * 1024**3, 0.025
+LOW_BYTES, ROOM_BYTES = 2 * 1024**3, 3 * 1024**3
 WRITE_TEST = ".alerts-write-test"
 # A station: failing to start this many times within this long.
 STATION_FAILS, STATION_WINDOW_S = 3, 600.0
@@ -298,8 +297,8 @@ class Alerts:
             disk = None
         if disk is not None and disk.total > 0:
             free, share = disk.free, disk.free / disk.total
-            low = free < LOW_BYTES or share < LOW_SHARE
-            room = free >= ROOM_BYTES and share >= ROOM_SHARE
+            low = free < LOW_BYTES
+            room = free >= ROOM_BYTES
             going = (DATA_FULL, "") in self._now
             self.checked(
                 DATA_FULL,

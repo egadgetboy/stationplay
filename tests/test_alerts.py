@@ -167,7 +167,7 @@ async def test_the_data_folder(tmp_path, monkeypatch):
     monkeypatch.setattr(
         shutil, "disk_usage", lambda path: SimpleNamespace(total=total, free=free["bytes"], used=0)
     )
-    for got in (0.5, 0.5, 5.0, 1.0, 1.9):  # (GB: low, low, fine, then under 2%)
+    for got in (1.5, 1.5, 5.0, 1.0, 1.9):  # (GB: low, low, fine, then low again)
         free["bytes"] = int(got * 1024**3)
         await found.look(ctx)
     assert found.now() == []
@@ -175,15 +175,20 @@ async def test_the_data_folder(tmp_path, monkeypatch):
     await found.look(ctx)
     [alert] = found.now()
     assert alert.kind == "data-full" and "has only 819 MB free (1% of its disk)" in alert.sentence
-    # Just over the line isn't room enough to be fixed: 2.5% is.
-    for got in (2.2, 2.2, 2.6):
+    # Just over the line isn't room enough to be fixed: 3 GB is.
+    for got in (2.2, 2.2, 3.1):
         free["bytes"] = int(got * 1024**3)
         await found.look(ctx)
     assert found.now() != []
     await found.look(ctx)
     assert found.now() == [] and told.said[-1] == (
-        "StationPlay's data folder has room again (2.6 GB free).", "data-full", "fixed"
+        "StationPlay's data folder has room again (3.1 GB free).", "data-full", "fixed"
     )  # fmt: skip
+    # A large pool with a small share free still has plenty: no alert.
+    total, free["bytes"] = 20 * 1024**4, 300 * 1024**3
+    for _ in range(4):
+        await found.look(ctx)
+    assert found.now() == []
     # A data folder that can't be written to.
     ctx.settings.data_dir = tmp_path / "gone"
     await found.look(ctx)
