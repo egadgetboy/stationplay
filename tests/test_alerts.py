@@ -98,7 +98,7 @@ async def test_an_alert_starts_once_and_is_fixed_once(tmp_path, caplog):
         plex.down = down
         await found.look(ctx)
     assert found.listed() == [] and told.said == []
-    # Down three checks in a row: said once, however long it lasts.
+    # Down five checks in a row: said once, however long it lasts.
     for _ in range(5):
         plex.down = 0
         await found.look(ctx)
@@ -125,7 +125,7 @@ async def test_an_alert_starts_once_and_is_fixed_once(tmp_path, caplog):
     lines = [r.getMessage() for r in caplog.records if r.name == "app.alerts"]
     assert lines == [f"Alert: {sentence}", f"Alert fixed: {told.said[1][0]}"]
     # Plex refusing StationPlay's token says so.
-    for _ in range(3):
+    for _ in range(5):
         plex.down = 401
         await found.look(ctx)
     assert "doesn't accept StationPlay's token" in found.now()[0].sentence

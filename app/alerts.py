@@ -7,7 +7,7 @@ Only what StationPlay can tell for sure, and only once it has held a while,
 so a moment's hiccup is never an alert; and once one starts, it's fixed
 only once things have been right a while too, so none comes and goes:
 
-  plex        Plex can't be reached (or won't take StationPlay's token): 3
+  plex        Plex can't be reached (or won't take StationPlay's token): 5
               checks in a row, a minute apart. Fixed after 2 that reach it.
   data-full   The data folder's disk has less than 2 GB free: 3 checks in
               a row. Fixed once it has 3 GB free, twice. (A size, never a
@@ -269,7 +269,7 @@ class Alerts:
             )
         except TimeoutError:
             why = f"StationPlay can't reach Plex at {where}. Check that Plex is running."
-        self.checked(PLEX, bool(why), why, f"StationPlay can reach Plex at {where} again.", 3, 2)
+        self.checked(PLEX, bool(why), why, f"StationPlay can reach Plex at {where} again.", 5, 2)
         offset = plex.clock_offset_s
         if why or offset is None:
             return  # (nothing to tell the time by)
