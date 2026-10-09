@@ -14,8 +14,10 @@ the sign-in, passcode and link-code limits; who a linked device lists away
 from home; setting a passcode or changing a password from the apps (as an
 outsider, as someone else, an Admin's passcode, its format, the limits);
 Admin alerts and the web address they're sent to (only for Admins; only
-http and https, no redirects followed, never waited on); and each person's
-languages (their own only, and only languages StationPlay knows).
+http and https, no redirects followed, never waited on); each person's
+languages (their own only, and only languages StationPlay knows); and
+Media's addresses (every one refusing what a Kid's level hides, the same
+way, and taking only what's bounded).
 
 It's a tool, not part of CI (the test suite covers these as unit tests). Run
 it from the repo root:  python -m tools.attack_check   (add -v to see every
@@ -427,6 +429,10 @@ async def _attacks(checks: Checks, app, home: str, net: str) -> None:
 
     # 16) Each person's languages: only their own, and only known ones.
     await _languages(checks, app, home, net, admin_h, sam_h, kit_h)
+
+    # 17) Media: every address refuses what a level hides, the same way, and
+    # takes only what's bounded.
+    await _library(checks, app, home, admin_h, kit_h)
 
 
 async def _media_away(
@@ -966,6 +972,114 @@ async def _languages(
                                     headers=kit_h, json={"audio": "eng"})  # fmt: skip
                 checks.ok(r.status_code in (400, 404, 405),
                           f"a Kid can't {method} languages for {key}", f"got {r.status_code}")  # fmt: skip
+
+
+async def _library(checks: Checks, app, home: str, admin_h: dict, kit_h: dict) -> None:
+    """Media's addresses: a Kid gets nothing their level hides from any of
+    them (lists, home, search, details, others like it, episodes, pictures,
+    languages, playing, progress), answered as for what doesn't exist, even
+    with a key from an Admin's Resume row or an Admin's playing; and every
+    address takes only what's bounded, saying why in a sentence (never a
+    500, a stack trace or Plex's address)."""
+    checks.section("Media: what a level hides, and bounded inputs")
+
+    def plain_refusal(r: httpx.Response) -> bool:
+        body = r.text
+        return (
+            (r.status_code < 500 or r.status_code == 503)
+            and "Traceback" not in body
+            and "plex.test" not in body
+        )
+
+    async with httpx.AsyncClient(base_url=home) as c:
+        # Ada watches the grown-ups' show, and plays it.
+        await c.post("/api/internal/progress", headers=admin_h,
+                     json={"key": "211", "positionMs": 600_000})  # fmt: skip
+        resume = (await c.get("/api/internal/home", headers=admin_h)).json().get("continue", [])
+        played = (await c.post("/api/internal/play", headers=admin_h,
+                               json={"key": "211", "device": TV})).json()  # fmt: skip
+        checks.ok("211" in [x["key"] for x in resume] and "session" in played,
+                  "an Admin resumes and plays the grown-ups' show")  # fmt: skip
+        await c.get("/api/internal/art/301", headers=admin_h)  # (its poster kept, now)
+        gone = (await c.get("/api/internal/items/999999", headers=kit_h)).json()
+        for key in ("110", "211", "301"):
+            asks = [
+                ("GET", f"/api/internal/items/{key}", None, "asking for its details"),
+                ("GET", f"/api/internal/items/{key}/related", None, "asking for others like it"),
+                ("GET", f"/api/internal/items/{key}/episodes", None, "asking for its episodes"),
+                ("GET", f"/api/internal/art/{key}?kind=poster&w=320", None, "asking for its poster"),
+                ("GET", f"/api/internal/art/{key}?kind=backdrop", None, "asking for its backdrop"),
+                ("GET", f"/api/internal/art/{key}?kind=thumb", None, "asking for its still"),
+                ("PUT", f"/api/internal/items/{key}/languages", {"audio": "eng"},
+                 "choosing its languages"),
+                ("DELETE", f"/api/internal/items/{key}/languages", None,
+                 "clearing its languages"),
+                ("POST", "/api/internal/play", {"key": key, "device": TV}, "playing it"),
+                ("POST", "/api/internal/progress", {"key": key, "positionMs": 60_000},
+                 "reporting a place in it"),
+                ("POST", "/api/internal/progress", {"key": key, "watched": True},
+                 "marking it watched"),
+                ("POST", "/api/internal/progress",
+                 {"key": key, "positionMs": 60_000, "session": played.get("session", "")},
+                 "reporting a place in an Admin's playing of it"),
+            ]  # fmt: skip
+            for method, path, body, what in asks:
+                r = await c.request(method, path, json=body, headers=kit_h)
+                checks.ok(r.status_code == 404 and r.json() == gone,
+                          f"the Kid {what} ({key}) is answered as though it weren't there",
+                          f"got {r.status_code}")  # fmt: skip
+        lists = [
+            (await c.get(path, headers=kit_h)).text
+            for path in ("/api/internal/libraries/1?size=200", "/api/internal/libraries/2?size=200",
+                         "/api/internal/home", "/api/internal/search?q=i",
+                         "/api/internal/search?q=night", "/api/internal/search?q=heist",
+                         "/api/internal/items/100/episodes", "/api/internal/items/100/related",
+                         "/api/internal/items/300/related")
+        ]  # fmt: skip
+        for key in ("110", "211", "301"):
+            checks.ok(all(f'"key":"{key}"' not in text for text in lists),
+                      f"no list shows the Kid {key}")  # fmt: skip
+
+        # Bounded inputs: refused with a sentence, never a 500.
+        for method, path, body, wanted in (
+            ("GET", "/api/internal/search?q=" + "a" * 101, None, 400),
+            ("GET", "/api/internal/search?q=" + "%25" * 3000, None, 400),
+            ("GET", "/api/internal/search?q=%00%01%27%22%3Cscript%3E", None, 200),
+            ("GET", "/api/internal/libraries/2?size=201", None, 400),
+            ("GET", "/api/internal/libraries/2?size=0", None, 400),
+            ("GET", "/api/internal/libraries/2?start=-1", None, 400),
+            ("GET", "/api/internal/libraries/2?start=1000000000", None, 400),
+            ("GET", "/api/internal/libraries/2?sort=size", None, 400),
+            ("GET", "/api/internal/libraries/2?genre=" + "x" * 101, None, 400),
+            ("GET", "/api/internal/items/100/episodes?size=501", None, 400),
+            ("GET", "/api/internal/items/100/episodes?season=99999999", None, 400),
+            ("GET", "/api/internal/art/300?w=10001", None, 400),
+            ("GET", "/api/internal/art/300?w=-1", None, 400),
+            ("GET", "/api/internal/art/300?kind=..%2f..%2fetc", None, 400),
+            ("GET", "/api/internal/items/..%2f..%2fetc%2fpasswd", None, 404),
+            ("GET", "/api/internal/items/300%20OR%201=1", None, 404),
+            ("GET", "/api/internal/items/" + "9" * 25, None, 404),
+            ("GET", "/api/internal/items/%D9%A1%D9%A2%D9%A3", None, 404),  # (Arabic digits)
+            ("GET", "/api/internal/libraries/" + "1" * 40, None, 404),
+            ("POST", "/api/internal/play", {"key": "x" * 21, "device": TV}, 400),
+            ("POST", "/api/internal/play", {"key": "300", "device": TV, "startMs": -1}, 400),
+            ("POST", "/api/internal/play", {"key": "300", "device": {"video": [{}] * 41}}, 400),
+            ("POST", "/api/internal/progress", {"key": "300", "positionMs": -1}, 400),
+            ("POST", "/api/internal/progress", {"key": "300", "positionMs": 2**63}, 400),
+            ("POST", "/api/internal/progress", {"key": "300", "positionMs": 3 * 3_600_000}, 400),
+            ("POST", "/api/internal/progress", {"key": "300", "positionMs": 1, "sequence": 0}, 400),
+            ("POST", "/api/internal/progress", {"key": "300", "positionMs": 1,
+                                                "sequence": 2**40}, 400),
+            ("POST", "/api/internal/progress", {"key": "300", "session": "x" * 65,
+                                                "positionMs": 1}, 400),
+        ):  # fmt: skip
+            r = await c.request(method, path, json=body, headers=kit_h)
+            said = r.headers.get("content-type", "").startswith("application/json") and (
+                r.status_code == 200 or isinstance(r.json().get("detail"), str)
+            )
+            checks.ok(r.status_code == wanted and said and plain_refusal(r),
+                      f"{method} {path[:60]} is answered {wanted}, plainly",
+                      f"got {r.status_code}: {r.text[:80]}")  # fmt: skip
 
 
 async def _pin_limit(checks: Checks, app, home: str, device_key: str) -> None:
