@@ -35,7 +35,15 @@
     --bad: #b3402f;
     --bad-soft: #f8e4e0;
     --shadow: 0 1px 2px rgba(20, 24, 30, .06), 0 2px 8px rgba(20, 24, 30, .05);
-    --radius: 12px;
+    /* Corners, the same throughout (as in StationPlay's apps): a rectangle
+       (a poster or picture, a panel, a button, a field, a dialog) is rounded
+       as the apps' posters are on a phone or tablet; a pill (a chip, the
+       header's, a setting's choices) is round at its ends; a small badge is
+       rounded a little. A rectangle around another, with room between them,
+       is rounded that much more, so their curves stay parallel. */
+    --radius: 10px;
+    --radius-small: 6px;
+    --pill: 999px;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     --bar: #0b7a6e;  /* the Stats tab's bars: one hue, checked against the panel */
     --brand: #0ea609;  /* the logo's green */
@@ -106,7 +114,7 @@
   .spacer { flex: 1; }
   .pill {
     display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
-    border-radius: 999px; font-size: 13px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--pill); font-size: 13px; background: var(--panel); border: 1px solid var(--line);
     white-space: nowrap;
   }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); }
@@ -139,7 +147,7 @@
     border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap;
   }
   .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
-  .tab .count { font-size: 12px; background: var(--bad-soft); color: var(--bad); border-radius: 999px; padding: 1px 7px; margin-left: 4px; }
+  .tab .count { font-size: 12px; background: var(--bad-soft); color: var(--bad); border-radius: var(--pill); padding: 1px 7px; margin-left: 4px; }
   /* The tabs, and the Buy Me a Coffee link at the end of their row. */
   .tabrow { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); margin: 4px 0 20px; }
   .tabrow .tabs { flex: 1; min-width: 0; border-bottom: 0; margin: 0 0 -1px; align-self: stretch; }
@@ -150,7 +158,7 @@
   .tabs.rows .tab { padding: 10px; }
   .coffee {
     display: inline-flex; align-items: center; gap: 8px; flex: none; padding: 4px 12px 4px 4px;
-    border-radius: 999px; font-size: 13px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--pill); font-size: 13px; background: var(--panel); border: 1px solid var(--line);
     color: var(--ink-2); text-decoration: none; white-space: nowrap;
   }
   .coffee:hover { color: var(--ink); border-color: var(--accent); }
@@ -169,11 +177,11 @@
   .foot { margin: 36px 0 8px; text-align: center; font-size: 12px; color: var(--ink-3); }
   .foot a { color: inherit; }
   .foot .appearance { margin-top: 10px; display: inline-flex; align-items: center; gap: 8px; }
-  .foot .appearance select { width: auto; padding: 3px 8px; border-radius: 6px; font-size: 12px; color: var(--ink-2); background: var(--panel); }
+  .foot .appearance select { width: auto; padding: 3px 8px; border-radius: var(--radius); font-size: 12px; color: var(--ink-2); background: var(--panel); }
   .small { font-size: 13px; }
 
   .btn {
-    display: inline-flex; align-items: center; gap: 6px; border-radius: 8px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px; border-radius: var(--radius); cursor: pointer;
     padding: 7px 12px; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
     font-size: 14px; white-space: nowrap; text-decoration: none;
   }
@@ -184,12 +192,25 @@
   .btn.ghost { border-color: transparent; background: transparent; }
   .btn:disabled { opacity: .55; cursor: default; }
   .btn svg { width: 16px; height: 16px; }
+  /* A label beside its icon, in a button or a pill: its capitals centered on
+     the icon, whatever the font. The font's room above the capitals and
+     below the baseline is trimmed off, then given back in equal parts, so
+     the label is as tall as before and only moves to where it looks
+     centered. (Each such label is a <span>, and so are the labels of text
+     buttons in a row with one, so the row's words line up. A browser that
+     can't trim shows them as before.) */
+  @supports (text-box: trim-both cap alphabetic) {
+    .btn > span, .pill > span:not(.dot), .coffee > .label, .sel > span,
+    .setup-nav button > span:not(.num, .done, .dot), .more > summary > span:not(.warn) {
+      text-box: trim-both cap alphabetic; padding-block: calc((1lh - 1cap) / 2); min-height: 1lh;
+    }
+  }
 
   /* Channels */
   .channels { display: grid; gap: 12px; }
   .channel { display: grid; grid-template-columns: 72px 1fr; gap: 16px; padding: 16px; }
   .chnum {
-    width: 72px; height: 72px; border-radius: 10px; display: grid; place-items: center;
+    width: 72px; height: 72px; border-radius: var(--radius); display: grid; place-items: center;
     background: var(--ink); color: var(--bg); font-weight: 800; font-size: 28px; letter-spacing: -.02em;
     font-variant-numeric: tabular-nums;
   }
@@ -204,9 +225,9 @@
   .now .label { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); font-weight: 600; }
   /* How far into its program a station is: a thin line, and a mark where it is now
      (in the text color, so it stands out from the teal). */
-  .bar { height: 2px; background: var(--line); border-radius: 1px; margin: 9px 0 7px; max-width: 420px; }
-  .bar > span { position: relative; display: block; height: 100%; background: var(--accent); border-radius: 1px; }
-  .bar > span.at::after { content: ''; position: absolute; right: -1px; top: -4px; width: 2px; height: 10px; border-radius: 1px; background: var(--ink); }
+  .bar { height: 2px; background: var(--line); border-radius: var(--pill); margin: 9px 0 7px; max-width: 420px; }
+  .bar > span { position: relative; display: block; height: 100%; background: var(--accent); border-radius: var(--pill); }
+  .bar > span.at::after { content: ''; position: absolute; right: -1px; top: -4px; width: 2px; height: 10px; border-radius: var(--pill); background: var(--ink); }
   .channel .desc { color: var(--ink-2); font-size: 14px; margin: 2px 0 10px; max-width: 70ch; }
   /* A station's details, rolled up under a line that sums them up. */
   .more { margin-top: 8px; font-size: 13px; }
@@ -226,7 +247,7 @@
     .details { grid-template-columns: minmax(0, 1fr); }
     .details dt { margin-top: 6px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; }
   }
-  .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 2px 8px; border-radius: var(--pill); font-weight: 600; }
   .chip.bad { background: var(--bad-soft); color: var(--bad); }
   .chip.good { background: var(--good-soft); color: var(--good); }
   .chip.accent { background: var(--accent-soft); color: var(--accent); }
@@ -240,7 +261,7 @@
   .empty { padding: 36px 20px; text-align: center; }
   @media (max-width: 560px) {
     .channel { grid-template-columns: 48px 1fr; gap: 12px; padding: 14px; }
-    .chnum { width: 48px; height: 48px; font-size: 20px; border-radius: 8px; }
+    .chnum { width: 48px; height: 48px; font-size: 20px; }
     .row { grid-template-columns: 90px 1fr; }
   }
   .empty h3 { margin: 0 0 6px; }
@@ -255,7 +276,7 @@
   .setup-nav { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; position: sticky; top: 0; }
   .setup-nav button {
     display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: 0;
-    border-radius: 8px; padding: 7px 10px; cursor: pointer; color: var(--ink-2); font-size: 14px;
+    border-radius: var(--radius); padding: 7px 10px; cursor: pointer; color: var(--ink-2); font-size: 14px;
   }
   .setup-nav button:hover { background: var(--panel-2); }
   .setup-nav button[aria-current="step"] { background: var(--accent-soft); color: var(--ink); font-weight: 600; }
@@ -281,7 +302,7 @@
   .copyrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .copyrow code {
     font-family: var(--mono); font-size: 13px; background: var(--panel-2); border: 1px solid var(--line);
-    padding: 6px 10px; border-radius: 8px; word-break: break-all;
+    padding: 6px 10px; border-radius: var(--radius); word-break: break-all;
   }
   .copyrow .what { width: 150px; font-weight: 600; font-size: 14px; }
   @media (max-width: 560px) { .copyrow .what { width: 100%; } }  /* (on a phone, above its address) */
@@ -305,7 +326,7 @@
 
   /* Dialog */
   dialog {
-    border: 1px solid var(--line); border-radius: 14px; padding: 0; width: min(760px, calc(100vw - 24px));
+    border: 1px solid var(--line); border-radius: var(--radius); padding: 0; width: min(760px, calc(100vw - 24px));
     background: var(--panel); color: var(--ink); box-shadow: 0 20px 60px rgba(0,0,0,.25);
     max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px);
   }
@@ -325,15 +346,15 @@
   .field label { font-weight: 600; font-size: 14px; }
   .row { display: grid; grid-template-columns: 110px 1fr; gap: 12px; }
   input[type=text], input[type=url], input[type=number], input[type=search], input[type=password], input[type=time], select {
-    width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2);
+    width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2);
   }
   input[type=time] { width: auto; }
   select { max-width: 100%; }  /* (never wider than its box, even one as wide as its longest choice) */
   input:focus, select:focus, .btn:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .seg { display: inline-flex; justify-self: start; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+  .seg { display: inline-flex; justify-self: start; border: 1px solid var(--line); border-radius: var(--pill); overflow: hidden; }
   .seg button { border: 0; background: var(--panel-2); padding: 8px 14px; cursor: pointer; }
   .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
-  .picker { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .picker { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
   .picker-tools { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr) auto; gap: 8px; padding: 10px; background: var(--panel-2); border-bottom: 1px solid var(--line); }
   @media (max-width: 560px) {
     .picker-tools { grid-template-columns: minmax(0, 1fr) auto; }
@@ -347,7 +368,7 @@
   .pick .t { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 12px; row-gap: 2px; }
   .pick .genres { font-size: 12.5px; color: var(--ink-3); }
   .pick .poster {
-    width: 32px; height: 48px; flex: none; border-radius: 4px; object-fit: cover;
+    width: 32px; height: 48px; flex: none; border-radius: var(--radius); object-fit: cover;
     background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line);
   }
   .pick.all .poster { background: var(--accent); opacity: .35; box-shadow: none; }
@@ -391,10 +412,11 @@
     .editor-content .picker-list { height: 340px; }
     .editor-content .fbox { max-height: 340px; }
   }
-  .group { border: 1px solid var(--line); border-radius: 10px; }
+  .group { border: 1px solid var(--line); border-radius: var(--radius); }
+  /* (Its head fills the group inside its border: rounded 1px less.) */
   .group > summary {
     list-style: none; cursor: pointer; display: grid; gap: 1px; padding: 10px 36px 10px 12px;
-    position: relative; border-radius: 10px;
+    position: relative; border-radius: calc(var(--radius) - 1px);
   }
   .group > summary::-webkit-details-marker { display: none; }
   .group > summary::after {
@@ -404,7 +426,7 @@
   }
   .group[open] > summary::after { transform: translateY(-25%) rotate(225deg); }
   .group > summary:hover { background: var(--panel-2); }
-  .group[open] > summary { border-bottom: 1px solid var(--line); border-radius: 10px 10px 0 0; }
+  .group[open] > summary { border-bottom: 1px solid var(--line); border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0; }
   .group > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .g-title { font-weight: 650; font-size: 14px; }
   .g-sum { font-size: 13px; color: var(--ink-2); }
@@ -420,19 +442,19 @@
   /* Time-of-day blocks, each a small form of its own. */
   .blocks { display: grid; gap: 10px; }
   .blocks:empty { display: none; }
-  .block { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
+  .block { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); }
   .block input[type="text"] { width: 100%; }
   .block-shows { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .block-shows .hint { flex: 1 1 160px; min-width: 0; }
   /* Choosing a block's shows with the station's picker. */
-  .picking { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 10px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .picking { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 10px; border-radius: var(--radius); background: var(--accent); color: var(--accent-ink); font-weight: 600; }
   .picking span { flex: 1 1 200px; min-width: 0; }
   @media (max-width: 480px) {
     .opt { grid-template-columns: minmax(0, 1fr); }
     .opt-label { padding-top: 0; }
     .opt .seg button { padding: 7px 9px; }  /* (five choices on a phone's one line) */
   }
-  .sel { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; font-size: 13px; }
+  .sel { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--pill); font-size: 13px; }
   .sel button { border: 0; background: none; cursor: pointer; color: var(--ink-3); font-size: 16px; line-height: 1; padding: 0 4px; }
   .hint { font-size: 13px; color: var(--ink-2); }
 
@@ -444,7 +466,7 @@
 
   .toast {
     position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--bg);
-    padding: 10px 16px; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.25); z-index: 10; max-width: calc(100vw - 32px);
+    padding: 10px 16px; border-radius: var(--radius); box-shadow: 0 8px 30px rgba(0,0,0,.25); z-index: 10; max-width: calc(100vw - 32px);
   }
   .toast.error { background: var(--bad); color: #fff; }
   .toast .undo { margin-left: 14px; background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
@@ -456,23 +478,26 @@
   .chart { position: relative; width: 72px; height: 72px; }
   .chart img { width: 72px; height: 72px; display: block; }
   .chart .no {
-    position: absolute; right: -6px; bottom: -6px; min-width: 26px; height: 26px; padding: 0 6px; border-radius: 13px;
+    position: absolute; right: -6px; bottom: -6px; min-width: 26px; height: 26px; padding: 0 6px; border-radius: var(--radius-small);
     background: var(--ink); color: var(--bg); font-weight: 800; font-size: 13px; display: grid; place-items: center;
     font-variant-numeric: tabular-nums; border: 2px solid var(--panel);
   }
   @media (max-width: 560px) { .chart, .chart img { width: 48px; height: 48px; } }
   .logo-choice { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-  .logo-choice img, .logo-num { width: 64px; height: 64px; border-radius: 12px; }
+  .logo-choice img, .logo-num { width: 64px; height: 64px; border-radius: var(--radius); }
   .logo-num { display: grid; place-items: center; background: #1d2a36; color: #fff; font-weight: 800; font-size: 26px; }
   /* A logo in its own shape (a show's or movie's, from Plex: often white
-     lettering) is shown whole, on the dark of a TV picture. */
-  .chart img, .logo-choice img, .logo-grid img, table.stats .station img { object-fit: contain; }
-  img.shaped { background: #1d2a36; padding: 5px; box-sizing: border-box; border-radius: 8px; }
-  table.stats .station img.shaped { padding: 2px; border-radius: 6px; }
+     lettering) is shown whole, on the dark of a TV picture. Every logo is
+     rounded as a picture is (which shows on one that fills its square, such
+     as one uploaded). */
+  .chart img, .logo-choice img, .logo-grid img, table.stats .station img { object-fit: contain; border-radius: var(--radius); }
+  img.shaped { background: #1d2a36; padding: 5px; box-sizing: border-box; border-radius: var(--radius); }
+  table.stats .station img.shaped { padding: 2px; }
   .logo-choice .plex-logo { display: inline-flex; align-items: center; gap: 8px; }
-  .logo-choice .plex-logo img { width: auto; height: 30px; max-width: 110px; padding: 3px 6px; border-radius: 6px; background: #1d2a36; box-sizing: border-box; }
+  .logo-choice .plex-logo img { width: auto; height: 30px; max-width: 110px; padding: 3px 6px; border-radius: var(--radius); background: #1d2a36; box-sizing: border-box; }
   .logo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 6px; }
-  .logo-grid button { border: 2px solid transparent; background: none; border-radius: 14px; padding: 4px; cursor: pointer; display: grid; gap: 2px; justify-items: center; }
+  /* (Around its logo, 6px out: 4px of room and a 2px border.) */
+  .logo-grid button { border: 2px solid transparent; background: none; border-radius: calc(var(--radius) + 6px); padding: 4px; cursor: pointer; display: grid; gap: 2px; justify-items: center; }
   .logo-grid button:hover { background: var(--panel-2); }
   .logo-grid button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
   .logo-grid img, .logo-grid .logo-num { width: 76px; height: 76px; }
@@ -483,7 +508,7 @@
   #logoCats { margin-bottom: 12px; }
   .logo-grid .mine { position: relative; display: grid; }
   .logo-grid .mine .del {
-    position: absolute; top: 2px; right: 2px; width: 24px; height: 24px; padding: 0; border-radius: 12px;
+    position: absolute; top: 2px; right: 2px; width: 24px; height: 24px; padding: 0; border-radius: 50%;
     border: 1px solid var(--line); background: var(--panel); color: var(--ink-2); font-size: 15px; line-height: 1;
     display: grid; place-items: center;
   }
@@ -491,7 +516,7 @@
 
   /* Filters */
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-  .chipbtn { border: 1px solid var(--line); background: var(--panel-2); border-radius: 999px; padding: 4px 11px; cursor: pointer; font-size: 13px; }
+  .chipbtn { border: 1px solid var(--line); background: var(--panel-2); border-radius: var(--pill); padding: 4px 11px; cursor: pointer; font-size: 13px; }
   .chipbtn[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
   .fbox { padding: 12px; display: grid; gap: 14px; max-height: 340px; overflow: auto; }
   .fbox .field > label .hint { font-weight: 400; }
@@ -507,17 +532,17 @@
   .choice input { margin-top: 3px; }
   .choice input:disabled + span { opacity: .55; }
   .linkbtn { background: none; border: 0; padding: 0 0 0 6px; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }
-  .mark-preview { position: relative; width: 100%; max-width: 360px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden;
+  .mark-preview { position: relative; width: 100%; max-width: 360px; aspect-ratio: 16 / 9; border-radius: var(--radius); overflow: hidden;
     background: linear-gradient(135deg, #3b6ea5 0%, #7aa35a 45%, #d9a441 75%, #b5523b 100%); flex: none; }
   .mark-preview img, .mark-preview span { position: absolute; pointer-events: none; }
   .intro-preview { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   #fDescription { width: 100%; }
-  #introVideo, #bumperVideo, #sidVideo, #upNextVideo { width: 100%; max-width: 520px; aspect-ratio: 16 / 9; border-radius: 6px; background: #000; }
+  #introVideo, #bumperVideo, #sidVideo, #upNextVideo, #featureVideo { width: 100%; max-width: 520px; aspect-ratio: 16 / 9; border-radius: var(--radius); background: #000; }
   #upNextVideo { cursor: pointer; }
   #fBumper { flex: 1 1 200px; min-width: 0; }
   .mark-preview .zone { position: absolute; width: 50%; height: 50%; background: transparent; border: 0; padding: 0; cursor: pointer; }
   .mark-preview .zone:hover, .mark-preview .zone:focus-visible { background: rgba(255,255,255,.12); outline: none; }
-  .seg.corners { display: grid; grid-template-columns: 1fr 1fr; }
+  .seg.corners { display: grid; grid-template-columns: 1fr 1fr; border-radius: var(--radius); }  /* (two rows: a rectangle, not a pill) */
   .mark-preview span { color: #fff; white-space: nowrap; text-shadow: 1px 1px 1px rgba(0,0,0,.6); line-height: 1; }
   .mark-preview span.clock { font-weight: 600; font-variant-numeric: tabular-nums; }
   .scan { display: grid; gap: 8px; padding: 12px 14px; margin-bottom: 12px; font-size: 13px; }
@@ -539,11 +564,11 @@
   .limit-stations { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 4px 12px; margin: 8px 0 4px 18px; }
   .limit-stations label { display: flex; gap: 6px; align-items: center; min-width: 0; }
   .limit-stations label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .limit-note { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--panel-2); }
+  .limit-note { margin: 0; padding: 10px 12px; border-radius: var(--radius); background: var(--panel-2); }
   .limit-note ul { margin: 6px 0 0; padding-left: 20px; }
   /* Whether StationPlay's apps can reach it from outside: an icon, what it
      is, when it was checked, and Check now (the Access tab, and the setup). */
-  .reach { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 4px 10px; align-items: start; padding: 10px 12px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line); }
+  .reach { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 4px 10px; align-items: start; padding: 10px 12px; border-radius: var(--radius); background: var(--panel-2); border: 1px solid var(--line); }
   .reach.down { background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
   .reach .icon { display: grid; padding-top: 2px; }
   .reach .icon svg { display: block; }
@@ -596,9 +621,9 @@
   .tile .k { font-size: 13px; color: var(--ink-2); }
   table.stats td.num, table.stats th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   table.stats .station { display: flex; align-items: center; gap: 10px; }
-  table.stats .station img, table.stats .station .logo-num { width: 32px; height: 32px; border-radius: 6px; font-size: 13px; }
+  table.stats .station img, table.stats .station .logo-num { width: 32px; height: 32px; border-radius: var(--radius); font-size: 13px; }
   .hcell { display: grid; grid-template-columns: minmax(40px, 1fr) auto; gap: 8px; align-items: center; min-width: 140px; }
-  .hbar { height: 10px; border-radius: 0 4px 4px 0; background: var(--bar); }
+  .hbar { height: 10px; border-radius: 0 var(--radius-small) var(--radius-small) 0; background: var(--bar); }
   .stats-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin-top: 16px; }
   .stats-cols .panel { padding: 14px 16px; }
   .stats-cols h3 { font-size: 15px; margin: 0 0 10px; }
@@ -650,7 +675,7 @@
     table.now td.now-who { white-space: normal; }
   }
   .hours { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 2px; align-items: end; height: 120px; border-bottom: 1px solid var(--line); }
-  .hours span { background: var(--bar); border-radius: 4px 4px 0 0; min-height: 0; }
+  .hours span { background: var(--bar); border-radius: var(--radius-small) var(--radius-small) 0 0; min-height: 0; }
   .hours-axis { display: grid; grid-template-columns: repeat(4, 1fr); font-size: 11px; color: var(--ink-3); margin-top: 4px; }
   @media (max-width: 760px) {
     .stats-cols { grid-template-columns: minmax(0, 1fr); }
@@ -723,7 +748,7 @@
     <span class="pill" id="plexPill"><span class="dot"></span><span>Checking Plex…</span></span>
     <span class="pill" id="livePill" hidden><span class="dot live"></span><span></span></span>
     <button class="pill away" id="awayPill" type="button" hidden><span class="dot"></span><span class="long">Away from home</span><span class="short">Away</span><span class="word"></span></button>
-    <button class="pill userpill" id="userPill" type="button" hidden title="Your account"></button>
+    <button class="pill userpill" id="userPill" type="button" hidden title="Your account"><span></span></button>
   </header>
 
   <div class="tabrow">
@@ -745,11 +770,11 @@
       <h2>Your stations</h2>
       <div class="spacer"></div>
       <span class="hint" id="roomHint" hidden></span>
-      <button class="btn" id="smartStations" title="Make stations from what’s in your Plex: one station, or one for each decade, genre, studio, and more">Smart stations</button>
-      <button class="btn" id="fromCollections" title="Make a station from each Plex collection you pick, named after the collection">From Plex collections</button>
+      <button class="btn" id="smartStations" title="Make stations from what’s in your Plex: one station, or one for each decade, genre, studio, and more"><span>Smart stations</span></button>
+      <button class="btn" id="fromCollections" title="Make a station from each Plex collection you pick, named after the collection"><span>From Plex collections</span></button>
       <button class="btn primary" id="newChannel">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v10M3 8h10"/></svg>
-        New station
+        <span>New station</span>
       </button>
     </div>
     <div class="live-list" id="liveList"></div>
@@ -1037,8 +1062,8 @@
           <div class="logo-choice">
             <span id="logoPreview"></span>
             <span class="hint" id="logoName"></span>
-            <button type="button" class="btn" id="chooseLogo">Choose…</button>
-            <button type="button" class="btn ghost" id="randomLogo">Surprise me</button>
+            <button type="button" class="btn" id="chooseLogo"><span>Choose…</span></button>
+            <button type="button" class="btn ghost" id="randomLogo"><span>Surprise me</span></button>
             <button type="button" class="btn ghost plex-logo" id="plexLogo" hidden><img id="plexLogoImg" alt=""><span>Use the logo from Plex</span></button>
           </div>
         </div>
@@ -2564,7 +2589,7 @@ function renderChannels() {
           h('div', { class: 'bar' }, h('span', { class: pct > 0 ? 'at' : '', style: `width:${pct.toFixed(1)}%` }))) : null,
         stationDetails(ch, check, now),
         h('div', { class: 'actions' },
-          h('button', { class: 'btn', onclick: () => openGuide(ch) }, icon('<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M2 7h12M6 3v10"/>'), 'Guide'),
+          h('button', { class: 'btn', onclick: () => openGuide(ch) }, icon('<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M2 7h12M6 3v10"/>'), h('span', {}, 'Guide')),
           ...stationActions(ch, check))));
   }));
 }
@@ -2644,7 +2669,7 @@ function stationDetails(ch, check, now) {
   return h('details', {
     class: 'more', open: openDetails.has(ch.id),
     ontoggle: e => { e.target.open ? openDetails.add(ch.id) : openDetails.delete(ch.id); saveOpenDetails(); },
-  }, h('summary', {}, `Details: ${gist}`,
+  }, h('summary', {}, h('span', {}, `Details: ${gist}`),
       problems.length ? h('span', { class: 'warn', role: 'img', 'aria-label': `Needs attention: ${problems.join('; ')}`, title: `Needs attention: ${problems.join('; ')}` },
         warnIcon()) : null),
     h('dl', { class: 'details' },
@@ -2714,17 +2739,17 @@ function saveOpenDetails() {
 function stationActions(ch, check) {
   const duplicate = stationsLeft() > 0
     ? h('button', { class: 'btn', title: 'Make a new station with the same shows and settings, then change it as you like', onclick: () => openEditor(ch, true) },
-        icon('<rect x="5" y="5" width="8.5" height="8.5" rx="1.5"/><path d="M3 10.5V3.5A1 1 0 0 1 4 2.5h6.5"/>'), 'Duplicate')
+        icon('<rect x="5" y="5" width="8.5" height="8.5" rx="1.5"/><path d="M3 10.5V3.5A1 1 0 0 1 4 2.5h6.5"/>'), h('span', {}, 'Duplicate'))
     : null;
   // (Changing it is for an Admin, or whoever made it.)
   if (!ch.mayChange) return [duplicate];
   return [
-          h('button', { class: 'btn', onclick: () => openEditor(ch) }, icon('<path d="M11 2.5l2.5 2.5L6 12.5H3.5V10z"/>'), 'Edit'),
+          h('button', { class: 'btn', onclick: () => openEditor(ch) }, icon('<path d="M11 2.5l2.5 2.5L6 12.5H3.5V10z"/>'), h('span', {}, 'Edit')),
           duplicate,
-          h('button', { class: 'btn', disabled: check?.running, title: 'Check every file on this station now, so problems are found before anyone tunes in', onclick: () => checkChannel(ch) }, icon('<path d="M3 8.5l3 3 7-7"/>'), 'Check files'),
-          h('button', { class: 'btn', title: 'Check Plex for new and removed programs now. Changes start at the next program break.', onclick: () => updateNow(ch) }, icon('<path d="M13 3v4H9"/><path d="M13 7A5 5 0 1 0 12 12"/>'), 'Update now'),
-          ch.orderMode === 'shuffle' ? h('button', { class: 'btn', title: 'Start a new random order at the next program break', onclick: () => reshuffle(ch) }, icon('<path d="M2 4h3l6 8h3M2 12h3l6-8h3"/>'), 'Reshuffle') : null,
-          h('button', { class: 'btn danger', onclick: () => removeChannel(ch) }, icon('<path d="M3 4h10M6 4V2.5h4V4M5 4l.5 9h5L11 4"/>'), 'Delete'),
+          h('button', { class: 'btn', disabled: check?.running, title: 'Check every file on this station now, so problems are found before anyone tunes in', onclick: () => checkChannel(ch) }, icon('<path d="M3 8.5l3 3 7-7"/>'), h('span', {}, 'Check files')),
+          h('button', { class: 'btn', title: 'Check Plex for new and removed programs now. Changes start at the next program break.', onclick: () => updateNow(ch) }, icon('<path d="M13 3v4H9"/><path d="M13 7A5 5 0 1 0 12 12"/>'), h('span', {}, 'Update now')),
+          ch.orderMode === 'shuffle' ? h('button', { class: 'btn', title: 'Start a new random order at the next program break', onclick: () => reshuffle(ch) }, icon('<path d="M2 4h3l6 8h3M2 12h3l6-8h3"/>'), h('span', {}, 'Reshuffle')) : null,
+          h('button', { class: 'btn danger', onclick: () => removeChannel(ch) }, icon('<path d="M3 4h10M6 4V2.5h4V4M5 4l.5 9h5L11 4"/>'), h('span', {}, 'Delete')),
   ];
 }
 
@@ -3489,10 +3514,10 @@ function renderSelected() {
         h('button', { type: 'button', 'aria-label': `Remove ${s.title}`, onclick: () => remove(s) }, '×'))
     : s.type === 'collection'
     ? h('span', { class: 'sel filter', title: 'A Plex collection. Anything added to it in Plex joins the station automatically.' },
-        `▦ ${s.title}`,
+        h('span', {}, `▦ ${s.title}`),
         h('button', { type: 'button', 'aria-label': `Remove ${s.title}`, onclick: () => remove(s) }, '×'))
     : h('span', { class: 'sel' },
-        s.type === 'section' ? `All of ${s.title}` : s.title,
+        h('span', {}, s.type === 'section' ? `All of ${s.title}` : s.title),
         h('button', { type: 'button', 'aria-label': `Remove ${s.title}`, onclick: () => remove(s) }, '×'))));
   if (!picking) followFirstTitle();  // (a block's shows don't name the station)
   else showBlocks();
@@ -4267,7 +4292,7 @@ function fieldBox(f) {
   input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
   return h('div', { class: 'field' }, label,
     h('div', { class: 'inline-add' }, input, list, h('button', { type: 'button', class: 'btn', onclick: add }, 'Add')),
-    h('div', { class: 'chips' }, ...values.map(name => h('span', { class: 'sel' }, name,
+    h('div', { class: 'chips' }, ...values.map(name => h('span', { class: 'sel' }, h('span', {}, name),
       h('button', { type: 'button', 'aria-label': `Remove ${name}`, onclick: () => { toggleIn(values, name); changed(); } }, '×')))));
 }
 function renderFilter() {
@@ -5400,7 +5425,7 @@ async function loadMe() {
   if (!FOR_EVERYONE.includes(currentTab) && !isAdmin()) showTab('stations');
   $('#footSetupWrap').hidden = !isAdmin();
   $('#userPill').hidden = !me.user;
-  if (me.user) $('#userPill').textContent = `${me.user.name} · ${roleName(me.user.role)}`;
+  if (me.user) $('#userPill').firstElementChild.textContent = `${me.user.name} · ${roleName(me.user.role)}`;
   renderRoom();
 }
 // `idle`: signed out after an hour without activity.
