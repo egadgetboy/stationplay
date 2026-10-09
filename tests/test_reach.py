@@ -147,18 +147,13 @@ FINDINGS = [
      "Checking", ["The HTTPS certificate for tv.example.com has expired"]),
     ("https://tv.example.com", lambda r: fails(connect_error(), unaccepted(9, "certificate is not yet valid")),
      "Checking", ["isn't valid yet"]),
-    ("https://tv.example.com", lambda r: fails(connect_error(), unaccepted(
-        62, "Hostname mismatch, certificate is not valid for 'tv.example.com'.")),
-     "Checking", ["is for another name, not tv.example.com"]),
-    ("https://tv.example.com", lambda r: fails(connect_error(), unaccepted(18, "self-signed certificate")),
-     "Checking", ["isn't trusted: it's self-signed"]),
-    ("https://tv.example.com", lambda r: fails(connect_error(), unaccepted(
-        20, "unable to get local issuer certificate")),
-     "Checking", ["isn't trusted: devices don't know who issued it"]),
+    ("https://tv.example.com", lambda r: fails(connect_error(), unaccepted(23, "certificate revoked")),
+     "Checking", ["has been revoked"]),
     # (As some systems say it, without OpenSSL's reason.)
     ("https://tv.example.com", lambda r: fails(connect_error(), ssl.SSLCertVerificationError(
         1, "certificate verify failed: certificate has expired")),
      "Checking", ["has expired"]),
+    # StationPlay's own port with https:// is wrong wherever it's checked from.
     ("https://tv.example.com:8443", lambda r: fails(connect_error(), ssl.SSLError(
         1, "[SSL: WRONG_VERSION_NUMBER] wrong version number")),
      "Checking", ["doesn't answer over HTTPS", "Leave the port out", "https://tv.example.com."]),
@@ -167,26 +162,21 @@ FINDINGS = [
       "couldn't reach StationPlay", "public port, 8443"]),
     ("https://tv.example.com", lambda r: answers(504), "Checking", ["504 Gateway Timeout"]),
     ("https://tv.example.com", lambda r: answers(522), "Checking", ["error (522)"]),
-    ("https://tv.example.com", lambda r: answers(404), "Checking",
-     ["Something other than this StationPlay answered at https://tv.example.com (404 Not Found)"]),
-    ("https://tv.example.com", lambda r: answers(200, html="<h1>Router login</h1>"), "Checking",
-     ["Something other than this StationPlay answered", "a page that isn't StationPlay's"]),
-    # Another StationPlay: it isn't waiting for this check.
-    ("https://tv.example.com", lambda r: answers(200, json={"stationplay": True}), "Checking",
-     ["Something other than this StationPlay answered"]),
-    ("https://tv.example.com", lambda r: answers(403), "Checking",
-     ["turned the check away", "(403 Forbidden)", "access list"]),
+    # What may be the router (see ROUTER_LIKE): nothing from here has worked,
+    # so it can't tell.
+    ("https://tv.example.com", lambda r: fails(connect_error(), unaccepted(18, "self-signed certificate")),
+     "Can't check from here",
+     ["From here, https://tv.example.com answers with a self-signed certificate. That's likely "
+      "your router itself", "apps away from home still work", "on a phone using mobile data",
+      "add a DNS override in your router that points tv.example.com at your reverse proxy's "
+      "address on your home network."]),
     ("http://tv.example.com", lambda r: lambda request: httpx.Response(
         301, headers={"Location": f"https://tv.example.com{request.url.raw_path.decode()}"}),
-     "Checking", ["http://tv.example.com redirects to https://tv.example.com. Use "
-                  "https://tv.example.com as the address instead."]),
-    ("https://tv.example.com", lambda r: answers(
-        302, headers={"Location": "https://auth.example.com/login?rd=https%3A%2F%2Ftv"}),
-     "Checking", ["redirects to https://auth.example.com/login instead of reaching StationPlay"]),
-    # Couldn't connect: nothing from here has worked, so it can't tell.
+     "Can't check from here", ["From here, http://tv.example.com redirects to "
+                               "https://tv.example.com. That's likely your router itself"]),
     ("https://tv.example.com", lambda r: fails(connect_error(), ConnectionRefusedError(111, "x")),
      "Can't check from here", ["Nothing answered at https://tv.example.com: the connection was "
-                                "refused", "NAT loopback", "mobile data"]),
+                                "refused", "NAT loopback", "mobile data", "DNS override"]),
     ("https://tv.example.com", lambda r: fails(httpx.ConnectTimeout("timed out")),
      "Can't check from here", ["Nothing answered at https://tv.example.com within 10 seconds"]),
     ("https://tv.example.com", lambda r: fails(httpx.RemoteProtocolError("closed")),
@@ -199,6 +189,48 @@ FINDINGS = [
      "Can't check from here", ["couldn't look up nas.tailnet.ts.net", "Tailscale"]),
     ("http://100.101.102.103:3310", lambda r: fails(connect_error(), ConnectionRefusedError(111, "x")),
      "Can't check from here", ["on a phone on the VPN"]),
+    ("http://100.101.102.103:3310", lambda r: answers(404), "Can't check from here",
+     ["From here, http://100.101.102.103:3310 answers with 404 Not Found", "on a phone on the VPN"]),
+]  # fmt: skip
+
+# What may be the home's router answering for the outside address, from
+# inside the home (it has no NAT loopback), as the owner's does: (what
+# answers, what the address does, as it's said, and what the finding says
+# once it counts).
+ROUTER_LIKE = [
+    # The router's own certificate: self-signed, and for another name.
+    (lambda r: fails(connect_error(), unaccepted(18, "self-signed certificate")),
+     "answers with a self-signed certificate", ["isn't trusted: it's self-signed"]),
+    (lambda r: fails(connect_error(), unaccepted(
+        62, "Hostname mismatch, certificate is not valid for 'tv.example.com'.")),
+     "answers with a certificate for another name", ["is for another name, not tv.example.com"]),
+    (lambda r: fails(connect_error(), unaccepted(20, "unable to get local issuer certificate")),
+     "answers with a certificate devices don't trust",
+     ["isn't trusted: devices don't know who issued it"]),
+    # Its sign-in page, or a warning page in its place.
+    (lambda r: answers(200, html="<h1>A potential DNS Rebind attack has been detected.</h1>"),
+     "answers with a page that isn't StationPlay's",
+     ["Something other than this StationPlay answered", "a page that isn't StationPlay's"]),
+    (lambda r: answers(403, html="<h1>Login</h1>"),
+     "answers with 403 Forbidden instead of StationPlay's answer",
+     ["turned the check away", "(403 Forbidden)", "access list"]),
+    (lambda r: answers(404), "answers with 404 Not Found instead of StationPlay's answer",
+     ["Something other than this StationPlay answered at https://tv.example.com (404 Not Found)"]),
+    # (Another StationPlay: it isn't waiting for this check.)
+    (lambda r: answers(200, json={"stationplay": True}),
+     "answers with a page that isn't StationPlay's",
+     ["Something other than this StationPlay answered"]),
+    # A redirect to it, or to a sign-in page.
+    (lambda r: answers(302, headers={"Location": "https://192.168.1.1/index.php"}),
+     "redirects to https://192.168.1.1/index.php",
+     ["redirects to https://192.168.1.1/index.php instead of reaching StationPlay"]),
+    (lambda r: answers(
+        302, headers={"Location": "https://auth.example.com/login?rd=https%3A%2F%2Ftv"}),
+     "redirects to https://auth.example.com/login",
+     ["redirects to https://auth.example.com/login instead of reaching StationPlay"]),
+    (lambda r: fails(connect_error(), ssl.SSLError(1, "[SSL: WRONG_VERSION_NUMBER] wrong version number")),
+     "doesn't answer over HTTPS",
+     ["doesn't answer over HTTPS", "Check that the address leads to your reverse proxy"]),
 ]  # fmt: skip
 
 
@@ -345,6 +377,51 @@ async def test_not_connecting_is_down_only_once_a_check_from_here_has_worked(cap
     assert caplog.records[-1].levelname == "WARNING"
 
 
+@pytest.mark.parametrize(("there", "found", "says"), ROUTER_LIKE)
+async def test_what_may_be_the_router_counts_only_once_a_check_from_here_has_worked(
+    there, found, says, caplog
+):
+    caplog.set_level(logging.INFO, logger="app.reach")
+    r = reach_at("https://tv.example.com")
+    clock = r.clock
+    answering(r, there(r))
+    for _ in range(4):  # (never down, however long it goes on)
+        cant = await r.check_now()
+        assert cant.state == "cant-check" and cant.short == "Can't check from here"
+        assert cant.detail.startswith(
+            f"From here, https://tv.example.com {found}. That's likely your router itself: many "
+            "routers answer for your home's own internet address when it's used from inside "
+            "your home, while apps away from home still work."
+        )
+        assert cant.detail.endswith(
+            "add a DNS override in your router that points tv.example.com at your reverse "
+            "proxy's address on your home network."
+        )
+        clock.now += 300  # type: ignore[attr-defined]
+    assert [rec.getMessage() for rec in caplog.records] == [cant.detail]  # (once)
+    # An app came in from outside lately: apps get in.
+    r.access.app_outside_at = clock.now  # type: ignore[attr-defined]
+    up = r.status()
+    assert up.state == "up" and up.short == "Apps are getting in"
+    assert f"From here, https://tv.example.com {found}: likely your router" in up.detail
+    r.access.app_outside_at = None  # type: ignore[attr-defined]
+    # A check from here worked: the router lets checks through, so now it
+    # counts (but one alone still doesn't make it down).
+    answering(r, ready(r))
+    assert (await r.check_now()).state == "up"
+    answering(r, there(r))
+    clock.now += 300  # type: ignore[attr-defined]
+    once = await r.check_now()
+    assert once.state == "checking" and once.detail.endswith("in a minute to be sure.")
+    for words in says:
+        assert words in once.detail, (words, once.detail)
+    clock.now += 60  # type: ignore[attr-defined]
+    down = await r.check_now()
+    assert down.state == "down"
+    assert "Checks from here got through earlier, so this isn't your router" in down.detail
+    assert caplog.records[-1].levelname == "WARNING"
+
+
 async def test_an_app_that_came_in_lately_makes_it_up():
     r = reach_at("https://tv.example.com")
     clock = r.clock
@@ -365,7 +442,7 @@ async def test_an_app_that_came_in_lately_makes_it_up():
     for _ in range(3):
         clock.now += 60  # type: ignore[attr-defined]
         assert (await r.check_now()).state == "up"
-    # But a problem that isn't about connecting isn't hidden by it.
+    # But a problem that can't be the router isn't hidden by it.
     answering(r, ready(r))
     await r.check_now()
     answering(r, answers(502))
