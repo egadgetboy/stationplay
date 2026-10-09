@@ -10,9 +10,12 @@ tries what an attacker would and prints PASS or FAIL for each: routes
 without and with the wrong role; forged headers; CSRF from another site;
 path traversal; oversized bodies; script in names; guessing or reusing keys,
 play addresses and reach nonces; reaching Media and stations a level hides;
-the sign-in, PIN and link-code limits; who a linked device lists away from
-home; and setting a passcode or changing a password from the apps (as an
-outsider, as someone else, an Admin's passcode, its format, the limits).
+the sign-in, passcode and link-code limits; who a linked device lists away
+from home; setting a passcode or changing a password from the apps (as an
+outsider, as someone else, an Admin's passcode, its format, the limits);
+Admin alerts and the web address they're sent to (only for Admins; only
+http and https, no redirects followed, never waited on); and each person's
+languages (their own only, and only languages StationPlay knows).
 
 It's a tool, not part of CI (the test suite covers these as unit tests). Run
 it from the repo root:  python -m tools.attack_check   (add -v to see every
@@ -178,7 +181,7 @@ async def _attacks(checks: Checks, app, home: str, net: str) -> None:
         kid_level = next(lv["id"] for lv in levels if lv["builtin"] == "kid")
         await c.put(f"/api/access/users/{kit['id']}/viewing", json={"level": kid_level},
                     headers=admin_h)  # fmt: skip
-        # Give the User a PIN, for the PIN brute-force test later.
+        # Give the User a passcode, for the passcode brute-force test later.
         await c.put(f"/api/access/users/{sam['id']}/picker", json={"pin": "4321"}, headers=admin_h)
 
     # 1) The public port: no Plex, no home-only addresses, sign-in required.
@@ -378,8 +381,8 @@ async def _attacks(checks: Checks, app, home: str, net: str) -> None:
         checks.ok(r.status_code == 404, "a wrong reach nonce is answered as not found",
                   f"got {r.status_code}")  # fmt: skip
 
-    # 10) Brute-forcing the sign-in and the device PIN.
-    checks.section("The sign-in and PIN limits")
+    # 10) Brute-forcing the sign-in and the device passcode.
+    checks.section("The sign-in and passcode limits")
     # From the internet, behind a proxy that sets X-Real-IP (so the limit is
     # by that address). A dedicated address, so this doesn't spend any other.
     guesser = {"X-Real-IP": "203.0.113.40", "X-Forwarded-Proto": "https"}
@@ -391,7 +394,7 @@ async def _attacks(checks: Checks, app, home: str, net: str) -> None:
                                headers=guesser)  # fmt: skip
         checks.ok(blocked.status_code == 429, "sign-in waits after too many wrong passwords",
                   f"got {blocked.status_code}")  # fmt: skip
-    # Many PIN guesses at once can't beat the five-tries limit (the limit is
+    # Many passcode guesses at once can't beat the five-tries limit (the limit is
     # by person, so it isn't spent by anything above).
     await _pin_limit(checks, app, home, device_key)
 
@@ -418,6 +421,12 @@ async def _attacks(checks: Checks, app, home: str, net: str) -> None:
 
     # 14) Passcodes and passwords from the apps: only one's own, as the rules say.
     await _own_pin_and_password(checks, app, home, net, admin_h, sam_h, kit_h, device_key)
+
+    # 15) Admin alerts, and the web address they're sent to: only for Admins.
+    await _alerts_and_notify(checks, app, home, net, admin_h, sam_h, kit_h)
+
+    # 16) Each person's languages: only their own, and only known ones.
+    await _languages(checks, app, home, net, admin_h, sam_h, kit_h)
 
 
 async def _media_away(
@@ -728,9 +737,240 @@ async def _own_pin_and_password(
                   f"got {off.status_code}, {r.status_code}, {on_page.status_code}")  # fmt: skip
 
 
+class _Hook:
+    """A web address on this machine for alerts to be sent to: /hook answers
+    200, /redirect sends them on to /landed, and /slow never answers. It
+    notes the paths asked for."""
+
+    def __init__(self) -> None:
+        self.asked: list[str] = []
+        self.port = 0
+        self._server: asyncio.Server | None = None
+        self._answering: set[asyncio.Task] = set()
+
+    async def start(self) -> None:
+        self._server = await asyncio.start_server(self._answer, "127.0.0.1", 0)
+        self.port = self._server.sockets[0].getsockname()[1]
+
+    async def stop(self) -> None:
+        if self._server is not None:
+            self._server.close()
+        for task in self._answering:
+            task.cancel()
+
+    def url(self, path: str) -> str:
+        return f"http://127.0.0.1:{self.port}{path}"
+
+    async def _answer(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        task = asyncio.current_task()
+        if task is not None:
+            self._answering.add(task)
+        try:
+            head = await reader.readuntil(b"\r\n\r\n")
+            path = head.split(b" ", 2)[1].decode()
+            self.asked.append(path.split("?")[0])
+            if path.startswith("/slow"):
+                await asyncio.sleep(30)
+            elif path.startswith("/redirect"):
+                writer.write(f"HTTP/1.1 302 Found\r\nLocation: {self.url('/landed')}\r\n"
+                             "Content-Length: 0\r\n\r\n".encode())  # fmt: skip
+            else:
+                writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+            await writer.drain()
+        except (asyncio.IncompleteReadError, ConnectionError, IndexError):
+            pass
+        finally:
+            writer.close()
+            self._answering.discard(task)  # type: ignore[arg-type]
+
+
+async def _alerts_and_notify(
+    checks: Checks, app, home: str, net: str, admin_h: dict, sam_h: dict, kit_h: dict
+) -> None:
+    """GET /api/internal/alerts and the web address alerts go to: only an
+    Admin reads them or sets it; it's only ever http or https; a redirect is
+    never followed; one that never answers holds nothing else up; and the log
+    never has the address whole."""
+    checks.section("Admin alerts, and the web address they're sent to")
+    ctx = app.state.ctx
+    https = {"X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.80"}
+    hook = _Hook()
+    await hook.start()
+    try:
+        async with httpx.AsyncClient(base_url=net) as out:
+            for token in ({}, {"Authorization": "Bearer made-up"}):
+                for method, path in (("GET", "/api/internal/alerts"), ("GET", "/api/notify"),
+                                     ("PUT", "/api/notify"), ("POST", "/api/notify/test")):  # fmt: skip
+                    r = await out.request(method, path, headers={**https, **token},
+                                          json={"on": True, "url": hook.url("/hook")})  # fmt: skip
+                    made_up = " with a made-up token" if token else ""
+                    checks.ok(r.status_code == 401, f"an outsider can't {method} {path}{made_up}",
+                              f"got {r.status_code}")  # fmt: skip
+            r = await out.get("/api/internal/alerts", headers=admin_h)
+            checks.ok(r.status_code == 403, "alerts aren't sent over plain HTTP from the internet",
+                      f"got {r.status_code}")  # fmt: skip
+            for who, headers in (("a User", sam_h), ("a Kid", kit_h)):
+                r = await out.get("/api/internal/alerts", headers={**https, **headers})
+                checks.ok(r.status_code == 403, f"{who} can't read alerts from the internet",
+                          f"got {r.status_code}")  # fmt: skip
+        async with httpx.AsyncClient(base_url=home) as c:
+            for who, headers in (("a User", sam_h), ("a Kid", kit_h)):
+                for method, path in (("GET", "/api/internal/alerts"), ("GET", "/api/notify"),
+                                     ("PUT", "/api/notify"), ("POST", "/api/notify/test")):  # fmt: skip
+                    r = await c.request(method, path, headers=headers,
+                                        json={"on": True, "url": hook.url("/hook")})  # fmt: skip
+                    checks.ok(r.status_code == 403, f"{who} can't {method} {path}",
+                              f"got {r.status_code}")  # fmt: skip
+            checks.ok(not ctx.notify.on and not hook.asked,
+                      "nothing was set or sent for them")  # fmt: skip
+            async with httpx.AsyncClient(base_url=home) as page:
+                await page.post("/api/access/sign-in", json=USER)
+                status = (await page.get("/api/status")).json()
+                checks.ok("alerts" not in status, "a User's page isn't told the alerts")
+            r = await c.get("/api/internal/alerts", headers=admin_h)
+            checks.ok(r.status_code == 200 and isinstance(r.json().get("alerts"), list),
+                      "an Admin reads the alerts", f"got {r.status_code}")  # fmt: skip
+
+            # Only http and https, however it's dressed up.
+            for url in (
+                "file:///etc/passwd", "ftp://127.0.0.1/x", "gopher://127.0.0.1:70/_x",
+                "javascript:alert(1)", "data:text/plain,hi", "dict://127.0.0.1:11211/",
+                "//127.0.0.1/hook", "127.0.0.1/hook", "http:///hook", "http://exa mple.com/",
+                "http://127.0.0.1/\r\nX-Injected: 1", "  ", "https://example.com/" + "x" * 600,
+                "\u0068ttp://127.0.0.1/hook\u0000",
+            ):  # fmt: skip
+                saved = await c.put("/api/notify", headers=admin_h, json={"on": True, "url": url})
+                tested = await c.post("/api/notify/test", headers=admin_h, json={"url": url})
+                checks.ok(saved.status_code in (400, 422) and tested.status_code in (400, 422)
+                          and not ctx.notify.on,
+                          f"the web address {url[:40]!r} is refused",
+                          f"got {saved.status_code}, {tested.status_code}")  # fmt: skip
+            checks.ok(not hook.asked, "nothing was sent to a refused address")
+
+            # A redirect is never followed.
+            tested = await c.post("/api/notify/test", headers=admin_h,
+                                  json={"url": hook.url("/redirect"), "format": "json"})  # fmt: skip
+            sent = tested.json().get("sent", {}) if tested.status_code == 200 else {}
+            checks.ok(sent.get("ok") is False and "/landed" not in hook.asked
+                      and hook.asked.count("/redirect") == 2,
+                      "a redirect is never followed (and it's tried once more)",
+                      f"got {tested.status_code}, {sent}, asked {hook.asked}")  # fmt: skip
+
+            # One that never answers is given 5 seconds (and one more try),
+            # and holds nothing else up meanwhile.
+            await c.put("/api/notify", headers=admin_h,
+                        json={"on": True, "url": hook.url("/slow?token=sekret-token")})  # fmt: skip
+            began = asyncio.get_running_loop().time()
+            slow = asyncio.ensure_future(
+                c.post("/api/notify/test", headers=admin_h, json={}, timeout=30)
+            )
+            await asyncio.sleep(0.5)
+            quick = await c.get("/api/v1/server")
+            waited = asyncio.get_running_loop().time() - began
+            checks.ok(quick.status_code == 200 and waited < 2,
+                      "a web address that never answers holds nothing else up",
+                      f"{waited:.1f}s")  # fmt: skip
+            tested = await slow
+            took = asyncio.get_running_loop().time() - began
+            sent = tested.json().get("sent", {}) if tested.status_code == 200 else {}
+            checks.ok(sent.get("status") == "no answer within 5 seconds" and took < 15,
+                      "a web address that never answers is given 5 seconds, and one more try",
+                      f"{sent} after {took:.1f}s")  # fmt: skip
+            # An alert starting meanwhile is never waited on.
+            began = asyncio.get_running_loop().time()
+            ctx.alerts.start("backups", "The attack check's own alert.")
+            r = await c.get("/api/internal/alerts", headers=admin_h)
+            waited = asyncio.get_running_loop().time() - began
+            listed = [a["sentence"] for a in r.json().get("alerts", [])]
+            checks.ok("The attack check's own alert." in listed and waited < 1,
+                      "an alert goes out in the background", f"{waited:.1f}s")  # fmt: skip
+            ctx.alerts.fix("backups", "The attack check's alert is over.")
+            logs = (await c.get("/api/logs?limit=500", headers=admin_h)).json().get("text", "")
+            checks.ok("sekret-token" not in logs and "/slow" not in logs,
+                      "the log never has the web address whole")  # fmt: skip
+            await c.put("/api/notify", headers=admin_h, json={"on": False, "url": ""})
+    finally:
+        await hook.stop()
+
+
+async def _languages(
+    checks: Checks, app, home: str, net: str, admin_h: dict, sam_h: dict, kit_h: dict
+) -> None:
+    """PUT /api/internal/languages and /api/internal/items/{key}/languages:
+    an outsider can't; one person's are never another's, whatever's sent;
+    only languages StationPlay knows; and only for what someone can see."""
+    checks.section("Each person's languages")
+    https = {"X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.90"}
+    async with httpx.AsyncClient(base_url=net) as out:
+        for method, path in (("PUT", "/api/internal/languages"),
+                             ("PUT", "/api/internal/items/300/languages"),
+                             ("DELETE", "/api/internal/items/300/languages")):  # fmt: skip
+            for token in ({}, {"Authorization": "Bearer made-up"}):
+                r = await out.request(
+                    method, path, json={"audio": "jpn"}, headers={**https, **token}
+                )
+                made_up = " with a made-up token" if token else ""
+                checks.ok(r.status_code == 401, f"an outsider can't {method} {path}{made_up}",
+                          f"got {r.status_code}")  # fmt: skip
+        r = await out.put("/api/internal/languages", json={"audio": "jpn"}, headers=sam_h)
+        checks.ok(r.status_code == 403, "languages aren't set over plain HTTP from the internet",
+                  f"got {r.status_code}")  # fmt: skip
+    async with httpx.AsyncClient(base_url=home) as c:
+
+        async def mine(headers: dict) -> dict:
+            return (await c.get("/api/internal/me", headers=headers)).json().get("languages", {})
+
+        kits, admins = await mine(kit_h), await mine(admin_h)
+        kit = next(u.id for u in app.state.ctx.db.users() if u.name == KID["name"])
+        r = await c.put("/api/internal/languages", headers=sam_h,
+                        json={"audio": "jpn", "captions": True, "user": KID["name"], "id": kit,
+                              "userId": kit, "name": KID["name"], "user_id": kit})  # fmt: skip
+        sams = await mine(sam_h)
+        checks.ok(r.status_code == 200 and (sams.get("audio") or {}).get("code") == "jpn"
+                  and await mine(kit_h) == kits and await mine(admin_h) == admins,
+                  "languages sent with someone else's name or id are the sender's own",
+                  f"got {r.status_code}")  # fmt: skip
+        r = await c.put("/api/internal/items/300/languages", headers=sam_h,
+                        json={"audio": "fre", "user": KID["name"], "id": kit})  # fmt: skip
+        kit_item = (await c.get("/api/internal/items/300", headers=kit_h)).json()
+        checks.ok(r.status_code == 200 and kit_item.get("languages") == {"item": None, "show": None},
+                  "a show's or movie's languages are the sender's own",
+                  f"got {r.status_code}, {kit_item.get('languages')}")  # fmt: skip
+        played = await c.post("/api/internal/play", headers=kit_h,
+                              json={"key": "300", "device": TV})  # fmt: skip
+        checks.ok(played.status_code == 200 and played.json().get("chosen") is None,
+                  "another's languages never choose what someone plays",
+                  f"got {played.status_code}")  # fmt: skip
+
+        # Only languages StationPlay knows, as codes; captions true or false.
+        before = await mine(sam_h)
+        for body in (
+            {"audio": "klingon"}, {"audio": ""}, {"audio": "e" * 41}, {"audio": "<script>"},
+            {"audio": "eng'; DROP TABLE languages; --"}, {"audio": "../../etc/passwd"},
+            {"audio": 7}, {"audio": ["eng"]}, {"audio": {"code": "eng"}}, {"audio": True},
+            {"captionLanguage": "zz"}, {"captionLanguage": "eng\u0000"}, {"captions": "true"},
+            {"captions": 1}, {"captions": None}, {"captions": [True]},
+        ):  # fmt: skip
+            r = await c.put("/api/internal/languages", headers=sam_h, json=body)
+            checks.ok(r.status_code == 400 and await mine(sam_h) == before,
+                      f"the languages {body!r} are refused", f"got {r.status_code}")  # fmt: skip
+        for body in ({"audio": "xx"}, {"captions": "no"}, {"captionLanguage": 12}):
+            r = await c.put("/api/internal/items/300/languages", headers=sam_h, json=body)
+            checks.ok(r.status_code == 400, f"a movie's languages {body!r} are refused",
+                      f"got {r.status_code}")  # fmt: skip
+
+        # Only for what someone can see, and only shows, episodes and movies.
+        for key in ("301", "211", "110", "999999", "..%2f..%2fetc", "300%20OR%201=1", "-1"):
+            for method in ("PUT", "DELETE"):
+                r = await c.request(method, f"/api/internal/items/{key}/languages",
+                                    headers=kit_h, json={"audio": "eng"})  # fmt: skip
+                checks.ok(r.status_code in (400, 404, 405),
+                          f"a Kid can't {method} languages for {key}", f"got {r.status_code}")  # fmt: skip
+
+
 async def _pin_limit(checks: Checks, app, home: str, device_key: str) -> None:
-    """Try every wrong PIN at once and confirm the limit holds and none gets
-    in. (The User already has the PIN 4321 from setup.)"""
+    """Try every wrong passcode at once and confirm the limit holds and none
+    gets in. (The User already has the passcode 4321 from setup.)"""
     async with httpx.AsyncClient(base_url=home, headers={"StationPlay-Device": device_key}) as c:
         people = (await c.get("/api/internal/picker")).json()["people"]
         sam = next(p for p in people if p["name"] == USER["name"])
@@ -742,7 +982,7 @@ async def _pin_limit(checks: Checks, app, home: str, device_key: str) -> None:
         codes = await asyncio.gather(*(guess(f"{n:04d}") for n in range(4300, 4400) if n != 4321))
         checks.ok(
             codes.count(403) <= access.TRIES and 200 not in codes and 429 in codes,
-            "many PIN guesses at once can't beat the limit or get in",
+            "many passcode guesses at once can't beat the limit or get in",
             f"checked={codes.count(403)} got-in={codes.count(200)}",
         )
 

@@ -247,6 +247,7 @@ def tracks(found: tuple[Track, ...], audio: bool) -> list[dict]:
             "id": t.id,
             "name": ondemand.track_name(t, audio),
             "language": plain(t.language) or None,
+            "languageCode": languages.track_code(t),
             "codec": t.codec,
             "default": t.default,
             **({} if audio else {"forced": t.forced, "external": t.external}),

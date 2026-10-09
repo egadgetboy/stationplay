@@ -5051,8 +5051,8 @@ async function loadNotify() {
   if (body.dataset.editing) return;  // (not while it's being changed)
   const edit = () => { body.dataset.editing = '1'; };
   const on = h('input', { type: 'checkbox', checked: got.on, oninput: edit });
-  const url = h('input', { type: 'url', id: 'notifyUrl', value: got.url, placeholder: 'https://ntfy.sh/your-topic', maxlength: 500, autocomplete: 'off', spellcheck: 'false', 'aria-describedby': 'notifyUrlHint', oninput: edit, style: 'width:min(100%,420px)' });
-  const format = h('select', { id: 'notifyFormat', style: 'width:auto', 'aria-describedby': 'notifyFormatHint', onchange: edit },
+  const url = h('input', { type: 'url', id: 'notifyUrl', value: got.url, placeholder: 'https://ntfy.sh/your-topic', maxlength: 500, autocomplete: 'off', spellcheck: 'false', 'aria-describedby': 'notifyUrlHint', oninput: edit, style: 'width:min(100%,420px);justify-self:start' });
+  const format = h('select', { id: 'notifyFormat', style: 'width:auto;justify-self:start', 'aria-describedby': 'notifyFormatHint', onchange: edit },
     h('option', { value: 'text' }, 'Plain text, for ntfy'), h('option', { value: 'json' }, 'JSON, for Gotify, Home Assistant and others'));
   format.value = got.format;
   const result = h('span', { class: 'hint', role: 'status' });

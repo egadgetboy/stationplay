@@ -133,6 +133,52 @@ On the public port, only `GET /api/v1/server` (and StationPlay's check of
 itself) answers until signing in is on. API tokens (`docs/api.md`) don't
 work here: these addresses are for the apps' own sign-ins.
 
+## What 1.29.0 asks of the apps
+
+1. **Options: Audio language and Captions.** Ask `GET /api/internal/me`
+   when Options opens. Offer **Audio language** (each file's own, or one of
+   `languages.choices`, listed by `name`) and **Captions**: on or off, and
+   their language (the audio's, or one of `choices`). Save each change with
+   `PUT /api/internal/languages`: it holds on every device the person uses
+   (see Languages).
+2. **Playing.** Send `device.subtitles` with `POST /api/internal/play` (the
+   subtitle formats the player shows itself), and don't send `audio` or
+   `subtitle` when a program starts: StationPlay chooses from the person's
+   languages. When `chosen` isn't null, select `chosen.audio` and
+   `chosen.subtitle` in the player (a subtitle file of its own comes from
+   `subtitles[].url`; one that's `drawnSubtitle` is already in the
+   picture), and show `chosen.audioWhy` and `chosen.subtitleWhy` in the
+   player's info. When it's null, the player chooses, as before.
+3. **The player's Audio & subtitles.** Offer **Remember for the whole
+   show**, on to start for an episode (a movie's choice is the movie's
+   own). When the viewer chooses a sound track, or subtitles (or none), keep
+   it with `PUT /api/internal/items/{key}/languages`: with it on, for the
+   show (`showKey`), clearing the episode's own (`DELETE` its key) so the
+   show's holds; with it off, for the episode alone (or the movie). Send
+   the track's `languageCode` as `audio`; for subtitles, `captions: true`
+   and their `languageCode` as `captionLanguage` (a forced track, or none:
+   `captions: false`). A track whose `languageCode` is null can't be kept:
+   leave that one out. Then switch tracks as before: the player switches
+   among a file's own; for a copy, ask `POST /api/internal/play` again,
+   with `audio` and `subtitle` as the viewer has them (null for none) and
+   `startMs` where they are, and `POST` the old one's `leave`.
+4. **Alerts, for Admins.** For an Admin (`user.role` is `admin`, or
+   signing in is off), ask `GET /api/internal/alerts` when the app opens
+   and comes back to the front, and every few minutes while it's open. Show
+   the alerts now, each `sentence` as it is with how long it's lasted (see
+   Admin alerts), and say when one is fixed. Android also asks every 15
+   minutes in the background (WorkManager), notifying once for each new
+   `id`, and once when it's fixed; Apple's apps, when iOS lets them refresh
+   in the background, as well as when they open; Roku's shows how many
+   there are in the guide's header, opening the list.
+5. **Passcode.** StationPlay's page says passcode now, as the apps do; the
+   fields are still `pin`.
+
+A server before 1.29.0 doesn't send `languages` (in `GET /api/internal/me`
+and an item's details), `chosen` or `languageCode`, and answers 404 for the
+new addresses: without them, leave out what they'd offer (and show no
+alerts).
+
 ## POST /api/internal/link
 
 Open to anyone: starts signing in with a code. Send which app this is, and
@@ -745,6 +791,7 @@ A show's, movie's or episode's details: its card's fields, and more.
 | `audio[].id` | string | The track's ID |
 | `audio[].name` | string | How to list it, such as "English · Dolby Digital · 5.1" |
 | `audio[].language` | string or null | Its language |
+| `audio[].languageCode` | string or null | Its language's code, such as `jpn` (from 1.29.0): what to save when the viewer chooses it (see Languages); null if it isn't known |
 | `audio[].codec` | string | Its format, such as `aac`, `ac3`, `eac3`, `dts`, `truehd` |
 | `audio[].default` | boolean | Whether the file says to play it unless asked otherwise |
 | `audio[].index` | number or null | Its place among all the file's tracks (0 is the first) |
@@ -752,6 +799,7 @@ A show's, movie's or episode's details: its card's fields, and more.
 | `subtitles[].id` | string | The track's ID |
 | `subtitles[].name` | string | How to list it, such as "Spanish · Forced" |
 | `subtitles[].language` | string or null | Its language |
+| `subtitles[].languageCode` | string or null | Its language's code (from 1.29.0), as `audio[].languageCode` |
 | `subtitles[].codec` | string | Its format: `srt`, `ass`, `vtt` and `mov_text` are text; `pgs` and `vobsub` are pictures |
 | `subtitles[].default` | boolean | Whether the file says to show it unless asked otherwise |
 | `subtitles[].forced` | boolean | Whether it's only the parts in another language |
@@ -879,26 +927,29 @@ and `deviceName` (as for signing in, for the log):
             "video": [{"codec": "h264", "width": 3840, "height": 2160, "bitDepth": 8},
                       {"codec": "hevc", "width": 3840, "height": 2160, "bitDepth": 10}],
             "hdr": ["hdr10", "hlg"],
-            "audio": ["aac", "ac3", "eac3", "mp3", "opus", "flac"]},
+            "audio": ["aac", "ac3", "eac3", "mp3", "opus", "flac"],
+            "subtitles": ["srt", "ass", "vtt", "pgs"]},
  "app": "StationPlay for Android TV", "deviceName": "Den"}
 ```
 
 `hdr` lists only what the screen shows (`hdr10`, `hlg`, `dv` for Dolby
-Vision); `[]` for a screen without HDR. From 1.29.0, `device.subtitles`
-lists the subtitle formats its player shows itself, in a file it plays as
-it is or beside a copy (`srt`, `ass`, `vtt`, `mov_text`, `pgs`, `vobsub`):
-a subtitle chosen for the person in another format is drawn in (see
-Languages). Without it, every one chosen for them is. Add `"version"` (a version's `id`
-from its details) to play that version. Without it, the best version the
-device can play as it is plays, unless the app sends `"maxKbps"`: how much
-its connection to StationPlay carries, as it measured lately (with
-`/api/internal/speed-test`). Then the best one that connection keeps up with
-plays (it needs no more than two-thirds of it, on average), or with none,
-the smallest the device can play. A file plays as it is when the
-device can play its file type, its picture's format at its size and bit
-depth, its HDR (Dolby Vision profile 5 needs `dv`; other profiles also play
-as the HDR10, HLG or ordinary picture beneath), and the sound of its default
-track (or of `audio`, if it's sent).
+Vision); `[]` for a screen without HDR. From 1.29.0, `subtitles` lists the
+subtitle formats its player shows itself (`srt`, `ass`, `vtt`, `mov_text`,
+`pgs`, `vobsub`), in a file it plays as it is or beside a copy: a subtitle
+chosen for the person in another format is drawn in (see Languages), and
+without the list, every one chosen for them is.
+
+Add `"version"` (a version's `id` from its details) to play that version.
+Without it, the best version the device can play as it is plays, unless the
+app sends `"maxKbps"`: how much its connection to StationPlay carries, as it
+measured lately (with `/api/internal/speed-test`). Then the best one that
+connection keeps up with plays (it needs no more than two-thirds of it, on
+average), or with none, the smallest the device can play. A file plays as it
+is when the device can play its file type, its picture's format at its size
+and bit depth, its HDR (Dolby Vision profile 5 needs `dv`; other profiles
+also play as the HDR10, HLG or ordinary picture beneath), and the sound of
+its default track (or of `audio`, if it's sent, or else of the one chosen
+for the person: see Languages).
 
 When it can't, StationPlay 1.24.0 makes a copy it can (`features` lists
 `convert`), for an app that says it takes one: `device.hls` lists what its
@@ -1016,6 +1067,7 @@ so plainly.
 | `audio[].id` | string | As in its details |
 | `audio[].name` | string | As in its details |
 | `audio[].language` | string or null | As in its details |
+| `audio[].languageCode` | string or null | As in its details |
 | `audio[].codec` | string | As in its details |
 | `audio[].default` | boolean | As in its details |
 | `audio[].index` | number or null | As in its details |
@@ -1023,6 +1075,7 @@ so plainly.
 | `subtitles[].id` | string | As in its details |
 | `subtitles[].name` | string | As in its details |
 | `subtitles[].language` | string or null | As in its details |
+| `subtitles[].languageCode` | string or null | As in its details |
 | `subtitles[].codec` | string | As in its details |
 | `subtitles[].default` | boolean | As in its details |
 | `subtitles[].forced` | boolean | As in its details |

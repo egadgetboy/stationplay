@@ -314,8 +314,12 @@ def test_playing_what_each_person_chose(app):
         assert play(home, "202", tia)["chosen"]["subtitle"] == "2027"
         details = home.get("/api/internal/items/202", headers=sam).json()["languages"]
         assert details == {"item": None, "show": None}
-        mine = home.get("/api/internal/items/202", headers=tia).json()["languages"]
+        whole = home.get("/api/internal/items/202", headers=tia).json()
+        mine = whole["languages"]
         assert mine["item"] is None and mine["show"]["audio"]["code"] == "jpn"
+        # Each track's code: what the player keeps when the viewer picks it.
+        assert [t["languageCode"] for t in whole["audio"]] == ["jpn", "eng", "eng"]
+        assert [t["languageCode"] for t in whole["subtitles"]] == ["eng", "eng", "jpn"]
 
 
 def test_languages_that_wont_do_are_refused(app):
