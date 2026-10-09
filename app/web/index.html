@@ -5055,7 +5055,7 @@ async function loadAway() {
 // undefined while the number won't do.
 function mediaAwayFields(got, onEdit) {
   const most = got.mediaMbpsMost;
-  const pick = h('select', { id: 'mediaAway', onchange: () => { onEdit(); paint(); } },
+  const pick = h('select', { id: 'mediaAway', style: 'width:auto', onchange: () => { onEdit(); paint(); } },
     h('option', { value: 'original' }, 'Original'), h('option', { value: 'cap' }, 'Up to…'));
   pick.value = got.mediaMbps ? 'cap' : 'original';
   const mbps = h('input', { type: 'number', id: 'mediaAwayMbps', min: 1, max: most, step: 1, value: got.mediaMbps || '', placeholder: 'Mbps', 'aria-label': 'Up to how many Mbps', style: 'width:100px', oninput: onEdit });
