@@ -171,9 +171,10 @@ list `library`.
   (as everything for the apps is there). Its sign-in is checked each time
   it's asked for there (at home, every minute), so it stops the moment the
   sign-in ends; turning watching away from home off ends every session
-  started there. Anything else (a guessed address, one that has ended, or
-  one started at home) is answered 404 by the Gate itself, before anything
-  else sees it (`access.Access.play_outside`).
+  started there. Anything else (a guessed address, one started at home, or
+  one that has ended) is answered 404. Only a session started there that's
+  still going gets past the Gate (`access.Access.play_outside`); the Gate
+  answers the rest itself, before anything else sees them.
 - **Quality away from home** (an Admin's setting, kept with watching away
   from home): **Original** plays each title as it would at home; **Up to**
   1 to 200 Mbps plays a version within it as it would at home (the best the
