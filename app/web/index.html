@@ -931,7 +931,7 @@
       <div class="adduser">
         <div class="field"><label for="newUserName">Name</label><input type="text" id="newUserName" maxlength="40" autocomplete="off" required></div>
         <div class="field"><label for="newUserPassword">Password</label><input type="password" id="newUserPassword" minlength="__PASSWORD_MIN__" maxlength="__PASSWORD_MAX__" autocomplete="new-password" required></div>
-        <div class="field" id="newUserPinField"><label for="newUserPin">PIN (optional)</label><input type="text" id="newUserPin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off" placeholder="4 digits"></div>
+        <div class="field" id="newUserPinField"><label for="newUserPin">Passcode (optional)</label><input type="text" id="newUserPin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off" placeholder="4 digits"></div>
         <div class="field"><label for="newUserRole">Role</label><select id="newUserRole"><option value="user">User</option><option value="admin">Admin</option></select></div>
         <div class="field" id="newUserStationsField"><label for="newUserStations">Stations they can make</label><select id="newUserStations"></select></div>
         <button class="btn primary" type="submit">Add</button>
@@ -2220,7 +2220,7 @@ const SETUP_PAGES = {
       return h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, u.name), h('div', { class: 'opt-ctl' }, select));
     });
     return { node: h('div', { class: 'playback' }, intro, ...rows,
-      h('p', { class: 'hint', style: 'margin:0' }, 'On the Access tab, Stations beside someone’s name allows or blocks a station for them, and Devices chooses which devices they’re on and gives them a PIN.')),
+      h('p', { class: 'hint', style: 'margin:0' }, 'On the Access tab, Stations beside someone’s name allows or blocks a station for them, and Devices chooses which devices they’re on and gives them a passcode.')),
     save: async () => {
       for (const [id, [select, was]] of picks) {
         if (select.value === was) continue;
@@ -5819,7 +5819,7 @@ $('#showOnDefault').addEventListener('change', async e => {
   catch (err) { toast(err.message, true); }
   loadAccess();
 });
-// Someone's devices: where they show, their PIN, and an invite code.
+// Someone's devices: where they show, their passcode, and an invite code.
 let devicesFor = null;
 function openUserDevices(u) {
   devicesFor = u;
@@ -5857,25 +5857,25 @@ function paintUserDevices() {
     u.showOn === 'home' ? h('span', { class: 'small' }, 'Away from home too, on:') : null,
     ...(boxes.length ? boxes.map(([id, box]) => h('label', {}, box, ` ${linked.devices.find(d => d.id === id).name}`)) : [h('span', { class: 'muted small' }, 'No devices are linked yet.')]),
     boxes.length ? h('div', {}, h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ showOn: u.showOn, devices: boxes.filter(([, b]) => b.checked).map(([id]) => id) }, 'Saved') }, 'Save devices')) : null) : null;
-  const pin = h('input', { type: 'text', inputmode: 'numeric', pattern: '[0-9]{4}', maxlength: 4, placeholder: '4 digits', autocomplete: 'off', 'aria-label': 'New PIN' });
+  const pin = h('input', { type: 'text', inputmode: 'numeric', pattern: '[0-9]{4}', maxlength: 4, placeholder: '4 digits', autocomplete: 'off', 'aria-label': 'New passcode' });
   const invite = h('div', { class: 'small' });
   $('#userDevicesBody').replaceChildren(...[
     h('div', { class: 'playback' },
       h('strong', {}, 'Show on'),
       radio('home', 'Devices at home', ' On every linked device’s list while it’s at home, on your network or through your VPN. Away from home, only on a device they signed in on, or one you choose. Suits a household.'),
       u.showOn === 'home' ? pick : null,
-      radio('all', 'All devices', byName ? ' On every linked device’s list, at home and away: a device away from home, such as a phone at a friend’s, shows their name too.' : ' Needs a password or a PIN, as a device away from home would show their name for anyone there to pick.', !byName),
+      radio('all', 'All devices', byName ? ' On every linked device’s list, at home and away: a device away from home, such as a phone at a friend’s, shows their name too.' : ' Needs a password or a passcode, as a device away from home would show their name for anyone there to pick.', !byName),
       radio('selected', 'Selected devices', ' Only on the devices you choose, at home and away, such as a family iPad that travels.'),
       u.showOn === 'selected' ? pick : null,
-      radio('signed-in', 'Only where they sign in', byName ? ' On no list until they sign in on a device, by name; then on that device’s, at home and away.' : ' Needs a password or a PIN, to sign in by name.', !byName)),
+      radio('signed-in', 'Only where they sign in', byName ? ' On no list until they sign in on a device, by name; then on that device’s, at home and away.' : ' Needs a password or a passcode, to sign in by name.', !byName)),
     h('div', { class: 'playback' },
-      h('strong', {}, 'PIN'),
+      h('strong', {}, 'Passcode'),
       h('p', { class: 'hint', style: 'margin:0' }, u.pin
-        ? `${u.name} has a PIN: a device asks for it when they pick themselves.`
-        : `${u.name} has no PIN, so anyone using a device they’re on can pick them. ${u.role === 'admin' ? 'As an Admin, they give their password instead.' : ''}`),
+        ? `${u.name} has a passcode: a device asks for it when they pick themselves.`
+        : `${u.name} has no passcode, so anyone using a device they’re on can pick them. ${u.role === 'admin' ? 'As an Admin, they give their password instead.' : ''}`),
       h('div', { class: 'scan-set' }, pin,
-        h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ pin: pin.value.trim() }, 'PIN saved') }, u.pin ? 'Change PIN' : 'Set PIN'),
-        u.pin ? h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ pin: '' }, 'PIN removed') }, 'Remove PIN') : null)),
+        h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ pin: pin.value.trim() }, 'Passcode saved') }, u.pin ? 'Change passcode' : 'Set passcode'),
+        u.pin ? h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ pin: '' }, 'Passcode removed') }, 'Remove passcode') : null)),
     byName ? h('div', { class: 'playback' },
       h('strong', {}, 'Invite code'),
       h('p', { class: 'hint', style: 'margin:0' }, `For signing in on a device the first time without a password: ${u.name} chooses Sign in on Who’s tuning in? and enters their name and the code. It works once, for 7 days.`),

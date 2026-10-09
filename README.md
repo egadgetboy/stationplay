@@ -857,8 +857,8 @@ StationPlay learns the ratings of what's on each station as it checks Plex for u
 StationPlay's apps can share one device among several people, such as the living room TV. The first time someone signs in on the device (with their password, or a code entered on StationPlay's page), it's **linked**. From then on, it opens on **Who's tuning in?**, and whoever is watching picks themselves.
 
 - **Who's on the list.** Choose **Devices** beside a person's name: **Devices at home** (a household: on every device while it's at home, or through your VPN; away from home, only on a device they signed in on, or one you choose), **All devices** (away from home too), **Selected devices** (such as a family iPad that travels), or **Only where they sign in** (a larger server). New people start as **New people show on** says, under **Linked devices**.
-- **PINs.** A person can have a 4-digit PIN, which the device asks for when they pick themselves. An Admin without a PIN gives their password. Five wrong PINs for someone means a 15-minute wait for them, on every device. The first time someone signs in on a device with their password or an invite code, the app asks them to choose a PIN (a passcode, in the apps) or none, and they can change it in the app's Options; an Admin who has a PIN keeps one.
-- **No password needed.** A User can have no password, such as a "Kids" user who only picks themselves on the TV. Someone with neither a password nor a PIN can't sign in by name, so they're shown on devices at home or selected devices only.
+- **Passcodes.** A person can have a 4-digit passcode, which the device asks for when they pick themselves. An Admin without a passcode gives their password. Five wrong passcodes for someone means a 15-minute wait for them, on every device. The first time someone signs in on a device with their password or an invite code, the app asks them to choose a passcode or none, and they can change it in the app's Options; an Admin who has a passcode keeps one. An Admin sets or removes anyone's under **Devices** beside their name on the **Access** tab.
+- **No password needed.** A User can have no password, such as a "Kids" user who only picks themselves on the TV. Someone with neither a password nor a passcode can't sign in by name, so they're shown on devices at home or selected devices only.
 - **Sign in on a new device.** Choose **Sign in** on Who's tuning in?, then enter your name and your password, or an **invite code** an Admin made for you under **Devices** (it works once, for 7 days). After that, you're on that device's list. Anyone can take themselves off a device's list.
 - **Unlinking.** **Linked devices** on the **Access** tab lists each device and who's on its list. **Unlink** signs it out at once.
 
@@ -1076,7 +1076,7 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/backups.py` | Backups and restores |
 | `app/access.py` | Sign-in, Admins and Users, and the access log |
 | `app/viewing.py`, `app/ratings.py`, `app/titles.py` | Viewing Levels: what each person can see, ratings read as ages, and the ratings of what's on each station |
-| `app/devices.py` | Linked devices, Who's tuning in?, PINs and invite codes |
+| `app/devices.py` | Linked devices, Who's tuning in?, passcodes and invite codes |
 | `app/stats.py`, `app/watching.py` | Viewing stats, who's watching now, and matching Plex sessions to stations |
 | `app/health.py` | The server's health for the Stats tab: processor, memory, network and storage, from Linux's own files |
 | `app/alerts.py`, `app/notify.py` | Admin alerts, and notifying a web address of them |

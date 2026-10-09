@@ -17,13 +17,13 @@ default for new people says which they start with). Away from home (the
 public port), a device lists only who's on every device, and who signed in
 on it or was chosen for it. The picker always has Sign in, by name: the
 first time on a device with an invite code (made by an Admin, once, for 7
-days) or a password, never just a PIN; after that, they're on that device's
+days) or a password, never just a passcode; after that, they're on that device's
 picker. Anyone can take themselves off a device's picker.
 
-A PIN (4 digits, kept as a hash; the apps call it a passcode) is asked for
-when someone picks themselves, if they have one; an Admin without one gives
-their password. Five wrong PINs for someone means a 15-minute wait for
-them, on every device. Someone with neither a password nor a PIN (a "Kids"
+A passcode (a PIN: 4 digits, kept as a hash) is asked for when someone
+picks themselves, if they have one; an Admin without one gives their
+password. Five wrong passcodes for someone means a 15-minute wait for them,
+on every device. Someone with neither a password nor a passcode (a "Kids"
 user, say) can't sign in by name, so they're on devices at home or chosen
 ones only: no one can get in from anywhere by guessing a name, and no
 device away from home lists them unless an Admin chose it.
@@ -71,16 +71,16 @@ INVITE_MS = 7 * 86_400_000
 CODE_LETTERS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 NAME_MOST = 120
 DEVICE_HEADER = "stationplay-device"
-WRONG_PIN = "That PIN isn't right"
+WRONG_PIN = "That passcode isn't right"
 ADMIN_PASSWORD = (
-    "Enter your password: on a device others use too, an Admin needs a PIN or their password"
+    "Enter your password: on a device others use too, an Admin needs a passcode or their password"
 )
 # (The same whether or not there's anyone by that name: it isn't said who
 # has a sign-in, or had one.)
 WRONG_SIGN_IN = (
     "That name, code or password isn't right. If you should have access here, ask an Admin."
 )
-# Someone's own PIN, in an app (which calls it a passcode): see set_own_pin.
+# Someone's own passcode (a PIN, in the code), in an app: see set_own_pin.
 PIN_DIGITS = "A passcode is 4 digits"
 ADMIN_KEEPS_PIN = (
     "An Admin needs a passcode, or their password on a device others use too, so an Admin "
@@ -298,7 +298,7 @@ class Devices:
         if len(wrong) >= PIN_TRIES:
             minutes = max(1, round((PIN_WAIT_S - (now - wrong[0])) / 60))
             raise Refused(
-                f"Too many wrong PINs for {user.name}. Try again in {minutes} minute"
+                f"Too many wrong passcodes for {user.name}. Try again in {minutes} minute"
                 f"{'' if minutes == 1 else 's'}.",
                 429,
             )
@@ -311,7 +311,8 @@ class Devices:
         if not right:
             if tries == PIN_TRIES:
                 self.access.record(
-                    logging.WARNING, f"Too many wrong PINs for {user.name}: they wait 15 minutes"
+                    logging.WARNING,
+                    f"Too many wrong passcodes for {user.name}: they wait 15 minutes",
                 )
             raise Refused(WRONG_PIN)
         wrong.clear()
@@ -437,7 +438,7 @@ class Devices:
         """Sets someone's PIN (None or "": none). ValueError."""
         if pin:
             if not PIN.fullmatch(pin):
-                raise ValueError("A PIN is 4 digits")
+                raise ValueError(PIN_DIGITS)
             hashed = await asyncio.to_thread(hash_password, pin)
         else:
             hashed = ""
@@ -486,9 +487,9 @@ def _needs_one(name: str, show_on: str) -> str | None:
     way, if they can't: they'd sign in by name, or be on devices away from
     home that no one chose for them, for anyone there to pick."""
     if show_on == SIGNED_IN:
-        return f"{name} needs a PIN or a password to sign in by name."
+        return f"{name} needs a passcode or a password to sign in by name."
     if show_on == ALL:
-        return f"{name} needs a PIN or a password to show on devices away from home."
+        return f"{name} needs a passcode or a password to show on devices away from home."
     return None
 
 
@@ -588,7 +589,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         try:
             if body.pin is not None:
                 await d.set_pin(user, body.pin)
-                said.append(f"{'set' if body.pin else 'removed'} {user.name}'s PIN")
+                said.append(f"{'set' if body.pin else 'removed'} {user.name}'s passcode")
                 user = user_or_404(user_id)
             if body.showOn is not None or body.devices is not None:
                 show_on = body.showOn or d.show_on(user)

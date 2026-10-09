@@ -3,14 +3,14 @@
 StationPlay already has users: an Admin adds them on the Access tab, each
 signs in with a name and password, and the apps link with a code. This adds
 what each user may **see**, and a way for a household to share one TV or
-tablet: a **Who's tuning in?** picker, with optional PINs. All of it is
+tablet: a **Who's tuning in?** picker, with optional passcodes. All of it is
 decided on the server. The apps show only what the server sends.
 
 ## Goals
 
 1. **Off until it's used.** A StationPlay with one user, or none, works
-   exactly as it does today. Viewing Levels, PINs and the picker appear only
-   once there's a second user.
+   exactly as it does today. Viewing Levels, passcodes and the picker
+   appear only once there's a second user.
 2. **Nothing leaks.** What a user can't see isn't in any list, search, guide,
    Resume row or "on now" for them: no title, no picture, no placeholder. A
    key or address for it is refused with the same answer as one that
@@ -27,8 +27,8 @@ decided on the server. The apps show only what the server sends.
 ## Phases
 
 - **Phase 1:** Viewing Levels (rating and libraries), per-user station
-  allow and block, enforced everywhere; linked devices, the picker, PINs,
-  invite codes and "Show on"; Users can be watch-only.
+  allow and block, enforced everywhere; linked devices, the picker,
+  passcodes, invite codes and "Show on"; Users can be watch-only.
 - **Phase 2:** genre, tag, title and collection rules; rating overrides;
   per-user title exceptions; Station Audience warnings; Preview as user;
   Why is this hidden.
@@ -133,9 +133,10 @@ hidden.
   so deciding whether a user sees a station is a few comparisons.
 - **`levels`**: name, movie age, TV age, unrated shown or not, libraries
   (all, or a list).
-- **`users`** gains: level, PIN (a hash, or none), whether they chose to
-  have no PIN, Show on (see below), and whether they may change their own
-  password. A User may have no password: they use only the pickers.
+- **`users`** gains: level, passcode (`pin`: a hash, or none), whether they
+  chose to have no passcode, Show on (see below), and whether they may
+  change their own password. A User may have no password: they use only the
+  pickers.
 - **`user_stations`**: a station allowed or blocked for a user.
 - **`linked_devices`**, **`device_people`** and **`invites`**: the linked
   devices (by a hash of each one's key, with who linked each, by id and by
@@ -180,22 +181,22 @@ so did the server's default; the access log says how many people moved.
 
 The picker always has **Sign in**: the person enters their name and, the
 first time on that device, their invite code or password; after that they
-switch with their PIN. Each person can **Remove me from this device**.
+switch with their passcode. Each person can **Remove me from this device**.
 
 Safety rules:
 
-- A user with neither a password nor a PIN (a "Kids" user, say) can be
+- A user with neither a password nor a passcode (a "Kids" user, say) can be
   **Devices at home** or **Selected devices** only, never signed in by
   name, so no one can get in from anywhere by guessing a name like "Kids",
   and no device away from home lists them unless an Admin chose it. (A
   user with a password signs in with it, on the page or in an app, as
   today.)
 - The first sign-in on a device takes an invite code or a password, never
-  just a PIN. An **invite code** is made by an Admin for one user, works
-  once, and expires after 7 days.
-- An Admin always needs their PIN (or password) on a picker.
-- PINs are 4 digits, kept as hashes. 5 wrong PINs for a user means a
-  15-minute wait for that user, on every device.
+  just a passcode. An **invite code** is made by an Admin for one user,
+  works once, and expires after 7 days.
+- An Admin always needs their passcode (or password) on a picker.
+- Passcodes are 4 digits, kept as hashes. 5 wrong passcodes for a user
+  means a 15-minute wait for that user, on every device.
 - The picker exists only on a device already linked. A stranger who
   installs an app never sees a name.
 - Away from home, picking someone a device doesn't list there is refused,
@@ -204,8 +205,8 @@ Safety rules:
 ### A passcode after the first sign-in
 
 From 1.28.0, once someone has signed in with their password or an invite
-code, later sign-ins are open, or locked with a 4-digit passcode (the apps'
-word for a PIN) if they choose. The first time they sign in on a device that
+code, later sign-ins are open, or locked with a 4-digit passcode if they
+choose. The first time they sign in on a device that
 way (in an app, by name, or with a code entered on StationPlay's page),
 the app asks them to choose a passcode, or No passcode, unless they have one
 or already said they want none. Either answer holds on every device, and
@@ -224,7 +225,7 @@ and little kids can each have one or not.
 - Someone with neither (a "Kids" user) is never asked: they never sign in
   by name, and only an Admin gives them a passcode.
 - Wrong passcodes still count after a new one is chosen. An Admin still
-  sets or removes anyone's PIN on the Access tab.
+  sets or removes anyone's passcode on the Access tab.
 - The access log says "<name> set a passcode" or "<name> chose no
   passcode", and in which app.
 
@@ -273,7 +274,8 @@ stations.)
 
 ## The apps
 
-- The picker on start, a PIN pad, Sign in, and Remove me from this device.
+- The picker on start, a passcode pad, Sign in, and Remove me from this
+  device.
 - Whatever the server sends is what's shown; nothing is filtered on the
   device.
 - The free app's one station stays the **server's first station**, never
@@ -289,6 +291,6 @@ stations.)
 - A User can't make an Admin, or change their own level.
 - A first Admin can't be added from the internet (as today).
 - A revoked device is signed out on its next request.
-- A user with neither a password nor a PIN can't sign in by name.
-- Five wrong PINs lock that user for 15 minutes, on every device.
+- A user with neither a password nor a passcode can't sign in by name.
+- Five wrong passcodes lock that user for 15 minutes, on every device.
 - A StationPlay with one user, or none, answers exactly as before.

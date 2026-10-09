@@ -72,15 +72,15 @@ StationPlay-Device: <deviceKey>
 
 From then on, the app opens on the picker (`GET /api/internal/picker`), and
 whoever is using it picks themselves (`POST /api/internal/picker/choose`,
-with their PIN if they have one), or signs in by name
+with their passcode if they have one), or signs in by name
 (`POST /api/internal/picker/sign-in`). Either gives a token for that
 person, as signing in does, which lasts a day from when it was last used;
 picking someone else ends it. A device key lasts until an Admin unlinks the
 device on the Access tab, which also signs out whoever is signed in on it:
 anything asked with its key then answers 401, and the app links again. An
 app shows the picker when it lists more than one person, or one with a
-PIN; otherwise it picks the one person itself. (An Admin without a PIN
-gives their password only on a device others use too.)
+passcode; otherwise it picks the one person itself. (An Admin without a
+passcode gives their password only on a device others use too.)
 
 Apps that don't send `"picker": true` sign in as they always have, and get
 no `deviceKey`.
@@ -91,8 +91,8 @@ From 1.28.0, the answer to signing in with a password or an invite code
 (`POST /api/internal/sign-in`, `POST /api/internal/picker/sign-in`), or with
 a code entered on StationPlay's page (`POST /api/internal/link/check`), says
 `askPin`: whether to ask this person, there and then, to choose a 4-digit
-passcode for picking themselves on Who's tuning in? (the Access tab calls it
-a PIN). It's true while they have none and haven't said they want none.
+passcode for picking themselves on Who's tuning in? (`pin`, in the fields'
+names). It's true while they have none and haven't said they want none.
 Offer both:
 
 - **A passcode:** 4 digits, typed twice to be sure, sent with
@@ -223,8 +223,8 @@ front, as the device may have moved:
 | `people` | list | Who's on its picker |
 | `people[].id` | number | Who they are, for `POST /api/internal/picker/choose` |
 | `people[].name` | string | Their name |
-| `people[].pin` | boolean | Whether picking them asks for their PIN |
-| `people[].admin` | boolean | Whether they're an Admin (picking an Admin with no PIN asks for their password) |
+| `people[].pin` | boolean | Whether picking them asks for their passcode |
+| `people[].admin` | boolean | Whether they're an Admin (picking an Admin with no passcode asks for their password) |
 
 Answers 401 when the key isn't good (the device was unlinked: link it
 again), and 400 when signing in is off.
@@ -237,8 +237,9 @@ Asked with the device's key. Picks someone on its picker:
 {"id": 3, "pin": "1234"}
 ```
 
-`pin` when they have one; `password` instead, for an Admin with no PIN on
-a device others use too (its picker lists more than one person).
+`pin` (their passcode) when they have one; `password` instead, for an
+Admin with no passcode on a device others use too (its picker lists more
+than one person).
 
 | Field | Type | What it is |
 |---|---|---|
@@ -247,10 +248,10 @@ a device others use too (its picker lists more than one person).
 | `user.name` | string | Their name |
 | `user.role` | string | `admin` or `user` |
 
-Answers 403 for a wrong PIN or password (with the sentence to show), 429
-after 5 wrong PINs for that person in 15 minutes (on any device), and 404
-for someone not on this device's picker where it is now (away from home,
-someone listed only at home, say). 401 always means the device isn't
+Answers 403 for a wrong passcode or password (with the sentence to show),
+429 after 5 wrong passcodes for that person in 15 minutes (on any device),
+and 404 for someone not on this device's picker where it is now (away from
+home, someone listed only at home, say). 401 always means the device isn't
 linked any more, here and on every picker address: link it again.
 
 ## POST /api/internal/picker/sign-in
@@ -275,7 +276,7 @@ device's picker from then on.
 | `askPin` | boolean | Whether to ask them now to choose a passcode, or none (from 1.28.0: see A passcode, after the first sign-in) |
 
 Answers 403 for a wrong name, code or password, or for someone who can't
-sign in by name (they have neither a password nor a PIN: pick them from
+sign in by name (they have neither a password nor a passcode: pick them from
 the list), with the sentence to show; and 429 after 10 wrong tries on this
 device in 15 minutes.
 

@@ -138,7 +138,9 @@ def test_a_household_tv(app):
                 json={"id": tia_id, "pin": "0000"},
                 headers=device(key),
             )
-            assert wrong.status_code == 403 and wrong.json()["detail"] == "That PIN isn't right"
+            assert wrong.status_code == 403 and wrong.json()["detail"] == (
+                "That passcode isn't right"
+            )
         waits = tv.post(
             "/api/internal/picker/choose", json={"id": tia_id, "pin": "4321"}, headers=device(key)
         )
@@ -162,7 +164,7 @@ def test_a_household_tv(app):
         assert tv.get("/api/v1/stations", headers=bearer(ada.json()["token"])).status_code == 401
         log = admin.get("/api/logs?access_log=true").json()["text"]
         assert "Ada unlinked StationPlay for Roku on Living Room Roku" in log
-        assert "Too many wrong PINs for Tia: they wait 15 minutes" in log
+        assert "Too many wrong passcodes for Tia: they wait 15 minutes" in log
 
 
 def test_an_invite_code_works_once(app):
@@ -206,7 +208,7 @@ def test_who_can_be_shown_where(app):
         refused = admin.post(
             "/api/access/users", json={"name": "Kids", "role": "user", "showOn": "signed-in"}
         )
-        assert refused.status_code == 400 and "PIN or a password" in refused.json()["detail"]
+        assert refused.status_code == 400 and "passcode or a password" in refused.json()["detail"]
         assert [u["name"] for u in admin.get("/api/access/users").json()] == ["Ada"]
         # An Admin always has a password.
         assert (
@@ -249,7 +251,7 @@ def test_who_can_be_shown_where(app):
         assert admin.get("/api/access/devices").json()["chosen"] == {str(kids["id"]): [tv_id]}
         assert (
             admin.put(f"/api/access/users/{kids['id']}/picker", json={"pin": "12"}).json()["detail"]
-            == "A PIN is 4 digits"
+            == "A passcode is 4 digits"
         )
 
 
