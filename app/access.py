@@ -40,11 +40,12 @@ From the internet (through a Cloudflare Tunnel, or another reverse proxy),
 StationPlay is reached on its public port (PUBLIC_PORT), never the one Plex
 uses. There, what Plex and IPTV apps use isn't offered at all, signing in is
 always needed (until there's a user, nothing but the sign-in page is shown:
-the first user is added on the home network), each visitor's address is the
-one the reverse proxy or Cloudflare passes on (see address), and wrong
-passwords from the internet as a whole are limited too (but not on a
-browser you've signed in on before, so strangers' wrong passwords can't keep
-you out).
+the first user is added on the home network), a program played on demand is
+offered only at the address of one a signed-in app started there (see
+play_outside), each visitor's address is the one the reverse proxy or
+Cloudflare passes on (see address), and wrong passwords from the internet
+as a whole are limited too (but not on a browser you've signed in on
+before, so strangers' wrong passwords can't keep you out).
 """
 
 from __future__ import annotations
@@ -207,8 +208,9 @@ OPEN = (
     | FOR_PLEX
 )
 # Programs played on demand in StationPlay's apps: each at an address of its
-# own, which is what lets a player in (see ondemand.py). On the home network
-# only, for now.
+# own, which is what lets a player in (see ondemand.py). On the home network;
+# and on the public port, only a program a signed-in app started there,
+# while it and that sign-in last (see play_outside, and applibrary.py).
 PLAY_UNDER = "/play/"
 # What StationPlay's apps use, and the API: from the internet, only over
 # HTTPS (passwords, sign-ins, tokens and stream addresses must never cross it
@@ -436,6 +438,11 @@ class Access:
     # Someone's PIN and where they're shown on the apps' pickers (devices.py,
     # which sets this).
     picker: Any = field(init=False, default=None)
+    # Whether a program played on demand (by its play session's id) may be
+    # asked for on the public port: a session that's going, which a
+    # signed-in app started there (applibrary.py, which sets this). Until
+    # it's set, none may.
+    play_outside: Callable[[str], bool] | None = field(init=False, default=None)
     # When a signed-in app last came in through the public port over HTTPS
     # (time.monotonic(); None: not since StationPlay started), as proof that
     # apps reach StationPlay from outside (see reach.py). In memory only.
@@ -933,7 +940,7 @@ class Gate:
         send = _with_security_headers(send)
         if (
             public
-            and (path in FOR_PLEX or path.startswith((*FOR_PLEX_UNDER, PLAY_UNDER)))
+            and (path in FOR_PLEX or path.startswith(FOR_PLEX_UNDER))
             and not path.startswith(AWAY_UNDER)
         ):
             await _refuse(send, 404, "Not Found")
@@ -960,6 +967,8 @@ class Gate:
             if state["outside"] and path not in PAGE and path != REACH:
                 return 403, NOT_SET_UP
             return None
+        if path.startswith(PLAY_UNDER) and state["outside"] and not self._plays_outside(path):
+            return 404, "Not Found"  # (made at home, ended, or never there)
         if path.startswith((AWAY_UNDER, PLAY_UNDER)):
             return None  # (its address says whose it is)
         app_token = bearer(scope)
@@ -988,6 +997,13 @@ class Gate:
         ):
             return 403, WATCHES_ONLY
         return None
+
+    def _plays_outside(self, path: str) -> bool:
+        """Whether a play session's address (/play/<id>/...) may be asked
+        for on the public port (see Access.play_outside)."""
+        session_id = path[len(PLAY_UNDER) :].partition("/")[0]
+        allowed = self.access.play_outside
+        return bool(session_id) and allowed is not None and allowed(session_id)
 
     def _api_token(self, scope: dict, token: str) -> tuple[int, str] | None:
         """_decide, for a request made with an API token."""

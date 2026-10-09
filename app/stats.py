@@ -568,9 +568,11 @@ def now(ctx: AppContext, now_ms: int) -> list[dict]:
         how = _station_how(stream.b, night=stream.night)
         rows += [_app_row(who, since, how, station=what) for who, since in stream.viewing()]
     for session in ctx.plays.now():
+        # (Away from home, told apart by its app's own address, as stations are.)
         who = playing.Watcher(
-            session.client, session.away, session.user, session.user_id or None, session.app
-        )
+            session.client, session.away, session.user, session.user_id or None, session.app,
+            session.tag,
+        )  # fmt: skip
         rows.append(
             _app_row(who, session.started_ms, _media_how(session),
                      media={"title": playing.title(session.entry)})

@@ -81,6 +81,9 @@ READ_TIMEOUT_US = 30_000_000  # (reading a file from Plex: ffmpeg's -rw_timeout)
 CONVERT_HEIGHTS = ((2160, 20_000), (1440, 12_000), (1080, 8_000), (720, 4_000), (480, 2_000))
 CONVERT_MOST_HEIGHT = 1080
 LEAST_KBPS = 1_000
+# A picture made to fit the Admin's cap on Media away from home (see
+# away.py) gets at least this, however low the cap.
+LEAST_CAPPED_KBPS = 300
 # On a GPU, frames between keyframes at most, besides the keyframe where each
 # piece starts (as libx264 makes them on the CPU).
 GPU_GOP = 250
@@ -351,19 +354,39 @@ def _encoding(encoder: Encoder, kbps: int) -> list[str]:
 # Deciding how ------------------------------------------------------------------------
 
 
-def convert_size(media: Media, most_height: int, fit_kbps: int | None) -> tuple[int, int]:
+def convert_size(
+    media: Media,
+    most_height: int,
+    fit_kbps: int | None,
+    cap_kbps: int | None = None,
+    sound_kbps: int = AUDIO_KBPS,
+) -> tuple[int, int]:
     """A converted picture's (height, kbps): as big as the file's, the
     device's and CONVERT_MOST_HEIGHT allow; with `fit_kbps` (what the
     connection carries), the biggest that needs no more than two-thirds of
-    it."""
+    it; and away from home, with the Admin's cap (`cap_kbps`), never more
+    than the cap, with the copy's sound (`sound_kbps`)."""
     height = min(media.height or CONVERT_MOST_HEIGHT, most_height or CONVERT_MOST_HEIGHT,
                  CONVERT_MOST_HEIGHT)  # fmt: skip
     rungs = [(h, k) for h, k in CONVERT_HEIGHTS if h <= max(height, CONVERT_HEIGHTS[-1][0])]
     for h, k in rungs:
-        if fit_kbps is None or k + AUDIO_KBPS <= fit_kbps * 2 // 3:
+        if (fit_kbps is None or k + AUDIO_KBPS <= fit_kbps * 2 // 3) and (
+            cap_kbps is None or k + sound_kbps <= cap_kbps
+        ):
             return min(height, h), k
     h, _ = rungs[-1]
-    return min(height, h), max(LEAST_KBPS, fit_kbps * 2 // 3 - AUDIO_KBPS) if fit_kbps else 2_000
+    kbps = max(LEAST_KBPS, fit_kbps * 2 // 3 - AUDIO_KBPS) if fit_kbps else 2_000
+    if cap_kbps is not None:
+        kbps = min(kbps, max(LEAST_CAPPED_KBPS, cap_kbps - sound_kbps))
+    return min(height, h), kbps
+
+
+def sound_kbps(audio_codec: str, channels: int) -> int:
+    """About what a copy's sound takes, as it's made (copied as it is:
+    about what it would take made)."""
+    if audio_codec == "ac3" or (audio_codec == "copy" and channels > 2):
+        return SURROUND_KBPS
+    return AUDIO_KBPS
 
 
 def sound_for(track: Track | None, device_audio: frozenset[str], night: bool) -> tuple[str, int]:

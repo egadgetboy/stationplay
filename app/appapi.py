@@ -255,6 +255,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             access.NOT_SET_UP if access.outside(request.scope) and not ctx.access.required else None
         )
         away = ctx.away.address if ctx.away.on else None
+        # (Your library: at home, or through a VPN; and through the public
+        # port while watching away from home is on.)
+        media = ctx.media_here(access.outside(request.scope))
         return {
             "name": settings.friendly_name,
             "id": ctx.device_id,
@@ -267,10 +270,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "features": [
                 *FEATURES,
                 *(["away"] if away else []),
-                # (Your library: at home, or through a VPN, for now.)
-                *(["library"] if ctx.shared.on and not access.outside(request.scope) else []),
+                *(["library"] if media else []),
                 # (Copies of what a device can't play as it is: see converting.py.)
-                *(["convert"] if ctx.shared.on and not access.outside(request.scope) else []),
+                *(["convert"] if media else []),
             ],
         }
 

@@ -4902,12 +4902,12 @@ function awayFields(got, onEdit, id) {
   if (!me.required) warnings.push('Sign-in is off. Through the public port, apps must sign in, so add a user on the Access tab first.');
   return {
     nodes: [
-      h('p', { style: 'margin:0' }, 'With this on, StationPlay’s own apps can watch your stations away from home, as they do at home. Plex, Jellyfin and other apps don’t change: they use StationPlay on your home network only.'),
+      h('p', { style: 'margin:0' }, 'With this on, StationPlay’s own apps can watch your stations away from home, and Media if you share it, as they do at home. Plex, Jellyfin and other apps don’t change: they use StationPlay on your home network only.'),
       h('div', { class: 'limit-note' }, h('strong', {}, 'What it takes'),
         h('ul', {},
           h('li', {}, h('strong', {}, 'A way in from outside. '), 'Either a VPN such as Tailscale or WireGuard on the phone or tablet (then the address below is your server’s VPN address, such as http://nas.your-tailnet.ts.net:3310), or the public port (PUBLIC_PORT) behind a reverse proxy with HTTPS. Not a Cloudflare Tunnel: Cloudflare’s free plan isn’t meant for video. The README’s “Reaching StationPlay from outside your home” explains each.'),
-          h('li', {}, h('strong', {}, 'Signing in, through the public port. '), 'Each app that signs in gets a private address for its stations, which stops working as soon as that person signs out or is removed.'),
-          h('li', {}, h('strong', {}, 'Upload speed. '), 'Each station watched away from home is sent over your home internet connection, at the picture size set under Picture and tuners on the Add to Plex tab.'))),
+          h('li', {}, h('strong', {}, 'Signing in, through the public port. '), 'Each app that signs in gets a private address for its stations, and one for each title it plays from Media. They stop working as soon as that person signs out or is removed.'),
+          h('li', {}, h('strong', {}, 'Upload speed. '), 'Each station watched away from home is sent over your home internet connection, at the picture size set under Picture and tuners on the Add to Plex tab, and so is Media, at the quality you choose on the Access tab.'))),
       ...warnings.map(w => h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' ', w)),
       h('label', {}, on, ' Let StationPlay’s apps watch away from home'),
       h('div', { class: 'field' }, h('label', { for: id }, 'The address apps reach StationPlay at from outside'), address,
@@ -5027,11 +5027,14 @@ async function loadAway() {
   const body = $('#awayBody');
   if (body.dataset.editing) return;  // (not while it's being changed)
   const fields = awayFields(got, () => { body.dataset.editing = '1'; }, 'awayAddress');
+  const media = mediaAwayFields(got, () => { body.dataset.editing = '1'; });
   const result = h('span', { class: 'hint', role: 'status' });
   const save = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
     const { on } = fields.values();
+    const mediaMbps = media.value();
+    if (mediaMbps === undefined) { result.textContent = `For Media away from home, enter a number of Mbps from 1 to ${got.mediaMbpsMost}.`; return; }
     let saved;
-    try { saved = await api('/api/away', { method: 'PUT', body: fields.values() }); }
+    try { saved = await api('/api/away', { method: 'PUT', body: { ...fields.values(), mediaMbps } }); }
     catch (e) { result.textContent = e.message; return; }
     // (Saved all the same, with a port it can't have: said plainly.)
     if (saved.on && saved.portProblem) toast(`Saved, but ${lowerFirst(saved.portProblem)}`, true);
@@ -5041,9 +5044,42 @@ async function loadAway() {
   } }, 'Save');
   body.replaceChildren(
     ...fields.nodes,
+    ...media.nodes,
     h('div', { class: 'scan-set' }, save, result),
     reachStatus(),
     ...(got.on && got.apps ? [h('p', { class: 'muted small', style: 'margin:0' }, `${plural(got.apps, 'app')} signed in away from home since StationPlay started.`)] : []));
+}
+// Media away from home: Original, or up to a number of Mbps (see away.py on
+// the server), with the upload StationPlay's apps measured from outside
+// beside it, as a guide. `value()`: null for Original, the number, or
+// undefined while the number won't do.
+function mediaAwayFields(got, onEdit) {
+  const most = got.mediaMbpsMost;
+  const pick = h('select', { id: 'mediaAway', onchange: () => { onEdit(); paint(); } },
+    h('option', { value: 'original' }, 'Original'), h('option', { value: 'cap' }, 'Up to…'));
+  pick.value = got.mediaMbps ? 'cap' : 'original';
+  const mbps = h('input', { type: 'number', id: 'mediaAwayMbps', min: 1, max: most, step: 1, value: got.mediaMbps || '', placeholder: 'Mbps', 'aria-label': 'Up to how many Mbps', style: 'width:100px', oninput: onEdit });
+  const unit = h('span', {}, 'Mbps');
+  const paint = () => { mbps.hidden = unit.hidden = pick.value !== 'cap'; };
+  paint();
+  const up = got.upload;
+  const measured = up
+    ? `StationPlay’s apps measured your home’s upload from outside at ${up.mbps} Mbps (${shortDate(up.at)}, from ${up.device}). Everyone watching away from home shares it, stations too, so a cap well under it leaves room for others.`
+    : 'No connection test from outside yet. To run one, open Options in a StationPlay app on a phone using mobile data and choose Test the connection; its result shows here, as a guide.';
+  return {
+    nodes: [
+      h('div', { class: 'field' },
+        h('label', { for: 'mediaAway' }, 'Media away from home'),
+        h('div', { class: 'scan-set' }, pick, mbps, unit),
+        h('span', { class: 'hint' }, 'Original plays each title as it would at home. With a cap, a title whose file needs more is converted down to fit, at most 1080p (this takes a share of the server’s processor, as other converted copies do); one within it plays as it would at home. When a connection can’t keep up, the apps still step down on their own.'),
+        h('span', { class: 'hint' }, measured)),
+    ],
+    value: () => {
+      if (pick.value !== 'cap') return null;
+      const n = Number(mbps.value);
+      return Number.isInteger(n) && n >= 1 && n <= most ? n : undefined;
+    },
+  };
 }
 // How many can watch at once in StationPlay's apps (see capacity.py) ---------------
 const shortDate = ms => new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric' });
@@ -5131,7 +5167,7 @@ function libraryFields(got, onEdit) {
     return [pick, h('label', { class: 'small' }, h('strong', {}, label), ' ', pick, hint ? h('span', { class: 'muted' }, ' ', hint) : '')];
   };
   const [slowHome, slowHomeRow] = slow('home', 'At home:', '');
-  const [slowAway, slowAwayRow] = slow('away', 'Away from home:', '(once your library can be watched away from home)');
+  const [slowAway, slowAwayRow] = slow('away', 'Away from home:', '');
   const values = () => ({
     libraries: [...boxes].filter(([, b]) => b.checked).map(([key]) => key),
     whenSlow: { home: slowHome.value, away: slowAway.value },
@@ -5144,7 +5180,7 @@ function libraryFields(got, onEdit) {
         h('ul', {},
           h('li', {}, h('strong', {}, 'The best picture and sound. '), 'A file plays as it is whenever the device can play it, including 4K and HDR. If it can’t, StationPlay makes a copy as it plays: repackaged, with the picture kept as it is (this costs next to nothing), or converted, with the picture made again (this takes a share of the server’s processor, so at most 3 at once; on a GPU it’s light on the processor, so up to 6). Converted copies are 1080p at most, and HDR is made ordinary.'),
           h('li', {}, h('strong', {}, 'Each person’s own place. '), 'The Resume row, where each program picks up and what’s been watched are kept for each person who signs in (shared by everyone while sign-in is off).'),
-          h('li', {}, h('strong', {}, 'At home for now. '), 'Your library can be watched on your home network, or through a VPN such as Tailscale or WireGuard. Watching it through the public port comes later, with copies made to fit your upload speed.'),
+          h('li', {}, h('strong', {}, 'At home and away. '), 'Your library can be watched on your home network, or through a VPN such as Tailscale or WireGuard. With StationPlay’s apps away from home turned on (above), it can also be watched through the public port, by people signed in, at the quality you choose there.'),
           h('li', {}, h('strong', {}, 'Steady playing. '), 'The apps buffer ahead first. If playing still can’t keep up for a while, a short connection test says whether it’s the connection, StationPlay reading the file, or the device, and a smaller version of the title is used, as you choose below.'),
           h('li', {}, 'Programs played this way count toward the limit on devices watching at once, set on the Access tab.'))),
       ...(got.problem ? [h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' ', got.problem)] : []),

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import secrets
 import socket
 import sys
 from pathlib import Path
@@ -184,11 +185,18 @@ async def _attacks(checks: Checks, app, home: str, net: str) -> None:
         for path in (
             "/discover.json", "/lineup.json", "/lineup_status.json", "/xmltv.xml", "/guide.xml",
             "/stations.m3u", "/channels.m3u", "/stream/3", "/auto/v3", "/art/201",
-            "/hls/3/index.m3u8", "/play/anything/file.mkv",
+            "/hls/3/index.m3u8",
         ):  # fmt: skip
             r = await out.get(path)
             checks.ok(r.status_code == 404, f"{path} is not served on the public port",
                       f"got {r.status_code}")  # fmt: skip
+        # A play address there: only over HTTPS, and only one an app started there.
+        r = await out.get("/play/anything/file.mkv")
+        checks.ok(r.status_code == 403, "a play address over plain HTTP is refused",
+                  f"got {r.status_code}")  # fmt: skip
+        r = await out.get("/play/anything/file.mkv", headers={"X-Forwarded-Proto": "https"})
+        checks.ok(r.status_code == 404, "a made-up play address gets nothing",
+                  f"got {r.status_code}")  # fmt: skip
         for path in ("/api/channels", "/api/status", "/api/logs", "/logos/x.png", "/api/stats",
                      "/poster/201", "/plex-logo/201.png"):  # fmt: skip
             r = await out.get(path)
@@ -384,14 +392,135 @@ async def _attacks(checks: Checks, app, home: str, net: str) -> None:
     # by person, so it isn't spent by anything above).
     await _pin_limit(checks, app, home, device_key)
 
-    # 11) The home-only library is not reached on the public port, even by a
-    # signed-in app over HTTPS.
-    checks.section("Media stays on the home network")
+    # 11) While watching away from home is off, the library is not reached on
+    # the public port, even by a signed-in app over HTTPS.
+    checks.section("Media stays on the home network while away from home is off")
     https = {**admin_h, "X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.50"}
     async with httpx.AsyncClient(base_url=net) as out:
         for path in ("/api/internal/libraries", "/api/internal/home", "/api/internal/items/300"):
             r = await out.get(path, headers=https)
             checks.ok(r.status_code in (403, 404), f"{path} is home-only from the internet",
+                      f"got {r.status_code}")  # fmt: skip
+        played = await out.post("/api/internal/play", json={"key": "300", "device": TV},
+                                headers=https)  # fmt: skip
+        checks.ok(played.status_code == 403, "nothing plays through the public port",
+                  f"got {played.status_code}")  # fmt: skip
+
+    # 12) With it on, Media through the public port: only for those signed in,
+    # within their level, at addresses only the app that started them has.
+    await _media_away(checks, app, home, net, admin_h, sam_h, kit_h)
+
+
+async def _media_away(
+    checks: Checks, app, home: str, net: str, admin_h: dict, sam_h: dict, kit_h: dict
+) -> None:
+    """Media through the public port, once an Admin turns on watching away
+    from home: an outsider can't browse or play; a guessed, ended or
+    home-made play address gets nothing there; a Kid can't play what their
+    level hides; and a play address stops with its sign-in."""
+    checks.section("Media through the public port")
+    https = {"X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.60"}
+    ctx = app.state.ctx
+    async with httpx.AsyncClient(base_url=home) as c:
+        on = await c.put("/api/away", json={"on": True, "address": "https://tv.example.com"},
+                         headers=admin_h)  # fmt: skip
+        checks.ok(on.status_code == 200, "an Admin turns on watching away from home",
+                  f"got {on.status_code}")  # fmt: skip
+        at_home = (
+            await c.post("/api/internal/play", json={"key": "300", "device": TV}, headers=sam_h)
+        ).json()
+    async with httpx.AsyncClient(base_url=net) as out:
+        # An outsider: nothing, with no token or a made-up one.
+        for method, path, body in (
+            ("GET", "/api/internal/libraries", None), ("GET", "/api/internal/home", None),
+            ("GET", "/api/internal/items/300", None), ("GET", "/api/internal/art/300", None),
+            ("GET", "/api/internal/libraries/2", None), ("GET", "/api/internal/search?q=pic", None),
+            ("POST", "/api/internal/play", {"key": "300", "device": TV}),
+            ("POST", "/api/internal/progress", {"key": "300", "positionMs": 60_000}),
+        ):  # fmt: skip
+            for token in ({}, {"Authorization": "Bearer made-up"}):
+                r = await out.request(method, path, json=body, headers={**https, **token})
+                made_up = " with a made-up token" if token else ""
+                checks.ok(r.status_code == 401, f"an outsider can't {method} {path}{made_up}",
+                          f"got {r.status_code}")  # fmt: skip
+        # A program started at home isn't offered there, in any way.
+        for method in ("GET", "HEAD"):
+            r = await out.request(method, at_home["url"], headers=https)
+            checks.ok(r.status_code == 404,
+                      f"a program started at home can't be {method} from the public port",
+                      f"got {r.status_code}")  # fmt: skip
+        r = await out.post(at_home["leave"], headers=https)
+        checks.ok(r.status_code == 404, "a program started at home can't be ended from there",
+                  f"got {r.status_code}")  # fmt: skip
+        await out.post(
+            "/api/internal/progress",
+            json={"key": "300", "positionMs": 60_000, "session": at_home["session"]},
+            headers={**https, **sam_h},
+        )
+        going = ctx.plays.find(at_home["session"])
+        checks.ok(going is not None and going.position_ms is None,
+                  "a program started at home can't be kept going from there")  # fmt: skip
+        # A signed-in app plays through it: the player at its own address.
+        played = await out.post("/api/internal/play", json={"key": "300", "device": TV},
+                                headers={**https, **sam_h})  # fmt: skip
+        if not checks.ok(played.status_code == 200, "a signed-in app plays Media from outside",
+                         played.text[:120]):  # fmt: skip
+            return
+        mine = played.json()
+        part = await out.get(mine["url"], headers={**https, "Range": "bytes=0-8"})
+        checks.ok(part.status_code == 206 and part.content == b"a program",
+                  "its player gets ranges of the file, with no sign-in",
+                  f"got {part.status_code}")  # fmt: skip
+        plain = await out.get(mine["url"])
+        checks.ok(plain.status_code == 403, "its address is refused over plain HTTP",
+                  f"got {plain.status_code}")  # fmt: skip
+        session = mine["session"]
+        for guess in (
+            "/play/" + secrets.token_urlsafe(24) + "/file.mkv",
+            "/play/" + session[:-1] + ("A" if session[-1] != "A" else "B") + "/file.mkv",
+            "/play/" + session.upper() + "/file.mkv",
+            "/play/..%2f..%2fetc%2fpasswd/file.mkv",
+            "/play/" + session + "%2f..%2f..%2fapi%2flogs",
+        ):
+            r = await out.get(guess, headers=https)
+            checks.ok(r.status_code == 404 and b"root:" not in r.content,
+                      f"a guessed play address gets nothing ({guess[:24]}…)",
+                      f"got {r.status_code}")  # fmt: skip
+        await out.post(mine["leave"], headers=https)
+        ended = await out.get(mine["url"], headers=https)
+        checks.ok(ended.status_code == 404, "an ended play address gets nothing",
+                  f"got {ended.status_code}")  # fmt: skip
+        # Its sign-in ending ends it at once.
+        signed = await out.post("/api/internal/sign-in", json=USER, headers=https)
+        token = {"Authorization": f"Bearer {signed.json().get('token', '')}"}
+        again = await out.post("/api/internal/play", json={"key": "300", "device": TV},
+                               headers={**https, **token})  # fmt: skip
+        if checks.ok(again.status_code == 200, "an app signed in from outside plays Media",
+                     again.text[:120]):  # fmt: skip
+            await out.post("/api/internal/sign-out", headers={**https, **token})
+            gone = await out.get(again.json()["url"], headers=https)
+            checks.ok(gone.status_code == 404, "a play address stops when its sign-in ends",
+                      f"got {gone.status_code}")  # fmt: skip
+        # A Kid can't see or play there what their level hides.
+        for key in ("110", "211", "301"):
+            seen = await out.get(f"/api/internal/items/{key}", headers={**https, **kit_h})
+            r = await out.post("/api/internal/play", json={"key": key, "device": TV},
+                               headers={**https, **kit_h})  # fmt: skip
+            checks.ok(seen.status_code == 404 and r.status_code == 404,
+                      f"the Kid can't see or play item {key} from outside",
+                      f"got {seen.status_code}, {r.status_code}")  # fmt: skip
+        allowed = await out.post("/api/internal/play", json={"key": "300", "device": TV},
+                                 headers={**https, **kit_h})  # fmt: skip
+        checks.ok(allowed.status_code == 200, "the PG movie plays for the Kid from outside",
+                  f"got {allowed.status_code}")  # fmt: skip
+    # Turning watching away from home off ends what plays there.
+    async with httpx.AsyncClient(base_url=home) as c:
+        await c.put("/api/away", json={"on": False, "address": "https://tv.example.com"},
+                    headers=admin_h)  # fmt: skip
+    async with httpx.AsyncClient(base_url=net) as out:
+        if allowed.status_code == 200:
+            r = await out.get(allowed.json()["url"], headers=https)
+            checks.ok(r.status_code == 404, "turning away from home off ends Media there",
                       f"got {r.status_code}")  # fmt: skip
 
 

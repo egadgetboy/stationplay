@@ -591,6 +591,21 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         reached = check.answer(proxy.answers[-1], "GET /api/internal/reach")
         assert reached == {"stationplay": True, "port": "public", "https": True}
         check.answer(internet.get("/api/internal/reach?n=guess"), "GET /api/internal/reach", 404)
+
+        # With watching away from home on, Media through the public port too
+        # (see test_ondemand.py), its programs at addresses of their own there.
+        outside = check.answer(internet.get("/api/v1/server"), "GET /api/v1/server")
+        assert {"away", "library", "convert"} <= set(outside["features"])
+        box = {"containers": ["mkv"], "video": [{"codec": "hevc", "width": 3840, "height": 2160,
+               "bitDepth": 10}], "hdr": ["hdr10"], "audio": ["aac"]}  # fmt: skip
+        away = check.answer(
+            internet.post("/api/internal/play", headers=pat, json={"key": "300", "device": box}),
+            "POST /api/internal/play",
+        )
+        assert away["method"] == "direct" and away["whenSlow"] == "switch"
+        assert internet.get(away["url"]).content == b"a movie, as it is" * 100
+        assert internet.post(away["leave"]).status_code == 204
+        assert internet.get(away["url"]).status_code == 404
     check.everything_seen()
 
 
