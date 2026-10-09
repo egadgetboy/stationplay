@@ -403,7 +403,13 @@ class Devices:
         PINs for them lately still count against the new one."""
         if pin is not None and not PIN.fullmatch(pin):
             raise Refused(PIN_DIGITS, 400)
+        self._may_set_own_pin(user, pin)  # (before the work of hashing it)
         hashed = await asyncio.to_thread(hash_password, pin) if pin is not None else ""
+        self._may_set_own_pin(user, pin)  # (and as things are now)
+        self.db.set_pin(user.id, hashed, no_pin=pin is None)
+        return pin is not None
+
+    def _may_set_own_pin(self, user: User, pin: str | None) -> None:
         now = self.db.user(user.id) or user
         password = bool(self.db.password_hash(user.id))
         if not password and not now.has_pin:
@@ -412,8 +418,6 @@ class Devices:
             raise Refused(ADMIN_KEEPS_PIN)
         if pin is None and not password:
             raise Refused(PIN_ONLY)
-        self.db.set_pin(user.id, hashed, no_pin=pin is None)
-        return pin is not None
 
     # An Admin's choices for someone ------------------------------------------------------
 

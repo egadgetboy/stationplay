@@ -10,7 +10,9 @@ tries what an attacker would and prints PASS or FAIL for each: routes
 without and with the wrong role; forged headers; CSRF from another site;
 path traversal; oversized bodies; script in names; guessing or reusing keys,
 play addresses and reach nonces; reaching Media and stations a level hides;
-and the sign-in, PIN and link-code limits.
+the sign-in, PIN and link-code limits; who a linked device lists away from
+home; and setting a passcode or changing a password from the apps (as an
+outsider, as someone else, an Admin's passcode, its format, the limits).
 
 It's a tool, not part of CI (the test suite covers these as unit tests). Run
 it from the repo root:  python -m tools.attack_check   (add -v to see every
@@ -411,6 +413,12 @@ async def _attacks(checks: Checks, app, home: str, net: str) -> None:
     # within their level, at addresses only the app that started them has.
     await _media_away(checks, app, home, net, admin_h, sam_h, kit_h)
 
+    # 13) Who's tuning in? away from home lists only a device's own people.
+    await _picker_away(checks, app, home, net, device_key)
+
+    # 14) Passcodes and passwords from the apps: only one's own, as the rules say.
+    await _own_pin_and_password(checks, app, home, net, admin_h, sam_h, kit_h, device_key)
+
 
 async def _media_away(
     checks: Checks, app, home: str, net: str, admin_h: dict, sam_h: dict, kit_h: dict
@@ -523,6 +531,187 @@ async def _media_away(
             r = await out.get(allowed.json()["url"], headers=https)
             checks.ok(r.status_code == 404, "turning away from home off ends Media there",
                       f"got {r.status_code}")  # fmt: skip
+
+
+async def _picker_away(checks: Checks, app, home: str, net: str, device_key: str) -> None:
+    """A linked device's picker through the public port: it lists only who
+    signed in on it (or is on every device, or was chosen for it), and no
+    one it doesn't list there can be picked by their id."""
+    checks.section("Who's tuning in? away from home")
+    key = {"StationPlay-Device": device_key}
+    https = {"X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.65", **key}
+    async with httpx.AsyncClient(base_url=home, headers=key) as c:
+        at_home = [p["name"] for p in (await c.get("/api/internal/picker")).json()["people"]]
+    async with httpx.AsyncClient(base_url=net, headers=https) as out:
+        r = await out.get("/api/internal/picker")
+        away = [p["name"] for p in r.json().get("people", [])] if r.status_code == 200 else None
+        checks.ok(
+            away == [USER["name"]] and ADMIN["name"] in at_home and KID["name"] in at_home,
+            "away from home, the device lists only who signed in on it",
+            f"at home {at_home}, away {away}",
+        )
+        for person in app.state.ctx.db.users():
+            if person.name == USER["name"]:
+                continue
+            r = await out.post("/api/internal/picker/choose",
+                               json={"id": person.id, "password": ADMIN["password"]})  # fmt: skip
+            checks.ok(r.status_code == 404,
+                      f"{person.name}, listed only at home, can't be picked away from home",
+                      f"got {r.status_code}")  # fmt: skip
+        plain = await out.get("/api/internal/picker", headers={"X-Forwarded-Proto": "http"})
+        checks.ok(plain.status_code == 403, "the picker away from home needs HTTPS",
+                  f"got {plain.status_code}")  # fmt: skip
+
+
+async def _own_pin_and_password(
+    checks: Checks, app, home: str, net: str, admin_h: dict, sam_h: dict, kit_h: dict,
+    device_key: str,
+) -> None:  # fmt: skip
+    """POST /api/internal/pin and /api/internal/password: an outsider can't
+    use them; one person can't change another's; an Admin's passcode can't be
+    removed in an app; a passcode is exactly 4 digits; and the limits hold
+    (wrong current passwords, many at once, and the wait after wrong
+    passcodes, which a new one doesn't end)."""
+    checks.section("Passcodes and passwords from the apps")
+    db = app.state.ctx.db
+    ids = {u.name: u.id for u in db.users()}
+    pin_of = db.pin_hash
+    password_of = db.password_hash
+    https = {"X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.70"}
+    tries = {"current": "not the one", "new": "a brand new password"}
+    both = (("/api/internal/pin", {"pin": "1111"}), ("/api/internal/password", tries))
+
+    # An outsider: no token, a made-up one, a device's key alone, plain HTTP.
+    async with httpx.AsyncClient(base_url=net) as out:
+        for path, body in both:
+            for said, headers in (
+                ("no token", https), ("a made-up token", {**https, "Authorization": "Bearer made-up"}),
+                ("a device's key alone", {**https, "StationPlay-Device": device_key}),
+            ):  # fmt: skip
+                r = await out.post(path, json=body, headers=headers)
+                checks.ok(r.status_code == 401, f"an outsider can't POST {path} with {said}",
+                          f"got {r.status_code}")  # fmt: skip
+            r = await out.post(path, json=body, headers={**kit_h, "X-Real-IP": "203.0.113.70"})
+            checks.ok(r.status_code == 403, f"POST {path} needs HTTPS from the internet",
+                      f"got {r.status_code}")  # fmt: skip
+    async with httpx.AsyncClient(base_url=home) as c:
+        for path, body in both:
+            r = await c.post(path, json=body)
+            checks.ok(r.status_code == 401, f"POST {path} needs a sign-in at home too",
+                      f"got {r.status_code}")  # fmt: skip
+        # A browser's sign-in isn't an app's.
+        async with httpx.AsyncClient(base_url=home) as page:
+            await page.post("/api/access/sign-in", json=KID)
+            r = await page.post("/api/internal/pin", json={"pin": "1111"})
+            checks.ok(r.status_code == 403, "a browser's sign-in can't set a passcode",
+                      f"got {r.status_code}")  # fmt: skip
+
+        # One person can't change another's: whatever else is sent, it's theirs.
+        sams_pin, sams_password = pin_of(ids[USER["name"]]), password_of(ids[USER["name"]])
+        r = await c.post("/api/internal/pin", headers=kit_h,
+                         json={"pin": "1111", "id": ids[USER["name"]], "name": USER["name"],
+                               "user": {"name": USER["name"]}})  # fmt: skip
+        checks.ok(r.status_code == 200 and pin_of(ids[USER["name"]]) == sams_pin
+                  and pin_of(ids[KID["name"]]) != "",
+                  "a passcode set with someone else's name or id is the sender's own",
+                  f"got {r.status_code}")  # fmt: skip
+        r = await c.post("/api/internal/password", headers=kit_h,
+                         json={"current": USER["password"], "new": "taken over now",
+                               "name": USER["name"], "id": ids[USER["name"]]})  # fmt: skip
+        checks.ok(r.status_code == 400 and password_of(ids[USER["name"]]) == sams_password,
+                  "someone else's current password changes nothing",
+                  f"got {r.status_code}")  # fmt: skip
+        for method, path, body in (
+            ("PUT", f"/api/access/users/{ids[USER['name']]}/picker", {"pin": "0000"}),
+            ("PUT", f"/api/access/users/{ids[USER['name']]}/picker", {"pin": ""}),
+            ("PUT", f"/api/access/users/{ids[USER['name']]}", {"password": "taken over now"}),
+            ("PUT", f"/api/access/users/{ids[KID['name']]}", {"canChangePassword": True}),
+        ):  # fmt: skip
+            r = await c.request(method, path, json=body, headers=kit_h)
+            checks.ok(r.status_code == 403, f"a User can't {method} {path} {body}",
+                      f"got {r.status_code}")  # fmt: skip
+
+        # An Admin's passcode can't be removed in an app.
+        set_it = await c.post("/api/internal/pin", headers=admin_h, json={"pin": "1357"})
+        kept = await c.post("/api/internal/pin", headers=admin_h, json={"pin": None})
+        checks.ok(set_it.status_code == 200 and kept.status_code == 403
+                  and pin_of(ids[ADMIN["name"]]) != "",
+                  "an Admin's passcode can't be removed in an app",
+                  f"got {set_it.status_code}, {kept.status_code}")  # fmt: skip
+
+        # A passcode is exactly 4 digits, 0 to 9.
+        kits_pin = pin_of(ids[KID["name"]])
+        for wrong in ("123", "12345", "abcd", "12a4", " 1234", "1234 ", "1234\n", "",
+                      "\u0661\u0662\u0663\u0664", "\uff11\uff12\uff13\uff14", "+123",
+                      "-123", "12.3", "0x12", 1234, ["1234"], {"pin": "1234"}):  # fmt: skip
+            r = await c.post("/api/internal/pin", headers=kit_h, json={"pin": wrong})
+            checks.ok(r.status_code == 400 and pin_of(ids[KID["name"]]) == kits_pin,
+                      f"the passcode {wrong!r} is refused", f"got {r.status_code}")  # fmt: skip
+        r = await c.post("/api/internal/pin", headers=kit_h, json={})
+        checks.ok(r.status_code == 400, "a passcode must be sent (or null)", f"got {r.status_code}")
+
+        # Someone anyone at home may pick ("Kids") gets a passcode only from an Admin.
+        made = await c.post("/api/access/users", headers=admin_h,
+                            json={"name": "Kids", "role": "user"})  # fmt: skip
+        picked = await c.post("/api/internal/picker/choose", json={"id": made.json()["id"]},
+                              headers={"StationPlay-Device": device_key})  # fmt: skip
+        kids_h = {"Authorization": f"Bearer {picked.json().get('token', '')}"}
+        for pin in ("2222", None):
+            r = await c.post("/api/internal/pin", headers=kids_h, json={"pin": pin})
+            checks.ok(r.status_code == 403, f"Kids can't set their own passcode ({pin!r})",
+                      f"got {r.status_code}")  # fmt: skip
+        r = await c.post("/api/internal/password", headers=kids_h,
+                         json={"current": "", "new": "a brand new password"})  # fmt: skip
+        checks.ok(r.status_code == 403, "Kids can't give themselves a password",
+                  f"got {r.status_code}")  # fmt: skip
+
+        # The wait after wrong passcodes holds, even after a new one is set.
+        await c.post("/api/internal/pin", headers=sam_h, json={"pin": "2468"})
+        r = await c.post("/api/internal/picker/choose", json={"id": ids[USER["name"]], "pin": "2468"},
+                         headers={"StationPlay-Device": device_key})  # fmt: skip
+        checks.ok(r.status_code == 429, "a new passcode doesn't end the wait after wrong ones",
+                  f"got {r.status_code}")  # fmt: skip
+
+    kits_password = password_of(ids[KID["name"]])
+    async with httpx.AsyncClient(base_url=net) as out:
+        # Wrong current passwords count as wrong sign-ins (from that address).
+        one = {**https, **kit_h, "X-Real-IP": "203.0.113.71"}
+        for _ in range(access.TRIES):
+            await out.post("/api/internal/password", json=tries, headers=one)
+        r = await out.post("/api/internal/password", headers=one,
+                           json={"current": KID["password"], "new": "a brand new password"})  # fmt: skip
+        checks.ok(r.status_code == 429 and password_of(ids[KID["name"]]) == kits_password,
+                  "changing a password waits after too many wrong current ones",
+                  f"got {r.status_code}")  # fmt: skip
+        # Many at once can't beat the limit, or get in.
+        many = {**https, **kit_h, "X-Real-IP": "203.0.113.72"}
+        codes = [
+            r.status_code
+            for r in await asyncio.gather(*(
+                out.post("/api/internal/password", headers=many,
+                         json={"current": f"guess {n}", "new": "a brand new password"})
+                for n in range(30)
+            ))
+        ]  # fmt: skip
+        checks.ok(codes.count(400) <= access.TRIES and 200 not in codes and 429 in codes
+                  and password_of(ids[KID["name"]]) == kits_password,
+                  "many wrong current passwords at once can't beat the limit",
+                  f"checked={codes.count(400)} changed={codes.count(200)}")  # fmt: skip
+
+    # When an Admin turns it off, neither the app nor the page changes it.
+    async with httpx.AsyncClient(base_url=home) as c:
+        off = await c.put(f"/api/access/users/{ids[KID['name']]}", headers=admin_h,
+                          json={"canChangePassword": False})  # fmt: skip
+        r = await c.post("/api/internal/password", headers=kit_h,
+                         json={"current": KID["password"], "new": "a brand new password"})  # fmt: skip
+        async with httpx.AsyncClient(base_url=home) as page:
+            await page.post("/api/access/sign-in", json=KID)
+            on_page = await page.post("/api/access/me/password",
+                                      json={"current": KID["password"], "password": "a brand new one"})  # fmt: skip
+        checks.ok(off.status_code == 200 and r.status_code == 403 and on_page.status_code == 403
+                  and password_of(ids[KID["name"]]) == kits_password,
+                  "with it turned off, a User can't change their own password anywhere",
+                  f"got {off.status_code}, {r.status_code}, {on_page.status_code}")  # fmt: skip
 
 
 async def _pin_limit(checks: Checks, app, home: str, device_key: str) -> None:

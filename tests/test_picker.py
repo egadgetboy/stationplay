@@ -420,10 +420,10 @@ def test_devices_at_home_list_the_household_and_away_only_their_own(tmp_path):
         )
         assert kids.status_code == 200
         # Selected devices: only there, at home and away.
-        admin.put(
-            f"/api/access/users/{made['Kids']['id']}/picker",
-            json={"showOn": "selected", "devices": []},
-        )
+        kids_on = f"/api/access/users/{made['Kids']['id']}/picker"
+        admin.put(kids_on, json={"showOn": "selected", "devices": [tv_id]})
+        assert "Kids" in people(home, key) and "Kids" in people(away, key)
+        admin.put(kids_on, json={"showOn": "selected", "devices": []})
         assert "Kids" not in people(home, key) and "Kids" not in people(away, key)
         admin.put(f"/api/access/users/{made['Bo']['id']}/picker", json={"showOn": "home"})
         [listed] = admin.get("/api/access/devices").json()["devices"]

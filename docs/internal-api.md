@@ -108,6 +108,27 @@ shows whether they have one (`user.pin` in `GET /api/internal/me`), to
 choose a new one there, or none. An Admin who has a passcode can't remove it
 in an app (it's refused, with the sentence to show): offer only a new one.
 
+### What 1.28.0 asks of the apps
+
+1. **Who's tuning in?** Ask `GET /api/internal/picker` each time the picker
+   shows, and again when the app comes back to the front: a device lists
+   fewer people away from home than at home. When picking someone answers
+   404, they aren't on this device's list where it is now: ask for the
+   list again.
+2. **After signing in** with a password, an invite code or a code entered on
+   the page: when `askPin` is true, ask for a passcode (typed twice) or No
+   passcode, and send it with `POST /api/internal/pin`.
+3. **Options:** ask `GET /api/internal/me` when they open. Show whether
+   the person has a passcode (`user.pin`), with Change passcode and No
+   passcode (not for an Admin who has one), and Change password only while
+   `user.canChangePassword` is true (`POST /api/internal/password`; keep the
+   `token` it answers with in place of the app's).
+4. **Every refusal** carries a sentence to show as it is (`detail`).
+
+A server before 1.28.0 doesn't send `askPin`, `user.pin` or
+`user.canChangePassword`, and doesn't have the two new addresses: without
+those fields, leave out what they'd offer.
+
 On the public port, only `GET /api/v1/server` (and StationPlay's check of
 itself) answers until signing in is on. API tokens (`docs/api.md`) don't
 work here: these addresses are for the apps' own sign-ins.
