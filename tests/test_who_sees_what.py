@@ -201,7 +201,12 @@ def test_levels_are_kept_on_the_access_tab(app):
     with TestClient(app) as admin:
         admin.post("/api/access/users", json=ADA)
         state = admin.get("/api/access/viewing").json()
-        assert [lv["name"] for lv in state["levels"]] == ["Unrestricted", "Teen", "Kid", "Young Child"]
+        assert [lv["name"] for lv in state["levels"]] == [
+            "Unrestricted",
+            "Teen",
+            "Kid",
+            "Young Child",
+        ]
         assert state["movieRatings"][0] == [0, "G"] and state["tvRatings"][-1] == [17, "TV-MA"]
         made = admin.post(
             "/api/access/levels",
@@ -219,7 +224,9 @@ def test_levels_are_kept_on_the_access_tab(app):
         assert bad.status_code == 400 and bad.json()["detail"] == "Choose a rating from the list"
         # Unrestricted stays as it is; the others can be removed.
         free = next(lv for lv in state["levels"] if lv["name"] == "Unrestricted")
-        kept = admin.put(f"/api/access/levels/{free['id']}", json={"name": "Adults", "movieAge": 13})
+        kept = admin.put(
+            f"/api/access/levels/{free['id']}", json={"name": "Adults", "movieAge": 13}
+        )
         assert kept.status_code == 400 and "stays as it is" in kept.json()["detail"]
         assert admin.delete(f"/api/access/levels/{free['id']}").status_code == 400
         assert admin.delete(f"/api/access/levels/{kid_level(admin)}").status_code == 204

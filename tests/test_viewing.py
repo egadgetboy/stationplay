@@ -176,7 +176,9 @@ def test_levels_come_with_stationplay_and_can_be_changed(tmp_path):
     teen = next(lv for lv in again.levels() if lv.builtin == viewing.TEEN)
     again.remove_level(teen.id)
     assert [lv.name for lv in viewing.Viewing(db, Titles(db)).levels()] == [
-        "Unrestricted", "Kids", "Young Child"
+        "Unrestricted",
+        "Kids",
+        "Young Child",
     ]
     # An Admin's own: named once, and removed only when no one's on it.
     grand = again.save_level(None, "Grandparents", 13, 14, True, None)
@@ -214,5 +216,6 @@ def test_an_early_adult_level_becomes_unrestricted(tmp_path):
     db.add_level("Teen", 13, 14, False, None, "teen")
     v = viewing.Viewing(db, Titles(db))
     assert [(lv.name, lv.builtin) for lv in v.levels()] == [
-        ("Unrestricted", "unrestricted"), ("Teen", "teen")
+        ("Unrestricted", "unrestricted"),
+        ("Teen", "teen"),
     ]
