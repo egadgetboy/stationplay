@@ -18,9 +18,11 @@ The deciding is in ondemand.py; this is the asking and answering.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import logging
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -68,6 +70,12 @@ PLAY_ENDED = "That program's address has ended. Choose it again to play it."
 # it in their player).
 EVEN_WHY = "even sound for the show's episodes"
 NOT_PLAYABLE = "Choose an episode or a movie to play"
+NO_PICTURE = "There's no such picture"
+PAST_END = "That's past the end of this program"
+# A place reported this far past the end of what plays is refused (a little
+# past it is the end: watched).
+PAST_END_MS = 10 * 60_000
+UNREACHABLE_SAID_S = 60.0  # (the log says the library can't be reached once a minute, at most)
 NO_FILE = "StationPlay can't reach this program's file right now. Try again in a moment."
 COPY_FAILED = "StationPlay couldn't make this ready to play here. Try again, or choose another."
 KEYFRAMES_WAIT_S = 20.0  # reading a file's index, at most
@@ -140,6 +148,9 @@ class ProgressReport(BaseModel):
     positionMs: int | None = Field(default=None, ge=0, le=7 * 86_400_000)
     watched: bool | None = None
     session: str | None = Field(default=None, max_length=64)
+    # Each report's place in its playing (1, 2, 3...), so one sent before
+    # another but arriving after it is known (from 1.30.0).
+    sequence: int | None = Field(default=None, ge=1, le=2**31)
 
 
 class WhenSlow(BaseModel):
@@ -391,20 +402,51 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         return session is not None and session.away and session.sign_in is not None and ctx.away.on
 
     ctx.access.play_outside = plays_outside
+    said_unreachable = [0.0]  # (when the log last said so: see unreachable)
+    picture_turns = asyncio.Semaphore(ondemand.PICTURES_AT_ONCE)
 
-    class Asking:
-        """Answers for what the library says: not shared (404), or the
-        library unreachable (503)."""
+    def unreachable(why: str) -> HTTPException:
+        """The library can't be reached (503): said in the log, once a
+        minute at most, however many apps ask meanwhile."""
+        now = time.monotonic()
+        if now - said_unreachable[0] >= UNREACHABLE_SAID_S:
+            said_unreachable[0] = now
+            log.warning("A StationPlay app couldn't be shown your library (%s)", why)
+        return HTTPException(503, ondemand.UNREACHABLE)
 
-        def __enter__(self) -> None:
-            return None
-
-        def __exit__(self, kind: Any, e: Any, tb: Any) -> None:
-            if isinstance(e, NotShared):
+    @contextlib.asynccontextmanager
+    async def asking(request: Request) -> AsyncIterator[None]:
+        """Asking the library for what a request needs, within
+        LIBRARY_WAIT_S of its first ask, however many things it asks, so no
+        request hangs on Plex. What isn't shared (or seen), or the library
+        says isn't there, answers 404; the library slow, away or saying what
+        can't be read, 503."""
+        deadline = getattr(request.state, "library_by", None)
+        if deadline is None:
+            deadline = request.state.library_by = (
+                asyncio.get_running_loop().time() + ondemand.LIBRARY_WAIT_S
+            )
+        waiting = asyncio.timeout_at(deadline)
+        try:
+            async with waiting:
+                yield
+        except NotShared:
+            raise HTTPException(404, ondemand.NOT_SHARED) from None
+        except LibraryError as e:
+            if e.status == 404:  # (Plex's "no such thing" is ours)
                 raise HTTPException(404, ondemand.NOT_SHARED) from None
-            if isinstance(e, LibraryError):
-                log.warning("A StationPlay app couldn't be shown your library (%s)", e)
-                raise HTTPException(503, ondemand.UNREACHABLE) from None
+            raise unreachable(str(e)) from None
+        except TimeoutError:
+            if not waiting.expired():
+                raise
+            raise unreachable(
+                f"Plex didn't answer within {ondemand.LIBRARY_WAIT_S:g} seconds"
+            ) from None
+        except (KeyError, TypeError, AttributeError, ValueError):
+            # (What the library said couldn't be read: as though it were
+            # away, rather than a stack trace for the app.)
+            log.exception("What Plex said for a StationPlay app couldn't be read")
+            raise HTTPException(503, ondemand.UNREACHABLE) from None
 
     # What each person can see (see viewing.py) ------------------------------
 
@@ -460,7 +502,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     async def libraries(request: Request):
         shared_here(request)
         viewer = viewer_of(request)
-        with Asking():
+        async with asking(request):
             found = await cat.libraries()
         return {"libraries": [lib for lib in found if library_seen(viewer, lib["key"])]}
 
@@ -493,7 +535,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         unwatched = q.get("unwatched", "") in ("1", "true")
         user_id, _ = person(request)
         viewer = viewer_of(request)
-        with Asking():
+        async with asking(request):
             if not library_seen(viewer, key):
                 raise NotShared(key)
             title, kind, entries = await cat.whole(key, sort, genre)
@@ -517,7 +559,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         shared_here(request)
         user_id, _ = person(request)
         viewer = viewer_of(request)
-        with Asking():
+        async with asking(request):
             going = await ondemand.continue_watching(cat, ctx.db, user_id)
             added = await cat.recently_added()
             if not viewer.everything:
@@ -528,6 +570,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     for lib, entries in added
                     if library_seen(viewer, lib["key"])
                 ]
+        going = going[: ondemand.CONTINUE_MOST]
         progress = dict(ctx.db.progress_of(user_id, [e.key for e, _ in going]))
         for e, start in going:  # (where to start, as worked out)
             progress[e.key] = (start, progress.get(e.key, (0, False))[1])
@@ -542,8 +585,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     def on_now(words: str, user: User | None) -> list[dict]:
         """The stations (that `user` can see) airing a show or movie whose
-        title contains `words` right now, with what's on."""
-        wanted, now, out = words.casefold(), now_ms(), []
+        title has `words` in it right now (as search finds titles: see
+        ondemand.match), with what's on."""
+        wanted, now = ondemand.searchable(words), now_ms()
+        out: list[dict] = []
+        if not wanted:
+            return out
         for channel in ctx.stations_for(user):
             station = ctx.station(channel.id)
             slot = station.locate(now)
@@ -553,7 +600,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             title = (
                 item.show_title if item.kind == catalog.EPISODE and item.show_title else item.title
             )
-            if wanted in plain(title or "").casefold():
+            if ondemand.match(wanted, ondemand.searchable(plain(title or ""))) is not None:
                 out.append(
                     {
                         "number": channel.number,
@@ -577,9 +624,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         viewer = viewer_of(request)
         found: list[Entry] = []
         if ctx.media_here(access.outside(request.scope)):
-            with Asking():
+            async with asking(request):
                 found = await seen_only(viewer, await cat.search(words))
-            found = [e for e in found if library_seen(viewer, e.library)]
+            found = [e for e in found if library_seen(viewer, e.library)][: ondemand.SEARCH_MOST]
         return {
             "items": cards(user_id, found),
             "onNow": await asyncio.to_thread(on_now, words, user),
@@ -590,7 +637,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         shared_here(request)
         user_id, _ = person(request)
         viewer = viewer_of(request)
-        with Asking():
+        async with asking(request):
             e = await cat.entry(key)
             await must_see(viewer, e)
             if e.kind == catalog.SHOW:
@@ -605,7 +652,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 seasons.setdefault(ep.season if ep.season is not None else -1, []).append(ep)
             nxt = None
             if upcoming is not None:
-                ep, start = upcoming
+                ep, start, _why = upcoming
                 nxt = card(ep, {ep.key: (start, ep.key in done)})
             return {
                 **card(e, {}, max(0, (e.episodes or len(episodes)) - len(done))),
@@ -645,7 +692,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         """A show, an episode or a movie someone may choose languages for:
         one in a shared library that they can see."""
         shared_here(request)
-        with Asking():
+        async with asking(request):
             e = await cat.entry(key)
             await must_see(viewer_of(request), e)
         if e.kind not in languages.KINDS:
@@ -680,7 +727,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         shared_here(request)
         user_id, _ = person(request)
         viewer = viewer_of(request)
-        with Asking():
+        async with asking(request):
             e = await cat.entry(key)
             await must_see(viewer, e)
             if e.kind == catalog.EPISODE and e.show_key:
@@ -694,18 +741,27 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     @app.get("/api/internal/items/{key}/episodes")
     async def episodes_of(key: str, request: Request):
         shared_here(request)
-        season_text = request.query_params.get("season")
+        q = request.query_params
+        season_text = q.get("season")
         season = _whole(season_text, -1, "season", 0, 100_000) if season_text else None
+        start = _whole(q.get("start"), 0, "start", 0, 1_000_000)
+        size = _whole(q.get("size"), ondemand.EPISODES_MOST, "size", 1, ondemand.EPISODES_MOST)
         user_id, _ = person(request)
         viewer = viewer_of(request)
-        with Asking():
+        async with asking(request):
             e = await cat.entry(key)
             await must_see(viewer, e)
             if e.kind != catalog.SHOW:
                 raise HTTPException(400, "That isn't a show")
             found = await seen_only(viewer, await cat.episodes(key))
         chosen = [x for x in found if season is None or x.season == season]
-        return {"show": key, "season": season, "episodes": cards(user_id, chosen)}
+        return {
+            "show": key,
+            "season": season,
+            "total": len(chosen),
+            "start": start,
+            "episodes": cards(user_id, chosen[start : start + size]),
+        }
 
     @app.get("/api/internal/art/{key}")
     async def picture(key: str, request: Request):
@@ -715,28 +771,38 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(400, "kind must be poster, backdrop or thumb")
         width = ondemand.width_for(_whole(request.query_params.get("w"), 320, "w", 1, 10_000))
         viewer = viewer_of(request)
-        with Asking():
+        async with asking(request):
             await cat.check(key)  # (shared now, even if its picture was kept from before)
             if not viewer.everything:
                 await must_see(viewer, await cat.entry(key))
         kept = ctx.app_pictures.get((key, kind, width))
         if kept is None:
-            with Asking():
-                e = await cat.entry(key)
             # (An episode's poster is its show's; a show's still, its poster.)
-            target = e.show_key if e.kind == catalog.EPISODE and kind != "thumb" else e.key
             which = "art" if kind == "backdrop" else "thumb"
+            async with asking(request):
+                e = await cat.entry(key)
+                target = e.show_key if e.kind == catalog.EPISODE and kind != "thumb" else e.key
+                shown = e if not target or target == e.key else await cat.entry(target)
+            if not (shown.has_art if which == "art" else shown.has_thumb):
+                raise HTTPException(404, NO_PICTURE)  # (the library has none: no need to ask)
             height = width * 3 // 2 if kind == "poster" else width * 9 // 16
             try:
-                with Asking():
-                    kept = await ctx.library.picture(target or e.key, which, width, height)
-            except httpx.HTTPError:
-                raise HTTPException(404, "There's no such picture") from None
-            ctx.app_pictures.put((key, kind, width), kept)
-        data, content_type = kept
-        return Response(
-            data, media_type=content_type, headers={"Cache-Control": "private, max-age=86400"}
-        )
+                async with asking(request), picture_turns:
+                    got = await ctx.library.picture(shown.key, which, width, height)
+            except httpx.HTTPStatusError:
+                raise HTTPException(404, NO_PICTURE) from None
+            except httpx.HTTPError as ex:
+                raise unreachable(f"a picture didn't come: {type(ex).__name__}") from None
+            kept = ctx.app_pictures.put((key, kind, width), got)
+        data, content_type, tag = kept
+        headers = {
+            "Cache-Control": "private, max-age=86400",
+            "ETag": tag,
+            "X-Content-Type-Options": "nosniff",
+        }
+        if {tag, "*"} & _tags(request.headers.get("if-none-match", "")):
+            return Response(status_code=304, headers=headers)  # (the app has it already)
+        return Response(data, media_type=content_type, headers=headers)
 
     # Playing ---------------------------------------------------------------
 
@@ -819,11 +885,47 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         known = ctx.db.session_app(access.session_hash(token)) if token else None
         return known or app_label("", "")
 
+    def sign_in_of(request: Request, name: str) -> str | None:
+        """The sign-in a program is played with (its token's hash), if
+        signing in is on."""
+        token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
+        return access.session_hash(token) if name and token else None
+
+    def said_stop(session: ondemand.PlaySession) -> None:
+        """The log's line for something stopping in an app: who, what, where
+        they stopped, and for how long they watched."""
+        at = session.position_ms
+        log.info(
+            "%s stopped %s%s%s (watched %s)",
+            session.user or "Someone",
+            describe(session.entry),
+            " away from home" if session.away else "",
+            f" at {playing.clock(at / 1000)}" if at is not None else "",
+            playing.minutes(session.watched_s),
+        )
+
+    def one_at_a_time(sign_in: str | None, client: str, e: Entry) -> None:
+        """A device plays one program at a time: starting one ends what it
+        was playing (said in the log as leaving it says it, unless it's the
+        same program again: another sound track, or a smaller version), and
+        the copy being made for it, if any."""
+        for old in ctx.plays.on_device(sign_in, client):
+            ctx.plays.end(old.id)
+            if old.entry.key != e.key:
+                said_stop(old)
+
     def said_start(
         session: ondemand.PlaySession, sound: Track | None, how: str, from_plex: bool
     ) -> None:
         """The log's line for something starting to play in an app: who,
         in which app, what, its file, and how it plays."""
+        if session.media.parts > 1:
+            # (Its files can't be played one after another as one yet.)
+            log.info(
+                "%s is split into %d files in Plex; StationPlay's apps play only the first",
+                describe(session.entry),
+                session.media.parts,
+            )
         log.info(
             "%s started %s in %s, %s: %s (%s)%s, %s",
             session.user or "Someone",
@@ -987,8 +1089,6 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             else:
                 tall = [m for m in versions if m.height >= converting.CONVERT_MOST_HEIGHT]
                 media = tall[-1] if tall else versions[0]
-        if media.parts > 1:
-            return refuse([f"it's split into {media.parts} files"])
         picked = languages.pick(media, wanted) if wanted else None
         to_draw = draws(media)
         subtitle = body.subtitle if picked is None else to_draw.id if to_draw else None
@@ -1054,7 +1154,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             if "h264" not in dev.video:
                 return refuse(["this device doesn't play H.264"])
             on_gpu = ctx.gpu is not None and ctx.gpu.encoder_for_copies().is_gpu
-            if ctx.plays.copies() >= (CONVERTING_MOST_GPU if on_gpu else CONVERTING_MOST):
+            # (Not counting this device's own, which this one takes over from.)
+            mine = ctx.plays.on_device(sign_in_of(request, name), client)
+            if ctx.plays.copies(besides=mine) >= (
+                CONVERTING_MOST_GPU if on_gpu else CONVERTING_MOST
+            ):
                 raise HTTPException(503, BUSY_CONVERTING)
             # (Away from home, never more than the cap, whatever it's converted for.)
             height, kbps = converting.convert_size(
@@ -1087,7 +1191,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 job = subtitles.Extraction(source, nth, settings.data_dir / subtitles.FOLDER
                                            / f"app-{hashlib.sha1(key.encode()).hexdigest()[:24]}.ass",
                                            styled)  # fmt: skip
-                await asyncio.to_thread(job.target.parent.mkdir, parents=True, exist_ok=True)
+                try:
+                    await asyncio.to_thread(job.target.parent.mkdir, parents=True, exist_ok=True)
+                except OSError as ex:
+                    log.warning("A copy for a StationPlay app couldn't be made (%s)", ex)
+                    raise HTTPException(503, COPY_FAILED) from None
                 drawn = job.ready()
                 if not job.target.exists():
                     first = subtitles.extract(settings, job)
@@ -1095,7 +1203,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 return refuse(["its subtitles"])
         if (over := ctx.capacity.refusal(ctx.app_watchers(), client, away_)) is not None:
             return over_the_limit(over, body, request, e, tag)
-        folder = converting.new_folder()
+        try:
+            folder = await asyncio.to_thread(converting.new_folder)
+        except OSError as ex:  # (the disk full, say)
+            log.warning("A copy for a StationPlay app couldn't be made (%s)", ex)
+            raise HTTPException(503, COPY_FAILED) from None
         if fetch_from is not None and shown is not None:
             target = (
                 folder
@@ -1109,14 +1221,14 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             night=body.night, even=even, height=height,
             kbps=kbps, tone_map=tone_map, subtitles=drawn, drawn=shown.id if shown else None,
         )  # fmt: skip
-        token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
         task = asyncio.ensure_future(first) if first is not None else None
         label = app_of(body, request)
         before = ctx.plays.before(user_id, e.key, client, STEP_S)
         again = ctx.plays.before(user_id, e.key, client) is not None
+        sign_in = sign_in_of(request, name)
+        one_at_a_time(sign_in, client, e)
         session = ctx.plays.start(
-            user_id=user_id, user=name,
-            sign_in=access.session_hash(token) if name and token else None,
+            user_id=user_id, user=name, sign_in=sign_in,
             entry=e, media=media, path=path, plex=stream, client=client, away=away_, app=label,
             tag=tag,
             subtitles={
@@ -1173,7 +1285,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     async def play(body: PlayAsk, request: Request):
         shared_here(request)
         user_id, name = person(request)
-        with Asking():
+        async with asking(request):
             e = await cat.entry(body.key)
             await must_see(viewer_of(request), e)
         if e.kind not in (catalog.EPISODE, catalog.MOVIE):
@@ -1262,13 +1374,14 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         )
         if path is None and stream is None:
             raise HTTPException(503, NO_FILE)
-        token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
         before = ctx.plays.before(user_id, e.key, client, STEP_S)
         again = ctx.plays.before(user_id, e.key, client) is not None
+        sign_in = sign_in_of(request, name)
+        one_at_a_time(sign_in, client, e)
         session = ctx.plays.start(
             user_id=user_id,
             user=name,
-            sign_in=access.session_hash(token) if name and token else None,
+            sign_in=sign_in,
             entry=e,
             media=media,
             path=path,
@@ -1320,42 +1433,56 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.post("/api/internal/progress")
     async def progress(body: ProgressReport, request: Request):
+        """Where someone is in an episode or a movie, or marked watched (or
+        not) from a menu (see docs/on-demand.md, "Progress"). Nothing is
+        sent on to Plex, and while it plays (`session`), Plex isn't asked."""
         shared_here(request)
         user_id, _ = person(request)
         if body.positionMs is None and body.watched is None:
             raise HTTPException(400, "Send positionMs, or watched")
-        with Asking():
-            e = await cat.entry(body.key)
+        # Its own playing (or one just ended): still watching, and the order
+        # of its reports. Through the public port, only one started there.
+        playing_ = ctx.plays.find(body.session or "") or ctx.plays.ended(body.session or "")
+        mine = (
+            playing_ is not None
+            and playing_.entry.key == body.key
+            and playing_.user_id == user_id
+            and (playing_.away or not access.outside(request.scope))
+        )
+        session = playing_ if mine else None
+        async with asking(request):
+            e = session.entry if session is not None else await cat.entry(body.key)
+            if not cat.shared_library(e):
+                raise NotShared(e.key)
             await must_see(viewer_of(request), e)
         if e.kind not in (catalog.EPISODE, catalog.MOVIE):
             raise HTTPException(400, NOT_PLAYABLE)
-        if body.session:
-            # (Still watching: its own session only, and through the public
-            # port, only one started there.)
-            going = ctx.plays.find(body.session)
-            if (
-                going is not None
-                and going.entry.key == e.key
-                and going.user_id == user_id
-                and (going.away or not access.outside(request.scope))
-            ):
-                ctx.plays.get(body.session)
-                if body.positionMs is not None:
-                    going.position_ms = body.positionMs
-        old = ctx.db.progress_of(user_id, [e.key]).get(e.key)
+        kept = ctx.db.progress_of(user_id, [e.key]).get(e.key)
+        if session is not None and body.sequence is not None:
+            if body.sequence <= session.sequence:
+                # (Sent before one already here: it never moves them back.)
+                was = kept or (0, False)
+                return {"positionMs": ondemand.resume_at(was), "watched": was[1]}
+            session.sequence = body.sequence
+        length = ondemand.length_of(e, session.media if session is not None else None)
+        if body.positionMs is not None and length and body.positionMs > length + PAST_END_MS:
+            raise HTTPException(400, PAST_END)
+        if session is not None and ctx.plays.find(session.id) is session:
+            ctx.plays.get(session.id)  # (still watching)
+            if body.positionMs is not None:
+                session.position_ms = body.positionMs
         if body.watched is not None:
             position, watched = 0, body.watched
         else:
-            position, watched = ondemand.progressed(old, body.positionMs or 0, e)
-        ctx.db.save_progress(
-            user_id,
-            e.key,
-            e.show_key,
-            position,
-            e.duration_ms or 0,
-            watched,
-            int(time.time() * 1000),
-        )
+            position, watched = ondemand.progressed(kept, body.positionMs or 0, e, length)
+        now = int(time.time() * 1000)
+        # An episode in one file with others ("S01E01-E02"): they're where it is.
+        together = [
+            x for x in cat.kept_episodes(e.show_key or "") if e.file and x.file == e.file
+        ] or [e]
+        for x in together:
+            ctx.db.save_progress(user_id, x.key, x.show_key, position, e.duration_ms or 0,
+                                 watched, now)  # fmt: skip
         return {"positionMs": ondemand.resume_at((position, watched)), "watched": watched}
 
     # The play sessions' own addresses (a player can't sign in) ---------------
@@ -1471,15 +1598,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         session = ctx.plays.end(session_id)
         # (Not when a newer one took over: another sound track, a smaller version.)
         if session is not None and not ctx.plays.newer(session):
-            at = session.position_ms
-            log.info(
-                "%s stopped %s%s%s (watched %s)",
-                session.user or "Someone",
-                describe(session.entry),
-                " away from home" if session.away else "",
-                f" at {playing.clock(at / 1000)}" if at is not None else "",
-                playing.minutes(session.watched_s),
-            )
+            said_stop(session)
         return Response(status_code=204)
 
     # The Access tab: which libraries the apps may see ------------------------
@@ -1549,6 +1668,11 @@ def _whole(text: str | None, otherwise: int, name: str, low: int, high: int) -> 
     if not low <= value <= high:
         raise HTTPException(400, f"{name} must be from {low} to {high}")
     return value
+
+
+def _tags(said: str) -> set[str]:
+    """The ETags in an If-None-Match header (weak ones as strong ones)."""
+    return {t.strip().removeprefix("W/") for t in said.split(",") if t.strip()}
 
 
 def chosen(picked: languages.Picked | None, sound: Track | None, shown: Track | None) -> Any:

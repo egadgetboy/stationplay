@@ -158,6 +158,9 @@ class Entry:
     credits: tuple[int, int] | None = None
     media: tuple[Media, ...] = field(default=())  # (episodes and movies, when asked for)
     sort_title: str = ""  # how the source sorts it ("Orbit Room, The"), "" if as its title
+    # Its file (its first version's), as the source has it: episodes with the
+    # same one are in one file together ("S01E01-E02"); "" if not known.
+    file: str = ""
     # (When asked for in detail:)
     tagline: str = ""
     cast: tuple[tuple[str, str], ...] = ()  # (name, role) as billed

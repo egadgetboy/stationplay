@@ -29,6 +29,9 @@ TYPE_SHOW = 2
 TYPE_COLLECTION = 18
 # Entries per request when listing a whole library or show.
 PAGE_SIZE = 1000
+# A request Plex didn't answer is asked again after this long (then twice
+# this), up to three times in all.
+RETRY_S = 0.5
 # Background requests (building and checking stations) StationPlay has in
 # flight to Plex at once, at most. Lookups for programs about to play don't
 # wait behind them.
@@ -200,12 +203,17 @@ class PlexClient:
                         f"Plex returned HTTP {resp.status_code} for {path}", resp.status_code
                     )
                 resp.raise_for_status()
-                return resp.json().get("MediaContainer", {})
+                said = resp.json()
+                container = said.get("MediaContainer", {}) if isinstance(said, dict) else None
+                if not isinstance(container, dict):
+                    # (Not what Plex says: handled as Plex not answering.)
+                    raise ValueError("Plex's answer couldn't be read")
+                return container
             except PlexError:
                 raise
             except (httpx.HTTPError, ValueError) as e:
                 last_error = e
-                await asyncio.sleep(0.5 * (attempt + 1))
+                await asyncio.sleep(RETRY_S * (attempt + 1))
         raise PlexError(f"Plex request for {path} failed ({self._quiet(last_error)})")
 
     async def _get_all(self, path: str, params: dict | None = None) -> list[dict[str, Any]]:
@@ -325,12 +333,12 @@ class PlexClient:
                 # The library's folders, as Plex sees them.
                 "locations": [
                     loc["path"]
-                    for loc in d.get("Location") or []
+                    for loc in _listed(d, "Location")
                     if isinstance(loc.get("path"), str)
                 ],
             }
-            for d in data.get("Directory", [])
-            if d.get("type") in ("show", "movie")
+            for d in _listed(data, "Directory")
+            if d.get("type") in ("show", "movie") and str(d.get("key") or "").isdigit()
         ]
 
     async def section_items(self, section_key: str) -> list[dict[str, Any]]:
@@ -360,7 +368,7 @@ class PlexClient:
         data = await self._get("/library/sections")
         return "|".join(
             f"{d.get('key')}:{d.get('updatedAt')}:{d.get('scannedAt')}:{d.get('contentChangedAt')}"
-            for d in sorted(data.get("Directory", []), key=lambda d: str(d.get("key")))
+            for d in sorted(_listed(data, "Directory"), key=lambda d: str(d.get("key")))
         )
 
     # Filters --------------------------------------------------------------
@@ -1042,7 +1050,7 @@ class PlexClient:
                 **({"genre": genre} if genre else {}),
             },
         )
-        page = [e for m in data.get("Metadata") or [] if (e := to_entry(m, section))]
+        page = [e for m in _listed(data, "Metadata") if (e := to_entry(m, section))]
         total = data.get("totalSize")
         return (total if isinstance(total, int) else start + len(page)), page
 
@@ -1060,29 +1068,16 @@ class PlexClient:
             },
         )
         shows: list[str] = []
-        for m in data.get("Metadata") or []:
+        for m in _listed(data, "Metadata"):
             show = str(m.get("grandparentRatingKey") or "")
             if show.isdigit() and show not in shows:
                 shows.append(show)
         return [e for e in await self.entries(shows[:count]) if e.kind == catalog.SHOW]
 
-    async def search(self, section: str, kind: str, words: str, count: int) -> list[Entry]:
-        """A library's shows or movies whose titles contain `words`."""
-        data = await self._get(
-            f"/library/sections/{section}/all",
-            {
-                "type": TYPE_SHOW if kind == catalog.SHOW else TYPE_MOVIE,
-                "title": words,
-                "sort": "titleSort",
-                "X-Plex-Container-Start": 0,
-                "X-Plex-Container-Size": count,
-            },
-        )
-        return [e for m in data.get("Metadata") or [] if (e := to_entry(m, section))]
-
     async def entry(self, key: str, details: bool = False) -> Entry | None:
         """A show, movie or episode (None if Plex has no such thing). With
-        `details`, its intro and credits and what its files hold too."""
+        `details`, its intro and credits and what its files hold too.
+        PlexError for an answer that can't be read (as for none at all)."""
         try:
             data = await self._get(
                 f"/library/metadata/{key}", {"includeMarkers": 1} if details else None
@@ -1092,9 +1087,10 @@ class PlexClient:
                 return None
             raise
         section = str(data.get("librarySectionID") or "")
-        found = [
-            x for m in data.get("Metadata") or [] if (x := to_entry(m, section, details=details))
-        ]
+        listed = _listed(data, "Metadata")
+        if any(not _described(m) for m in listed):
+            raise PlexError(f"Plex's answer for {key} couldn't be read")
+        found = [x for m in listed if (x := to_entry(m, section, details=details))]
         return found[0] if found else None
 
     async def entries(self, keys: list[str]) -> list[Entry]:
@@ -1119,7 +1115,7 @@ class PlexClient:
             # (Each says which library it's in; the answer as a whole only
             # when it's about one.)
             section = str(data.get("librarySectionID") or "") if len(batch) == 1 else ""
-            for m in data.get("Metadata") or []:
+            for m in _listed(data, "Metadata"):
                 if (x := to_entry(m, section)) is not None:
                     found[x.key] = x
         return [found[k] for k in wanted if k in found]
@@ -1135,7 +1131,7 @@ class PlexClient:
         section = str(data.get("librarySectionID") or "")
         found = [
             x
-            for m in data.get("Metadata") or []
+            for m in _listed(data, "Metadata")
             if (x := to_entry(m, section)) and x.kind == catalog.EPISODE
         ]
         return sorted(found, key=episode_order)
@@ -1143,33 +1139,79 @@ class PlexClient:
     async def picture(self, key: str, which: str, width: int, height: int) -> tuple[bytes, str]:
         """A show's, movie's or episode's picture (`which`: "thumb", its
         poster or still, or "art", its backdrop), made the size asked for by
-        Plex (or as it is, if Plex won't). httpx.HTTPError if there's none."""
+        Plex (or as it is, if Plex won't), at most PICTURE_MOST bytes.
+        httpx.HTTPStatusError if there's none (or it isn't a picture);
+        another httpx.HTTPError if Plex can't be reached."""
         path = _checked(f"/library/metadata/{key}/{which}")
         try:
-            return await self.get_bytes(
+            return await self._picture(
                 "/photo/:/transcode",
                 {"url": path, "width": width, "height": height, "minSize": 1, "upscale": 1},
             )
         except httpx.HTTPStatusError:
-            return await self.get_bytes(path)
+            return await self._picture(path)
+
+    async def _picture(self, path: str, params: dict | None = None) -> tuple[bytes, str]:
+        """A picture from Plex, if it is one: an image's type, not empty,
+        and not too big."""
+        async with self._client.stream(
+            "GET", _checked(path), params=params, headers={"Accept": "image/*"}
+        ) as resp:
+            resp.raise_for_status()
+            kind = resp.headers.get("content-type", "").split(";")[0].strip().lower()
+            data = bytearray()
+            if kind in PICTURE_TYPES:
+                async for chunk in resp.aiter_bytes():
+                    data += chunk
+                    if len(data) > PICTURE_MOST:
+                        break
+            if not data or len(data) > PICTURE_MOST:
+                # (Not a picture, an empty one, or one far too big: as good as none.)
+                raise httpx.HTTPStatusError("Not a picture", request=resp.request, response=resp)
+        return bytes(data), kind
 
 
 # For StationPlay's apps: how a library's shows and movies can be sorted.
 _SORTS = {"title": "titleSort", "added": "addedAt:desc", "released": "originallyAvailableAt:desc"}
 # Shows, movies and episodes asked for in one request, at most.
 ENTRIES_AT_ONCE = 50
+# Pictures for the apps: what's taken as one, and how big one may be.
+PICTURE_TYPES = frozenset({"image/jpeg", "image/png", "image/webp", "image/gif"})
+PICTURE_MOST = 20 << 20
 
 
-def episode_order(e: Entry) -> tuple[bool, int, int, str]:
-    """Seasons in order with specials (season 0) last, then episodes."""
+def _listed(data: dict[str, Any], field: str) -> list[dict[str, Any]]:
+    """What Plex lists under `field` ("Metadata", "Directory"...): those
+    that are described, as dictionaries. PlexError if it isn't a list (an
+    answer that can't be read is handled as no answer)."""
+    found = data.get(field)
+    if found is None:
+        return []
+    if not isinstance(found, list):
+        raise PlexError("Plex's answer couldn't be read")
+    return [m for m in found if isinstance(m, dict)]
+
+
+def _described(m: dict[str, Any]) -> bool:
+    """Whether Plex described something enough to be read: a kind and a key."""
+    return isinstance(m.get("type"), str) and str(m.get("ratingKey") or "").isdigit()
+
+
+def episode_order(e: Entry) -> tuple[bool, int, int, str, int, str]:
+    """Seasons in order with specials (season 0) last, then episodes (those
+    without a season or a number after those with one); alike, by title, then
+    key, so the order is always the same."""
     season = e.season if e.season is not None else 10_000
-    return (season == 0, season, e.episode if e.episode is not None else 10_000, e.title)
+    number = e.episode if e.episode is not None else 10_000
+    return (season == 0, season, number, e.title, len(e.key), e.key)
 
 
 def to_entry(m: dict[str, Any], section: str = "", details: bool = False) -> Entry | None:
     """Plex's description of a show, movie or episode, as the apps are told
     it (see catalog.py); None for anything else. `details`: Plex was asked
     about it alone, so its markers and streams are there."""
+    if not isinstance(m, dict):
+        return None
     kind = m.get("type")
     key = str(m.get("ratingKey") or "")
     if kind not in (catalog.SHOW, catalog.MOVIE, catalog.EPISODE) or not key.isdigit():
@@ -1180,6 +1222,7 @@ def to_entry(m: dict[str, Any], section: str = "", details: bool = False) -> Ent
     library = str(m.get("librarySectionID") or section or "")
     show_key = str(m.get("grandparentRatingKey") or "") if episode else ""
     media = tuple(to_media(m)) if details and kind != catalog.SHOW else ()
+    part = first_part(m) if kind != catalog.SHOW else None
     intro = credits = None
     if details and episode:  # (movies have no Skip buttons)
         intro, credits = _skips(duration, m.get("Marker"), [x.duration_ms for x in media])
@@ -1208,6 +1251,7 @@ def to_entry(m: dict[str, Any], section: str = "", details: bool = False) -> Ent
         credits=credits,
         media=media,
         sort_title=str(m.get("titleSort") or ""),
+        file=part.file if part is not None and isinstance(part.file, str) else "",
         tagline=str(m.get("tagline") or "") if details else "",
         cast=_roles(m) if details else (),
         directors=_names(m, "Director") if details else (),
@@ -1224,7 +1268,7 @@ def _roles(m: dict[str, Any]) -> tuple[tuple[str, str], ...]:
     """Who's in it, as billed: (name, the part they play)."""
     out = [
         (str(r["tag"]).strip(), str(r.get("role") or "").strip())
-        for r in m.get("Role") or []
+        for r in _each(m.get("Role"))
         if isinstance(r, dict) and str(r.get("tag") or "").strip()
     ]
     return tuple(out[:CAST_MOST])
@@ -1233,7 +1277,7 @@ def _roles(m: dict[str, Any]) -> tuple[tuple[str, str], ...]:
 def _names(m: dict[str, Any], field: str) -> tuple[str, ...]:
     """Its directors or writers, in Plex's order, each once."""
     out: list[str] = []
-    for t in m.get(field) or []:
+    for t in _each(m.get(field)):
         name = str(t.get("tag") or "").strip() if isinstance(t, dict) else ""
         if name and name not in out:
             out.append(name)
@@ -1242,6 +1286,11 @@ def _names(m: dict[str, Any], field: str) -> tuple[str, ...]:
 
 def _int(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _each(value: Any) -> list:
+    """What Plex lists, or nothing if it isn't a list."""
+    return value if isinstance(value, list) else []
 
 
 # Skip intro and Skip credits (episodes only; see _skips).
@@ -1308,12 +1357,12 @@ def _skips(
 def to_media(m: dict[str, Any]) -> list[Media]:
     """The versions of a program's file, as Plex describes them."""
     out = []
-    for media in m.get("Media") or []:
+    for media in _each(m.get("Media")):
         if not isinstance(media, dict):
             continue
-        parts = [p for p in media.get("Part") or [] if isinstance(p, dict)]
+        parts = [p for p in _each(media.get("Part")) if isinstance(p, dict)]
         part = parts[0] if parts else {}
-        streams = [s for s in part.get("Stream") or [] if isinstance(s, dict)]
+        streams = [s for s in _each(part.get("Stream")) if isinstance(s, dict)]
         video = next((s for s in streams if s.get("streamType") == 1), {})
         trc = str(video.get("colorTrc") or "").lower()
         hdr = catalog.HDR10 if trc == "smpte2084" else catalog.HLG if trc == "arib-std-b67" else ""
@@ -1446,7 +1495,8 @@ def _count(value: Any) -> int:
 
 def genres(m: dict[str, Any]) -> list[str]:
     """A movie's or show's genres, as Plex lists them (its first few)."""
-    return [str(t["tag"]) for t in m.get("Genre") or [] if isinstance(t, dict) and t.get("tag")][:3]
+    tags = [t for t in _each(m.get("Genre")) if isinstance(t, dict) and t.get("tag")]
+    return [str(t["tag"]) for t in tags][:3]
 
 
 def _has_tag(m: dict[str, Any], field: str, wanted: set[str]) -> bool:
@@ -1496,8 +1546,10 @@ def resolution(m: dict[str, Any]) -> str | None:
 
 
 def first_part(m: dict[str, Any]) -> MediaPart | None:
-    for media in m.get("Media", []) or []:
-        for part in media.get("Part", []) or []:
+    for media in _each(m.get("Media")):
+        for part in _each(media.get("Part") if isinstance(media, dict) else None):
+            if not isinstance(part, dict):
+                continue
             return MediaPart(
                 file=part.get("file"),
                 key=part.get("key"),

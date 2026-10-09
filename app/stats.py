@@ -161,11 +161,14 @@ class Stats:
 
 async def count_plays_forever(ctx: AppContext) -> None:
     """Counts what's being played on demand as it plays (every
-    PLAYS_COUNT_S), so the stats are up to date while it's watched."""
+    PLAYS_COUNT_S), so the stats are up to date while it's watched; and
+    tidies what apps gone without leaving left behind (see
+    ondemand.PlaySessions.tidy)."""
     while True:
         await asyncio.sleep(PLAYS_COUNT_S)
         try:
             ctx.plays.count()
+            ctx.plays.tidy()  # (and what apps gone without leaving left behind)
         except Exception:
             log.exception("Counting what's played in the apps failed")
 

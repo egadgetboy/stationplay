@@ -599,6 +599,18 @@ class Copy:
         if self._cutting:
             await asyncio.wait(set(self._cutting), timeout=10.0)
 
+    def rest(self, after_s: float) -> None:
+        """Deletes its pieces if nothing has asked for one in `after_s` and
+        nothing's being made (its player gone, as an app gone without
+        leaving is): they're made again, from where the player is, if it
+        comes back."""
+        run = self._run
+        if self.ready and (run is None or run.done) and time.monotonic() - self.asked >= after_s:
+            for path in self.ready.values():
+                with contextlib.suppress(OSError):
+                    path.unlink()
+            self.ready.clear()
+
     def stop(self) -> None:
         """Stops making it, and deletes its pieces."""
         if self.stopped:

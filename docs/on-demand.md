@@ -43,8 +43,14 @@ library layer it builds on is in `docs/library.md`.
 - **1.27.0:** watching on demand through the public port, while watching
   away from home is on, with the Admin's quality away from home (see Away
   from home); and even sound for a show's episodes (see Even sound).
+- **1.30.0:** Media made solid: answers within 8 seconds however Plex is
+  (see When Plex is slow or away); lists sorted, paged and searched by
+  StationPlay, case and accents aside (see Lists); Up next decided in one
+  place, and progress kept in order (see Progress, resume and watched);
+  pictures fetched once (ETags); a device playing one program at a time;
+  a movie in several files playing its first.
 - **Later:** fragmented MP4 copies, so Apple's player can have an HEVC
-  picture as it is.
+  picture as it is; a movie in several files played as one.
 
 The `features` an app sees (`GET /api/v1/server`) say what this server
 offers where the app is: `library` once a library is shared, at home (and
@@ -73,6 +79,27 @@ lists things, so checking rarely costs a request. A key that isn't shared,
 or that Plex doesn't know, answers 404 with the same sentence either way,
 so nothing can be learned by guessing keys.
 
+## When Plex is slow or away
+
+No address for the apps waits long on Plex. Whatever a request asks of the
+library (its details, a list, a picture, the episodes of a show) it gets
+within 8 seconds of its first ask (`ondemand.LIBRARY_WAIT_S`), or it answers
+503, "StationPlay can't reach Plex right now. Try again in a moment.", well
+before an app would give up waiting itself. The same goes for Plex saying
+something StationPlay can't read (an answer that isn't JSON, or isn't what
+Plex says): it's handled as Plex away, never as a 500. A single show or
+movie in a list that can't be read is left out of the list, and a field of
+the wrong kind (a year that isn't a number, say) is left out of what's
+told. What Plex says isn't there (404) answers 404, as anything not shared
+does.
+
+What was being fetched isn't thrown away when a request stops waiting: it
+carries on, once for everyone who asks for it at the same time, and is kept
+as usual, so an app asking again a little later often finds it ready. The
+log says the library can't be reached once a minute at most, however many
+apps are asking. The libraries themselves are kept a minute, so browsing
+asks Plex for them rarely.
+
 ## The addresses (all under `/api/internal`, documented in `docs/internal-api.md`)
 
 | Address | What it answers |
@@ -80,13 +107,50 @@ so nothing can be learned by guessing keys.
 | `GET /libraries` | The shared libraries: key, title, kind (`show` or `movie`) |
 | `GET /libraries/{key}` | One library's shows or movies, a page at a time (`start`, `size` up to 200), sorted by `title`, `added` (newest first) or `released` (newest first), narrowed by `genre` or `unwatched`, with its genres and where each letter starts |
 | `GET /home` | The Resume row for this person, and each shared library's recently added |
-| `GET /search?q=` | Shows and movies whose titles contain the words, across shared libraries; and stations airing one now |
+| `GET /search?q=` | Shows and movies whose titles have the words in them, across shared libraries, case and accents aside; and stations airing one now |
 | `GET /items/{key}` | A show's or movie's or episode's details |
-| `GET /items/{key}/episodes?season=` | A show's episodes: one season's, or all of them |
+| `GET /items/{key}/episodes?season=` | A show's episodes: one season's, or all of them, a page at a time (`start`, `size` up to 500) |
 | `GET /items/{key}/related` | Others like a show or movie: sharing its genres, then the nearest in years |
 | `GET /art/{key}?kind=&w=` | A picture: `poster` (2:3), `backdrop` (16:9) or `thumb` (an episode's still) |
 | `POST /play` | Starts playing a program: answers how and where |
 | `POST /progress` | Where someone is in a program, or marks it watched or not |
+
+## Lists
+
+StationPlay sorts and searches the lists itself, from each library's whole
+list of shows or movies, fetched from Plex 500 at a time, all at once after
+the first, and kept (`Whole` in `ondemand.py`): as it is for 2 minutes,
+then for as long as the library's fingerprint (Plex's times for each
+library's changes) says nothing has changed, up to 30 minutes. A genre's
+list is fetched as one of its own. At most 8 lists are kept, and 40,000
+shows and movies among them; a show's episodes, for its 50 latest shows,
+and 40,000 episodes among them.
+
+- **Sorting.** By title: the library's sort title (Plex's leaves out a
+  leading "The", "A" or "An"; without one, StationPlay leaves those out),
+  case and accents aside, numbers as numbers, "#" (digits, and anything
+  but A to Z) first. Newest added, or newest released (those without a
+  date last), ties in the order of their titles. Titles alike are in the
+  order of their keys, so pages never repeat or skip one, and every letter
+  is together, for jumping to it.
+- **Paging.** A library's shows or movies, up to 200 a page; a show's
+  episodes, up to 500 a page (500 unless asked for fewer, so an app before
+  1.30.0 gets a whole season, as before). Search answers up to 50; the
+  Resume row and each library's recently added, up to 20; others like a
+  title, up to 12.
+- **Search.** The words (1 to 100 characters) are found anywhere in a
+  title or its sort title, with case, accents ("Amélie" for "Amelie") and
+  punctuation set aside, and with spaces left out too ("spiderman" for
+  "Spider-Man"). A title that's just the words comes first, then those
+  starting with them, then those with a word starting with them, then the
+  rest, each in title order; the first 50 that person may see.
+- **Large libraries.** With 5,000 movies, 300 shows and 20,000 episodes,
+  the first page of a library after it changes takes as long as Plex takes
+  for its pages (10 of them, asked at once, 6 at a time); after that, every
+  page, sort, filter, letter and search comes from what's kept, in tens of
+  milliseconds, without asking Plex (checked by the tests). A page of 200
+  is about 35 KB; a show's 500 episodes about 140 KB. Each library's
+  recently added is kept a minute, as the home screen is opened often.
 
 A **card** (in lists) is a show's or movie's key, kind, title and year,
 with its poster's address and, for a show, how many episodes it has and how
@@ -94,9 +158,22 @@ many this person hasn't watched. Text is made plain, as for stations.
 
 Pictures come from Plex, made the size asked for (`w` is rounded up to one
 of a few widths so they can be kept: 160, 320, 480, 720, 1280, 1920), and
-kept in memory (up to 48 MB) like the station editor's posters. They need a
-sign-in whenever signing in is on, as everything under `/api/internal` does, so
-apps send their token with pictures too.
+kept in memory (up to 48 MB; one over 6 MB isn't kept) like the station
+editor's posters. They need a sign-in whenever signing in is on, as
+everything under `/api/internal` does, so apps send their token with
+pictures too.
+
+- **Fetched once.** Each has an ETag (from what's in it) and
+  `Cache-Control: private, max-age=86400`: an app keeps it a day, then asks
+  with `If-None-Match`, and while it's the same it's told so (304), with
+  nothing sent. Who may see it is checked first, every time.
+- **Never a hang.** A picture the library says it hasn't got (no poster,
+  no backdrop) is 404 without asking Plex; one Plex hasn't got, or answers
+  with something that isn't a picture (an image's type, not empty, at most
+  20 MB), is 404 too; Plex not sending it in time is 503, as for the rest
+  of the library (8 seconds). At most 8 are asked of Plex at once (an app
+  scrolling a grid of posters asks for many), the rest waiting their turn
+  within that time.
 
 ## Playing
 
@@ -137,6 +214,19 @@ The answer is a play session:
 | `durationMs` | How long it is |
 | `markers` | `intro` and `credits`, each `[startMs, endMs]` or null, and `creditsToEnd` (the Skip intro and Skip credits buttons; episodes only) |
 | `subtitles` | The subtitle tracks; ones in separate files have a `url` to load beside the video |
+
+A device plays one program at a time: starting one ends what it was
+playing (its addresses answer 404, a copy being made for it stops, and the
+log says it stopped, unless it's the same program again: another sound
+track, or a smaller version). A device is an app's sign-in, or while
+signing in is off, its address. Every refusal is a status with `detail`, a
+sentence the apps show as it is.
+
+A movie in several files (Plex's stacked parts) plays its first file, as it
+is or as a copy, and the log says so; its length, for watched, is that
+file's. Playing the parts one after another as one is left for later: it
+would take a copy for every device, and a new way of making copies, where
+playing the first file as it is is sure.
 
 `/play/<session>/…` addresses need no sign-in (a player can't sign in):
 the session ID, 32 random characters (192 bits, from `secrets`), is what
@@ -206,7 +296,10 @@ from its start in pieces of about 6 seconds, so the player shows the whole
 length and seeks anywhere. The pieces are made as they're asked for, by one
 ffmpeg from where the player is (again from wherever it jumps to), a few
 pieces ahead of the player and no further, and deleted behind it and when
-the session ends; ffmpeg stops when nothing has asked for two minutes.
+the session ends; ffmpeg stops when nothing has asked for two minutes, and
+the pieces made are deleted when nothing has asked for ten (an app gone
+without leaving: they're made again if it comes back), checked every
+minute. The session itself ends after 4 hours unused.
 
 - **Repackaged** when the device plays the picture as it is and the pieces
   can carry it (H.264; HEVC for a player that takes HEVC in MPEG-TS
@@ -356,29 +449,53 @@ for keeping up can come from another shared library.
 
 ## Progress, resume and watched
 
-`POST /progress` with `{"key", "positionMs"}` (every 10 seconds or so while
-playing, and when stopping), or `{"key", "watched": true}` (or false) from a
-menu. Kept in a new table, per StationPlay user (user 0 while signing in is
-off), the newest 5,000 programs each:
+`POST /progress` with `{"key", "positionMs", "session", "sequence"}` (every
+10 seconds or so while playing, and when stopping), or `{"key", "watched":
+true}` (or false) from a menu. Kept in a new table, per StationPlay user
+(user 0 while signing in is off), the newest 5,000 programs each:
 
 ```
 progress (user_id, rating_key, show_key, position_ms, duration_ms,
           watched, updated_ms, PRIMARY KEY (user_id, rating_key))
 ```
 
-- Reaching an episode's credits (Plex's marker) or, for a movie or an
-  episode without one, 90% of the way through marks it **watched** and puts its position back to the start.
-  Watched stays watched while someone watches it again.
+- **Watched**: into an episode's closing credits (Plex's marker), or 90%
+  of the way through what plays (the version playing: its own length, as
+  versions of a title can differ; a movie in several files plays its first,
+  so it's that file's), whichever comes first. That marks it watched and
+  puts its position back to the start. Watched stays watched while someone
+  watches it again.
 - Less than a minute in starts from the beginning next time.
-- **Up next** for a show: the episode someone is partway through (or barely
-  started), or the one after the last they finished, or the first; specials
-  aside, and skipping episodes already watched.
-- **The Resume row**: programs partway through, and up next for shows
-  watched lately, newest first, one per show, up to 20.
+- **Up next** for a show is decided in one place (`ondemand.next_up`), the
+  same for every app, from someone's progress in the show, newest first,
+  menu marks of "not watched" aside: the episode they're partway through
+  (or barely started; a special too); else after the last regular episode
+  they finished, the first one after it, in order across seasons, that they
+  haven't watched (specials aside, and past any in the same file as it);
+  none, and the show is finished, nothing next, whatever they skipped
+  before it; a special they finished is passed over; with nothing yet, the
+  first episode (specials aside, unless there's nothing else).
+- **The Resume row**: movies partway through (a minute or more), and each
+  show's Up next (not a show finished, or not started), newest first, one
+  per show, up to 20, of what that person may see.
+- **Episodes in one file** (S01E01-E02): Plex lists each, and each plays
+  the file. Where someone is in one, and whether it's watched, is saved for
+  all of them (those of its show's episodes StationPlay has at hand, so
+  without asking Plex), and Up next goes past them all.
+- **Reports in order.** An app numbers its reports in each playing
+  (`sequence`, from 1.30.0); one numbered no higher than the newest for
+  that playing (still going, or one of the last 200 ended) is late, and
+  changes nothing. Without numbers, they count as they arrive.
+- **Bounds.** A position from 0 to 7 days; more than 10 minutes past the
+  end of what plays is refused, a little past it is the end.
+- **Plex.** A report for something playing (`session`) never asks Plex
+  anything (the playing has the program), so reporting every second is
+  fine, and is kept even while Plex is away. Nothing is sent to Plex:
+  Plex's own watched status is left alone, and what's watched in Plex's own
+  players doesn't move anyone's place here (decided for 1.21.0, and again
+  for 1.30.0): one Plex account can't stand for several StationPlay users.
+  Sending it to Plex for one chosen person is a later option.
 - Removing a user removes their progress.
-- Plex's own watched status is left alone in 1.21.0: one Plex account can't
-  stand for several StationPlay users. Sending it to Plex for one chosen
-  person is a later option.
 
 ## Your library and the stations
 

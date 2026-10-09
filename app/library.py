@@ -200,9 +200,6 @@ class Library:
     async def recently_added(self, library: str, kind: str, count: int) -> list[Entry]:
         return await self._plex_for(library).recently_added(library, kind, count)
 
-    async def search(self, library: str, kind: str, words: str, count: int) -> list[Entry]:
-        return await self._plex_for(library).search(library, kind, words, count)
-
     async def entry(self, key: str, details: bool = False) -> Entry | None:
         """A show, movie or episode; None if there's no such thing."""
         if is_folder_key(key):

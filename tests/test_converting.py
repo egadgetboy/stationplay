@@ -588,9 +588,12 @@ def test_three_converted_at_once_or_six_on_a_gpu(app):
         home.put("/api/app-libraries", json={"libraries": ["2"]})
         ctx = app.state.ctx
         smaller = {"key": "400", "device": PHONE, "maxKbps": 1500, "fit": True}
+        devices = iter(range(2, 250))
 
         def play() -> int:
-            answer = home.post("/api/internal/play", json=smaller)
+            # (Each on a device of its own: a device plays one program at a time.)
+            device = TestClient(app, client=(f"10.0.0.{next(devices)}", 50000))
+            answer = device.post("/api/internal/play", json=smaller)
             if answer.status_code == 200:
                 assert answer.json()["method"] == "convert"
                 session = ctx.plays.get(answer.json()["session"])

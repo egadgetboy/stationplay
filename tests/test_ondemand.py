@@ -77,7 +77,7 @@ def test_why_a_device_cant_play_a_file_as_it_is():
         (media(video="hevc", bit_depth=12), ["its 12-bit picture"]),
         (media(video="hevc", dv_profile=5), ["its Dolby Vision profile 5 picture"]),
         (media(audio=(Track("1", "dts", default=True),)), ["its sound's format (DTS)"]),
-        (media(parts=2), ["it's split into 2 files"]),
+        (media(parts=2, container="avi"), ["its file type (AVI)"]),  # (its first file plays)
     ]
     for found, why in cases:
         assert ondemand.unplayable(found, TV_BOX) == why, found
@@ -97,8 +97,9 @@ def test_why_a_device_cant_play_a_file_as_it_is():
     assert ondemand.cant_play(
         ["its file type (AVI)", "its 12-bit picture", "its sound's format (DTS)"]
     ) == (
-        "This device can't play this file as it is: its file type (AVI), its 12-bit picture and "
-        "its sound's format (DTS). StationPlay can't convert video for its apps yet."
+        "This device can't play this file as it is (its file type (AVI), its 12-bit picture and "
+        "its sound's format (DTS)), and this app can't take a copy made for it. Update the app "
+        "to play it."
     )
 
 
@@ -230,12 +231,19 @@ def test_the_next_episode_skips_specials_and_whats_watched():
         Entry(k, catalog.EPISODE, k, season=s, episode=n)
         for k, s, n in (("a", 1, 1), ("b", 1, 2), ("c", 2, 1), ("x", 0, 1))
     ]
-    assert ondemand.next_episode(eps, None, set()).key == "a"
-    assert ondemand.next_episode(eps, "a", set()).key == "b"
-    assert ondemand.next_episode(eps, "a", {"b"}).key == "c"
-    # After the last, the first one missed (specials aside); none once all are watched.
-    assert ondemand.next_episode(eps, "c", {"a", "c"}).key == "b"
-    assert ondemand.next_episode(eps, "c", {"a", "b", "c"}) is None
+
+    def after(key, watched=()):
+        rows = [(key, ondemand.FINISHED)] if key else []
+        found = ondemand.next_up(eps, rows, set(watched))
+        return found and found[0].key
+
+    assert after(None) == "a"
+    assert after("a") == "b"
+    assert after("a", {"b"}) == "c"
+    # After the last, the show is finished (specials aside), even with one
+    # skipped before it: it's still unwatched in the show's list.
+    assert after("c", {"a", "c"}) is None
+    assert after("c", {"a", "b", "c"}) is None
 
 
 def test_what_progress_says():
@@ -391,9 +399,10 @@ def test_browsing_a_library(app, plex):
         assert movie["audio"][0]["name"] == "English · Dolby Digital · 5.1"
         assert movie["markers"] == {"intro": None, "credits": None, "creditsToEnd": False}
         assert movie["picture"] == {"size": "1080p", "hdr": None}
-        # Search: titles containing the words, those starting with them first.
+        # Search: titles with the words in them, the best matches first ("The
+        # Movie" sorts as "Movie", just what was typed).
         found = home.get("/api/internal/search?q=movie").json()["items"]
-        assert [m["title"] for m in found] == ["Another Movie", "The Movie"]
+        assert [m["title"] for m in found] == ["The Movie", "Another Movie"]
         assert [m["title"] for m in home.get("/api/internal/search?q=the").json()["items"]] == [
             "The Movie",  # (starts with it)
             "Another Movie",
@@ -428,11 +437,11 @@ def test_narrowing_a_library_jumping_to_a_letter_and_others_like_it(app, plex):
         home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
         page = home.get("/api/internal/libraries/2").json()
         assert [m["title"] for m in page["items"]] == [
-            "9 Lives", "Another Movie", "A Drama", "The Movie", "Élan"
+            "9 Lives", "Another Movie", "A Drama", "Élan", "The Movie"
         ]  # fmt: skip
         assert page["genres"] == ["Comedy", "Drama"]
         assert [(x["letter"], x["start"]) for x in page["letters"]] == [
-            ("#", 0), ("A", 1), ("D", 2), ("M", 3), ("E", 4)
+            ("#", 0), ("A", 1), ("D", 2), ("E", 3), ("M", 4)
         ]  # fmt: skip
         assert home.get("/api/internal/libraries/2?sort=added").json()["letters"] == []
         comedies = home.get("/api/internal/libraries/2?genre=comedy").json()
@@ -506,15 +515,19 @@ def test_playing_a_file_as_it_is(app, plex, tmp_path, caplog):
         assert refused.status_code == 422
         assert refused.json()["why"] == ["its file type (AVI)", "its picture's format (MPEG-4)"]
         assert play(home, "100").status_code == 400  # (a show isn't played)
+        # (A device plays one program at a time: each of those ended the one before.)
+        assert home.get(played["url"]).status_code == 404
         # Subtitles in files of their own, as text whatever the address says.
+        played = play(home, "300").json()
         [subs] = [t for t in played["subtitles"] if t["external"]]
         got = home.get(subs["url"].replace(".srt", ".html"))
         assert got.status_code == 200 and got.headers["content-type"] == "application/x-subrip"
         assert got.headers["content-security-policy"] == "sandbox"
         # Leaving ends it.
-        assert home.post(episode["leave"]).status_code == 204
-        assert home.get(episode["url"]).status_code == 404
+        assert home.post(played["leave"]).status_code == 204
+        assert home.get(played["url"]).status_code == 404
         # So does its library no longer being shared.
+        played = play(home, "300").json()
         assert home.get(played["url"]).status_code == 200
         home.put("/api/app-libraries", json={"libraries": ["1"]})
         assert home.get(played["url"]).status_code == 404
@@ -699,8 +712,9 @@ def test_media_plays_away_from_home(app, plex, tmp_path, caplog):
         # Only over HTTPS, as everything for the apps is there.
         plain_http = TestClient(app, base_url=f"http://testserver:{PUBLIC_PORT}")
         assert plain_http.get(movie["url"]).status_code == 403
-        # From Plex, where StationPlay can't read the file.
-        episode = play(phone, "201", **auth).json()
+        # From Plex, where StationPlay can't read the file (on another device:
+        # one plays one program at a time).
+        episode = play(phone, "201", **signed_in(phone, ADMIN, "Tablet")).json()
         data = plex.files["201"]
         part = player.get(episode["url"], headers={"Range": "bytes=10-"})
         assert part.status_code == 206 and part.content == data[10:]
@@ -822,12 +836,14 @@ def test_media_away_from_home_counts_against_the_limits(app):
         assert "watching away from home at once" in refused.json()["detail"]
         # At home, the limit away from home doesn't apply.
         assert play(home, "300").status_code == 200
-        # Copies converted away from home count with those at home.
+        # Copies converted away from home count with those at home (each
+        # device's own: a device plays one program at a time).
         busy = home.put("/api/app-limits", json={"devices": 0, "away": 0})
         assert busy.status_code == 200
-        for _ in range(applibrary.CONVERTING_MOST):
+        for n in range(applibrary.CONVERTING_MOST):
+            another = signed_in(tablet, ADMIN, f"Tablet {n}")
             got = tablet.post("/api/internal/play", json={"key": "301", "device": PHONE},
-                              headers=on_tablet)  # fmt: skip
+                              headers=another)  # fmt: skip
             assert got.status_code == 200 and got.json()["method"] == "convert", got.text
         assert ctx.plays.copies() == applibrary.CONVERTING_MOST
         one_more = home.post("/api/internal/play", json={"key": "301", "device": PHONE})

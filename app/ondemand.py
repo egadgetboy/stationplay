@@ -11,13 +11,15 @@ change either way.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import re
 import secrets
 import time
 import unicodedata
 from collections import OrderedDict
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -43,31 +45,46 @@ SLOW_DEFAULTS = {"home": "offer", "away": "switch"}
 EVEN_META = "app_even_sound"
 LIBRARIES_MOST = 100
 NOT_SHARED = "That isn't in a library shared with StationPlay's apps"
-UNREACHABLE = "Your library can't be reached right now. Try again in a moment."
+UNREACHABLE = "StationPlay can't reach Plex right now. Try again in a moment."
 
 # Requests to the library for the apps at once, at most (the rest wait).
 LIBRARY_AT_ONCE = 6
+# What an app asks waits this long for the library, at most, then is told
+# it can't be reached (503), well before an app gives up waiting itself.
+# What was being fetched carries on, so asking again soon finds it ready.
+LIBRARY_WAIT_S = 8.0
 # What's remembered of the library, and for how long.
 WHERE_KEPT = 5000  # which library each show, movie and episode is in
 ENTRIES_KEPT = 500  # shows', movies' and episodes' details
 ENTRY_S = 600.0
+LIBRARIES_S = 60.0  # the libraries themselves
 SHOWS_KEPT = 50  # shows' lists of episodes
+EPISODES_KEPT = 40_000  # (and their episodes, in all, at most)
 EPISODES_S = 120.0
-# Whole libraries (as sorted, and for one genre), for filtering, jumping to
-# a letter and finding others like a title: kept this long, this many.
+# Whole libraries (and their genres), for sorting, filtering, jumping to a
+# letter, searching and finding others like a title: kept this long, then
+# while the library hasn't changed (as its fingerprint says, asked at most
+# every FINGERPRINT_S), up to WHOLE_MOST_S; this many (and their shows and
+# movies, in all, at most).
 WHOLE_S = 120.0
+WHOLE_MOST_S = 1800.0
+FINGERPRINT_S = 20.0
 WHOLES_KEPT = 8
+WHOLE_ENTRIES_KEPT = 40_000
 WHOLE_PAGE = 500  # asked for this many at a time
 GENRES_S = 600.0
 GENRE_LONGEST = 100
 RELATED_MOST = 12
 
-# Lists: shows or movies per page (and at most), search results and home rows.
+# Lists: shows or movies per page (and at most), a show's episodes per page
+# (at most, and unless asked for fewer), search results and home rows.
 PAGE_DEFAULT = 50
 PAGE_MOST = 200
+EPISODES_MOST = 500
 SEARCH_MOST = 50
 SEARCH_LONGEST = 100  # characters searched for
 ADDED_MOST = 20  # each library's recently added
+ADDED_S = 60.0  # (kept this long)
 CONTINUE_MOST = 20
 SHOW_ROWS = 20  # a show's latest progress looked through for what's next
 
@@ -76,6 +93,7 @@ SHOW_ROWS = 20  # a show's latest progress looked through for what's next
 WIDTHS = (160, 320, 480, 720, 1280, 1920)
 PICTURE_KINDS = ("poster", "backdrop", "thumb")
 PICTURE_BYTES_KEPT = 48 << 20
+PICTURES_AT_ONCE = 8  # (asked of the library at once, at most: the rest wait their turn)
 
 # Progress: less than this far in counts as not started; a program is
 # watched once its credits start (Plex's marker) or, without one, this far.
@@ -87,6 +105,7 @@ WATCHED_SHARE = 0.9
 # even through the public port.)
 SESSION_ID_BYTES = 24
 SESSION_IDLE_S = 4 * 3600.0  # ended once unused this long
+COPY_RESTING_S = 600.0  # a copy unused this long has its pieces deleted
 WATCHING_S = 180.0  # counts as a device watching until unheard from this long
 SESSIONS_MOST = 500
 RECHECK_S = 60.0  # how often a session's sign-in is checked again
@@ -178,6 +197,37 @@ class NotShared(LookupError):
     the apps are told the same either way)."""
 
 
+class Whole:
+    """A whole library's shows or movies (or one genre's of them), as
+    fetched, and as sorted and searched (each made as it's first asked for,
+    and kept with it). Kept WHOLE_S as it is, then while the library's
+    fingerprint is the same, up to WHOLE_MOST_S. (A show's episodes are kept
+    the same way.)"""
+
+    def __init__(self, entries: list[Entry], fingerprint: str) -> None:
+        self.entries = entries
+        self.fingerprint = fingerprint
+        self.made = self.checked = time.monotonic()
+        self._sorted: dict[str, list[Entry]] = {}
+        self._words: list[tuple[str, str, tuple, Entry]] | None = None
+
+    def sorted(self, sort: str) -> list[Entry]:
+        found = self._sorted.get(sort)
+        if found is None:
+            found = self._sorted[sort] = sorted_by(self.entries, sort)
+        return found
+
+    def words(self) -> list[tuple[str, str, tuple, Entry]]:
+        """Each one's title and sort title as they're searched (see
+        searchable), and its place by title: (title, sort title, place, it)."""
+        if self._words is None:
+            self._words = [
+                (searchable(e.title), searchable(sort_text(e)), title_order(e), e)
+                for e in self.sorted("title")
+            ]
+        return self._words
+
+
 class Catalog:
     """The library as the apps see it: only shared libraries, with what's
     been asked lately kept a while so browsing doesn't ask the library about
@@ -188,10 +238,31 @@ class Catalog:
         self.shared = shared
         self._where: OrderedDict[str, str] = OrderedDict()  # key -> its library
         self._entries: OrderedDict[str, tuple[float, Entry]] = OrderedDict()
-        self._episodes: OrderedDict[str, tuple[float, list[Entry]]] = OrderedDict()
-        self._wholes: OrderedDict[tuple[str, str, str], tuple[float, list[Entry]]] = OrderedDict()
+        self._episodes: OrderedDict[str, Whole] = OrderedDict()  # (shows' episodes)
+        self._wholes: OrderedDict[tuple[str, str], Whole] = OrderedDict()
         self._genres: dict[str, tuple[float, list[dict[str, str]]]] = {}
+        self._libraries: tuple[float, list[dict[str, Any]]] | None = None
+        self._fingerprint: tuple[float, str] | None = None
+        self._added: dict[str, tuple[float, list[Entry]]] = {}  # (by library)
         self._turns = asyncio.Semaphore(LIBRARY_AT_ONCE)
+        self._fetching: dict[tuple[str, ...], asyncio.Future] = {}
+
+    async def _once(self, key: tuple[str, ...], fetch: Callable[[], Awaitable[Any]]) -> Any:
+        """What `fetch` fetches, fetched once however many ask for it at
+        once, and carried on to the end even when they stop waiting (an app
+        told the library is slow asks again, and finds it ready)."""
+        task = self._fetching.get(key)
+        if task is None:
+            task = self._fetching[key] = asyncio.ensure_future(fetch())
+
+            def done(t: asyncio.Future) -> None:
+                if self._fetching.get(key) is t:
+                    del self._fetching[key]
+                if not t.cancelled():
+                    t.exception()  # (told to whoever's waiting; otherwise, no matter)
+
+            task.add_done_callback(done)
+        return await asyncio.shield(task)
 
     def learn(self, entries: Iterable[Entry]) -> None:
         """Remembers which library each of these is in."""
@@ -209,11 +280,21 @@ class Catalog:
         return bool(entry.library) and entry.library in self.shared.keys
 
     async def libraries(self) -> list[dict[str, str]]:
-        """The shared libraries, in the library's own order."""
+        """The shared libraries, in the library's own order (what the library
+        has is kept LIBRARIES_S)."""
         if not self.shared.on:
             return []
-        async with self._turns:
-            found = await self.library.libraries()
+        now = time.monotonic()
+        if self._libraries is not None and now - self._libraries[0] < LIBRARIES_S:
+            found = self._libraries[1]
+        else:
+
+            async def fetch() -> list[dict[str, Any]]:
+                async with self._turns:
+                    return await self.library.libraries()
+
+            found = await self._once(("libraries",), fetch)
+            self._libraries = (now, found)
         return [
             {"key": str(s["key"]), "title": plain(str(s.get("title") or "")), "kind": s["type"]}
             for s in found
@@ -238,13 +319,19 @@ class Catalog:
             self._entries.move_to_end(key)
             found: Entry | None = kept[1]
         else:
-            async with self._turns:
-                found = await self.library.entry(key, details=True)
-            if found is not None:
-                self._entries[key] = (now, found)
-                while len(self._entries) > ENTRIES_KEPT:
-                    self._entries.popitem(last=False)
-                self.learn([found])
+
+            async def fetch() -> Entry | None:
+                async with self._turns:
+                    found = await self.library.entry(key, details=True)
+                if found is not None:
+                    self._entries[key] = (time.monotonic(), found)
+                    self._entries.move_to_end(key)
+                    while len(self._entries) > ENTRIES_KEPT:
+                        self._entries.popitem(last=False)
+                    self.learn([found])
+                return found
+
+            found = await self._once(("entry", key), fetch)
         if found is None or not self.shared_library(found):
             raise NotShared(key)
         return found
@@ -258,31 +345,44 @@ class Catalog:
         elif where not in self.shared.keys:
             raise NotShared(key)
 
-    async def episodes(self, show: str) -> list[Entry]:
-        """A shared show's episodes, in order (specials last)."""
-        await self.check(show)
-        now = time.monotonic()
+    def kept_episodes(self, show: str) -> list[Entry]:
+        """A show's episodes, if they're kept (never asking the library)."""
         kept = self._episodes.get(show)
-        if kept is not None and now - kept[0] < EPISODES_S:
-            self._episodes.move_to_end(show)
-            return kept[1]
-        async with self._turns:
-            found = await self.library.show_episodes(show)
-        self.learn(found)
-        self._episodes[show] = (now, found)
-        while len(self._episodes) > SHOWS_KEPT:
-            self._episodes.popitem(last=False)
-        return found
+        return kept.entries if kept is not None else []
 
-    async def browse(
-        self, library: str, sort: str, start: int, size: int
-    ) -> tuple[str, str, int, list[Entry]]:
-        """A page of a shared library: (its title, kind, total, the page)."""
-        title, kind = await self.library_kind(library)
-        async with self._turns:
-            total, page = await self.library.browse(library, kind, sort, start, size)
-        self.learn(page)
-        return title, kind, total, page
+    async def episodes(self, show: str) -> list[Entry]:
+        """A shared show's episodes, in order (specials last): kept
+        EPISODES_S, then while the library hasn't changed (as a Whole is)."""
+        await self.check(show)
+        kept = self._episodes.get(show)
+        now = time.monotonic()
+        if (
+            kept is not None
+            and now - kept.checked >= EPISODES_S
+            and now - kept.made < WHOLE_MOST_S
+            and await self.fingerprint() == kept.fingerprint
+        ):
+            kept.checked = now  # (the library hasn't changed since)
+        if kept is not None and now - kept.checked < EPISODES_S:
+            self._episodes.move_to_end(show)
+            return kept.entries
+
+        async def fetch() -> list[Entry]:
+            fingerprint = await self.fingerprint()
+            async with self._turns:
+                found = await self.library.show_episodes(show)
+            self.learn(found)
+            self._episodes[show] = Whole(found, fingerprint)
+            self._episodes.move_to_end(show)
+            while len(self._episodes) > SHOWS_KEPT or (
+                len(self._episodes) > 1
+                and sum(len(x.entries) for x in self._episodes.values()) > EPISODES_KEPT
+            ):
+                self._episodes.popitem(last=False)
+            return found
+
+        found: list[Entry] = await self._once(("episodes", show), fetch)
+        return found
 
     async def genres(self, library: str) -> list[dict[str, str]]:
         """A shared library's genres, A to Z: [{"id", "title"}]."""
@@ -299,71 +399,128 @@ class Catalog:
             kept = self._genres[library] = (now, named)
         return kept[1]
 
-    async def whole(self, library: str, sort: str, genre: str = "") -> tuple[str, str, list[Entry]]:
-        """All of a shared library's shows or movies, sorted (and only those
-        with `genre`, by its name): (its title, kind, them). Kept a little
-        while, so paging through it, or filtering it, asks the library once."""
-        title, kind = await self.library_kind(library)
+    async def fingerprint(self) -> str:
+        """What changes whenever anything in the libraries may have (asked
+        of the library at most every FINGERPRINT_S)."""
         now = time.monotonic()
-        key = (library, sort, genre)
-        kept = self._wholes.get(key)
-        if kept is not None and now - kept[0] < WHOLE_S:
-            self._wholes.move_to_end(key)
-            return title, kind, kept[1]
-        genre_id = None
-        if genre:
-            wanted = genre.casefold()
-            found = [g["id"] for g in await self.genres(library) if g["title"].casefold() == wanted]
-            if not found:
-                return title, kind, []  # (no such genre here)
-            genre_id = found[0]
-        entries: list[Entry] = []
-        while True:
+        if self._fingerprint is not None and now - self._fingerprint[0] < FINGERPRINT_S:
+            return self._fingerprint[1]
+
+        async def fetch() -> str:
             async with self._turns:
-                total, page = await self.library.browse(
-                    library, kind, sort, len(entries), WHOLE_PAGE, genre_id
-                )
-            entries += page
-            if not page or len(entries) >= total:
-                break
-        self.learn(entries)
-        self._wholes[key] = (now, entries)
-        while len(self._wholes) > WHOLES_KEPT:
-            self._wholes.popitem(last=False)
-        return title, kind, entries
+                return await self.library.fingerprint()
+
+        found: str = await self._once(("fingerprint",), fetch)
+        self._fingerprint = (now, found)
+        return found
+
+    async def whole(self, library: str, sort: str, genre: str = "") -> tuple[str, str, list[Entry]]:
+        """All of a shared library's shows or movies, sorted (see sorted_by;
+        and only those with `genre`, by its name): (its title, kind, them).
+        Kept a while (see Whole), so paging through it, filtering it, and
+        searching it ask the library once."""
+        title, kind = await self.library_kind(library)
+        found = await self._whole(library, kind, genre)
+        return title, kind, found.sorted(sort)
+
+    async def _whole(self, library: str, kind: str, genre: str) -> Whole:
+        key = (library, genre)
+        kept = self._wholes.get(key)
+        now = time.monotonic()
+        if (
+            kept is not None
+            and now - kept.checked >= WHOLE_S
+            and now - kept.made < WHOLE_MOST_S
+            and await self.fingerprint() == kept.fingerprint
+        ):
+            kept.checked = now  # (the library hasn't changed since)
+        if kept is not None and now - kept.checked < WHOLE_S:
+            self._wholes.move_to_end(key)
+            return kept
+
+        async def fetch() -> Whole:
+            fingerprint = await self.fingerprint()  # (a change while fetching: fetched again)
+            genre_id = None
+            if genre:
+                wanted = genre.casefold()
+                ids = [
+                    g["id"] for g in await self.genres(library) if g["title"].casefold() == wanted
+                ]
+                if not ids:
+                    return Whole([], fingerprint)  # (no such genre here)
+                genre_id = ids[0]
+
+            async def page(start: int) -> tuple[int, list[Entry]]:
+                async with self._turns:
+                    return await self.library.browse(
+                        library, kind, "title", start, WHOLE_PAGE, genre_id
+                    )
+
+            # The first page says how many there are; the rest come at once.
+            total, first = await page(0)
+            rest = range(len(first), total, WHOLE_PAGE) if first else range(0)
+            pages = await asyncio.gather(*(page(start) for start in rest))
+            together = first + [e for _, p in pages for e in p]
+            entries = list({e.key: e for e in together}.values())  # (each once)
+            self.learn(entries)
+            whole = self._wholes[key] = Whole(entries, fingerprint)
+            self._wholes.move_to_end(key)
+            while len(self._wholes) > WHOLES_KEPT or (
+                len(self._wholes) > 1
+                and sum(len(x.entries) for x in self._wholes.values()) > WHOLE_ENTRIES_KEPT
+            ):
+                self._wholes.popitem(last=False)
+            return whole
+
+        found: Whole = await self._once(("whole", *key), fetch)
+        return found
 
     async def recently_added(self) -> list[tuple[dict[str, str], list[Entry]]]:
-        """Each shared library's newest shows or movies."""
+        """Each shared library's newest shows or movies (kept ADDED_S, as
+        the home screen is opened often)."""
         libs = await self.libraries()
 
         async def newest(lib: dict[str, str]) -> list[Entry]:
-            async with self._turns:
-                return await self.library.recently_added(lib["key"], lib["kind"], ADDED_MOST)
+            kept = self._added.get(lib["key"])
+            if kept is not None and time.monotonic() - kept[0] < ADDED_S:
+                return kept[1]
+
+            async def fetch() -> list[Entry]:
+                async with self._turns:
+                    found = await self.library.recently_added(lib["key"], lib["kind"], ADDED_MOST)
+                self.learn(found)
+                self._added[lib["key"]] = (time.monotonic(), found)
+                return found
+
+            found: list[Entry] = await self._once(("added", lib["key"]), fetch)
+            return found
 
         found = await asyncio.gather(*(newest(lib) for lib in libs))
-        for entries in found:
-            self.learn(entries)
         return [
             (lib, [e for e in entries if self.shared_library(e)])
             for lib, entries in zip(libs, found, strict=True)
         ]
 
     async def search(self, words: str) -> list[Entry]:
-        """Shows and movies whose titles contain `words`, in every shared
-        library, best matches (titles starting with them) first."""
+        """Shows and movies whose titles have `words` in them, in every
+        shared library, case and accents aside (see match): the best
+        matches first (a title that's just that, then those starting with
+        it, then with a word starting with it, then the rest), each kind of
+        match in the order of their titles. All of them: the caller keeps
+        those someone may see, then the first few."""
+        wanted = searchable(words)
+        if not wanted:
+            return []
         libs = await self.libraries()
-
-        async def look(lib: dict[str, str]) -> list[Entry]:
-            async with self._turns:
-                return await self.library.search(lib["key"], lib["kind"], words, SEARCH_MOST)
-
+        wholes = await asyncio.gather(*(self._whole(lib["key"], lib["kind"], "") for lib in libs))
         found = [
-            e for entries in await asyncio.gather(*(look(lib) for lib in libs)) for e in entries
+            (how, order, e)
+            for whole in wholes
+            for title, sort, order, e in whole.words()
+            if (how := match(wanted, title, sort)) is not None
         ]
-        self.learn(found)
-        wanted = words.casefold()
-        found.sort(key=lambda e: (not e.title.casefold().startswith(wanted), e.title.casefold()))
-        return found[:SEARCH_MOST]
+        found.sort(key=lambda x: x[:2])
+        return [e for _, _, e in found]
 
     async def entries(self, keys: list[str]) -> list[Entry]:
         """Several shows, movies or episodes, in the order asked, leaving out
@@ -376,29 +533,93 @@ class Catalog:
         return [e for e in found if self.shared_library(e)]
 
 
-# Jumping to a letter, and others like a title ----------------------------------------
+# Sorting, jumping to a letter, searching, and others like a title ------------------
 
 _ARTICLES = ("the ", "a ", "an ")
+# Letters that don't come apart into a plain letter and an accent.
+_LETTERS = str.maketrans(
+    {"æ": "ae", "œ": "oe", "ø": "o", "đ": "d", "ð": "d", "ł": "l", "þ": "th", "ı": "i"}
+)
+
+
+def folded(text: str) -> str:
+    """Text as titles are compared and sorted: case and accents set aside
+    ("Amélie" is "amelie", "Æon Flux" is "aeon flux")."""
+    apart = unicodedata.normalize("NFKD", text.casefold())
+    return "".join(c for c in apart if not unicodedata.combining(c)).translate(_LETTERS)
+
+
+def sort_text(e: Entry) -> str:
+    """What a show or movie is sorted by: the library's own sort title
+    (Plex's sorts "The Orbit Room" as "Orbit Room"), or else its title
+    without a leading "The", "A" or "An"."""
+    if e.sort_title.strip():
+        return e.sort_title.strip()
+    title = e.title.strip()
+    lowered = title.casefold()
+    for article in _ARTICLES:
+        if lowered.startswith(article) and len(title) > len(article):
+            return title[len(article) :].lstrip()
+    return title
+
+
+def _sorted_as(e: Entry) -> str:
+    """A show's or movie's sort title as it's compared (see folded), from
+    its first letter or digit ("¡Three Amigos!" as "three amigos!")."""
+    text = folded(sort_text(e))
+    at = next((i for i, c in enumerate(text) if c.isalnum()), 0)
+    return text[at:]
 
 
 def letter_of(e: Entry) -> str:
-    """The letter a show or movie is listed under, as the library sorts it
-    ("The Orbit Room" under O; "Élan" under E); "#" for a digit or anything
-    else."""
-    title = (e.sort_title or e.title).strip()
-    if not e.sort_title:
-        lowered = title.casefold()
-        for article in _ARTICLES:
-            if lowered.startswith(article) and len(title) > len(article):
-                title = title[len(article) :].lstrip()
-                break
-    first = unicodedata.normalize("NFKD", title[:1])[:1].upper()
+    """The letter a show or movie is listed under ("The Orbit Room" under
+    O; "Élan" under E); "#" for a digit, or anything that isn't A to Z."""
+    first = _sorted_as(e)[:1].upper()
     return first if "A" <= first <= "Z" else "#"
+
+
+def _numbers_in_order(text: str) -> tuple:
+    """`text`, with its numbers compared as numbers ("Saw 2" before "Saw
+    10"), however long."""
+    parts = re.split(r"(\d+)", text)
+    return tuple((len(p.lstrip("0")), p.lstrip("0")) if i % 2 else p for i, p in enumerate(parts))
+
+
+def key_order(key: str) -> tuple[int, str]:
+    """Keys in order (a longer number is a larger one): what breaks ties."""
+    return len(key), key
+
+
+def title_order(e: Entry) -> tuple:
+    """Where a show or movie is listed by title: "#" (digits, and anything
+    that isn't A to Z) first, then A to Z by its sort title from its first
+    letter or digit, case and accents aside, numbers as numbers; titles
+    alike in order of their keys, so the order is always the same."""
+    text = _sorted_as(e)
+    return (letter_of(e) != "#", _numbers_in_order(text), key_order(e.key))
+
+
+def sorted_by(entries: Iterable[Entry], sort: str) -> list[Entry]:
+    """Shows or movies as listed: by `title` (see title_order), `added`
+    (newest first) or `released` (newest first, those without a date last);
+    ties in the order of their titles."""
+    by_title = sorted(entries, key=title_order)
+    if sort == "added":
+        return sorted(by_title, key=lambda e: e.added_ms or 0, reverse=True)
+    if sort == "released":
+
+        def released(e: Entry) -> tuple[bool, str]:
+            when = e.released or (str(e.year) if e.year else "")
+            return bool(when), when
+
+        return sorted(by_title, key=released, reverse=True)
+    return by_title
 
 
 def letters(entries: list[Entry]) -> list[dict[str, Any]]:
     """Where each letter starts among `entries` (sorted by title), for
-    jumping to it: [{"letter", "start"}], each letter once."""
+    jumping to it: [{"letter", "start"}], each letter once, in order ("#"
+    first). How many each has is where the next starts, less its own."""
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for i, e in enumerate(entries):
@@ -407,6 +628,36 @@ def letters(entries: list[Entry]) -> list[dict[str, Any]]:
             seen.add(letter)
             out.append({"letter": letter, "start": i})
     return out
+
+
+def searchable(text: str) -> str:
+    """Text as it's searched: folded (see folded), anything but letters and
+    digits as spaces, single-spaced."""
+    return " ".join("".join(c if c.isalnum() else " " for c in folded(text)).split())
+
+
+# How well a title matches what's searched for (the lower, the better).
+EXACT, STARTS, WORD, INSIDE = 0, 1, 2, 3
+
+
+def match(wanted: str, title: str, sort: str = "") -> int | None:
+    """How well a title matches `wanted` (all three searchable): EXACT (its
+    title, or sort title, is just that), STARTS (it starts with it), WORD
+    (a word in it does), INSIDE (it's in it somewhere, or is with its spaces
+    left out: "spiderman" finds "Spider-Man"); None if it doesn't."""
+    titles = (title, sort) if sort and sort != title else (title,)
+    if wanted in titles:
+        return EXACT
+    if any(t.startswith(wanted) for t in titles):
+        return STARTS
+    if any(f" {wanted}" in t for t in titles):
+        return WORD
+    if any(wanted in t for t in titles):
+        return INSIDE
+    joined = wanted.replace(" ", "")
+    if any(joined in t.replace(" ", "") for t in titles):
+        return EXACT if any(joined == t.replace(" ", "") for t in titles) else INSIDE
+    return None
 
 
 def related(entry: Entry, pool: Iterable[Entry], most: int = RELATED_MOST) -> list[Entry]:
@@ -500,10 +751,9 @@ def needs_dolby_vision(media: Media) -> bool:
 
 def unplayable(media: Media, dev: Device) -> list[str]:
     """Why a device can't play a version of a file as it is, in words ([]:
-    it can). What the library didn't say isn't held against it."""
+    it can). What the library didn't say isn't held against it. (A version
+    in several files plays its first: see applibrary.py.)"""
     why = []
-    if media.parts > 1:
-        why.append(f"it's split into {media.parts} files")
     if media.container and media.container not in dev.containers:
         why.append(f"its file type ({label(media.container)})")
     if media.video:
@@ -635,10 +885,11 @@ def version_labels(media: Iterable[Media]) -> dict[int, str]:
 
 
 def cant_play(why: list[str]) -> str:
-    """What a device that can't play a file as it is is told."""
+    """What a device that can't play a file as it is is told, when its app
+    doesn't take the copies StationPlay makes."""
     return (
-        f"This device can't play this file as it is: {and_list(why)}. StationPlay can't "
-        "convert video for its apps yet."
+        f"This device can't play this file as it is ({and_list(why)}), and this app can't "
+        "take a copy made for it. Update the app to play it."
     )
 
 
@@ -669,13 +920,26 @@ def track_name(track: Track, audio: bool) -> str:
 # Progress ---------------------------------------------------------------------------
 
 
-def is_watched(position_ms: int, entry: Entry) -> bool:
+def length_of(entry: Entry, media: Media | None = None) -> int | None:
+    """How long a program is as it plays: the version playing (`media`), if
+    it's known; a movie in several files plays its first (see applibrary.py),
+    so it's that file's length; otherwise its own."""
+    if media is not None and media.duration_ms:
+        return media.duration_ms
+    best = next(iter(best_first(entry.media)), None)
+    if best is not None and best.parts > 1 and best.duration_ms:
+        return best.duration_ms
+    return entry.duration_ms
+
+
+def is_watched(position_ms: int, entry: Entry, length_ms: int | None = None) -> bool:
     """Whether someone this far into a program has watched it: into its
-    credits, or without them, most of the way."""
-    if entry.credits is not None:
-        return position_ms >= entry.credits[0]
-    duration = entry.duration_ms or 0
-    return duration > 0 and position_ms >= duration * WATCHED_SHARE
+    closing credits (Plex's marker), or 90% of the way through (of
+    `length_ms`, how long it is as it plays: see length_of)."""
+    if entry.credits is not None and position_ms >= entry.credits[0]:
+        return True
+    length = length_ms or entry.duration_ms or 0
+    return length > 0 and position_ms >= length * WATCHED_SHARE
 
 
 def resume_at(row: tuple[int, bool] | None) -> int:
@@ -688,26 +952,16 @@ def resume_at(row: tuple[int, bool] | None) -> int:
     return position if position >= STARTED_MS else 0
 
 
-def progressed(old: tuple[int, bool] | None, position_ms: int, entry: Entry) -> tuple[int, bool]:
+def progressed(
+    old: tuple[int, bool] | None, position_ms: int, entry: Entry, length_ms: int | None = None
+) -> tuple[int, bool]:
     """Someone's progress in a program once they're `position_ms` into it:
-    (where they are, watched). Reaching its credits finishes it (and starts
-    it from the beginning next time); watched stays watched, even while
-    they watch it again."""
-    if is_watched(position_ms, entry):
+    (where they are, watched). Reaching its credits, or 90% of the way,
+    finishes it (and starts it from the beginning next time); watched stays
+    watched, even while they watch it again."""
+    if is_watched(position_ms, entry, length_ms):
         return 0, True
     return position_ms, bool(old and old[1])
-
-
-def next_episode(episodes: list[Entry], after: str | None, watched: set[str]) -> Entry | None:
-    """The episode to watch next, specials aside: the first one not watched
-    after `after` (or from the start); or, with none left after it, the
-    first one missed before it."""
-    regular = [e for e in episodes if e.season != 0]
-    keys = [e.key for e in regular]
-    start = keys.index(after) + 1 if after in keys else 0
-    later = (e for e in regular[start:] if e.key not in watched)
-    missed = (e for e in regular[:start] if e.key not in watched and e.key != after)
-    return next(later, None) or next(missed, None)
 
 
 PARTWAY, STARTED, FINISHED, MARKED = "partway", "started", "finished", "marked"
@@ -722,6 +976,48 @@ def where_they_are(position_ms: int, watched: bool) -> str:
     if position_ms > 0:
         return STARTED
     return FINISHED if watched else MARKED
+
+
+# What's next in a show (docs/on-demand.md, "Up next"): why it's the one.
+GOING, AFTER, FIRST = "going", "after", "first"
+
+
+def next_up(
+    episodes: list[Entry], rows: Iterable[tuple[str, str]], watched: set[str]
+) -> tuple[Entry, str] | None:
+    """The episode of a show to play next, and why (the one place it's
+    decided: see docs/on-demand.md, "Up next"). `episodes`: the show's, in
+    order; `rows`: someone's progress in them, newest first, as (key,
+    where_they_are); `watched`: the keys of those they've watched.
+
+    The newest that says where they are decides, marks of "not watched" from
+    a menu aside: an episode they're partway through, or barely started (a
+    special too), is GOING; after a regular episode they finished (or marked
+    watched), it's the first one AFTER it (across seasons, specials aside,
+    and past any in the same file as it) that they haven't watched, and
+    with none, the show is finished (None), whatever they skipped before
+    it. A special they finished is passed over. With nothing yet, it's the
+    FIRST episode (specials aside, unless there's nothing else)."""
+    by_key = {e.key: e for e in episodes}
+    regular = [e for e in episodes if e.season != 0] or list(episodes)
+    places = {e.key: i for i, e in enumerate(regular)}
+    for key, state in rows:
+        found = by_key.get(key)
+        if found is None or state == MARKED:
+            continue
+        if state in (PARTWAY, STARTED):
+            return found, GOING
+        at = places.get(key)
+        if at is None:
+            continue  # (a special: they're where they were before it)
+        later = (
+            e
+            for e in regular[at + 1 :]
+            if e.key not in watched and not (found.file and e.file == found.file)
+        )
+        upcoming = next(later, None)
+        return (upcoming, AFTER) if upcoming is not None else None
+    return (regular[0], FIRST) if regular else None
 
 
 # Play sessions ------------------------------------------------------------------------
@@ -763,6 +1059,7 @@ class PlaySession:
     counted_s: float = 0.0
     played: bool = False
     position_ms: int | None = None
+    sequence: int = 0  # (the newest progress report's, if the app numbers them)
 
     def used(self, now: float) -> None:
         """Something asked for it (`now`, time.monotonic())."""
@@ -825,6 +1122,10 @@ class PlaySessions:
             session.used(time.monotonic())
         return session
 
+    def ended(self, session_id: str) -> PlaySession | None:
+        """A session that ended lately (one of the last ENDED_KEPT)."""
+        return next((s for s in self._ended.values() if s.id == session_id), None)
+
     def find(self, session_id: str) -> PlaySession | None:
         """A session that's still going, without marking it as used."""
         session = self._sessions.get(session_id)
@@ -884,9 +1185,19 @@ class PlaySessions:
             if session.away or not away:
                 self.end(session_id)
 
-    def copies(self, on_gpu: bool = False) -> int:
+    def on_device(self, sign_in: str | None, client: str) -> list[PlaySession]:
+        """What one device is playing: an app's sign-in's (its own), or
+        while signing in is off, its address's. (A device plays one program
+        at a time: see applibrary.py.)"""
+        return [
+            s
+            for s in self._sessions.values()
+            if (s.sign_in == sign_in if sign_in else s.sign_in is None and s.client == client)
+        ]
+
+    def copies(self, on_gpu: bool = False, besides: list[PlaySession] | None = None) -> int:
         """Copies being converted (their pictures made) now, or asked for
-        lately (`on_gpu`: those on the GPU)."""
+        lately (`on_gpu`: those on the GPU), but for those of `besides`."""
         return sum(
             1
             for s in self._sessions.values()
@@ -894,7 +1205,17 @@ class PlaySessions:
             and not s.copy.plan.copies_picture
             and s.copy.active
             and (not on_gpu or s.copy.encoder.is_gpu)
+            and s not in (besides or ())
         )
+
+    def tidy(self) -> None:
+        """Ends the sessions unused for SESSION_IDLE_S, and deletes the pieces
+        of copies unused for COPY_RESTING_S (an app gone without leaving: its
+        pieces are made again if it comes back)."""
+        self._tidy()
+        for s in self._sessions.values():
+            if s.copy is not None:
+                s.copy.rest(COPY_RESTING_S)
 
     def watching(self) -> dict[str, bool]:
         """The devices playing something now: client -> away from home."""
@@ -916,34 +1237,41 @@ class PlaySessions:
 
 
 class PictureCache:
-    """Pictures for the apps, the most recently used kept up to a size."""
+    """Pictures for the apps, the most recently used kept up to a size, each
+    with its ETag (from what's in it), so an app asking again for one it has
+    is told it has it (304)."""
 
     def __init__(self, most_bytes: int = PICTURE_BYTES_KEPT) -> None:
         self.most_bytes = most_bytes
-        self._kept: OrderedDict[tuple[str, str, int], tuple[bytes, str]] = OrderedDict()
+        self._kept: OrderedDict[tuple[str, str, int], tuple[bytes, str, str]] = OrderedDict()
         self._bytes = 0
 
     def clear(self) -> None:
         self._kept.clear()
         self._bytes = 0
 
-    def get(self, key: tuple[str, str, int]) -> tuple[bytes, str] | None:
+    def get(self, key: tuple[str, str, int]) -> tuple[bytes, str, str] | None:
+        """(the picture, its type, its ETag), if it's kept."""
         found = self._kept.get(key)
         if found is not None:
             self._kept.move_to_end(key)
         return found
 
-    def put(self, key: tuple[str, str, int], picture: tuple[bytes, str]) -> None:
-        if len(picture[0]) > self.most_bytes // 8:
-            return  # (one huge picture doesn't push out everything else)
+    def put(self, key: tuple[str, str, int], picture: tuple[bytes, str]) -> tuple[bytes, str, str]:
+        """Keeps a picture (unless it's too big to): (it, its type, its ETag)."""
+        data, kind = picture
+        found = (data, kind, f'"{hashlib.sha1(data).hexdigest()[:24]}"')
+        if len(data) > self.most_bytes // 8:
+            return found  # (one huge picture doesn't push out everything else)
         old = self._kept.pop(key, None)
         if old is not None:
             self._bytes -= len(old[0])
-        self._kept[key] = picture
-        self._bytes += len(picture[0])
+        self._kept[key] = found
+        self._bytes += len(data)
         while self._bytes > self.most_bytes:
             _, gone = self._kept.popitem(last=False)
             self._bytes -= len(gone[0])
+        return found
 
 
 def width_for(asked: int) -> int:
@@ -955,34 +1283,32 @@ def width_for(asked: int) -> int:
 # The Resume row and what's next -------------------------------------------------
 
 
-async def up_next(cat: Catalog, db: Database, user_id: int, show: str) -> tuple[Entry, int] | None:
-    """The episode of a show someone would play next, and where in it: the
-    one they're partway through (or barely started), or the one after the
-    last they finished, or the first. None when they've watched it all."""
+async def up_next(
+    cat: Catalog, db: Database, user_id: int, show: str
+) -> tuple[Entry, int, str] | None:
+    """The episode of a show someone would play next (see next_up), where
+    in it to start, and why; None once they've finished the show."""
     episodes = await cat.episodes(show)
-    keys = [e.key for e in episodes]
-    progress = db.progress_of(user_id, keys)
-    after = None
-    for row in db.recent_progress_of_show(user_id, show, SHOW_ROWS):
-        key = row["rating_key"]
-        state = where_they_are(row["position_ms"], bool(row["watched"]))
-        if key not in keys or state == MARKED:
-            continue
-        if state != FINISHED:
-            return episodes[keys.index(key)], resume_at(progress.get(key))
-        after = key
-        break
-    watched = {k for k, (_, w) in progress.items() if w}
-    found = next_episode(episodes, after, watched)
-    return (found, resume_at(progress.get(found.key))) if found is not None else None
+    progress = db.progress_of(user_id, [e.key for e in episodes])
+    rows = [
+        (row["rating_key"], where_they_are(row["position_ms"], bool(row["watched"])))
+        for row in db.recent_progress_of_show(user_id, show, SHOW_ROWS)
+    ]
+    found = next_up(episodes, rows, {k for k, (_, w) in progress.items() if w})
+    if found is None:
+        return None
+    episode, why = found
+    return episode, resume_at(progress.get(episode.key)), why
 
 
 async def continue_watching(cat: Catalog, db: Database, user_id: int) -> list[tuple[Entry, int]]:
-    """What someone was partway through, and the next episodes of shows they
-    finished one of lately: (the program, where to start it), newest first,
-    one per show."""
-    picks: list[str] = []
-    nexts: dict[str, tuple[int, str]] = {}  # show -> (place in picks, the episode finished)
+    """The Resume row: movies someone is partway through (a minute or more),
+    and for each show they've watched lately, what's next in it (see next_up:
+    an episode going, or the one after the last they finished; never a
+    show they've finished, or one they haven't started): (the program, where
+    to start it), newest first, one per show. Up to twice CONTINUE_MOST: the
+    caller keeps those someone may see, then CONTINUE_MOST."""
+    picks: list[tuple[str, str]] = []  # (a movie's key, or "", a show's key, or "")
     seen: set[str] = set()
     for row in db.recent_progress(user_id, CONTINUE_MOST * 10):
         show = row["show_key"]
@@ -991,26 +1317,25 @@ async def continue_watching(cat: Catalog, db: Database, user_id: int) -> list[tu
             continue
         if show:
             seen.add(show)
-        if state == PARTWAY or (show and state == STARTED):
-            picks.append(row["rating_key"])
-        elif show and state == FINISHED:
-            nexts[show] = (len(picks), row["rating_key"])
-            picks.append("")  # (filled in below)
-        if len(picks) >= CONTINUE_MOST:
+            picks.append(("", show))
+        elif state == PARTWAY:
+            picks.append((row["rating_key"], ""))
+        if len(picks) >= CONTINUE_MOST * 2:  # (some shows have nothing next)
             break
 
-    async def after(show: str, finished: str) -> str:
+    async def next_in(show: str) -> str:
         try:
-            episodes = await cat.episodes(show)
+            found = await up_next(cat, db, user_id, show)
         except NotShared:
             return ""
-        watched = db.watched_in_shows(user_id, [show]).get(show, set())
-        found = next_episode(episodes, finished, watched)
-        return found.key if found else ""
+        return found[0].key if found is not None and found[2] != FIRST else ""
 
-    found = await asyncio.gather(*(after(s, k) for s, (_, k) in nexts.items()))
-    for (place, _), key in zip(nexts.values(), found, strict=True):
-        picks[place] = key
-    keys = list(dict.fromkeys(k for k in picks if k))
+    nexts = iter(await asyncio.gather(*(next_in(show) for _, show in picks if show)))
+    keys: list[str] = []
+    for key, show in picks:
+        found = key or (next(nexts) if show else "")
+        if found and found not in keys:
+            keys.append(found)
     progress = db.progress_of(user_id, keys)
+    # (All of them: the caller keeps those the person may see, then the first few.)
     return [(e, resume_at(progress.get(e.key))) for e in await cat.entries(keys)]

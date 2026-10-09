@@ -179,6 +179,38 @@ and an item's details), `chosen` or `languageCode`, and answers 404 for the
 new addresses: without them, leave out what they'd offer (and show no
 alerts).
 
+## What 1.30.0 asks of the apps
+
+1. **Progress in order.** Number each playing's progress reports
+   (`sequence`: 1, 2, 3..., from 1 again for each `POST /api/internal/play`),
+   so one that arrives late never moves the viewer back (see
+   `POST /api/internal/progress`). Send the last one as the player stops,
+   before its `leave`.
+2. **One program at a time.** Starting a program ends the one the device
+   was playing (its addresses answer 404). Ask for the next episode when
+   it's time to play it, not while another plays. Switching sound tracks
+   or versions works as before.
+3. **Up next from StationPlay.** Show a show's `next`, and the Resume row,
+   as they come (see Up next and the Resume row); don't work out what's
+   next in the app. When an episode ends and the next should play, report
+   where it ended, then ask for its show's details for `next`.
+4. **A show's episodes a page at a time.** `GET
+   /api/internal/items/{key}/episodes` answers up to 500 at once (a whole
+   season, for all but the longest), with `total` and `start`: while
+   `start` plus the episodes you have is less than `total`, ask for more
+   with `?start=`.
+5. **Pictures.** Keep each one a day, by its address; then ask with
+   `If-None-Match` and its `ETag`, and a 304 means the one you have is
+   still it.
+6. **503 means try again.** When Plex is slow or away, the library's
+   addresses answer within 8 seconds with 503 and a sentence to show;
+   offer to try again (what was being fetched carries on, so it's often
+   ready a moment later).
+
+A server before 1.30.0 ignores `sequence`, answers a show's episodes all at
+once without `total` and `start` (take them as the whole list), and sends
+pictures without an `ETag`.
+
 ## POST /api/internal/link
 
 Open to anyone: starts signing in with a code. Send which app this is, and
@@ -608,8 +640,12 @@ answer 403, and `features` doesn't list `library` there. Ask
 `GET /api/v1/server` again where the app is (at home, or away) to know.
 
 Anything that isn't in a shared library answers 404, the same as something
-that doesn't exist. When the library can't be reached (Plex is down, say),
-these answer 503.
+that doesn't exist (and so does what Plex says isn't there). Every one of
+these answers within 8 seconds, however slow Plex is: when Plex is slow,
+away, or says something StationPlay can't read, they answer 503 with
+"StationPlay can't reach Plex right now. Try again in a moment." (never a
+500). What StationPlay was fetching carries on meanwhile, so asking again a
+little later often finds it ready.
 
 Keys are strings, and the same key always means the same show, movie or
 episode. Pictures (`poster`, `backdrop`, `thumb`) are addresses under
@@ -668,6 +704,32 @@ picture, as an app's `subtitle` is, by the same rules. An app that sends
 `chosen` is null; so does someone who has chosen nothing anywhere, whose
 programs play as they did before 1.29.0. Stations don't use these (not yet).
 
+## Up next and the Resume row
+
+StationPlay decides what's next in a show, the same for every app (a show's
+`next`, and the Resume row), from this person's progress in its episodes,
+newest first (marking one not watched from a menu says nothing about where
+they are, so those are passed over):
+
+1. **An episode they're partway through**, or barely started (a special
+   too): that one, where they stopped (from the start, if it was under a
+   minute).
+2. **After an episode they finished** (or marked watched): the first one
+   after it, in order across seasons (specials aside, and past any in the
+   same file as it), that they haven't watched. With none, they've finished
+   the show: nothing is next (`next` is null, and it isn't on the Resume
+   row), even if they skipped one before it.
+3. **A special they finished** is passed over: they're where they were
+   before it.
+4. **Nothing yet:** the first episode (specials aside, unless the show has
+   only specials). A show they haven't started isn't on the Resume row.
+
+The Resume row has the movies they're partway through (a minute or more
+in), and each show's Up next by 1 or 2: newest first, one per show, up to
+20. Where they are is kept by StationPlay alone (see
+`POST /api/internal/progress`): what they watch in Plex's own players
+doesn't count.
+
 ## GET /api/internal/libraries
 
 The shared libraries, in the library's own order.
@@ -683,12 +745,20 @@ The shared libraries, in the library's own order.
 
 One shared library's shows or movies, a page at a time: `?start=` (0 if it
 isn't given) and `?size=` (1 to 200; 50 if it isn't given), sorted by
-`?sort=`: `title` (the default; titles without a leading "The", "A" or
-"An", as the library sorts them), `added` (newest first) or `released`
-(newest first). Narrowed (from 1.24.0) by `?genre=` (one of its `genres`)
-and `?unwatched=1` (only movies this person hasn't watched, and shows with
-episodes they haven't watched); a genre the library hasn't any of leaves
-nothing.
+`?sort=`:
+
+- `title` (the default): by the library's sort title (or the title without
+  a leading "The", "A" or "An"), case and accents aside ("Élan" with the
+  Es), numbers as numbers ("Saw 2" before "Saw 10"); those starting with a
+  digit, or anything but A to Z (another alphabet, say), first.
+- `added`: newest first.
+- `released`: newest first; those without a date last.
+
+Titles alike (two movies called "Hamlet", or added at the same moment) are
+always in the same order, so a page never repeats or skips one. Narrowed
+(from 1.24.0) by `?genre=` (one of its `genres`) and `?unwatched=1` (only
+movies this person hasn't watched, and shows with episodes they haven't
+watched); a genre the library hasn't any of leaves nothing.
 
 | Field | Type | What it is |
 |---|---|---|
@@ -701,7 +771,7 @@ nothing.
 | `items[]` | card | One show or movie |
 | `genres` | list | The library's genres, A to Z (from 1.24.0), to narrow it by |
 | `genres[]` | string | One genre |
-| `letters` | list | Sorted by `title`: where each letter starts in the whole list, as narrowed, for jumping to it (`[]` for the other sorts; from 1.24.0) |
+| `letters` | list | Sorted by `title`: where each letter starts in the whole list, as narrowed, for jumping to it: each letter once, in order, `#` first (`[]` for the other sorts; from 1.24.0). How many a letter has is where the next starts (or `total`), less its own `start` |
 | `letters[].letter` | string | `A` to `Z`, or `#` for titles starting with a digit or anything else |
 | `letters[].start` | number | Where its first show or movie is (a `start` to ask for) |
 
@@ -711,7 +781,7 @@ What the app's home screen shows.
 
 | Field | Type | What it is |
 |---|---|---|
-| `continue` | list | The Resume row: what this person is partway through, and the next episode of shows they've been watching, newest first (up to 20) |
+| `continue` | list | The Resume row: the movies this person is partway through, and each show's Up next (see Up next and the Resume row), newest first, one per show (up to 20) |
 | `continue[]` | card | An episode or movie; `positionMs` is where to start it |
 | `added` | list | Each shared library's recently added shows or movies (libraries with none are left out) |
 | `added[].library` | string | The library's key |
@@ -722,10 +792,20 @@ What the app's home screen shows.
 ## GET /api/internal/search
 
 Search: the one place the library and the stations meet. Shows and movies
-whose titles contain `?q=` (up to 100 characters), across the shared
-libraries, titles starting with it first (up to 50); and the stations
-airing a show or movie with it in its title right now. It answers wherever
-the stations do, with `items` empty where the library isn't offered.
+whose titles have `?q=` in them, across the shared libraries, and the
+stations airing a show or movie with it in its title right now. It answers
+wherever the stations do, with `items` empty where the library isn't
+offered.
+
+- `q` is 1 to 100 characters (a single letter is fine, for searching as the
+  viewer types); none, or more, is refused (400, with the sentence to show).
+- Case, accents and punctuation are set aside: "amelie" finds "Amélie",
+  "spider man" and "spiderman" find "Spider-Man". A title is found by its
+  sort title too ("matrix" finds "The Matrix" as a title that's just that).
+- Up to 50, the best first: a title that's just what was typed, then titles
+  starting with it, then titles with a word starting with it, then the
+  rest; each of those in the order of their titles (as `sort=title` lists
+  them).
 
 | Field | Type | What it is |
 |---|---|---|
@@ -777,7 +857,7 @@ A show's, movie's or episode's details: its card's fields, and more.
 | `seasons[].title` | string | "Season 1", "Specials" |
 | `seasons[].episodes` | number | How many episodes it has |
 | `seasons[].unwatched` | number | How many of them this person hasn't watched |
-| `next` | card or null | (A show) the episode to play next: the one this person is partway through, or the one after the last they finished, or the first; null once they've watched it all |
+| `next` | card or null | (A show) the episode to play next (see Up next and the Resume row): the one this person is partway through, or the first after the last they finished that they haven't watched, or the first; null once they've finished the show |
 | `markers` | object | (An episode) where its intro and closing credits are, for the Skip intro and Skip credits buttons. Movies have none, so they have no Skip buttons |
 | `markers.intro` | list or null | The intro, as `[startMs, endMs]`: show Skip intro from its start until its end, and skip to its end. Null if it hasn't one, or Plex's markers don't fit its file |
 | `markers.intro[]` | number | A time in it, in milliseconds from its start |
@@ -845,14 +925,20 @@ From 1.24.0.
 
 ## GET /api/internal/items/{key}/episodes
 
-A show's episodes, in order (specials last): all of them, or one season's
-with `?season=`.
+A show's episodes, in order: seasons in order, specials last, and episodes
+without a season or a number after those with one (alike, always in the
+same order). All of them, or one season's with `?season=`; a page at a time
+(from 1.30.0) with `?start=` (0 if it isn't given) and `?size=` (1 to 500;
+500 if it isn't given). Ask for the next page while `start` plus the
+episodes you have is less than `total`.
 
 | Field | Type | What it is |
 |---|---|---|
 | `show` | string | The show's key |
 | `season` | number or null | The season asked for (null: all of them) |
-| `episodes` | list | Its episodes |
+| `total` | number | How many episodes there are in all, of the season asked for (from 1.30.0) |
+| `start` | number | Where this page starts (from 1.30.0) |
+| `episodes` | list | Its episodes: this page |
 | `episodes[]` | card | One episode |
 
 ## PUT /api/internal/items/{key}/languages
@@ -910,10 +996,19 @@ whoever is signed in: their show's, or their own, hold again. Answers as
 
 ## GET /api/internal/art/{key}
 
-A picture, as JPEG or PNG: `?kind=poster` (the default; 2:3, an episode's is
-its show's), `backdrop` (16:9) or `thumb` (an episode's still, 16:9), made
-`?w=` pixels wide (rounded up to 160, 320, 480, 720, 1280 or 1920). 404 if
-there's no such picture.
+A picture, as JPEG or PNG (or WebP or GIF, as Plex has it): `?kind=poster`
+(the default; 2:3, an episode's is its show's), `backdrop` (16:9) or `thumb`
+(an episode's still, 16:9), made `?w=` pixels wide (1 to 10000; rounded up
+to 160, 320, 480, 720, 1280 or 1920, the largest for anything wider; 320 if
+it isn't given). 404 if there's no such picture, or what Plex has isn't
+one, at once when the library says there's none; 503 when Plex doesn't
+send it in time, as for the rest of the library.
+
+Each comes with `Cache-Control: private, max-age=86400` and an `ETag`. Keep
+it a day; after that, ask again with `If-None-Match` and its ETag, and
+while it's the same, the answer is 304, with nothing in it. A picture's
+address is the same for as long as it's the same show, movie or episode, so
+apps cache by it.
 
 ## POST /api/internal/play
 
@@ -992,7 +1087,27 @@ didn't send `device.hls`, or nothing it takes would show the file right),
 the answer is 422, with `detail` (a sentence to show) and `why` (a list of
 the reasons). StationPlay converts at most 3 copies at once, or 6 on a GPU
 (repackaging costs next to nothing): one more is answered 503 with
-`detail`.
+`detail` (a device's own copy, which a new one takes over from, isn't
+counted).
+
+Every refusal has `detail`, a sentence to show as it is: 400 (an episode or
+a movie wasn't chosen, or the request wasn't understood), 404 (it isn't
+shared, can't be seen, or has no file), 422 (as above), 503 (Plex can't be
+reached, the file can't be read right now, a copy can't be begun, too many
+being converted, or one more device than the limits allow, with `limit` and
+`most`).
+
+A device plays one program at a time (from 1.30.0): asking for another, or
+for the same one again (another sound track, a smaller version), ends the
+one it was playing, and the copy being made for it, if any; its addresses
+answer 404 from then on. So ask for the next episode when it's time to play
+it, not while another plays. A device is an app's sign-in (each app signs
+in on its own), or while signing in is off, its address.
+
+A movie Plex has in several files (stacked: "Part 1" and "Part 2") plays
+its first file, as it is or as a copy: its `durationMs` is that file's, and
+it's watched 90% of the way through it. The log says so, for an Admin to
+join the files (StationPlay can't play them one after another as one yet).
 
 An Admin's limits on devices watching count programs played this way too
 (see Playing a station in `docs/api.md`), and through the public port, the
@@ -1084,23 +1199,51 @@ so plainly.
 | `subtitles[].url` | string or null | For a file of its own: where to get it, to add beside the video (it needs no token). Tracks inside the file are the player's to show |
 
 The `url` (and subtitles' `url`) stop working when the app `POST`s to
-`leave`, after 4 hours unused, when the app's sign-in ends, when its library
-is no longer shared, when watching away from home is turned off (for one
-started through the public port), and when StationPlay restarts (404);
-choose the program again to play it again. Through the public port, a
-sign-in that ends stops its programs at once.
+`leave`, when the same device plays something else (from 1.30.0), after 4
+hours unused, when the app's sign-in ends, when its library is no longer
+shared, when watching away from home is turned off (for one started through
+the public port), and when StationPlay restarts (404); choose the program
+again to play it again. Through the public port, a sign-in that ends stops
+its programs at once. An app gone without its `leave` (closed, or out of
+reach) leaves nothing being made for long: a copy stops being made two
+minutes after its player last asked for a piece, and the pieces made are
+deleted after ten (made again, from where the player is, if it comes back).
 
 ## POST /api/internal/progress
 
-Where this person is in an episode or movie: send `{"key": "1234",
-"positionMs": 1325000, "session": "..."}` every 10 seconds or so while it
-plays (`session` keeps the device counted as watching), and when it stops.
-Or mark it from a menu: `{"key": "1234", "watched": true}` (or `false`).
+Where this person is in an episode or movie: send
 
-Reaching an episode's closing credits (or 90% of the way, for a movie or
-an episode without them) marks it watched and starts it from the beginning
-next time. Less than a minute in
-starts it from the beginning too.
+```json
+{"key": "1234", "positionMs": 1325000, "session": "...", "sequence": 12}
+```
+
+every 10 seconds or so while it plays (`session` keeps the device counted
+as watching), and when it stops, before its `leave`. Or mark it from a
+menu: `{"key": "1234", "watched": true}` (or `false`).
+
+- **`sequence`** (from 1.30.0): each report's number in its playing (1, 2,
+  3...). A report numbered no higher than one StationPlay already has for
+  that playing (sent before it, but arriving after) changes nothing, and is
+  answered with what's kept, so a late report never moves someone back
+  (rewinding is a newer report, so it does). Without it, reports count as
+  they arrive.
+- **Bounds.** `positionMs` is a whole number of milliseconds, 0 to 7 days;
+  anything else is refused (400, with the sentence to show). A little past
+  the end is the end; more than 10 minutes past the end of what plays (the
+  version playing, with `session`) is refused: "That's past the end of this
+  program."
+- **Watched**: into an episode's closing credits, or 90% of the way
+  through what plays (for a movie in several files, its first: see
+  `POST /api/internal/play`), whichever comes first. It then starts from
+  the beginning next time, and Up next moves on. Watched stays watched
+  while it's watched again. Less than a minute in starts it from the
+  beginning next time too (see Up next and the Resume row).
+- An episode in one file with others ("S01E01-E02"): where it is, and
+  whether it's watched, is theirs too.
+- **How often.** Every second is fine. With `session`, Plex isn't asked
+  anything for a report (one is kept even while Plex is away), and nothing
+  is ever sent on to Plex: StationPlay keeps each person's place itself,
+  and Plex's own watched marks are left as they are.
 
 | Field | Type | What it is |
 |---|---|---|

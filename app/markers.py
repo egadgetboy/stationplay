@@ -89,6 +89,8 @@ def parse_markers(raw: list[dict[str, Any]] | None) -> list[Marker]:
     """Plex's intro and credits markers for one program."""
     out = []
     for m in raw or []:
+        if not isinstance(m, dict):
+            continue  # (nothing that can be read)
         kind = str(m.get("type") or "")
         if kind not in (INTRO, CREDITS):
             continue  # commercials, bookmarks...
