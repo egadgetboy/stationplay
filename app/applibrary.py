@@ -37,12 +37,13 @@ from . import (
     catalog,
     converting,
     keyframes,
+    languages,
     ondemand,
     playing,
     subtitles,
     viewing,
 )
-from .appapi import APP_MAX, app_label, in_sentence, slot_program
+from .appapi import APP_MAX, LanguagesIn, app_label, in_sentence, slot_program
 from .broadcaster import now_ms
 from .catalog import Entry, Media, Track
 from .ffmpeg import Encoder, ProbeResult, Subtitles, to_sdr
@@ -115,6 +116,9 @@ class Abilities(BaseModel):
     hls: list[str] = Field(
         default_factory=list, max_length=10
     )  # (copies it takes: see converting.py)
+    # The subtitle formats its player shows itself (from 1.29.0: see
+    # languages.py; without them, a subtitle chosen for someone is drawn in).
+    subtitles: list[str] = Field(default_factory=list, max_length=20)
 
 
 class PlayAsk(BaseModel):
@@ -605,6 +609,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             return {
                 **card(e, {}, max(0, (e.episodes or len(episodes)) - len(done))),
                 **details(e),
+                "languages": ctx.languages.for_item(user_id, e),
                 "seasons": [
                     {
                         "season": n if n >= 0 else None,
@@ -629,8 +634,43 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             audio=tracks(media.audio, True) if media else [],
             subtitles=tracks(media.subtitles, False) if media else [],
             versions=versions(e),
+            languages=ctx.languages.for_item(user_id, e),
         )
         return out
+
+    # Languages chosen for a show, an episode or a movie (see languages.py) ----
+
+    async def chosen_for(key: str, request: Request) -> Entry:
+        """A show, an episode or a movie someone may choose languages for:
+        one in a shared library that they can see."""
+        shared_here(request)
+        with Asking():
+            e = await cat.entry(key)
+            await must_see(viewer_of(request), e)
+        if e.kind not in languages.KINDS:
+            raise HTTPException(400, "Choose languages for a show, an episode or a movie")
+        return e
+
+    @app.put("/api/internal/items/{key}/languages")
+    async def set_item_languages(key: str, body: LanguagesIn, request: Request):
+        """From the player: languages for a whole show, or an episode or a
+        movie alone, for whoever's signed in (null clears one; what isn't
+        sent stays)."""
+        e = await chosen_for(key, request)
+        user_id, _ = person(request)
+        try:
+            changes = languages.changes(body.given(), own=False)
+        except ValueError as ex:
+            raise HTTPException(400, str(ex)) from None
+        ctx.languages.change(user_id, e.key, changes)
+        return ctx.languages.for_item(user_id, e)
+
+    @app.delete("/api/internal/items/{key}/languages")
+    async def clear_item_languages(key: str, request: Request):
+        e = await chosen_for(key, request)
+        user_id, _ = person(request)
+        ctx.languages.clear(user_id, e.key)
+        return ctx.languages.for_item(user_id, e)
 
     @app.get("/api/internal/items/{key}/related")
     async def related_to(key: str, request: Request):
@@ -867,6 +907,31 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         )
         return True
 
+    def drawn_for(
+        picked: languages.Picked | None, shows: frozenset[str], copy: bool
+    ) -> Track | None:
+        """The subtitle chosen for someone from their languages (see
+        languages.py) that's drawn into the picture, as an app's `subtitle`
+        is: one the player doesn't show itself (`shows`: the formats it
+        does), and in a copy (`copy`), one inside the file too, as a copy
+        holds none. Only one StationPlay can draw: otherwise none."""
+        found = picked.subtitle if picked else None
+        if found is None or (found.codec in shows and (found.external or not copy)):
+            return None
+        if converting.picture_subtitles(found):
+            return None if found.external else found
+        return found if ctx.subtitling and (not found.external or found.id.isdigit()) else None
+
+    def shown_for(
+        picked: languages.Picked | None, drawn: Track | None, shows: frozenset[str], copy: bool
+    ) -> Track | None:
+        """The subtitle chosen for someone that's shown: drawn in, or by the
+        player itself (in a copy, only a file of its own, added beside it)."""
+        found = picked.subtitle if picked else None
+        if found is None or drawn is not None:
+            return drawn
+        return found if found.codec in shows and (found.external or not copy) else None
+
     async def play_copy(
         body: PlayAsk,
         request: Request,
@@ -878,13 +943,18 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         cap: int | None,
         even: bool,
         only_sound: Media | None = None,
+        wanted: languages.Wanted | None = None,
+        shows: frozenset[str] = frozenset(),
     ) -> Any:
         """Playing a copy StationPlay makes (see converting.py), for a device
         that can't play the file as it is, or for subtitles drawn in, a
         smaller picture made to fit, night mode's sound, or away from home,
         a file over the Admin's cap (`cap`, in kbps) converted down to fit
         it; with even sound for a show's episodes (`even`), whatever it's
-        made for. (`client` and `tag`: the device, as device_of says.)
+        made for. (`client` and `tag`: the device, as device_of says.) Its
+        sound and subtitles are the app's (`audio`, `subtitle`), or else
+        chosen from what the person wants (`wanted`: see languages.py; with
+        `shows`, the subtitle formats the player shows itself).
 
         `only_sound`: a version the device plays as it is, copied only for
         even sound: its picture kept as it is, and only its sound made. None
@@ -900,6 +970,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                      ondemand.and_list(why))  # fmt: skip
             return JSONResponse({"detail": cant_copy(why), "why": why}, status_code=422)
 
+        def draws(m: Media) -> Track | None:
+            return drawn_for(languages.pick(m, wanted) if wanted else None, shows, copy=True)
+
         # The version: the one asked for; or the best one whose picture can
         # be kept (away from home, within the cap); or for converting, the
         # smallest that's still big enough.
@@ -908,16 +981,23 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             keepable = [m for m in versions
                         if converting.picture_copyable(m, ondemand.unplayable(m, dev), hls)
                         and not ondemand.over_cap(m, cap)]  # fmt: skip
-            if keepable and not (body.subtitle or smaller):
+            if keepable and not (body.subtitle or smaller or draws(keepable[0])):
                 media = keepable[0]
             else:
                 tall = [m for m in versions if m.height >= converting.CONVERT_MOST_HEIGHT]
                 media = tall[-1] if tall else versions[0]
         if media.parts > 1:
             return refuse([f"it's split into {media.parts} files"])
+        picked = languages.pick(media, wanted) if wanted else None
+        to_draw = draws(media)
+        subtitle = body.subtitle if picked is None else to_draw.id if to_draw else None
+        if only_sound and subtitle:
+            return None  # (only the picture as it is will do: the file plays as it is)
         capped = ondemand.over_cap(media, cap)
         why = ondemand.unplayable(media, dev)
-        sound = converting.audio_track(media, body.audio)
+        sound = converting.audio_track(
+            media, picked.audio.id if picked and picked.audio else body.audio
+        )
         even = even and sound is not None  # (no sound, nothing to even)
         if only_sound and not even:
             return None
@@ -925,7 +1005,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             label = f"its sound's format ({ondemand.label(sound.codec)})"
             if label not in why:
                 why.append(label)
-        shown = next((t for t in media.subtitles if t.id == body.subtitle), None)
+        shown = next((t for t in media.subtitles if t.id == subtitle), None)
         if shown is not None:
             why.append("its subtitles, drawn into the picture")
         if smaller:
@@ -1067,6 +1147,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "why": why,
             "audioTrack": sound.id if sound else None,
             "drawnSubtitle": shown.id if shown else None,
+            "chosen": chosen(picked, sound, shown_for(picked, shown, shows, copy=True)),
             "leave": f"{here}/leave",
             "resumeMs": resume,
             "durationMs": media.duration_ms or e.duration_ms,
@@ -1112,12 +1193,22 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         cap = ctx.away.media_kbps if away_ else None
         media, why = ondemand.choose(e, dev, body.version, body.maxKbps, cap)
         hls = frozenset(h.strip().lower() for h in body.device.hls)
-        sound = converting.audio_track(media, body.audio) if media is not None else None
+        # The tracks this person wants (see languages.py), unless the app
+        # says which itself: then exactly those, as before. A subtitle chosen
+        # for them that the player doesn't show itself is drawn in, as the
+        # app's `subtitle` is.
+        told = bool({"audio", "subtitle"} & body.model_fields_set)
+        wanted = None if told else ctx.languages.wanted(user_id, e)
+        shows = frozenset(catalog.subtitle_codec(f) for f in body.device.subtitles)
+        picked = languages.pick(media, wanted) if wanted and media is not None else None
+        drawn = drawn_for(picked, shows, copy=False)
+        audio = picked.audio.id if picked and picked.audio else body.audio
+        sound = converting.audio_track(media, audio) if media is not None else None
         capped = media is not None and ondemand.over_cap(media, cap)
         as_it_is = (
             media is not None
             and not capped
-            and not (body.subtitle or body.fit or body.night)
+            and not (body.subtitle or drawn or body.fit or body.night)
             and (sound is None or not sound.codec or sound.codec in dev.audio)
         )
         # Even sound for a show's episodes (as the stations' episodes have it,
@@ -1125,7 +1216,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         # movie.
         even = ctx.shared.even_sound and e.kind == catalog.EPISODE
         if not as_it_is and "ts" in hls:
-            return await play_copy(body, request, e, dev, hls, client, tag, cap, even)
+            return await play_copy(
+                body, request, e, dev, hls, client, tag, cap, even, wanted=wanted, shows=shows
+            )
         if media is None:
             log.info(
                 "A StationPlay app can't play %s as it is (%s)", describe(e), ondemand.and_list(why)
@@ -1137,12 +1230,18 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             why = [f"it needs {need}, more than the {playing.mbps(cap)} allowed away from home"]
             log.info("A StationPlay app can't play %s away from home (%s)", describe(e), why[0])
             return JSONResponse({"detail": too_fast(need, cap), "why": why}, status_code=422)
-        if even and "ts" in hls and sound is not None:
+        # (A subtitle inside the file, chosen for them, that the player shows
+        # itself: a copy would hold none, so the file plays as it is.)
+        mine = shown_for(picked, None, shows, copy=False)
+        inside = mine is not None and not mine.external
+        if even and "ts" in hls and sound is not None and not inside:
             # (As night mode's sound is made for an app that can't make it:
             # the picture as it is, only the sound made. Where the picture
             # can't be kept as it is, the file plays as it is: even sound
             # never costs a picture made again.)
-            copied = await play_copy(body, request, e, dev, hls, client, tag, cap, even, media)
+            copied = await play_copy(
+                body, request, e, dev, hls, client, tag, cap, even, media, wanted, shows
+            )
             if copied is not None:
                 return copied
         if (over := ctx.capacity.refusal(ctx.app_watchers(), client, away_)) is not None:
@@ -1197,6 +1296,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "why": None,
             "audioTrack": None,
             "drawnSubtitle": None,
+            "chosen": chosen(picked, sound, shown_for(picked, None, shows, copy=False)),
             "leave": f"{here}/leave",
             "resumeMs": ondemand.resume_at(ctx.db.progress_of(user_id, [e.key]).get(e.key)),
             "durationMs": media.duration_ms or e.duration_ms,
@@ -1448,6 +1548,23 @@ def _whole(text: str | None, otherwise: int, name: str, low: int, high: int) -> 
     if not low <= value <= high:
         raise HTTPException(400, f"{name} must be from {low} to {high}")
     return value
+
+
+def chosen(picked: languages.Picked | None, sound: Track | None, shown: Track | None) -> Any:
+    """What was chosen for someone from their languages, as the play answer
+    says it (`sound`: the track that plays; `shown`: the subtitle that's
+    shown, if any); None when nothing was."""
+    if picked is None:
+        return None
+    why = picked.subtitle_why
+    if picked.subtitle is not None and shown is None:
+        why += ". This device can't show them"
+    return {
+        "audio": sound.id if sound and sound.id else None,
+        "audioWhy": picked.audio_why,
+        "subtitle": shown.id if shown else None,
+        "subtitleWhy": why,
+    }
 
 
 def cant_copy(why: list[str]) -> str:

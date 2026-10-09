@@ -20,6 +20,8 @@ from operator import attrgetter
 from pathlib import Path
 from typing import Any
 
+from .languages import Choice
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS channels (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -250,6 +252,18 @@ CREATE TABLE IF NOT EXISTS progress (
     PRIMARY KEY (user_id, rating_key)
 );
 CREATE INDEX IF NOT EXISTS progress_by_time ON progress (user_id, updated_ms);
+-- Each person's languages in StationPlay's apps (see languages.py), by
+-- StationPlay user (0 while signing in is off): their own (key ''), and
+-- what they chose for a show, an episode or a movie. NULL: not chosen there.
+CREATE TABLE IF NOT EXISTS languages (
+    user_id      INTEGER NOT NULL,
+    item_key     TEXT    NOT NULL,     -- '' for their own; or a show, episode or movie
+    audio        TEXT,                 -- a language's code ("jpn")
+    captions     INTEGER,              -- 1 on, 0 off
+    caption_language TEXT,
+    updated_ms   INTEGER NOT NULL,
+    PRIMARY KEY (user_id, item_key)
+);
 -- Viewing Levels: what their users can see (see viewing.py). Ages are
 -- ratings read as ages (ratings.py); NULL: no limit. builtin names the four
 -- that come with StationPlay ('' for an Admin's own).
@@ -1594,11 +1608,13 @@ class Database:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
             self._conn.execute("DELETE FROM progress WHERE user_id = ?", (user_id,))
+            self._conn.execute("DELETE FROM languages WHERE user_id = ?", (user_id,))
 
     def delete_all_users(self) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM users")
             self._conn.execute("DELETE FROM progress WHERE user_id != 0")
+            self._conn.execute("DELETE FROM languages WHERE user_id != 0")
 
     # Progress in what's watched on demand (see ondemand.py) ----------------------
 
@@ -1677,6 +1693,55 @@ class Database:
                 ):
                     out.setdefault(row["show_key"], set()).add(row["rating_key"])
         return out
+
+    # Each person's languages in the apps (see languages.py) ----------------------
+
+    def languages_of(self, user_id: int, keys: list[str]) -> dict[str, Choice]:
+        """What someone chose in these places (their own: ''; a show, an
+        episode or a movie: its key): key -> what's chosen there, for those
+        with anything."""
+        out: dict[str, Choice] = {}
+        if not keys:
+            return out
+        marks = ",".join("?" * len(keys))
+        with self._lock:
+            for row in self._conn.execute(
+                "SELECT item_key, audio, captions, caption_language FROM languages "
+                f"WHERE user_id = ? AND item_key IN ({marks})",
+                (user_id, *keys),
+            ):
+                captions = row["captions"]
+                out[row["item_key"]] = Choice(
+                    row["audio"], None if captions is None else bool(captions),
+                    row["caption_language"],
+                )  # fmt: skip
+        return out
+
+    def save_languages(self, user_id: int, key: str, chosen: Choice, now: int, keep: int) -> None:
+        """Keeps what someone chose in one place, and only the `keep` newest
+        places of theirs besides their own."""
+        captions = None if chosen.captions is None else int(chosen.captions)
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO languages (user_id, item_key, audio, captions, caption_language, "
+                "updated_ms) VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(user_id, item_key) DO UPDATE SET audio = excluded.audio, "
+                "captions = excluded.captions, caption_language = excluded.caption_language, "
+                "updated_ms = excluded.updated_ms",
+                (user_id, key, chosen.audio, captions, chosen.caption_language, now),
+            )
+            self._conn.execute(
+                "DELETE FROM languages WHERE user_id = ? AND item_key != '' AND item_key NOT IN ("
+                "SELECT item_key FROM languages WHERE user_id = ? AND item_key != '' "
+                "ORDER BY updated_ms DESC, rowid DESC LIMIT ?)",
+                (user_id, user_id, keep),
+            )
+
+    def clear_languages(self, user_id: int, key: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "DELETE FROM languages WHERE user_id = ? AND item_key = ?", (user_id, key)
+            )
 
     def add_session(
         self,

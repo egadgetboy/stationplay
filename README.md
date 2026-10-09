@@ -364,6 +364,8 @@ The server side is ready: StationPlay 1.19.0 and later include what the apps use
 
 **Even sound for a show's episodes.** Every episode played from your library in StationPlay's apps comes at the same loudness as the episodes on your stations (−24 LUFS), so a show's episodes match, played in order or shuffled, in any app, and none is much louder or quieter than the next. Movies are never changed. The picture plays as it is, and only the sound is made again (repackaged, which costs next to nothing), as night mode's sound is for an app that can't make it; with night mode too, the even sound comes first. Where the picture can't be kept as it is, the episode plays as it is, rather than have its picture made again. It's on to start: turn off **Even sound for a show's episodes** on the Access tab, under **Media in StationPlay's apps**, to play each episode's sound as it is, such as Dolby Atmos or DTS sent on to a receiver (with it on, that sound comes as ordinary 5.1 or stereo). Apps older than StationPlay 1.24.0's copies get each file as it is.
 
+**Languages.** Each person chooses their own sound language and captions (on or off, and in which language) in an app's Options, and StationPlay keeps them, so they follow that person to every device. From the player, they can choose otherwise for a whole show, or for one episode or movie. When a title plays, StationPlay picks its sound and subtitles from that (the episode's or movie's choice, then the show's, then their own, then the file's default): the sound in their language (never a commentary when there's another), captions in theirs (a full track before a forced one), and with captions off, only forced subtitles, for the parts in another language. Subtitles the device can't show itself are drawn into a copy, as above; an episode whose chosen subtitles are inside its file, and shown by the device itself, plays as it is rather than with even sound, as a copy carries no subtitles. Someone who hasn't chosen anything gets each file as before. Stations don't use them.
+
 ## Reaching StationPlay from outside your home
 
 **Often you don't need to.** Plex users away from home watch your stations through Plex as usual: Plex relays the stream. The same goes for Jellyfin and Emby, which reach StationPlay from your home network. What needs a way in from outside is StationPlay's own page, and StationPlay's apps.
@@ -1060,6 +1062,7 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/links.py` | Signing in an app with a code |
 | `app/away.py`, `app/reach.py`, `app/capacity.py` | StationPlay's apps away from home, and the check that they can reach it; limits on devices watching, and connection tests |
 | `app/ondemand.py`, `app/applibrary.py`, `app/catalog.py` | Your library on demand in StationPlay's apps |
+| `app/languages.py` | Each person's languages in StationPlay's apps, and the sound and subtitles chosen from them |
 | `app/converting.py`, `app/keyframes.py` | Copies of what a device can't play as it is: repackaged or converted, as HLS |
 | `app/hdhr.py` | HDHomeRun and XMLTV formats |
 | `app/breaks.py` | Commercials, trailers and Station ID cards |

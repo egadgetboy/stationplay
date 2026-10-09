@@ -75,6 +75,7 @@ class Track:
     forced: bool = False  # (subtitles: only the parts in another language)
     external: bool = False  # (subtitles) a file of its own, beside the video
     index: int | None = None  # its place among all the file's tracks (0: the first)
+    language_code: str = ""  # its language as a code ("eng": see languages.py), "" if unknown
 
     @property
     def picture(self) -> bool:

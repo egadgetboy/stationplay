@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
-from . import catalog
+from . import catalog, languages
 from .catalog import Entry, Media, Track
 from .db import Item
 from .library import LibraryError
@@ -1339,6 +1339,10 @@ def _track(s: dict[str, Any], codec: Callable[[str | None], str]) -> Track:
         forced=bool(s.get("forced")),
         external=bool(s.get("key")) and s.get("index") is None,
         index=_int(s.get("index")),
+        # (Plex's code for it, its two-letter tag, or failing those its name.)
+        language_code=languages.code(s.get("languageCode") or s.get("languageTag"))
+        or languages.code(s.get("language"))
+        or "",
     )
 
 

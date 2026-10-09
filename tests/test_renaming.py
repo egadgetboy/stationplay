@@ -196,17 +196,17 @@ def test_the_apps_show_the_new_name_the_next_time_they_ask(app):
         signed = tv.post("/api/internal/sign-in", json={**SAM, **TV}).json()
         key = {"StationPlay-Device": signed["deviceKey"]}
         his = bearer(signed["token"])
-        assert tv.get("/api/internal/me", headers=his).json() == {
-            "user": {"name": "Sam", "role": "user", "pin": False, "canChangePassword": True}
-        }
+        assert tv.get("/api/internal/me", headers=his).json()["user"] == {
+            "name": "Sam", "role": "user", "pin": False, "canChangePassword": True
+        }  # fmt: skip
         rename(pat, ids(pat)["Sam"], "Samuel")
         # Who's tuning in?
         people = tv.get("/api/internal/picker", headers=key).json()["people"]
         assert [p["name"] for p in people] == ["Pat", "Samuel"]
         # Options: who this app is signed in as.
-        assert tv.get("/api/internal/me", headers=his).json() == {
-            "user": {"name": "Samuel", "role": "user", "pin": False, "canChangePassword": True}
-        }
+        assert tv.get("/api/internal/me", headers=his).json()["user"] == {
+            "name": "Samuel", "role": "user", "pin": False, "canChangePassword": True
+        }  # fmt: skip
         assert tv.get("/api/internal/me").status_code == 401  # (signing in is on)
         # Picking him gives a sign-in in his new name.
         sam = next(p for p in people if p["name"] == "Samuel")

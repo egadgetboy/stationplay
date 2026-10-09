@@ -248,8 +248,9 @@ FOR_USERS = {
         "/api/internal/problem", "/api/internal/picker/remove", "/api/access/active",
         "/api/internal/pin", "/api/internal/password",
     ),
-    "PUT": ("/api/channels/",),
-    "DELETE": ("/api/channels/",),
+    # (Their own languages in the apps, and for a show, an episode or a movie.)
+    "PUT": ("/api/channels/", "/api/internal/languages", "/api/internal/items/"),
+    "DELETE": ("/api/channels/", "/api/internal/items/"),
 }  # fmt: skip
 # What a User on a limited Viewing Level may do (see viewing.py): watch what
 # they can see, in StationPlay's apps and on its page, and look after their
@@ -269,6 +270,8 @@ FOR_WATCHERS = {
         "/api/internal/report", "/api/internal/problem", "/api/internal/picker/remove",
         "/api/access/active", "/api/internal/pin", "/api/internal/password",
     ),
+    "PUT": ("/api/internal/languages", "/api/internal/items/"),
+    "DELETE": ("/api/internal/items/",),
 }  # fmt: skip
 WATCHES_ONLY = "Your Viewing Level lets you watch, but not make or change stations"
 

@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 
 from . import (
     __version__,
@@ -32,6 +32,7 @@ from . import (
     devices,
     hdhr,
     intro,
+    languages,
     links,
     playing,
     problems,
@@ -132,6 +133,19 @@ class PinChange(BaseModel):
 class PasswordChange(BaseModel):
     current: str = Field(max_length=access.PASSWORD_MAX)
     new: str = Field(max_length=access.PASSWORD_MAX)
+
+
+class LanguagesIn(BaseModel):
+    """Languages for the apps (see languages.py): each a language's code or
+    null, and captions true or false (or for a show, an episode or a movie,
+    null); what isn't sent stays as it is."""
+
+    audio: str | None = Field(default=None, max_length=languages.LONGEST)
+    captions: StrictBool | None = None
+    captionLanguage: str | None = Field(default=None, max_length=languages.LONGEST)
+
+    def given(self) -> dict[str, Any]:
+        return {name: getattr(self, name) for name in self.model_fields_set}
 
 
 class SpeedTested(BaseModel):
@@ -383,17 +397,48 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         """Who this app is signed in as now (for its Options): their name, as
         an Admin may have changed it since they signed in, their role,
         whether they have a PIN, and whether they may change their password
-        here. Null while signing in is off."""
+        here (`user`: null while signing in is off); and their languages
+        (see languages.py)."""
         user = access.signed_in(request)
+        mine = own_languages(user.id if user else 0)
         if user is None:
-            return {"user": None}
+            return {"user": None, "languages": mine}
         return {
             "user": {
                 "name": user.name,
                 "role": user.role,
                 "pin": user.has_pin,
                 "canChangePassword": ctx.access.own_password_refusal(user) is None,
-            }
+            },
+            "languages": mine,
+        }
+
+    def own_languages(user_id: int) -> dict[str, Any]:
+        """Someone's own languages, for the apps' Options: with every
+        language StationPlay knows, to choose from."""
+        own = ctx.languages.own(user_id)
+        return {
+            "audio": languages.as_json(own.audio),
+            "captions": bool(own.captions),
+            "captionLanguage": languages.as_json(own.caption_language),
+            "choices": languages.choices(),
+        }
+
+    @app.put("/api/internal/languages")
+    async def set_own_languages(body: LanguagesIn, request: Request):
+        """Someone's own languages (see languages.py), on every device:
+        the sound's, captions on or off, and the captions'. Only ever their
+        own: whoever's signed in (everyone's one while signing in is off)."""
+        user = access.signed_in(request)
+        try:
+            changes = languages.changes(body.given(), own=True)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        own = ctx.languages.change(user.id if user else 0, languages.OWN, changes)
+        return {
+            "audio": languages.as_json(own.audio),
+            "captions": bool(own.captions),
+            "captionLanguage": languages.as_json(own.caption_language),
         }
 
     def own_app(request: Request) -> tuple[User, SignedIn]:

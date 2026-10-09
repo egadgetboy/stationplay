@@ -48,6 +48,7 @@ from . import (
     hls,
     intro,
     jobs,
+    languages,
     limits,
     links,
     logbuffer,
@@ -461,6 +462,7 @@ class AppContext:
     titles: titles.Titles = field(init=False)  # the ratings of what's on the stations
     viewing: viewing.Viewing = field(init=False)  # what each user can see
     problems: problems.Problems = field(init=False)  # what the apps ran into
+    languages: languages.Languages = field(init=False)  # each person's, in the apps
     # Your shows and movies, wherever they come from (see library.py).
     library: Library = field(init=False)
     updater: Updater = field(init=False)
@@ -490,6 +492,7 @@ class AppContext:
         self.titles = titles.Titles(self.db)
         self.viewing = viewing.Viewing(self.db, self.titles)
         self.problems = problems.Problems(self.db)
+        self.languages = languages.Languages(self.db)
         self.access.judge_watching_by(self.viewing.watches_only)
         self.updater = Updater(self)
         self.markers = MarkerFinder(self.db, self.library)

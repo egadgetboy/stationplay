@@ -294,7 +294,7 @@ takes them off this device's picker, and signs them out. Answers
 Who this app is signed in as now (from 1.27.0), for its Options: an Admin
 can rename people, so ask again when it's shown rather than keep the name
 from signing in. (Who's tuning in? lists everyone as they're named now.)
-Answers 401 when the sign-in has ended.
+From 1.29.0, their languages too. Answers 401 when the sign-in has ended.
 
 | Field | Type | What it is |
 |---|---|---|
@@ -303,6 +303,43 @@ Answers 401 when the sign-in has ended.
 | `user.role` | string | `admin` or `user` |
 | `user.pin` | boolean | Whether they have a passcode (from 1.28.0) |
 | `user.canChangePassword` | boolean | Whether they may change their password in the app (from 1.28.0): false for someone without a password, and for someone an Admin turned that off for. Offer Change password only when it's true |
+| `languages` | object | Their own languages, for Options (from 1.29.0: see Languages); while signing in is off, everyone's |
+| `languages.audio` | object or null | The sound's language; null: each file's default track |
+| `languages.audio.code` | string | Its code, such as `jpn` |
+| `languages.audio.name` | string | Its name, such as "Japanese" |
+| `languages.captions` | boolean | Whether captions are on |
+| `languages.captionLanguage` | object or null | The captions' language; null: the language of the sound that plays |
+| `languages.captionLanguage.code` | string | Its code |
+| `languages.captionLanguage.name` | string | Its name |
+| `languages.choices` | list | Every language StationPlay knows, A to Z by name, to choose from |
+| `languages.choices[].code` | string | Its code |
+| `languages.choices[].name` | string | Its name |
+
+## PUT /api/internal/languages
+
+Asked with the app's token, or while signing in is off (from 1.29.0): the
+person's own languages (see Languages), for every device, as chosen in the
+app's Options. Send what changes (what isn't sent stays as it is):
+
+```json
+{"audio": "jpn", "captions": true, "captionLanguage": "eng"}
+```
+
+`audio` and `captionLanguage` are a language's code, or null (each file's
+default track; the sound's language); `captions` is true or false. Only
+ever the person signed in: anything else sent is ignored. Answers 400, with
+the sentence to show, for a language StationPlay doesn't know, and for
+`captions` that isn't true or false.
+
+| Field | Type | What it is |
+|---|---|---|
+| `audio` | object or null | The sound's language, as in `GET /api/internal/me` |
+| `audio.code` | string | Its code |
+| `audio.name` | string | Its name |
+| `captions` | boolean | Whether captions are on |
+| `captionLanguage` | object or null | The captions' language |
+| `captionLanguage.code` | string | Its code |
+| `captionLanguage.name` | string | Its name |
 
 ## POST /api/internal/pin
 
@@ -499,6 +536,54 @@ Each person has their own place in what they watch (the Resume row,
 where to resume, what they've watched), kept by StationPlay. While signing
 in is off, everyone shares one.
 
+## Languages
+
+From 1.29.0, each person has their own languages, kept by StationPlay so
+they follow them to every device (while signing in is off, everyone shares
+one set):
+
+- **Their own** (`languages` in `GET /api/internal/me`; set with
+  `PUT /api/internal/languages`): the sound's language (null: each file's
+  default track), captions on or off, and the captions' language (null:
+  the language of the sound that plays).
+- **For a show, or for an episode or a movie alone** (`languages` in
+  `GET /api/internal/items/{key}`; set from the player with
+  `PUT /api/internal/items/{key}/languages`, cleared with `DELETE`): any of
+  the three, each null where nothing is chosen there. A show's choice holds
+  for all its episodes; an episode's, for it alone.
+
+Languages are ISO 639-2 codes, as files carry them (`eng`, `jpn`; for the
+few with two, the one files use: `fre`, `ger`), each with a name to show
+("English", "Japanese"). StationPlay knows the languages in `choices` (in
+`GET /api/internal/me`), and takes two-letter codes (`en`, `pt-BR`) and the
+other three-letter ones (`fra`, `deu`) as them; any other is refused with
+400 and a sentence to show.
+
+When an app plays an episode or a movie (`POST /api/internal/play`) without
+sending `audio` or `subtitle`, StationPlay chooses for whoever is signed in,
+each of the three from the most particular place it's chosen: the
+episode's (or movie's), else its show's, else their own, else the file's
+default.
+
+- **Sound:** the first track in that language (the file's default among
+  them first), never a commentary when there's another; with none in it,
+  the file's default.
+- **Captions on:** a subtitle track in the captions' language, a full one
+  before a forced one (one for the deaf and hard of hearing is a full one).
+- **Captions off:** only a forced track in the language of the sound that
+  plays (forced subtitles are the parts in another language, meant to be
+  read).
+
+The answer's `chosen` says what it chose, and why, in a few words to show
+("Japanese, as chosen for this show"), and it plays: the app selects
+`chosen.audio` and `chosen.subtitle` in its player, and a subtitle the
+player can't show itself (its format isn't in `device.subtitles`; or, in a
+copy, one inside the file, as a copy holds none) is drawn into a copy's
+picture, as an app's `subtitle` is, by the same rules. An app that sends
+`audio` or `subtitle` (either, even null) gets exactly that, as before, and
+`chosen` is null; so does someone who has chosen nothing anywhere, whose
+programs play as they did before 1.29.0. Stations don't use these (not yet).
+
 ## GET /api/internal/libraries
 
 The shared libraries, in the library's own order.
@@ -640,6 +725,23 @@ A show's, movie's or episode's details: its card's fields, and more.
 | `versions[].size` | string or null | As `picture.size` |
 | `versions[].hdr` | string or null | As `picture.hdr` |
 | `versions[].bitrateKbps` | number or null | What it needs, in kilobits a second |
+| `languages` | object | What this person chose for it (from 1.29.0: see Languages), for the player's Audio & subtitles |
+| `languages.item` | object or null | For this show (the whole show), or this episode or movie alone; null: nothing |
+| `languages.item.audio` | object or null | The sound's language; null: not chosen here |
+| `languages.item.audio.code` | string | Its code, such as `jpn` |
+| `languages.item.audio.name` | string | Its name, such as "Japanese" |
+| `languages.item.captions` | boolean or null | Captions on or off; null: not chosen here |
+| `languages.item.captionLanguage` | object or null | The captions' language; null: not chosen here |
+| `languages.item.captionLanguage.code` | string | Its code |
+| `languages.item.captionLanguage.name` | string | Its name |
+| `languages.show` | object or null | (An episode) for its whole show; null: nothing (or not an episode) |
+| `languages.show.audio` | object or null | As `languages.item.audio` |
+| `languages.show.audio.code` | string | Its code |
+| `languages.show.audio.name` | string | Its name |
+| `languages.show.captions` | boolean or null | As `languages.item.captions` |
+| `languages.show.captionLanguage` | object or null | As `languages.item.captionLanguage` |
+| `languages.show.captionLanguage.code` | string | Its code |
+| `languages.show.captionLanguage.name` | string | Its name |
 
 Its `picture`, `audio` and `subtitles` are its best version's.
 
@@ -667,6 +769,59 @@ with `?season=`.
 | `episodes` | list | Its episodes |
 | `episodes[]` | card | One episode |
 
+## PUT /api/internal/items/{key}/languages
+
+From the player's Audio & subtitles (from 1.29.0): languages for a show's
+key (the whole show), or an episode's or a movie's (it alone), for whoever
+is signed in (see Languages). Send what changes, each optional:
+
+```json
+{"audio": "jpn", "captions": false, "captionLanguage": null}
+```
+
+A language's code, or null to clear that one (then the show's, or their
+own, holds); `captions` true, false or null. What isn't sent stays as it
+is. Answers 400, with the sentence to show, for a language StationPlay
+doesn't know, or a key that isn't a show, an episode or a movie (a season,
+say), and 404 for what isn't shared or can't be seen, as its details do.
+
+| Field | Type | What it is |
+|---|---|---|
+| `item` | object or null | What's chosen for it now, as `languages.item` in its details |
+| `item.audio` | object or null | The sound's language; null: not chosen here |
+| `item.audio.code` | string | Its code |
+| `item.audio.name` | string | Its name |
+| `item.captions` | boolean or null | Captions on or off; null: not chosen here |
+| `item.captionLanguage` | object or null | The captions' language; null: not chosen here |
+| `item.captionLanguage.code` | string | Its code |
+| `item.captionLanguage.name` | string | Its name |
+| `show` | object or null | (An episode) what's chosen for its whole show, as `languages.show` |
+| `show.audio` | object or null | As `item.audio` |
+| `show.audio.code` | string | Its code |
+| `show.audio.name` | string | Its name |
+| `show.captions` | boolean or null | As `item.captions` |
+| `show.captionLanguage` | object or null | As `item.captionLanguage` |
+| `show.captionLanguage.code` | string | Its code |
+| `show.captionLanguage.name` | string | Its name |
+
+## DELETE /api/internal/items/{key}/languages
+
+Clears all three for a show, an episode or a movie (from 1.29.0), for
+whoever is signed in: their show's, or their own, hold again. Answers as
+`PUT` does, with `item` null.
+
+| Field | Type | What it is |
+|---|---|---|
+| `item` | object or null | Null: nothing is chosen for it now |
+| `show` | object or null | (An episode) what's chosen for its whole show, as in `PUT` |
+| `show.audio` | object or null | As in `PUT` |
+| `show.audio.code` | string | Its code |
+| `show.audio.name` | string | Its name |
+| `show.captions` | boolean or null | As in `PUT` |
+| `show.captionLanguage` | object or null | As in `PUT` |
+| `show.captionLanguage.code` | string | Its code |
+| `show.captionLanguage.name` | string | Its name |
+
 ## GET /api/internal/art/{key}
 
 A picture, as JPEG or PNG: `?kind=poster` (the default; 2:3, an episode's is
@@ -691,7 +846,11 @@ and `deviceName` (as for signing in, for the log):
 ```
 
 `hdr` lists only what the screen shows (`hdr10`, `hlg`, `dv` for Dolby
-Vision); `[]` for a screen without HDR. Add `"version"` (a version's `id`
+Vision); `[]` for a screen without HDR. From 1.29.0, `device.subtitles`
+lists the subtitle formats its player shows itself, in a file it plays as
+it is or beside a copy (`srt`, `ass`, `vtt`, `mov_text`, `pgs`, `vobsub`):
+a subtitle chosen for the person in another format is drawn in (see
+Languages). Without it, every one chosen for them is. Add `"version"` (a version's `id`
 from its details) to play that version. Without it, the best version the
 device can play as it is plays, unless the app sends `"maxKbps"`: how much
 its connection to StationPlay carries, as it measured lately (with
@@ -788,6 +947,11 @@ so plainly.
 | `why[]` | string | One reason, such as "its sound's format (DTS)", or "even sound for the show's episodes" (from 1.27.0) |
 | `audioTrack` | string or null | The sound track in a copy (null for `direct`, where the player chooses among `audio`) |
 | `drawnSubtitle` | string or null | The subtitle track drawn into a copy's picture, if any |
+| `chosen` | object or null | What StationPlay chose for this person from their languages, and plays (from 1.29.0: see Languages); null when the app sent `audio` or `subtitle`, or nothing is chosen anywhere for them |
+| `chosen.audio` | string or null | The sound track that plays: select it in the player (a copy holds only it); null for a file without sound |
+| `chosen.audioWhy` | string | Why, in a few words to show: "Japanese, as chosen for this show", "The file's default: it has no Japanese sound" |
+| `chosen.subtitle` | string or null | The subtitle track to show: select it in the player (for a file of its own, add it from `subtitles[].url`), unless it's `drawnSubtitle`; null for none |
+| `chosen.subtitleWhy` | string | Why: "English captions, as you chose", "Forced English subtitles, for the parts in another language", "Captions are off" |
 | `leave` | string | Where to `POST` when the player stops |
 | `resumeMs` | number | Where this person stopped last time (0: the start). Offer to resume there, or start over |
 | `durationMs` | number or null | How long it is |

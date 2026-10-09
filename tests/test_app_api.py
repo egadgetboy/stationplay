@@ -29,6 +29,8 @@ PUBLIC_PORT = 8443
 PAT = {"name": "Pat", "password": "correct horse"}
 SAM = {"name": "Sam", "password": "battery staple"}
 TYPES = {"string": str, "number": (int, float), "boolean": bool, "list": list, "object": dict}
+# How an address's section starts ("GET /api/v1/stations").
+METHODS = ("GET /", "POST /", "PUT /", "DELETE /")
 # Kinds of field that are objects described in sections of their own.
 SHAPES = {"program": "A program", "card": "A card"}
 
@@ -42,7 +44,7 @@ def documented(*docs: Path) -> dict[str, dict[str, str]]:
         for line in doc.read_text().splitlines():
             if line.startswith("## "):
                 heading = line[3:].strip()
-                if heading.startswith(("GET /", "POST /")):
+                if heading.startswith(METHODS):
                     sections[heading] = {}  # (an address, even with no fields: data, say)
             elif row := re.fullmatch(r"\| `([^`]+)` \| ([^|]+) \|.*", line):
                 sections.setdefault(heading, {})[row.group(1)] = row.group(2).strip()
@@ -54,7 +56,7 @@ DOCUMENTED = documented(API_DOC, INTERNAL_DOC)
 
 def addresses(doc: Path) -> set[str]:
     """The addresses a document describes ("GET /api/v1/stations")."""
-    return {name for name in documented(doc) if name.startswith(("GET /", "POST /"))}
+    return {name for name in documented(doc) if name.startswith(METHODS)}
 
 
 class Checker:
@@ -195,7 +197,8 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         assert now["start"] <= time.time() * 1000 < now["end"] == upcoming["start"]
         refused = home.post("/api/internal/sign-in", json=PAT)
         check.answer(refused, "POST /api/internal/sign-in", 400)
-        assert check.answer(home.get("/api/internal/me"), "GET /api/internal/me") == {"user": None}
+        nobody = check.answer(home.get("/api/internal/me"), "GET /api/internal/me")
+        assert nobody["user"] is None and nobody["languages"]["audio"] is None
 
         # Signing in on: an app signs in, and sends its token.
         assert home.post("/api/access/users", json=PAT).status_code == 201
@@ -214,9 +217,29 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         assert not phone.cookies  # (apps get a token, not a cookie)
         sam = bearer(signed["token"])
         me = check.answer(phone.get("/api/internal/me", headers=sam), "GET /api/internal/me")
-        assert me == {
-            "user": {"name": "Sam", "role": "user", "pin": False, "canChangePassword": True}
+        assert me["user"] == {
+            "name": "Sam",
+            "role": "user",
+            "pin": False,
+            "canChangePassword": True,
         }
+        assert (me["languages"]["audio"], me["languages"]["captions"]) == (None, False)
+        assert {"code": "jpn", "name": "Japanese"} in me["languages"]["choices"]
+        # His languages, on every device (see test_languages.py).
+        mine = check.answer(
+            phone.put("/api/internal/languages", headers=sam,
+                      json={"audio": "en", "captions": True, "captionLanguage": "spa"}),
+            "PUT /api/internal/languages",
+        )  # fmt: skip
+        assert mine == {"audio": {"code": "eng", "name": "English"}, "captions": True,
+                        "captionLanguage": {"code": "spa", "name": "Spanish"}}  # fmt: skip
+        check.answer(
+            phone.put("/api/internal/languages", headers=sam, json={"audio": "klingon"}),
+            "PUT /api/internal/languages",
+            400,
+        )
+        me = check.answer(phone.get("/api/internal/me", headers=sam), "GET /api/internal/me")
+        assert me["languages"]["captionLanguage"]["code"] == "spa"
         check.answer(phone.get("/api/internal/me"), "GET /api/internal/me", 401)
         # A passcode, as the app asks after signing in (see test_picker.py).
         assert signed["askPin"] is True
@@ -357,8 +380,31 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
             phone.get("/api/internal/items/100", headers=sam), "GET /api/internal/items/{key}"
         )
         assert show["next"]["key"] == "201" and show["seasons"][0]["title"] == "Season 1"
+        # Languages for the whole show, and for one episode (see test_languages.py).
+        whole = check.answer(
+            phone.put("/api/internal/items/100/languages", headers=sam,
+                      json={"audio": "jpn", "captions": False, "captionLanguage": "eng"}),
+            "PUT /api/internal/items/{key}/languages",
+        )  # fmt: skip
+        assert whole["item"]["audio"]["code"] == "jpn" and whole["show"] is None
+        one = check.answer(
+            phone.put("/api/internal/items/202/languages", headers=sam,
+                      json={"audio": "eng", "captions": True, "captionLanguage": "es"}),
+            "PUT /api/internal/items/{key}/languages",
+        )  # fmt: skip
+        assert (one["item"]["captions"], one["show"]["captions"]) == (True, False)
         episode = check.answer(
             phone.get("/api/internal/items/202", headers=sam), "GET /api/internal/items/{key}"
+        )
+        assert episode["languages"] == one
+        cleared = check.answer(
+            phone.delete("/api/internal/items/202/languages", headers=sam),
+            "DELETE /api/internal/items/{key}/languages",
+        )
+        assert cleared == {"item": None, "show": whole["item"]}
+        check.answer(
+            phone.delete("/api/internal/items/100/languages", headers=sam),
+            "DELETE /api/internal/items/{key}/languages",
         )
         assert (
             episode["showKey"] == "100"
@@ -402,12 +448,18 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         poster = phone.get("/api/internal/art/300?kind=poster&w=300", headers=sam)
         assert poster.status_code == 200 and poster.headers["stationplay-api"] == "1"
         tv = {"containers": ["mkv"], "video": [{"codec": "hevc", "width": 3840, "height": 2160,
-              "bitDepth": 10}], "hdr": ["hdr10"], "audio": ["aac"]}  # fmt: skip
+              "bitDepth": 10}], "hdr": ["hdr10"], "audio": ["aac"], "subtitles": ["srt"]}  # fmt: skip
         played = check.answer(
             phone.post("/api/internal/play", headers=sam, json={"key": "300", "device": tv}),
             "POST /api/internal/play",
         )
         assert played["method"] == "direct" and played["resumeMs"] == 0
+        # (His Spanish captions: the file of their own beside it, which his player shows.)
+        [spanish] = [t for t in played["subtitles"] if t["language"] == "Spanish"]
+        assert played["chosen"] == {
+            "audio": played["audio"][0]["id"], "audioWhy": "English, as you chose",
+            "subtitle": spanish["id"], "subtitleWhy": "Spanish captions, as you chose",
+        }  # fmt: skip
         assert played["version"] == movie["versions"][0]["id"] and played["whenSlow"] == "offer"
         assert [(v["playable"], v["why"]) for v in played["versions"]] == [
             (True, None), (False, ["its picture's format (H.264)"])
