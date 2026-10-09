@@ -160,8 +160,14 @@ AWAY_UNDER = "/hls/k/"
 # in), and signing in.
 # (And what StationPlay's apps ask first: see appapi.py.)
 PAGE = frozenset({"/", "/link", "/apple-touch-icon.png", "/api/access/me", "/api/v1/server"})
+# Where StationPlay checks that its apps can reach it from outside (see
+# reach.py): open on both ports, to anyone, before there's a user, and over
+# plain HTTP too. It says nothing unless it's asked with the value a check
+# is waiting for.
+REACH = "/api/internal/reach"
 OPEN = (
     PAGE
+    | {REACH}
     | {"/api/access/sign-in", "/api/access/sign-out"}
     | {"/api/internal/sign-in", "/api/internal/link", "/api/internal/link/check"}
     # (A linked device's picker: its key, not a sign-in, says who may ask.)
@@ -346,6 +352,10 @@ class Access:
     # Someone's PIN and where they're shown on the apps' pickers (devices.py,
     # which sets this).
     picker: Any = field(init=False, default=None)
+    # When a signed-in app last came in through the public port over HTTPS
+    # (time.monotonic(); None: not since StationPlay started), as proof that
+    # apps reach StationPlay from outside (see reach.py). In memory only.
+    app_outside_at: float | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         self._users_exist = self.db.has_users()
@@ -378,6 +388,10 @@ class Access:
             "The reset-access file turned off sign-in and removed every user. "
             "Add a user in the Access tab to turn sign-in back on.",
         )
+
+    def app_came_from_outside(self) -> None:
+        """A signed-in app came in through the public port, over HTTPS."""
+        self.app_outside_at = time.monotonic()
 
     def record(self, level: int, message: str) -> None:
         """Logs a sign-in or a change to who can sign in, and keeps it."""
@@ -806,7 +820,7 @@ class Gate:
             and not path.startswith(AWAY_UNDER)
         ):
             await _refuse(send, 404, "Not Found")
-        elif public and path.startswith(FOR_APPS_UNDER) and not over_https(scope):
+        elif public and path.startswith(FOR_APPS_UNDER) and path != REACH and not over_https(scope):
             await _refuse(send, 403, NOT_HTTPS)
         elif scope["method"] not in SAFE_METHODS and _from_another_site(scope):
             await _refuse(send, 403, "StationPlay can only be changed from its own page")
@@ -826,16 +840,19 @@ class Gate:
         state["user"] = None
         path = scope["path"]
         if not self.access.required:
-            if state["outside"] and path not in PAGE:
+            if state["outside"] and path not in PAGE and path != REACH:
                 return 403, NOT_SET_UP
             return None
         if path.startswith((AWAY_UNDER, PLAY_UNDER)):
             return None  # (its address says whose it is)
-        token = bearer(scope) or _cookie(scope, COOKIE)
+        app_token = bearer(scope)
+        token = app_token or _cookie(scope, COOKIE)
         if token and token.startswith(API_TOKEN_PREFIX):
             refused = self._api_token(scope, token)
             return None if path in OPEN else refused
         user = state["user"] = self.access.session_user(token) if token else None
+        if user is not None and app_token and state["outside"] and over_https(scope):
+            self.access.app_came_from_outside()
         if path in OPEN:
             return None
         if user is None:

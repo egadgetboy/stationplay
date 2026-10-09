@@ -49,7 +49,8 @@ storage for the app), and never show it.
 From the internet (the public port), apps connect only over HTTPS: anything
 under `/api/v1`, `/api/internal` or `/hls/k/` that didn't come over HTTPS
 (as the reverse proxy in front says, with `X-Forwarded-Proto`) is refused
-with 403. On the home network, and through a VPN, plain HTTP is fine.
+with 403, but for StationPlay's check of itself (`GET /api/internal/reach`).
+On the home network, and through a VPN, plain HTTP is fine.
 
 Wrong passwords are limited as on the page: after 5 wrong ones from one
 address within 15 minutes, signing in from there waits (HTTP 429).
@@ -83,9 +84,9 @@ gives their password only on a device others use too.)
 Apps that don't send `"picker": true` sign in as they always have, and get
 no `deviceKey`.
 
-On the public port, only `GET /api/v1/server` answers until signing in is
-on. API tokens (`docs/api.md`) don't work here: these addresses are for
-the apps' own sign-ins.
+On the public port, only `GET /api/v1/server` (and StationPlay's check of
+itself) answers until signing in is on. API tokens (`docs/api.md`) don't
+work here: these addresses are for the apps' own sign-ins.
 
 ## POST /api/internal/link
 
@@ -267,6 +268,21 @@ from the fastest recent tests.
 | `where` | string | `home`, or `away` (through the public port) |
 | `eachMbps` | number | What one device watching takes, at the biggest picture the stations use |
 | `room` | number | How many devices a connection this fast has room for at once |
+
+## GET /api/internal/reach
+
+Not for the apps: StationPlay asks this of itself, at the address set for
+watching away from home, to check that apps can reach it from outside (the
+status on the Access tab, and in the page's header). It's open on both
+ports, to anyone, over plain HTTP too, and before there's a user. `?n=` is
+a random value a check is waiting for (for a minute at most). For any other
+value, it's 404, and nothing more is said.
+
+| Field | Type | What it is |
+|---|---|---|
+| `stationplay` | boolean | Always true |
+| `port` | string | The port the request came in on: `home`, or `public` |
+| `https` | boolean | Whether the request came over HTTPS, as the reverse proxy in front says (`X-Forwarded-Proto`) |
 
 ## POST /api/internal/report
 

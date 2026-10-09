@@ -61,6 +61,32 @@ def like_plex(fp: FakePlex) -> httpx.MockTransport:
     return httpx.MockTransport(handler)
 
 
+class Proxy:
+    """A reverse proxy in front of StationPlay (`app`), as StationPlay's check
+    of its outside address meets one (see reach.py): it passes each request
+    to `port`, saying it came over HTTPS (X-Forwarded-Proto) if `https`, and
+    keeps StationPlay's answers. Its `transport` is what answers the check."""
+
+    def __init__(self, app, port: int, https: bool = True) -> None:
+        self.port, self.https = port, https
+        self.answers: list[httpx.Response] = []
+        stationplay = httpx.ASGITransport(app=app)
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            url = request.url.copy_with(scheme="http", host="testserver", port=self.port)
+            headers = {k: v for k, v in request.headers.items() if k != "host"}
+            if self.https:
+                headers["X-Forwarded-Proto"] = "https"
+            got = await stationplay.handle_async_request(
+                httpx.Request(request.method, url, headers=headers)
+            )
+            await got.aread()
+            self.answers.append(got)
+            return httpx.Response(got.status_code, headers=got.headers, content=got.content)
+
+        self.transport = httpx.MockTransport(handler)
+
+
 def add_again(fp: FakePlex, show_key: str, new_key: str) -> dict[str, str]:
     """Plex removing a show and adding it again (or matching it afresh): the
     same show, episodes and files under new rating keys. Returns {old

@@ -54,6 +54,7 @@ from . import (
     ondemand,
     playback,
     problems,
+    reach,
     replacing,
     setup,
     smart,
@@ -438,6 +439,7 @@ class AppContext:
     access: access.Access = field(init=False)  # who can sign in
     devices: devices.Devices = field(init=False)  # the apps linked, and their pickers
     away: away.Away = field(init=False)  # StationPlay's apps away from home
+    reach: reach.Reach = field(init=False)  # whether they can reach it from outside
     capacity: capacity.Capacity = field(init=False)  # how many apps may watch at once
     # Your library in StationPlay's apps (see ondemand.py): which libraries
     # are shared with them, what they're shown, what's playing, pictures.
@@ -467,6 +469,7 @@ class AppContext:
         self.devices = devices.Devices(self.db, self.access)
         self.access.picker = self.devices
         self.away = away.Away(self.db, self.access)
+        self.reach = reach.Reach(self.away, self.access, self.settings)
         self.capacity = capacity.Capacity(self.db)
         self.shared = ondemand.Shared(self.db)
         self.catalog = ondemand.Catalog(self.library, self.shared)
@@ -631,6 +634,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             asyncio.create_task(ctx.fillers.refresh()),
             asyncio.create_task(backups.nightly_forever(ctx)),
             asyncio.create_task(ctx.scanner.run_forever()),
+            asyncio.create_task(ctx.reach.run_forever()),
         ]
         yield
         for task in background:
@@ -959,10 +963,18 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         # (By its key, not its address: apps behind one proxy are told apart.)
         return f"{user.name}'s app away from home ({key[:6]})"
 
+    def watching_away(key: str, user: User, number: int, request: Request) -> None:
+        """A playlist asked for at an app's own address: logged (once an
+        hour), and through the public port, proof that apps reach StationPlay
+        from outside (see reach.py)."""
+        ctx.away.watching(key, user, number, access.where(request.scope))
+        if access.outside(request.scope):
+            ctx.access.app_came_from_outside()
+
     @app.get("/hls/k/{key}/{number}/index.m3u8")
     async def hls_playlist_away(key: str, number: int, request: Request):
         user = away_user(key, number, recheck=True)
-        ctx.away.watching(key, user, number, access.where(request.scope))
+        watching_away(key, user, number, request)
         return await hls_playlist_for(number, away_client(key, user), away_=True)
 
     @app.get("/hls/k/{key}/{number}/logo.png")
@@ -987,7 +999,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     @app.get("/hls/k/{key}/{number}/night/index.m3u8")
     async def hls_night_playlist_away(key: str, number: int, request: Request):
         user = away_user(key, number, recheck=True)
-        ctx.away.watching(key, user, number, access.where(request.scope))
+        watching_away(key, user, number, request)
         return await hls_playlist_for(number, away_client(key, user), away_=True, night=True)
 
     @app.get("/hls/k/{key}/{number}/night/{piece}")
@@ -1435,6 +1447,15 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             "brokenFile": str(ctx.broken.path),
             "guide": ctx.updater.as_dict(),
             "fillers": ctx.fillers.as_dict(),
+            # For the header's "Away from home": while it's on, whether apps
+            # can reach StationPlay from outside (see reach.py).
+            "away": {
+                "on": True,
+                "address": ctx.away.address,
+                "reach": ctx.reach.status().as_dict(),
+            }
+            if ctx.away.on
+            else None,
         }
 
     def streams_now(user: User | None = None) -> list[dict]:
@@ -2831,6 +2852,12 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             "address": ctx.away.address,
             "publicPort": settings.public_port,
             "apps": ctx.away.apps,
+            # An https:// address on StationPlay's own port: saved, but it
+            # can't work (see away.port_problem); null otherwise.
+            "portProblem": away.port_problem(ctx.away.address, settings.port, settings.public_port)
+            or None,
+            # Whether apps can reach StationPlay there (see reach.py).
+            "reach": ctx.reach.status().as_dict(),
         }
 
     @app.get("/api/away")
@@ -2843,6 +2870,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             ctx.away.save(body.on, body.address)
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
+        ctx.reach.saved()  # (checked at once)
         ctx.access.record(
             logging.INFO,
             f"Watching away from home in StationPlay's apps is on, at {ctx.away.address}"
@@ -2850,6 +2878,25 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             else "Watching away from home in StationPlay's apps is off",
         )
         return away_json()
+
+    @app.post("/api/away/check")
+    async def away_check():
+        """Check now: whether apps can reach StationPlay at the address set,
+        checked now."""
+        if not ctx.away.on:
+            raise HTTPException(400, "Watching away from home is off, so there's nothing to check")
+        return (await ctx.reach.check_now()).as_dict()
+
+    @app.get(access.REACH)
+    async def reach_answer(request: Request):
+        """StationPlay checking that apps can reach it from outside (see
+        reach.py): for the value a check is waiting for, that it's
+        StationPlay, which port the request came in on, and whether it came
+        over HTTPS; for anything else, 404."""
+        outside, https = access.outside(request.scope), access.over_https(request.scope)
+        if not ctx.reach.answer(request.query_params.get("n", ""), outside, https):
+            raise HTTPException(404, "Not Found")
+        return {"stationplay": True, "port": "public" if outside else "home", "https": https}
 
     @app.get("/api/broken/download")
     async def broken_download():

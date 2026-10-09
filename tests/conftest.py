@@ -1,8 +1,9 @@
 """Fixtures shared between test files."""
 
+import httpx
 import pytest
 
-from app import db, jobs, scanner
+from app import db, jobs, reach, scanner
 
 from .test_e2e import media  # noqa: F401  (the test media files the end-to-end tests play)
 
@@ -14,6 +15,18 @@ def no_background_scans(monkeypatch):
     station's files turn that on."""
     monkeypatch.setattr(scanner, "STARTUP_DELAY_S", 10**6)
     monkeypatch.setattr(jobs, "CHECK_NEW_STATIONS", False)
+
+
+@pytest.fixture(autouse=True)
+def no_checks_over_the_internet(monkeypatch):
+    """StationPlay's checks of the address its apps use from outside (see
+    reach.py) never leave the machine in tests: nothing answers them, unless
+    a test says what does (Reach.transport)."""
+
+    def nothing_answers(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("No network in the tests", request=request)
+
+    monkeypatch.setattr(reach.Reach, "transport", httpx.MockTransport(nothing_answers))
 
 
 @pytest.fixture(autouse=True)

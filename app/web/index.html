@@ -103,6 +103,24 @@
   .dot.bad { background: var(--bad); }
   .dot.live { background: #e0463a; box-shadow: 0 0 0 3px rgba(224,70,58,.18); }
   .dot.warn { background: #e0a040; box-shadow: 0 0 0 3px rgba(224,160,64,.25); }
+  .dot.accent { background: var(--accent); }
+  /* Away from home: for Admins, while it's on, whether StationPlay's apps can
+     reach it from outside (it opens its panel on the Access tab). On a
+     phone, just its dot and "Away". */
+  .pill.away { cursor: pointer; color: var(--ink); }
+  .pill.away:hover { border-color: var(--accent); }
+  .pill.away:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .pill.away .word { font-weight: 600; }
+  .pill.away .word::before { content: "·"; margin-right: 6px; color: var(--ink-3); font-weight: 400; }
+  .pill.away .word.up { color: var(--good); }
+  .pill.away .word.down { color: var(--bad); }
+  .pill.away .word.checking { color: var(--accent); }
+  .pill.away .word.cant-check { color: var(--ink-2); }
+  .pill.away .short { display: none; }
+  @media (max-width: 560px) {
+    .pill.away .long, .pill.away .word { display: none; }
+    .pill.away .short { display: inline; }
+  }
 
   .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 4px 0 20px; overflow-x: auto; }
   .tab {
@@ -495,6 +513,23 @@
   .limit-stations label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .limit-note { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--panel-2); }
   .limit-note ul { margin: 6px 0 0; padding-left: 20px; }
+  /* Whether StationPlay's apps can reach it from outside: an icon, what it
+     is, when it was checked, and Check now (the Access tab, and the setup). */
+  .reach { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 4px 10px; align-items: start; padding: 10px 12px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line); }
+  .reach.down { background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
+  .reach .icon { display: grid; padding-top: 2px; }
+  .reach .icon svg { display: block; }
+  .reach .icon.up { color: var(--good); }
+  .reach .icon.down { color: var(--bad); }
+  .reach .icon.checking { color: var(--accent); }
+  .reach .icon.cant-check { color: var(--ink-3); }
+  .reach .what { margin: 0; font-size: 14px; }
+  .reach .when { margin: 3px 0 0; font-size: 12.5px; color: var(--ink-2); }
+  .reach .btn { align-self: center; }
+  @media (max-width: 480px) {
+    .reach { grid-template-columns: 16px minmax(0, 1fr); }
+    .reach .btn { grid-column: 2; justify-self: start; }
+  }
   .fresult { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--panel-2); flex-wrap: wrap; }
   .fresult #fCount { flex: 1 1 220px; }
   .freview-tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border-top: 1px solid var(--line); }
@@ -592,6 +627,7 @@
     <div class="spacer"></div>
     <span class="pill" id="plexPill"><span class="dot"></span><span>Checking Plex…</span></span>
     <span class="pill" id="livePill" hidden><span class="dot live"></span><span></span></span>
+    <button class="pill away" id="awayPill" type="button" hidden><span class="dot"></span><span class="long">Away from home</span><span class="short">Away</span><span class="word"></span></button>
     <button class="pill userpill" id="userPill" type="button" hidden title="Your account"></button>
   </header>
 
@@ -756,7 +792,7 @@
       <div class="arr-body" id="limitsBody"></div>
     </details>
     <details class="panel arr" id="awayPanel">
-      <summary><strong>StationPlay’s apps away from home</strong><span class="muted" id="awaySum"></span></summary>
+      <summary><strong>StationPlay’s apps away from home</strong><span class="muted" id="awaySum" data-away-sum></span></summary>
       <div class="arr-body" id="awayBody"></div>
     </details>
     <details class="panel arr" id="appLimitsPanel">
@@ -1573,7 +1609,8 @@ async function loadStatus() {
   $('#livePill').title = `Stations being watched right now, and how many connections there are. Each station uses one tuner (StationPlay has ${plural(status.tuners, 'tuner')}), no matter how many people watch it in Plex or another app.${full ? ' Every tuner is in use, so anyone tuning in to another station sees a card saying so.' : ''}`;
   $('#livePill').firstElementChild.className = full ? 'dot warn' : 'dot live';
   $('#livePill').lastElementChild.textContent = `${watched.length} of ${plural(status.tuners, 'tuner')} in use · ${plural(connections, 'connection')}`;
-  // (What's for Admins comes only to Admins.)
+  // (What's for Admins comes only to Admins: Away from home too.)
+  setAway(status.away);
   if (status.tunerUrl) {
     $('#tunerUrl').textContent = status.tunerUrl;
     $('#xmltvUrl').textContent = status.xmltvUrl;
@@ -2024,12 +2061,28 @@ const SETUP_PAGES = {
   },
 
   async away() {
-    const got = await api('/api/away');
-    const fields = awayFields(got, () => {}, 'setupAway');
-    return { node: h('div', { class: 'playback' }, ...fields.nodes), save: async () => {
+    let got = await api('/api/away');
+    setAway(got);
+    let warned = null;  // (the address it said to leave the port out of, once)
+    const fields = awayFields(got, () => box.paint(), 'setupAway');
+    // Saves what's changed: on leaving the step, and for Check now (a
+    // sentence if that didn't work).
+    const put = async () => {
       const { on, address } = fields.values();
       if (on === got.on && address.trim() === got.address) return;
-      try { await api('/api/away', { method: 'PUT', body: { on, address } }); } catch (e) { return e.message; }
+      try { got = await api('/api/away', { method: 'PUT', body: { on, address } }); } catch (e) { return e.message; }
+      setAway(got);
+      fields.note(got.on && got.portProblem);
+    };
+    const box = reachStatus({ save: put, shown: () => fields.values().on });
+    return { node: h('div', { class: 'playback' }, ...fields.nodes, box), save: async () => {
+      const problem = await put();
+      if (problem) return problem;
+      // Saved with a port it can't have: said here once, before going on.
+      if (got.on && got.portProblem && warned !== got.address) {
+        warned = got.address;
+        return `Saved, but ${lowerFirst(got.portProblem)}`;
+      }
     } };
   },
 
@@ -2093,6 +2146,7 @@ const SETUP_PAGES = {
       api('/api/playback'), api('/api/away'), api('/api/app-libraries').catch(() => null), api('/api/scan'),
       me.required ? api('/api/access/viewing').catch(() => null) : null,
     ]);
+    setAway(away);
     const limited = view ? Object.values(view.users).filter(u => { const lv = view.levels.find(l => l.id === u.level); return lv && levelLimited(lv); }).length : 0;
     const shared = libs ? libs.libraries.filter(l => libs.shared.includes(l.key)).map(l => l.title) : [];
     const w = scan.window;
@@ -2100,7 +2154,7 @@ const SETUP_PAGES = {
       ['playback', `${pb.picture} for new stations, ${plural(pb.tuners, 'tuner')}`],
       ['signIn', me.required ? 'Only people who sign in' : 'Anyone on your network'],
       ...(view ? [['viewing', limited ? `${limited === 1 ? '1 person' : `${limited} people`} on a level with limits` : 'Everyone sees everything']] : []),
-      ['away', away.on ? `On, at ${away.address}` : 'Off'],
+      ['away', h('span', { 'data-away-sum': 'Ready for apps away from home' }, awaySummary(away, 'Ready for apps away from home'))],
       ['library', shared.length ? `Shared: ${shared.join(', ')}` : 'Not shared'],
       ['fileChecks', w.on ? `Deep scan every night from ${clock(w.start)} to ${clock(w.end)}` : 'Quick checks only (the deep scan is off)'],
     ];
@@ -4701,10 +4755,18 @@ function renderLimits(got) {
 }
 // StationPlay's apps away from home --------------------------------------------------
 // Watching away from home: its settings, in its panel on the Access tab and
-// in the setup (`id`: the address box's, for its label).
+// in the setup (`id`: the address box's, for its label). `note` shows (or
+// clears) what's wrong with the saved address: a port it can't have.
 function awayFields(got, onEdit, id) {
   const on = h('input', { type: 'checkbox', checked: got.on, oninput: onEdit });
-  const address = h('input', { type: 'url', id, value: got.address, placeholder: 'https://tv.example.com', maxlength: 200, autocomplete: 'off', oninput: onEdit, style: 'width:min(100%,360px)' });
+  const address = h('input', { type: 'url', id, value: got.address, placeholder: 'https://tv.example.com (no port)', maxlength: 200, autocomplete: 'off', 'aria-describedby': `${id}Hint`, oninput: onEdit, style: 'width:min(100%,360px)' });
+  const portNote = h('p', { class: 'small', style: 'margin:0' });
+  const note = problem => {
+    portNote.hidden = !problem;
+    portNote.replaceChildren(...(problem ? [warnIcon(), ' ', problem] : []));
+  };
+  note(got.on && got.portProblem);
+  address.addEventListener('input', () => note(''));  // (it's about the address saved)
   const warnings = [];
   if (!got.publicPort) warnings.push('PUBLIC_PORT isn’t set, so apps can reach StationPlay from outside only through a VPN.');
   if (!me.required) warnings.push('Sign-in is off. Through the public port, apps must sign in, so add a user on the Access tab first.');
@@ -4718,31 +4780,139 @@ function awayFields(got, onEdit, id) {
           h('li', {}, h('strong', {}, 'Upload speed. '), 'Each station watched away from home is sent over your home internet connection, at the picture size set under Picture and tuners on the Add to Plex tab.'))),
       ...warnings.map(w => h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' ', w)),
       h('label', {}, on, ' Let StationPlay’s apps watch away from home'),
-      h('div', { class: 'field' }, h('label', { for: id }, 'The address apps reach StationPlay at from outside'), address),
+      h('div', { class: 'field' }, h('label', { for: id }, 'The address apps reach StationPlay at from outside'), address,
+        h('span', { class: 'hint', id: `${id}Hint` }, 'With a reverse proxy, its https:// address alone, with no port. With a VPN, the server’s VPN address with its port, such as http://nas.your-tailnet.ts.net:3310.'),
+        portNote),
     ],
     values: () => ({ on: on.checked, address: address.value }),
+    note,
   };
+}
+// Whether StationPlay's apps can reach it from outside (see reach.py on the
+// server), for Admins while watching away from home is on: the pill in the
+// header, the panel's summary, and the status on the Access tab and in the
+// setup. Painted again whenever it's said anew: with the page's status
+// (every 10 seconds), from the Access tab, and by Check now.
+let awayNow = null;  // {on, address, reach} as last said ({on: false}: off)
+const REACH_WORDS = { up: 'Up', down: 'Down', checking: 'Checking', 'cant-check': 'Can’t check' };
+const lowerFirst = text => text.charAt(0).toLowerCase() + text.slice(1);
+// `got`: /api/away's answer, or the status's `away` (null or missing: off,
+// or not for this person).
+function setAway(got) {
+  awayNow = got?.on ? { on: true, address: got.address, reach: got.reach } : { on: false };
+  paintAway();
+}
+// "On, at https://… · Ready" (or the problem, in a few words), or "Off".
+const awaySummary = (away, ready = 'Ready') => !away?.on ? 'Off'
+  : `On, at ${away.address} · ${away.reach.state === 'up' && away.reach.short === 'Ready' ? ready : away.reach.short}`;
+function paintAway() {
+  const pill = $('#awayPill');
+  const reach = awayNow?.on && isAdmin() ? awayNow.reach : null;
+  pill.hidden = !reach;
+  if (reach) {
+    const word = REACH_WORDS[reach.state] || REACH_WORDS.checking;
+    pill.querySelector('.dot').className = `dot ${{ up: 'ok', down: 'bad', checking: 'accent' }[reach.state] || ''}`;
+    pill.querySelector('.word').className = `word ${reach.state}`;
+    pill.querySelector('.word').textContent = word;
+    pill.setAttribute('aria-label', `Away from home: ${word}`);
+    pill.title = reach.detail;
+  }
+  document.querySelectorAll('[data-away-sum]').forEach(el => { el.textContent = awaySummary(awayNow, el.dataset.awaySum || 'Ready'); });
+  document.querySelectorAll('.reach').forEach(box => box.paint?.());
+}
+$('#awayPill').addEventListener('click', () => {
+  showTab('access');
+  const panel = $('#awayPanel');
+  panel.open = true;
+  panel.scrollIntoView({ block: 'start', behavior: 'smooth' });
+});
+function reachIcon(state) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('width', '16');
+  svg.setAttribute('height', '16');
+  svg.innerHTML = {
+    up: '<circle cx="8" cy="8" r="7.5" fill="currentColor"/><path d="M4.7 8.2l2.2 2.2 4.4-4.6" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+    down: '<path d="M8 1.2L15.3 14.6H.7z" fill="currentColor"/><path d="M8 6v4" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="12.3" r=".9" fill="#fff"/>',
+    checking: '<circle cx="8" cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="28 12.2" stroke-linecap="round"/>',
+    'cant-check': '<circle cx="8" cy="8" r="6.9" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.1 6.3a1.95 1.95 0 1 1 2.7 1.8c-.5.2-.8.6-.8 1.1v.3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.7" r=".9" fill="currentColor"/>',
+  }[state] || '';
+  return svg;
+}
+// The status: an icon and what it is, when it was checked (and when an app
+// last came in from outside, for an https:// address), and Check now.
+// `save`: what Check now saves first (a sentence if that didn't work);
+// `shown`: whether it's shown while what's saved is off (Check now saving it).
+function reachStatus({ save = null, shown = () => false } = {}) {
+  const icon = h('span', { class: 'icon', 'aria-hidden': 'true' });
+  const what = h('p', { class: 'what', role: 'status' });
+  const when = h('p', { class: 'when' });
+  const check = h('button', { type: 'button', class: 'btn', onclick: async () => {
+    check.disabled = true;
+    check.textContent = 'Checking…';
+    try {
+      const problem = save ? await save() : null;
+      if (problem) { toast(problem, true); return; }
+      if (!awayNow?.on) return;
+      const reach = await api('/api/away/check', { method: 'POST' });
+      if (awayNow?.on) { awayNow.reach = reach; paintAway(); }
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      check.disabled = false;
+      check.textContent = 'Check now';
+    }
+  } }, 'Check now');
+  const box = h('div', { class: 'reach' }, icon, h('div', {}, what, when), check);
+  box.paint = () => {
+    const reach = awayNow?.on ? awayNow.reach : null;
+    box.hidden = !reach && !shown();
+    box.className = `reach ${reach ? reach.state : ''}`;
+    icon.className = `icon ${reach ? reach.state : ''}`;
+    icon.replaceChildren(reachIcon(reach ? reach.state : ''));
+    // (Text is set only when it changes: `what` is read out when it does.)
+    const say = (el, text) => { if (el.textContent !== text) el.textContent = text; };
+    if (!reach) {
+      say(what, 'Check now saves this, and checks that apps can reach StationPlay at that address.');
+      say(when, '');
+      return;
+    }
+    say(what, reach.detail);
+    say(when, [
+      reach.checkedAt ? `Checked ${ago(reach.checkedAt)}` : 'Checking…',
+      // (Only apps through the public port are seen; on a VPN, they're home.)
+      awayNow.address.startsWith('https://')
+        ? reach.lastApp ? `An app last reached StationPlay from outside ${ago(reach.lastApp)}` : 'No app has reached StationPlay from outside since it started'
+        : '',
+    ].filter(Boolean).join(' · '));
+  };
+  box.paint();
+  return box;
 }
 async function loadAway() {
   let got;
   try { got = await api('/api/away'); }
   catch (e) { $('#awaySum').textContent = ''; $('#awayBody').replaceChildren(h('p', { class: 'muted', style: 'margin:0' }, e.message)); return; }
-  $('#awaySum').textContent = got.on ? `On, at ${got.address}` : 'Off';
+  setAway(got);  // (the summary beside the panel's title too)
   const body = $('#awayBody');
   if (body.dataset.editing) return;  // (not while it's being changed)
   const fields = awayFields(got, () => { body.dataset.editing = '1'; }, 'awayAddress');
   const result = h('span', { class: 'hint', role: 'status' });
   const save = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
     const { on } = fields.values();
-    try { await api('/api/away', { method: 'PUT', body: fields.values() }); }
+    let saved;
+    try { saved = await api('/api/away', { method: 'PUT', body: fields.values() }); }
     catch (e) { result.textContent = e.message; return; }
-    toast(on ? 'Saved. StationPlay’s apps can watch away from home.' : 'Saved. Watching away from home is off.');
+    // (Saved all the same, with a port it can't have: said plainly.)
+    if (saved.on && saved.portProblem) toast(`Saved, but ${lowerFirst(saved.portProblem)}`, true);
+    else toast(on ? 'Saved. StationPlay’s apps can watch away from home.' : 'Saved. Watching away from home is off.');
     delete body.dataset.editing;
     loadAway();
   } }, 'Save');
   body.replaceChildren(
     ...fields.nodes,
     h('div', { class: 'scan-set' }, save, result),
+    reachStatus(),
     ...(got.on && got.apps ? [h('p', { class: 'muted small', style: 'margin:0' }, `${plural(got.apps, 'app')} signed in away from home since StationPlay started.`)] : []));
 }
 // How many can watch at once in StationPlay's apps (see capacity.py) ---------------

@@ -17,7 +17,8 @@ app away from home reaches StationPlay one of two ways:
 
 The address set here (what the apps reach StationPlay at from outside) is
 told to the apps (/api/v1/server), so an app set up at home remembers it and
-uses it when home doesn't answer.
+uses it when home doesn't answer. Whether it really reaches StationPlay is
+checked while this is on (see reach.py).
 """
 
 from __future__ import annotations
@@ -82,6 +83,28 @@ def normalize_address(text: str) -> str:
         raise ValueError(problem)
     host = parts.hostname if ":" not in parts.hostname else f"[{parts.hostname}]"
     return f"{parts.scheme}://{host}" + (f":{port}" if port else "")
+
+
+def port_problem(address: str, port: int, public_port: int) -> str:
+    """What's wrong with an https:// address on one of StationPlay's own
+    ports ("" if nothing is): StationPlay never speaks HTTPS itself, so that
+    can't reach it through a reverse proxy. It's saved all the same, and the
+    page says so."""
+    parts = urlsplit(address)
+    if parts.scheme != "https" or not parts.hostname:
+        return ""
+    try:
+        given = parts.port
+    except ValueError:
+        return ""
+    if given is None or given not in {port, public_port} - {0}:
+        return ""
+    host = parts.hostname if ":" not in parts.hostname else f"[{parts.hostname}]"
+    return (
+        f"Leave the port out: StationPlay never speaks HTTPS itself, so an https:// address "
+        f"with port {given} can't reach it. Use your reverse proxy's address alone, "
+        f"https://{host}."
+    )
 
 
 class Away:

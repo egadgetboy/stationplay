@@ -21,6 +21,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex_library import LibraryPlex
+from .helpers import Proxy
 
 DOCS = Path(__file__).resolve().parent.parent / "docs"
 API_DOC, INTERNAL_DOC = DOCS / "api.md", DOCS / "internal-api.md"
@@ -579,6 +580,17 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         assert name in [b["name"] for b in home.get("/api/backups").json()["backups"]]
         spec = home.get("/api/v1/openapi.json", headers=admin)
         assert spec.status_code == 200 and spec.json()["info"]["title"] == "StationPlay API"
+
+        # StationPlay checking that apps reach it from outside (see
+        # test_reach.py), through a reverse proxy to the public port.
+        proxy = Proxy(app, PUBLIC_PORT)
+        ctx.reach.transport = proxy.transport
+        on = home.put("/api/away", json={"on": True, "address": "https://tv.example.com"})
+        assert on.status_code == 200
+        assert home.post("/api/away/check").json()["state"] == "up"
+        reached = check.answer(proxy.answers[-1], "GET /api/internal/reach")
+        assert reached == {"stationplay": True, "port": "public", "https": True}
+        check.answer(internet.get("/api/internal/reach?n=guess"), "GET /api/internal/reach", 404)
     check.everything_seen()
 
 

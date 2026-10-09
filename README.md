@@ -375,7 +375,11 @@ The server side is ready: StationPlay 1.19.0 and later include what the apps use
 
 A VPN is the most private: nothing at all is open to the internet, and to StationPlay a phone on the VPN is on your home network. A reverse proxy suits apps used by people who won't install a VPN, such as family elsewhere. A Roku can't run a VPN, so a Roku outside your home needs the reverse proxy.
 
-**For StationPlay's apps**, turn on **StationPlay's apps away from home** on the **Access** tab (it's off until you do), with the address the apps use from outside: your VPN address, or your reverse proxy's `https://` address. Apps set up at home remember it, and switch to it when home doesn't answer. Each station watched away from home is sent over your home connection's upload, at its picture size: about 1.7 Mbps at 480p, 3.7 Mbps at 720p and 6.2 Mbps at 1080p.
+**For StationPlay's apps**, turn on **StationPlay's apps away from home** on the **Access** tab (it's off until you do), with the address the apps use from outside: your VPN address with its port (such as `http://nas.your-tailnet.ts.net:3310`), or your reverse proxy's `https://` address alone, with no port. Apps set up at home remember it, and switch to it when home doesn't answer. Each station watched away from home is sent over your home connection's upload, at its picture size: about 1.7 Mbps at 480p, 3.7 Mbps at 720p and 6.2 Mbps at 1080p.
+
+**StationPlay checks that the apps can reach it.** While that's on, StationPlay asks for itself at the address, as an app away from home would: a few seconds after it starts, at once when you save the address, every 5 minutes, and when you choose **Check now**. Only the check it's waiting for gets an answer, so StationPlay knows it reached itself, not just something, and how: through which port, and over HTTPS or not. It says **Ready** when an `https://` address reaches the public port over HTTPS (or a VPN address reaches StationPlay), and otherwise what's wrong, in a sentence: a proxy that points at port 3310, an address without HTTPS, a name that isn't found, a certificate that has expired or isn't trusted, the proxy's own error, something else answering, or a redirect. The status sits under the address on the Access tab and in the setup, and for Admins, **Away from home** in the page's header says **Up**, **Down**, **Checking** or **Can't check** on every tab (choose it to open the Access tab's panel). One problem alone never makes it **Down**: StationPlay checks again a minute later. The log says when it goes down, and why, and when it's back.
+
+**When nothing answers from home.** Many routers don't let devices at home use the home's own internet address (this is called NAT loopback, or hairpinning), so a check from your server can fail while apps away from home work fine. StationPlay calls that **Down** only once a check from home has worked since it started. When a signed-in app has come in through the public port in the last 15 minutes, it's **Up**, and the panel says when an app last came in from outside. Otherwise it says **Can't check**, and why: to be sure, open your address on a phone using mobile data, not Wi-Fi.
 
 ### Tailscale
 
@@ -409,7 +413,7 @@ tv.example.com {
 
 **Nginx Proxy Manager:** add a proxy host for `tv.example.com` forwarding to `192.168.1.20` port `3311`. On its **SSL** tab, request a Let's Encrypt certificate and turn on **Force SSL**. On its **Advanced** tab, add `proxy_set_header CF-Connecting-IP $remote_addr;`.
 
-Then, on the **Access** tab at home, add the first user (an Admin) with a long password if you haven't, and turn on **StationPlay's apps away from home** with `https://tv.example.com`.
+Then, on the **Access** tab at home, add the first user (an Admin) with a long password if you haven't, and turn on **StationPlay's apps away from home** with `https://tv.example.com`. Leave the port out: that's the proxy's address, and StationPlay itself never speaks HTTPS. Within a few seconds, the status under it should say **Ready**. If it says the proxy points at the wrong port, point it at 3311, never 3310.
 
 What protects StationPlay there:
 
@@ -1033,7 +1037,7 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/hls.py` | Stations as HLS, for StationPlay's apps and other HLS players |
 | `app/appapi.py`, `app/api.py` | StationPlay's API (`/api/v1`): the server, stations and guide; API tokens, Admin actions and the OpenAPI spec. Also the apps' own sign-in and connection tests (`/api/internal`) |
 | `app/links.py` | Signing in an app with a code |
-| `app/away.py`, `app/capacity.py` | StationPlay's apps away from home; limits on devices watching, and connection tests |
+| `app/away.py`, `app/reach.py`, `app/capacity.py` | StationPlay's apps away from home, and the check that they can reach it; limits on devices watching, and connection tests |
 | `app/ondemand.py`, `app/applibrary.py`, `app/catalog.py` | Your library on demand in StationPlay's apps |
 | `app/converting.py`, `app/keyframes.py` | Copies of what a device can't play as it is: repackaged or converted, as HLS |
 | `app/hdhr.py` | HDHomeRun and XMLTV formats |

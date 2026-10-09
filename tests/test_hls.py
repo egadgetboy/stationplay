@@ -414,8 +414,11 @@ async def test_an_app_away_from_home_watches_through_the_public_port(tmp_path, m
                 .json()["stations"][0]["logo"]
                 .startswith("/channel-icon/7.png?v=")
             )
+            app.state.ctx.access.app_outside_at = None
             playlist = await phone.get(hls_url)
             assert playlist.status_code == 200, playlist.text
+            # (Playing, it came in from outside: see test_reach.py.)
+            assert app.state.ctx.access.app_outside_at is not None
             first = hls_url.replace("index.m3u8", pieces(playlist.text)[0])
             piece = await phone.get(first)
             assert piece.status_code == 200 and len(piece.content) > 10_000
