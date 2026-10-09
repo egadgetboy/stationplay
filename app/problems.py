@@ -8,7 +8,12 @@ Each one says which app, which version, and what kind of device (its model
 and system), so an Admin can tell from the Logs tab whether a problem is one
 device's, one kind of device's, or everyone's. The same problem from the
 same device soon after counts on the same row, and each one is said once in
-StationPlay's log. Kept 30 days, the newest 5,000 at most.
+StationPlay's log, as a warning, naming the station as the log does (see
+playing.station). Kept 30 days, the newest 5,000 at most.
+
+What an app says about playing that couldn't keep up ("kept-up") is also
+why it went to a smaller version, which the log says as it does (see
+applibrary.py): kept a little while for that, in memory only.
 """
 
 from __future__ import annotations
@@ -20,6 +25,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from .db import Database
+from .playing import cap
+from .playing import station as station_named
 from .text import plain
 
 log = logging.getLogger("stationplay.problems")
@@ -43,6 +50,7 @@ MOST = 30
 MOST_IN_S = 10 * 60
 TEXT_MOST = 300
 NAME_MOST = 120
+SAID_KEPT_S = 300  # how long what an app said about keeping up is kept (see said_lately)
 
 
 class Refused(Exception):
@@ -67,16 +75,18 @@ class Sent:
     device_name: str = ""
 
 
-def subject(kind: str, station: int | None, title: str) -> str:
-    """What a problem was about, as the Logs tab says it."""
-    if kind in STATION_KINDS or (kind == "kept-up" and station is not None and not title):
-        return f"Station {station}" if station is not None else "A station"
+def subject(kind: str, number: int | None, title: str, name: str = "") -> str:
+    """What a problem was about, as the Logs tab says it (`name`: the
+    station's)."""
+    if kind in STATION_KINDS or (kind == "kept-up" and number is not None and not title):
+        return cap(station_named(number, name, mid=True)) if number is not None else "A station"
     return title or "Something"
 
 
-def label(kind: str, station: int | None, title: str) -> str:
-    """ "Station 5 didn't start", "Northbound didn't play"."""
-    return KINDS.get(kind, "A problem").format(what=subject(kind, station, title))
+def label(kind: str, number: int | None, title: str, name: str = "") -> str:
+    """ "Station 5, Cartoon Classics, didn't start", "Northbound didn't
+    play"."""
+    return KINDS.get(kind, "A problem").format(what=subject(kind, number, title, name))
 
 
 def device_kind(app: str, version: str, device: str) -> str:
@@ -90,6 +100,13 @@ class Problems:
         self.db = db
         self._recent: dict[str, deque[float]] = {}
         self._forgot_ms = 0
+        self._said: dict[str, tuple[float, str]] = {}  # address -> (when, what) about keeping up
+
+    def said_lately(self, address: str, within_s: float) -> str:
+        """What an app at `address` said in the last `within_s` about
+        playing that couldn't keep up ("" if nothing)."""
+        when, what = self._said.get(address, (0.0, ""))
+        return what if what and time.monotonic() - when <= within_s else ""
 
     def note(self, sent: Sent, user_id: int | None, away: bool, address: str) -> None:
         """Keeps a problem an app sent (from `address`). Refused if it isn't one
@@ -120,10 +137,15 @@ class Problems:
         times.append(now)
         for key in [k for k, v in self._recent.items() if not v or now - v[-1] > MOST_IN_S]:
             del self._recent[key]
+        if sent.kind == "kept-up" and fields["detail"]:
+            self._said = {a: s for a, s in self._said.items() if now - s[0] <= SAID_KEPT_S}
+            self._said[address] = (now, fields["detail"])
         at = int(time.time() * 1000)
         self._forget_old(at)
         if self.db.add_problem(at, fields, at - SAME_MS, KEEP):
-            what = label(fields["kind"], fields["station"], fields["title"])
+            number = fields["station"]
+            channel = self.db.get_channel_by_number(number) if number is not None else None
+            what = label(fields["kind"], number, fields["title"], channel.name if channel else "")
             why = f": {fields['detail']}" if fields["detail"] else ""
             on = device_kind(fields["app"], fields["version"], fields["device"])
             named = f" ({fields['device_name']})" if fields["device_name"] else ""
@@ -144,6 +166,7 @@ class Problems:
         with how often, on how many devices, for how many people, and on
         what kinds of device (`only`: all on one kind)."""
         since = int(time.time() * 1000) - days * 86_400_000
+        stations = {c.number: c.name for c in self.db.list_channels()}
         groups: dict[tuple[str, int | None, str], list[dict[str, Any]]] = {}
         for row in self.db.problems_since(since):
             station = row["station"] if row["kind"] != "crashed" else None
@@ -162,7 +185,12 @@ class Problems:
             out.append(
                 {
                     "kind": kind,
-                    "label": label(kind, station, "" if kind == "crashed" else title),
+                    "label": label(
+                        kind,
+                        station,
+                        "" if kind == "crashed" else title,
+                        stations.get(station, "") if station is not None else "",
+                    ),
                     "station": station,
                     "title": title,
                     "times": sum(r["times"] for r in rows),

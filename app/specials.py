@@ -37,6 +37,8 @@ from typing import Any
 
 from . import marathons
 from .db import Channel, Database, Era, Item, MarathonRecord, NewEra, SpecialRun, show_key
+from .playing import cap
+from .playing import station as station_named
 from .schedule import (
     TAIL,
     EraSchedule,
@@ -487,8 +489,8 @@ def plan(
         planned += 1
         floor = start + 1
         log.info(
-            "Station %s: planned %s for %s",
-            channel.number,
+            "%s: planned %s for %s",
+            cap(station_named(channel.number, channel.name)),
             _name(d, made.special),
             datetime.fromtimestamp(start / 1000).strftime("%a %Y-%m-%d %H:%M"),
         )
@@ -521,8 +523,8 @@ def _skip(channel: Channel, d: Due, why: str) -> None:
         _said.clear()
     _said.add(said)
     log.info(
-        "Station %s: %s at %s won't air this time (%s)",
-        channel.number,
+        "%s: %s at %s won't air this time (%s)",
+        cap(station_named(channel.number, channel.name)),
         _name(d),
         datetime.fromtimestamp(d.at_ms / 1000).strftime("%a %Y-%m-%d %H:%M"),
         why,

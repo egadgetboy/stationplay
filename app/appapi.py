@@ -24,7 +24,19 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import __version__, access, api, capacity, devices, hdhr, intro, links, problems, specials
+from . import (
+    __version__,
+    access,
+    api,
+    capacity,
+    devices,
+    hdhr,
+    intro,
+    links,
+    playing,
+    problems,
+    specials,
+)
 from .broadcaster import now_ms
 from .text import plain
 
@@ -520,6 +532,23 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         user = access.signed_in(request)
         return ctx.away.key_for(access.session_hash(token), user) if token and user else None
 
+    def note_app(request: Request, key: str | None) -> None:
+        """Whose app this is, at its address at home (or at its own stream
+        address away from home): asked for the stations, it's about to
+        watch one, and its player asks for it without signing in (see
+        playing.py). Not for an API token's script."""
+        user = access.signed_in(request)
+        token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
+        app = ctx.db.session_app(access.session_hash(token)) if token and user else None
+        if user is None or app is None:
+            return
+        if key:
+            where = access.address(request.scope)
+            ctx.apps.saw(f"k:{key}", playing.Watcher(where, True, user.name, user.id, app, key[:6]))
+        elif not access.outside(request.scope):
+            where = request.client.host if request.client else "?"
+            ctx.apps.saw(where, playing.Watcher(where, False, user.name, user.id, app))
+
     def hls_address(number: int, key: str | None) -> str:
         """Where an app plays a station: at home, its HLS; from outside, its
         HLS at the app's own address."""
@@ -546,6 +575,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     )
     async def stations(request: Request):
         key = away_key(request)
+        note_app(request, key)
         channels = ctx.stations_for(access.signed_in(request))
         now = now_ms()
 

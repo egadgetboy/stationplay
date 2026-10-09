@@ -44,6 +44,7 @@ from . import (
     capacity,
     devices,
     hdhr,
+    health,
     hls,
     intro,
     jobs,
@@ -53,6 +54,7 @@ from . import (
     marathons,
     ondemand,
     playback,
+    playing,
     problems,
     reach,
     replacing,
@@ -393,8 +395,10 @@ class AppContext:
     device_id: str
     gpu: GpuManager
     broadcasters: dict[int, Broadcaster] = field(default_factory=dict)
-    # Stations being sent to StationPlay's apps (see hls.py).
+    # Stations being sent to StationPlay's apps (see hls.py), and whose app
+    # is at each address (see playing.py).
     hls_streams: hls.HlsStreams = field(default_factory=hls.HlsStreams)
+    apps: playing.Apps = field(default_factory=playing.Apps)
     # Apps waiting to be signed in with a code (see links.py).
     links: links.Links = field(default_factory=links.Links)
     stall_counts: dict[str, int] = field(default_factory=dict)
@@ -448,6 +452,7 @@ class AppContext:
     plays: ondemand.PlaySessions = field(default_factory=ondemand.PlaySessions)
     app_pictures: ondemand.PictureCache = field(default_factory=ondemand.PictureCache)
     stats: stats.Stats = field(init=False)  # how much each station is watched
+    health: health.Health = field(init=False)  # the server's health, now (see health.py)
     titles: titles.Titles = field(init=False)  # the ratings of what's on the stations
     viewing: viewing.Viewing = field(init=False)  # what each user can see
     problems: problems.Problems = field(init=False)  # what the apps ran into
@@ -474,6 +479,8 @@ class AppContext:
         self.shared = ondemand.Shared(self.db)
         self.catalog = ondemand.Catalog(self.library, self.shared)
         self.stats = stats.Stats(self.db)
+        self.plays.count_with = self.stats.played  # (Media played in the apps counts too)
+        self.health = health.Health(self.settings.data_dir)
         self.titles = titles.Titles(self.db)
         self.viewing = viewing.Viewing(self.db, self.titles)
         self.problems = problems.Problems(self.db)
@@ -635,6 +642,8 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             asyncio.create_task(backups.nightly_forever(ctx)),
             asyncio.create_task(ctx.scanner.run_forever()),
             asyncio.create_task(ctx.reach.run_forever()),
+            asyncio.create_task(ctx.health.run_forever(lambda: stats.on_gpu(ctx))),
+            asyncio.create_task(stats.count_plays_forever(ctx)),
         ]
         yield
         for task in background:
@@ -790,9 +799,14 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         if on_now is not None:
             return all_tuners_in_use(channel, on_now, client)
         playback.make_room(ctx, b)
-        viewer = b.subscribe(f"{client} on {number}")
         agent = request.headers.get("user-agent", "")
-        log.info("Viewer %s tuned to station %s (%s)", client, number, agent or "no user agent")
+        viewer = b.subscribe(f"{client} on {number}", client=client, agent=agent)
+        log.info(
+            "Viewer %s (%s) tuned to %s",
+            client,
+            agent or "no user agent",
+            playing.station(number, channel.name),
+        )
         started = time.monotonic()
 
         async def body():
@@ -809,9 +823,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 watched = fmt_offset(time.monotonic() - started)
                 if viewer.ended_because:
                     log.warning(
-                        "Viewer %s was disconnected from station %s after %s (%.0f MB): %s",
+                        "Viewer %s was disconnected from %s after %s (%.0f MB): %s",
                         client,
-                        number,
+                        playing.station(number, channel.name, mid=True),
                         watched,
                         sent / 1e6,
                         viewer.ended_because,
@@ -820,9 +834,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                     # The player closed the connection: stopped watching,
                     # changed station, or gave up on the stream.
                     log.info(
-                        "Viewer %s left station %s after %s (%.0f MB)",
+                        "Viewer %s left %s after %s (%.0f MB)",
                         client,
-                        number,
+                        playing.station(number, channel.name, mid=True),
                         watched,
                         sent / 1e6,
                     )
@@ -836,27 +850,32 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     # StationPlay's apps (and AirPlay and Chromecast): stations as HLS ---------
 
     async def hls_playlist_for(
-        number: int, client: str, away_: bool = False, night: bool = False
+        number: int,
+        client: str,
+        away_: bool = False,
+        night: bool = False,
+        watcher: playing.Watcher | None = None,
     ) -> Response:
         """A station's HLS playlist, for an app (`client`: which, for its
         stream's list of who's watching; `away_`: away from home; `night`:
-        with night mode's sound). The first ask starts the station's stream
-        for apps (see hls.py), and waits until a player has enough to start
-        on. One more device than an Admin's limits allow is turned away (see
-        capacity.py)."""
+        with night mode's sound; `watcher`: who it's watching for). The
+        first ask starts the station's stream for apps (see hls.py), and
+        waits until a player has enough to start on. One more device than an
+        Admin's limits allow is turned away (see capacity.py)."""
         channel = ctx.db.get_channel_by_number(number)
         if channel is None:
             raise HTTPException(404, f"There's no station {number}")
+        who = watcher or playing.Watcher(client, away_)
         watching = ctx.app_watchers()
         if (over := ctx.capacity.refusal(watching, client, away_)) is not None:
             limit, most = over
             log.warning(
                 "The limit of %s watching%s at once (set on the Access tab) was reached, "
-                "so an app on %s couldn't tune to station %s",
+                "so %s couldn't tune to %s",
                 capacity.devices(most),
                 " away from home" if limit == "away" else "",
-                client,
-                channel.number,
+                who.subject(start=False),
+                playing.station(channel.number, channel.name),
             )
             return JSONResponse(
                 {"detail": capacity.refused_because(limit, most), "limit": limit, "most": most},
@@ -870,12 +889,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             if on_now is not None:
                 tuners = playback.load(ctx.db).tuners
                 log.warning(
-                    "No tuners are free (%d in use, for stations %s), so an app on %s "
-                    "couldn't tune to station %s",
+                    "No tuners are free (%d in use, for stations %s), so %s couldn't tune to %s",
                     tuners,
                     ", ".join(map(str, on_now)),
-                    client,
-                    channel.number,
+                    who.subject(start=False),
+                    playing.station(channel.number, channel.name),
                 )
                 return JSONResponse(
                     {"detail": playback.busy_lines(tuners, on_now)[0], "onNow": on_now},
@@ -883,8 +901,8 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                     headers=hls.HEADERS,
                 )
             playback.make_room(ctx, b)
-            stream = ctx.hls_streams.start(b, channel.number, night)
-        stream.asked_by(client, away_)
+            stream = ctx.hls_streams.start(b, channel.number, channel.name, night)
+        stream.asked_by(client, away_, who)
         playlist = await stream.playlist()
         if playlist is None:
             return JSONResponse(
@@ -894,7 +912,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             )
         return Response(playlist, media_type="application/vnd.apple.mpegurl", headers=hls.HEADERS)
 
-    async def hls_piece_of(number: int, piece: str, night: bool = False) -> Response:
+    async def hls_piece_of(number: int, piece: str, client: str, night: bool = False) -> Response:
+        """One piece of a station's HLS (`client`: which app asked, as for
+        its playlist)."""
         channel = ctx.db.get_channel_by_number(number)
         stream = ctx.hls_streams.get(channel.id, night) if channel else None
         if stream is None:
@@ -903,6 +923,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         if data is None:
             raise HTTPException(404, "That piece of the stream is gone")
         stream.asked_by(None)
+        stream.still_watching(client)
         return Response(data, media_type="video/mp2t", headers=hls.HEADERS)
 
     def hls_left(number: int, client: str, night: bool = False) -> Response:
@@ -917,12 +938,13 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     @app.get("/hls/{number}/index.m3u8")
     async def hls_playlist(number: int, request: Request):
         """A station's HLS playlist, on the home network."""
-        return await hls_playlist_for(number, request.client.host if request.client else "?")
+        client = request.client.host if request.client else "?"
+        return await hls_playlist_for(number, client, watcher=ctx.apps.at_home(client))
 
     @app.get("/hls/{number}/{piece}")
-    async def hls_piece(number: int, piece: str):
+    async def hls_piece(number: int, piece: str, request: Request):
         """One piece of a station's HLS stream."""
-        return await hls_piece_of(number, piece)
+        return await hls_piece_of(number, piece, request.client.host if request.client else "?")
 
     @app.post("/hls/{number}/leave", status_code=204)
     async def hls_leave(number: int, request: Request):
@@ -933,11 +955,12 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     @app.get("/hls/{number}/night/index.m3u8")
     async def hls_night_playlist(number: int, request: Request):
         client = request.client.host if request.client else "?"
-        return await hls_playlist_for(number, client, night=True)
+        return await hls_playlist_for(number, client, night=True, watcher=ctx.apps.at_home(client))
 
     @app.get("/hls/{number}/night/{piece}")
-    async def hls_night_piece(number: int, piece: str):
-        return await hls_piece_of(number, piece, night=True)
+    async def hls_night_piece(number: int, piece: str, request: Request):
+        client = request.client.host if request.client else "?"
+        return await hls_piece_of(number, piece, client, night=True)
 
     @app.post("/hls/{number}/night/leave", status_code=204)
     async def hls_night_leave(number: int, request: Request):
@@ -963,11 +986,23 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         # (By its key, not its address: apps behind one proxy are told apart.)
         return f"{user.name}'s app away from home ({key[:6]})"
 
+    def away_watcher(key: str, user: User, request: Request) -> playing.Watcher:
+        """Who's watching at an app's own address: its person, and which app
+        (as it said when it asked for the stations: see appapi.py)."""
+        known = ctx.apps.at(f"k:{key}")
+        return playing.Watcher(
+            access.address(request.scope), True, user.name, user.id,
+            known.app if known else "", key[:6],
+        )  # fmt: skip
+
     def watching_away(key: str, user: User, number: int, request: Request) -> None:
         """A playlist asked for at an app's own address: logged (once an
         hour), and through the public port, proof that apps reach StationPlay
         from outside (see reach.py)."""
-        ctx.away.watching(key, user, number, access.where(request.scope))
+        channel = ctx.db.get_channel_by_number(number)
+        ctx.away.watching(
+            key, user, number, access.where(request.scope), channel.name if channel else ""
+        )
         if access.outside(request.scope):
             ctx.access.app_came_from_outside()
 
@@ -975,7 +1010,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     async def hls_playlist_away(key: str, number: int, request: Request):
         user = away_user(key, number, recheck=True)
         watching_away(key, user, number, request)
-        return await hls_playlist_for(number, away_client(key, user), away_=True)
+        return await hls_playlist_for(
+            number, away_client(key, user), away_=True, watcher=away_watcher(key, user, request)
+        )
 
     @app.get("/hls/k/{key}/{number}/logo.png")
     async def logo_away(key: str, number: int):
@@ -986,8 +1023,8 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.get("/hls/k/{key}/{number}/{piece}")
     async def hls_piece_away(key: str, number: int, piece: str):
-        away_user(key, number)
-        return await hls_piece_of(number, piece)
+        user = away_user(key, number)
+        return await hls_piece_of(number, piece, away_client(key, user))
 
     @app.post("/hls/k/{key}/{number}/leave", status_code=204)
     async def hls_leave_away(key: str, number: int):
@@ -1000,12 +1037,18 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     async def hls_night_playlist_away(key: str, number: int, request: Request):
         user = away_user(key, number, recheck=True)
         watching_away(key, user, number, request)
-        return await hls_playlist_for(number, away_client(key, user), away_=True, night=True)
+        return await hls_playlist_for(
+            number,
+            away_client(key, user),
+            away_=True,
+            night=True,
+            watcher=away_watcher(key, user, request),
+        )
 
     @app.get("/hls/k/{key}/{number}/night/{piece}")
     async def hls_night_piece_away(key: str, number: int, piece: str):
-        away_user(key, number)
-        return await hls_piece_of(number, piece, night=True)
+        user = away_user(key, number)
+        return await hls_piece_of(number, piece, away_client(key, user), night=True)
 
     @app.post("/hls/k/{key}/{number}/night/leave", status_code=204)
     async def hls_night_leave_away(key: str, number: int):
@@ -1033,11 +1076,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         tuners = playback.load(ctx.db).tuners
         log.warning(
             "No tuners are free (%d in use, for stations %s), so viewer %s got the "
-            '"All tuners in use" card instead of station %s',
+            '"All tuners in use" card instead of %s',
             tuners,
             ", ".join(map(str, on_now)),
             client,
-            channel.number,
+            playing.station(channel.number, channel.name),
         )
         now = time.monotonic()
         for card, began in list(busy_cards.items()):
@@ -1899,7 +1942,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             except HTTPException as e:
                 problems.append(f"{c['name']}: {e.detail}")
                 continue
-            log.info("Made station %s from the Plex collection %r", number, c["name"])
+            log.info(
+                "Made %s from the Plex collection %r",
+                playing.station(number, channel.name, mid=True),
+                c["name"],
+            )
             made.append(channel_json(channel))
         if not made:
             raise HTTPException(400, "; ".join(problems) or "No collections were chosen")
@@ -1957,7 +2004,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                     else:
                         problems.append(f"{what}: {e.detail}")
                     break
-                log.info("Made station %s (%s) from a filter", number, channel.name)
+                log.info("Made %s from a filter", playing.station(number, channel.name, mid=True))
                 made.append(channel_json(channel))
                 break
             else:

@@ -31,6 +31,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
+from .playing import station
+
 if TYPE_CHECKING:
     from .access import Access
     from .db import Database, User
@@ -191,9 +193,9 @@ class Away:
         if found is not None:
             self._by_session.pop(found.session, None)
 
-    def watching(self, key: str, user: User, number: int, where: str) -> None:
-        """Logs (once an hour) that someone's watching a station away from
-        home, in the access log."""
+    def watching(self, key: str, user: User, number: int, where: str, name: str = "") -> None:
+        """Logs (once an hour) that someone's watching a station (`name`: its
+        name) away from home, in the access log."""
         now = time.monotonic()
         last = self._seen.get((key, number))
         if last is not None and now - last < SEEN_AGAIN_S:
@@ -204,5 +206,7 @@ class Away:
                 del self._seen[next(iter(self._seen))]
         self._seen[(key, number)] = now
         self.access.record(
-            logging.INFO, f"{user.name} is watching station {number} away from home, from {where}"
+            logging.INFO,
+            f"{user.name} is watching {station(number, name, mid=True)} away from home, "
+            f"from {where}",
         )

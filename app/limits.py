@@ -30,6 +30,7 @@ import time
 from collections import deque
 from typing import TYPE_CHECKING, Any
 
+from .playing import station as station_named
 from .plex import PlexError
 from .watching import sure_station, user_of
 
@@ -157,14 +158,16 @@ class Limits:
             number = playing[cid][0]
             channel = ctx.db.get_channel(cid)
             station = f"{number} {channel.name}" if channel else str(number)
+            named = station_named(number, channel.name if channel else "")
+            named_mid = station_named(number, channel.name if channel else "", mid=True)
             if not sid:
                 if f"no id {uid} {cid}" not in self._unsure:
                     self._unsure.add(f"no id {uid} {cid}")
                     log.warning(
-                        "%s is watching station %s, which is blocked for them, but Plex gave no "
-                        "session ID to stop",
+                        "%s is watching %s, which is blocked for them, but Plex gave no session "
+                        "ID to stop",
                         name,
-                        station,
+                        named_mid,
                     )
                 continue
             if now - self._stopped.get(sid, -AGAIN_S) < AGAIN_S:
@@ -175,13 +178,11 @@ class Limits:
             except PlexError as e:
                 if e.status in (401, 403):
                     self.problem = (
-                        f"Plex wouldn't stop {name} from watching station {station}. Stopping "
-                        "playback needs Plex Pass on the server owner's account."
+                        f"Plex wouldn't stop {name} from watching {named}. Stopping playback "
+                        "needs Plex Pass on the server owner's account."
                     )
                 else:
-                    self.problem = (
-                        f"Plex couldn't stop {name} from watching station {station} ({e})"
-                    )
+                    self.problem = f"Plex couldn't stop {name} from watching {named} ({e})"
                 log.warning("%s", self.problem)
                 continue
             self.problem = ""
@@ -195,9 +196,7 @@ class Limits:
                     "atMs": int(time.time() * 1000),
                 }
             )
-            log.info(
-                "Stopped %s from watching station %s in Plex (blocked for them)", name, station
-            )
+            log.info("Stopped %s from watching %s in Plex (blocked for them)", name, named_mid)
         return stopped
 
 

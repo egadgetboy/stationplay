@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import logging
 import os
 import re
 import shutil
@@ -16,7 +17,7 @@ import httpx
 import pytest
 import uvicorn
 
-from app import hls
+from app import hls, stats
 from app.config import Settings
 from app.main import create_app
 from app.plex import PlexClient
@@ -349,10 +350,15 @@ async def start_with_public_port(tmp_path, plex: FakePlex):
 PAT = {"name": "Pat", "password": "correct horse"}
 
 
-async def test_an_app_away_from_home_watches_through_the_public_port(tmp_path, media):
+async def test_an_app_away_from_home_watches_through_the_public_port(
+    tmp_path, media, monkeypatch, caplog
+):
     """Off until an Admin turns it on; then an app signed in from the
     internet plays each station at an address of its own, which ends with
-    its sign-in, or when it's turned off. Plex's addresses stay home."""
+    its sign-in, or when it's turned off. Plex's addresses stay home. Its
+    viewing counts for whoever is signed in on it."""
+    monkeypatch.setattr(stats, "MIN_VIEW_S", 0)
+    caplog.set_level(logging.INFO)
     (home, internet), app, srv, task = await start_with_public_port(
         tmp_path, two_episode_show(media)
     )
@@ -393,7 +399,14 @@ async def test_an_app_away_from_home_watches_through_the_public_port(tmp_path, m
             assert on.status_code == 200 and on.json()["address"] == "https://tv.example.com"
             server = (await phone.get("/api/v1/server", headers=auth)).json()
             assert server["awayAddress"] == "https://tv.example.com"
-            assert server["features"] == ["hls", "speed-test", "reports", "night", "problems", "away"]
+            assert server["features"] == [
+                "hls",
+                "speed-test",
+                "reports",
+                "night",
+                "problems",
+                "away",
+            ]
             at_home = (await inside.get("/api/v1/server")).json()
             assert not at_home["outside"] and at_home["awayAddress"] == "https://tv.example.com"
             assert (await inside.get("/api/v1/stations")).json()["stations"][0]["hls"] == (
@@ -439,7 +452,18 @@ async def test_an_app_away_from_home_watches_through_the_public_port(tmp_path, m
             assert app.state.ctx.hls_streams.get(1, night=True) is None
 
             log = (await inside.get("/api/logs?access_log=true")).json()["text"]
-            assert "Pat is watching station 7 away from home, from 203.0.113.7" in log
+            assert "Pat is watching station 7, Test TV, away from home, from 203.0.113.7" in log
+            said = "\n".join(r.getMessage() for r in caplog.records)
+            who = r"Pat's StationPlay app away from home \([\w-]{6}\)"
+            assert re.search(f"{who} is watching station 7, Test TV$", said, re.M), said
+            assert re.search(
+                f"{who} is watching station 7, Test TV, with night mode's sound$", said, re.M
+            )
+            assert re.search(
+                f"{who} stopped watching station 7, Test TV, after less than a minute$", said, re.M
+            )
+            [(user_id, name, *_)] = app.state.ctx.db.app_watched_since("")
+            assert (user_id, name) == (1, "Pat")
             # Signing out ends that app's address.
             assert (await phone.post("/api/internal/sign-out", headers=auth)).status_code == 200
             assert (await phone.get(hls_url)).status_code == 404

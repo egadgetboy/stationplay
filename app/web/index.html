@@ -423,7 +423,7 @@
   .toast .undo { margin-left: 14px; background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
   [hidden] { display: none !important; }
   .live-list { display: grid; gap: 8px; }
-  .live { padding: 12px 14px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .live-list > .live { padding: 12px 14px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 
   /* Station logos */
   .chart { position: relative; width: 72px; height: 72px; }
@@ -579,6 +579,44 @@
   .who { display: grid; gap: 4px; }
   .who + .who { border-top: 1px solid var(--line); padding-top: 8px; }
   .who-detail { font-size: 13px; color: var(--ink-2); }
+  /* The server, now (Admins): each value, what goes with it, and its last
+     10 minutes as a line (one per tile, on the tile's own scale). */
+  .health { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .gauge { padding: 12px 14px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .gauge .k { font-size: 13px; color: var(--ink-2); }
+  .gauge .v { font-size: 22px; font-weight: 700; letter-spacing: -.01em; line-height: 1.25; overflow-wrap: anywhere; }
+  .gauge .v.na { font-size: 15px; font-weight: 600; color: var(--ink-3); }
+  .gauge .sub { font-size: 12.5px; color: var(--ink-2); overflow-wrap: anywhere; }
+  .spark { display: block; width: 100%; height: 40px; margin-top: auto; padding-top: 8px; box-sizing: content-box; overflow: visible; touch-action: pan-y; }
+  .spark .area { fill: var(--bar); opacity: .1; }
+  .spark .line { fill: none; stroke: var(--bar); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .spark .base { stroke: var(--line); stroke-width: 1; }
+  .spark .dot { fill: var(--bar); stroke: var(--panel); stroke-width: 2; }
+  .spark .hair { stroke: var(--ink-3); stroke-width: 1; }
+  /* Who's watching now (Admins). */
+  .now-panel { margin-bottom: 18px; }
+  .now-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 14px 16px 4px; }
+  .now-head h3 { font-size: 15px; margin: 0; }
+  #statNow > .muted { padding: 4px 16px 14px; margin: 0; }
+  table.now td { vertical-align: top; }
+  table.now td .sub { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; overflow-wrap: anywhere; }
+  table.now .chip { margin-left: 6px; vertical-align: 1px; }
+  table.now td.now-since, table.now td.now-who { white-space: nowrap; }
+  table.now td.now-since { color: var(--ink-2); font-size: 13.5px; }
+  table.now tr:last-child td { border-bottom: 0; }
+  /* On a phone: who and since when, then what, then how and on what. */
+  @media (max-width: 760px) {
+    table.now thead { display: none; }
+    table.now tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "who since" "what what" "how app"; gap: 2px 8px; border-bottom: 1px solid var(--line); padding: 10px 0; }
+    table.now tr:last-child { border-bottom: 0; }
+    table.now td { display: block; border: 0; padding: 2px 16px; min-width: 0; }
+    table.now td.now-who { grid-area: who; }
+    table.now td.now-since { grid-area: since; text-align: right; }
+    table.now td.now-what { grid-area: what; }
+    table.now td.now-how { grid-area: how; }
+    table.now td.now-app { grid-area: app; }
+    table.now td.now-how::before, table.now td.now-app::before { content: attr(data-k); display: block; font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; }
+  }
   .hours { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 2px; align-items: end; height: 120px; border-bottom: 1px solid var(--line); }
   .hours span { background: var(--bar); border-radius: 4px 4px 0 0; min-height: 0; }
   .hours-axis { display: grid; grid-template-columns: repeat(4, 1fr); font-size: 11px; color: var(--ink-3); margin-top: 4px; }
@@ -724,6 +762,19 @@
   </section>
 
   <section id="tab-stats" hidden>
+    <div id="statLive" hidden>
+      <div class="section-head">
+        <h2>Server</h2>
+        <span class="pill"><span class="dot live"></span><span>Live</span></span>
+        <div class="spacer"></div>
+        <span class="muted small" id="serverNote">The last 10 minutes, updated every 5 seconds while this tab is open</span>
+      </div>
+      <div class="health" id="healthTiles"></div>
+      <div class="panel now-panel">
+        <div class="now-head"><h3>Watching now</h3><span class="muted small" id="nowCount"></span></div>
+        <div id="statNow"></div>
+      </div>
+    </div>
     <div class="section-head">
       <h2>Stats</h2>
       <div class="spacer"></div>
@@ -736,16 +787,19 @@
     </div>
     <div class="tiles" id="statTiles"></div>
     <div class="panel"><table class="stats" id="statTable"></table></div>
-    <div class="panel who-panel" id="statUsersPanel" hidden>
-      <h3>Who’s watching, according to Plex</h3>
-      <div class="toplist" id="statUsers"></div>
-      <p class="muted small" style="margin:10px 0 0">Only Admins see this. While a station has viewers, StationPlay asks Plex every 30 seconds who’s watching what, and counts the time for each Plex user, station, and show. Viewing in other apps (through the M3U playlist) isn’t counted here. Time when two stations air the exact same program may not be counted either.</p>
+    <div class="stats-cols" id="statTop" hidden>
+      <div class="panel">
+        <h3>Top people</h3>
+        <div class="toplist" id="statPeople"></div>
+        <p class="muted small" style="margin:10px 0 0">Only Admins see this. StationPlay’s apps count for whoever is signed in on them, stations and Media alike. For Plex, StationPlay asks Plex every 30 seconds who’s watching which station, and counts the time for each Plex user. Viewing in other apps (through the M3U playlist) isn’t counted by person, and neither is time when two stations air the same program at once.</p>
+      </div>
+      <div class="panel"><h3>Top Media</h3><div class="toplist" id="statMedia"></div></div>
     </div>
     <div class="stats-cols">
       <div class="panel"><h3>Most watched shows &amp; movies</h3><div class="toplist" id="statPrograms"></div></div>
       <div class="panel"><h3>When people watch</h3><div id="statHours"></div></div>
     </div>
-    <p class="muted small">A viewing counts once it lasts a minute, so flipping past a station doesn’t count. StationPlay counts the streams Plex asks it for, so several people watching one station together in Plex (or Plex recording it) may count as one viewing. Stats are kept for 400 days. Today means since midnight.</p>
+    <p class="muted small">A viewing counts once it lasts a minute, so flipping past a station doesn’t count. StationPlay counts the streams Plex asks it for, so several people watching one station together in Plex (or Plex recording it) may count as one viewing; each of StationPlay’s apps counts on its own. Stats are kept for 400 days. Today means since midnight.</p>
   </section>
 
   <section id="tab-access" hidden>
@@ -1565,7 +1619,7 @@ function showTab(name) {
   if (name === 'broken') { loadArr().then(loadBroken); loadScan(); }
   if (name === 'logs') { loadLogs(true); loadProblems(); }
   if (name === 'setup') { loadBackups(); renderPlaybackPanel(); }
-  if (name === 'stats') loadStats();
+  if (name === 'stats') { loadStats(); loadNow(); }
   if (name === 'access') { loadAccess(); loadApps(); loadLimits(); loadAway(); loadAppLimits(); loadAppLibraries(); loadApiTokens(); }
   history.replaceState(null, '', '#' + name);
 }
@@ -5727,7 +5781,7 @@ async function loadStats() {
     tile(hoursText(s.totals.hours), 'watched'),
     tile(s.totals.views.toLocaleString(), noun(s.totals.views, 'viewing')),
     tile(`${s.totals.watched} of ${s.stations.length}`, 'stations watched'),
-    tile(String(s.watchingNow), `${noun(s.watchingNow, 'connection')} now`));
+    tile(String(s.watchingNow), 'watching now'));
   const most = Math.max(...s.stations.map(x => x.hours), 0) || 1;
   $('#statTable').replaceChildren(
     h('thead', {}, h('tr', {}, h('th', {}, 'Station'), h('th', { class: 'num' }, 'Viewings'), h('th', {}, 'Watched'),
@@ -5742,7 +5796,7 @@ async function loadStats() {
       h('td', { class: 'small', 'data-k': 'Last watched' }, x.lastMs ? ago(x.lastMs) : '—'),
       h('td', { class: 'small', 'data-k': 'Most watched' }, x.top || '—')))
       : [h('tr', {}, h('td', { colspan: 6, class: 'muted' }, 'No stations yet.'))])));
-  renderWho(s.users, s.usersProblem);
+  renderTop(s.people, s.media, s.usersProblem);
   const topMost = Math.max(...s.programs.map(p => p.hours), 0) || 1;
   $('#statPrograms').replaceChildren(...(s.programs.length ? s.programs.map(p => h('div', { class: 'toprow', title: `${p.hours.toFixed(2)} hours, on ${noun(p.stations.length, 'station')} ${p.stations.join(', ')}` },
     h('span', { class: 'name' }, p.title, h('span', { class: 'hint' }, p.kind === 'movie' ? ' · movie' : '')),
@@ -5757,25 +5811,169 @@ async function loadStats() {
     h('div', { class: 'hours-axis' }, ...[0, 6, 12, 18].map(n => h('span', {}, hourName(n)))));
 }
 document.querySelectorAll('[data-days]').forEach(b => b.addEventListener('click', () => { statDays = Number(b.dataset.days); loadStats(); }));
-// Who's watching, as Plex says (Admins only: the page gets `users` only then).
-function renderWho(users, problem) {
-  $('#statUsersPanel').hidden = !users;
-  if (!users) return;
-  const most = Math.max(...users.map(u => u.hours), 0) || 1;
+// Top people and Top Media (Admins only: the page gets `people` and `media` only then).
+function renderTop(people, media, problem) {
+  $('#statTop').hidden = !people;
+  if (!people) return;
+  const most = Math.max(...people.map(u => u.hours), 0) || 1;
   const list = (items, name) => items.map(x => `${name(x)} (${hoursText(x.hours)})`).join(', ');
-  $('#statUsers').replaceChildren(
+  $('#statPeople').replaceChildren(
     ...(problem ? [h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' ', problem)] : []),
-    ...(users.length ? users.map(u => h('div', { class: 'who' },
+    ...(people.length ? people.map(u => h('div', { class: 'who' },
       h('div', { class: 'toprow', title: `${u.hours.toFixed(2)} hours` },
-        h('span', { class: 'name' }, u.name),
+        h('span', { class: 'name' }, u.name, u.plex ? h('span', { class: 'hint' }, ' · Plex') : null),
         h('div', {}, h('div', { class: 'hbar', style: `width:${(u.hours / most * 100).toFixed(1)}%` })),
         h('span', { class: 'small' }, hoursText(u.hours))),
       h('div', { class: 'who-detail' },
-        u.stations.length ? `Stations: ${list(u.stations, x => `${x.number} ${x.name}`)}` : '',
-        u.programs.length ? h('br') : '',
-        u.programs.length ? `Shows & movies: ${list(u.programs, x => x.title)}` : '')))
-    : [h('p', { class: 'muted small', style: 'margin:0' }, 'No one watched in this period. (StationPlay has counted Plex users since version 1.16.)')]));
+        ...[u.stations.length ? `Stations: ${list(u.stations, x => `${x.number} ${x.name}`)}` : '',
+          u.mediaHours ? `Media: ${hoursText(u.mediaHours)}` : '',
+          u.programs.length ? `Shows & movies: ${list(u.programs, x => x.title)}` : '']
+          .filter(Boolean).flatMap((line, n) => n ? [h('br'), line] : [line]))))
+    : [h('p', { class: 'muted small', style: 'margin:0' }, 'No one watched in this period.')]));
+  const top = Math.max(...media.map(m => m.hours), 0) || 1;
+  $('#statMedia').replaceChildren(...(media.length ? media.map(m => h('div', { class: 'toprow', title: `${m.hours.toFixed(2)} hours, ${plural(m.plays, 'play')}` },
+    h('span', { class: 'name' }, m.title, h('span', { class: 'hint' }, m.kind === 'movie' ? ' · movie' : '')),
+    h('div', {}, h('div', { class: 'hbar', style: `width:${(m.hours / top * 100).toFixed(1)}%` })),
+    h('span', { class: 'small' }, `${hoursText(m.hours)} · ${plural(m.plays, 'play')}`)))
+    : [h('p', { class: 'muted small', style: 'margin:0' }, 'Nothing from Media was played in this period.')]));
 }
+
+// The server, now, and who's watching (Admins only): asked every 5 seconds
+// while the Stats tab is showing.
+let nowData = null;
+async function loadNow() {
+  if (!isAdmin()) { $('#statLive').hidden = true; return; }
+  let d;
+  try { d = await api('/api/stats/now'); } catch { return; }
+  nowData = d;
+  $('#statLive').hidden = false;
+  renderHealth(d.server);
+  renderNow(d.watching);
+}
+const pct = v => `${v < 10 ? v.toFixed(1) : Math.round(v)}%`;
+const bytesText = b => b >= 1e12 ? `${(b / 1e12).toFixed(1)} TB` : b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.round(b / 1e6)} MB`;
+const mbpsText = m => `${m >= 10 ? Math.round(m) : m.toFixed(1)} Mbps`;
+const agoS = s => s < 60 ? `${Math.round(s)} sec ago` : `${Math.round(s / 60)} min ago`;
+function renderHealth(sv) {
+  const hist = sv.history;
+  const na = () => h('div', { class: 'v na' }, 'Not available');
+  const last = vs => [...vs].reverse().find(v => v != null);
+  const gauge = (key, label, value, sub, series, fmt, top) => {
+    const el = h('div', { class: 'panel gauge', 'data-k': key },
+      h('div', { class: 'k' }, label),
+      value == null ? na() : h('div', { class: 'v' }, value),
+      sub ? h('div', { class: 'sub' }, sub) : null);
+    if (series && series.some(v => v != null)) el.append(sparkline(series, hist.atMs, fmt, top, label));
+    return el;
+  };
+  const p = sv.processor, m = sv.memory, n = sv.network, g = sv.gpu, st = sv.storage;
+  const things = (a, b) => `${plural(a, 'station')} and ${b} ${b === 1 ? 'copy' : 'copies'} on it now`;
+  $('#healthTiles').replaceChildren(
+    gauge('processor', 'Processor', p.own == null ? null : pct(p.own),
+      p.machine == null ? 'Whole machine: not available' : `Whole machine: ${pct(p.machine)}${p.processors ? ` of ${plural(p.processors, 'processor')}` : ''}`,
+      hist.processor, pct, () => 100),
+    gauge('memory', 'Memory', m.own == null ? null : bytesText(m.own),
+      m.used != null && m.total ? `${m.limit ? 'Container’s limit' : 'Whole machine'}: ${bytesText(m.used)} of ${bytesText(m.total)}` : 'Whole machine: not available',
+      hist.memory, bytesText, vs => Math.max(...vs) * 1.15),
+    gauge('sending', 'Sending', n.sending == null ? null : mbpsText(n.sending),
+      last(hist.sending) == null ? null : `Peak ${mbpsText(Math.max(...hist.sending.filter(v => v != null)))}`,
+      hist.sending, mbpsText, vs => Math.max(...vs, 1) * 1.15),
+    gauge('receiving', 'Receiving', n.receiving == null ? null : mbpsText(n.receiving),
+      last(hist.receiving) == null ? null : `Peak ${mbpsText(Math.max(...hist.receiving.filter(v => v != null)))}`,
+      hist.receiving, mbpsText, vs => Math.max(...vs, 1) * 1.15),
+    gauge('gpu', 'GPU', g.name ? g.name.split(' (')[0] : 'None',
+      g.name ? things(g.stations, g.copies) : g.state === 'starting' ? 'Testing the GPU' : 'Video is encoded on the processor',
+      g.name ? hist.gpu : null, v => `${v} on it`, vs => Math.max(...vs, 2) * 1.15),
+    gauge('storage', 'Storage', st.free == null ? null : bytesText(st.free),
+      st.total ? `free of ${bytesText(st.total)}, in the data folder` : null,
+      hist.storage, v => `${bytesText(v)} free`, () => st.total || 1));
+}
+// One value's last 10 minutes as a line (a single series, on its own scale
+// from zero), with its newest point marked. Pointing at it shows the value
+// then, in the tile's own value and label.
+function sparkline(values, times, fmt, top, label) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('class', 'spark');
+  const known = values.filter(v => v != null);
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', `${label}, the last 10 minutes: now ${fmt(known[known.length - 1])}, lowest ${fmt(Math.min(...known))}, highest ${fmt(Math.max(...known))}`);
+  const draw = () => {
+    const w = svg.clientWidth || 140, ht = 40, pad = 5;
+    svg.setAttribute('viewBox', `0 0 ${w} ${ht}`);
+    const most = Math.max(top(known) || 0, 1e-9);
+    const span = Math.max(values.length - 1, 1);
+    const x = i => pad + (w - 2 * pad) * (values.length === 1 ? 1 : i / span);
+    const y = v => ht - pad - (ht - 2 * pad) * Math.min(1, v / most);
+    const pts = values.map((v, i) => v == null ? null : [x(i), y(v)]);
+    let d = '', area = '', run = [];
+    const flush = () => {
+      if (run.length) {
+        d += 'M' + run.map(([a, b]) => `${a.toFixed(1)},${b.toFixed(1)}`).join('L');
+        area += `M${run[0][0].toFixed(1)},${ht - pad}L` + run.map(([a, b]) => `${a.toFixed(1)},${b.toFixed(1)}`).join('L') + `L${run[run.length - 1][0].toFixed(1)},${ht - pad}Z`;
+      }
+      run = [];
+    };
+    for (const pt of pts) { if (pt) run.push(pt); else flush(); }
+    flush();
+    const end = [...pts].reverse().find(Boolean);
+    svg.innerHTML = `<line class="base" x1="${pad}" x2="${w - pad}" y1="${ht - pad + .5}" y2="${ht - pad + .5}"/>`
+      + `<path class="area" d="${area}"/><path class="line" d="${d}"/>`
+      + `<line class="hair" y1="2" y2="${ht - pad}" visibility="hidden"/><circle class="dot" r="4" cx="${end[0]}" cy="${end[1]}"/>`;
+    const hair = svg.querySelector('.hair'), dot = svg.querySelector('.dot');
+    const tile = svg.closest('.gauge'), k = tile?.querySelector('.k'), v = tile?.querySelector('.v');
+    const shown = [k?.textContent, v?.textContent];
+    svg.onpointermove = e => {
+      const r = svg.getBoundingClientRect();
+      let i = Math.round((e.clientX - r.left - pad) / Math.max(w - 2 * pad, 1) * span);
+      i = Math.max(0, Math.min(values.length - 1, i));
+      while (i > 0 && pts[i] == null) i--;
+      if (!pts[i]) return;
+      hair.setAttribute('x1', pts[i][0]); hair.setAttribute('x2', pts[i][0]); hair.setAttribute('visibility', 'visible');
+      dot.setAttribute('cx', pts[i][0]); dot.setAttribute('cy', pts[i][1]);
+      const back = (times[times.length - 1] - times[i]) / 1000;
+      if (k && v) { k.textContent = `${shown[0]} · ${back < 3 ? 'now' : agoS(back)}`; v.textContent = fmt(values[i]); }
+    };
+    svg.onpointerleave = () => {
+      hair.setAttribute('visibility', 'hidden');
+      dot.setAttribute('cx', end[0]); dot.setAttribute('cy', end[1]);
+      if (k && v) [k.textContent, v.textContent] = shown;
+    };
+  };
+  requestAnimationFrame(draw);
+  return svg;
+}
+const HOW = { direct: 'As it is', repackage: 'Repackaged', convert: 'Converted' };
+// "Station 2, Cartoon Classics" (or just "Station 2", when its name says no more).
+const stationLine = st => st.name && st.name.toLowerCase() !== `station ${st.number}` ? `Station ${st.number}, ${st.name}` : `Station ${st.number}`;
+function renderNow(rows) {
+  $('#nowCount').textContent = rows.length ? `${rows.length} watching` : '';
+  if (!rows.length) {
+    $('#statNow').replaceChildren(h('p', { class: 'muted small' }, 'No one is watching right now.'));
+    return;
+  }
+  const sub = text => text ? h('div', { class: 'sub' }, text) : null;
+  $('#statNow').replaceChildren(h('table', { class: 'now' },
+    h('thead', {}, h('tr', {}, h('th', {}, 'Who'), h('th', {}, 'Watching'), h('th', {}, 'How'), h('th', {}, 'App and device'), h('th', {}, 'Since'))),
+    h('tbody', {}, ...rows.map(r => {
+      const who = r.plex ? (r.who || 'Plex') : (r.who || (r.where ? 'Someone' : 'Another player'));
+      const how = r.how;
+      const size = [how.picture, how.mbps != null ? `${how.mbps} Mbps` : null].filter(Boolean).join(' at ');
+      return h('tr', {},
+        h('td', { class: 'now-who' }, h('strong', {}, who),
+          r.plex ? h('span', { class: 'chip plain' }, 'Plex') : null,
+          r.where ? h('span', { class: 'chip ' + (r.where === 'away' ? 'accent' : 'plain') }, r.where === 'away' ? 'Away' : 'Home') : null),
+        h('td', { class: 'now-what' },
+          r.station ? [h('div', {}, stationLine(r.station)), sub(r.station.program)]
+            : [h('div', {}, r.media.title), sub('Media, on demand')]),
+        h('td', { class: 'now-how', 'data-k': 'How' }, h('div', {}, HOW[how.method] || how.method),
+          sub([size, how.on ? `on the ${how.on}` : null].filter(Boolean).join(' ')),
+          ...(how.notes || []).map(n => sub(`With ${n}`))),
+        h('td', { class: 'now-app', 'data-k': 'App and device' }, h('div', {}, r.app || (r.plex ? 'Plex' : 'An app')), sub(r.address)),
+        h('td', { class: 'now-since', title: new Date(r.sinceMs).toLocaleString() }, ago(r.sinceMs)));
+    }))));
+}
+window.addEventListener('resize', () => { if (currentTab === 'stats' && nowData) renderHealth(nowData.server); });
 
 // Boot ---------------------------------------------------------------------------
 // Refreshed every 10 seconds while the page is showing (not in a hidden tab).
@@ -5799,6 +5997,7 @@ const refresh = () => {
 setInterval(() => { if (!document.hidden) refresh(); }, 10000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 setInterval(() => { if (currentTab === 'logs' && !document.hidden && !signedOut()) loadLogs(); }, 5000);
+setInterval(() => { if (currentTab === 'stats' && !document.hidden && !signedOut()) loadNow(); }, 5000);
 setInterval(() => { if (currentTab === 'broken' && !document.hidden && !signedOut()) loadScan(); }, 10000);
 </script>
 </body>

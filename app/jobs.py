@@ -17,6 +17,8 @@ from .broken import CHECK, DEEP_SCAN, PLAYING, found_by
 from .db import Item
 from .ffmpeg import redact
 from .library import LibraryError
+from .playing import cap
+from .playing import station as station_named
 from .plex import Lookups, MediaPart, telling_title
 from .scanner import quick_check_item, quick_verdict
 from .sources import FIND_AGAIN_S, REMOVED
@@ -118,8 +120,8 @@ async def run_check(ctx: AppContext, channel_id: int, status: CheckStatus) -> No
         status.running = False
         status.finished_at = time.time()
         log.info(
-            "Station %s: checked %d files (%d with problems, %d couldn't be checked)",
-            channel.number,
+            "%s: checked %d files (%d with problems, %d couldn't be checked)",
+            cap(station_named(channel.number, channel.name)),
             status.total,
             status.newly_broken,
             status.skipped,

@@ -876,9 +876,14 @@ StationPlay only stops a stream when it's sure which station it is: the one stat
 
 The **Stats** tab shows how much each station is watched: viewings, hours watched, average viewing, when it was last watched, and its most-watched show or movie. Below are the most-watched shows and movies overall and the times of day people watch. Choose **Today** (since midnight), **7 days**, **30 days** or **All**.
 
-A viewing counts once it lasts a minute, so flipping past a station doesn't count. Viewings are counted per stream, so several people watching one station together in Plex can count as one viewing. Stats are kept for 400 days, and a station's stats are deleted with it.
+A viewing counts once it lasts a minute, so flipping past a station doesn't count. Viewings are counted per stream, so several people watching one station together in Plex can count as one viewing; each of StationPlay's apps counts on its own. Stats are kept for 400 days, and a station's stats are deleted with it.
 
-**Who's watching** (Admins only while sign-in is on): each Plex user's viewing, and the stations and programs each watches most. While a station has viewers, StationPlay asks Plex every 30 seconds what it's playing and to whom, and matches each Live TV session to a station. Viewing in other apps isn't counted per user, and neither is time when two stations air the same program at once. If your Plex token isn't allowed to see what's playing, the tab says so.
+Admins see more (so does everyone while sign-in is off):
+
+- **Server**, at the top, updated every 5 seconds while the tab is open: the processor and memory StationPlay uses and the whole machine's (or the container's memory limit, when it has one), what it's sending and receiving, which GPU is in use and how many stations and copies are on it, and the data folder's free space, each with a line of its last 10 minutes. StationPlay reads these from Linux itself (in Docker, the container's own figures); anything it can't read says "not available".
+- **Watching now**: everyone watching right now, one row each: who, what (a station and what's on it, or something from Media), how it's sent (as it is, repackaged or converted; its picture size and bitrate; on the GPU or the processor), in which app on which device, at home or away, and since when.
+- **Top people**: who watched most, stations and Media together, and the stations and shows or movies each watches most. In StationPlay's apps, viewing counts for whoever is signed in on the app (at home, for whoever's app last asked for the stations from that device). For Plex, while a station has viewers, StationPlay asks Plex every 30 seconds what it's playing and to whom, and matches each Live TV session to a station; Plex users are marked **Plex**. Viewing in other apps isn't counted per person, and neither is Plex time when two stations air the same program at once. If your Plex token isn't allowed to see what's playing, the tab says so.
+- **Top Media**: the shows and movies played most on demand in StationPlay's apps, with hours and plays. Watching the same thing again on the same device soon after (with another sound track, or a smaller version) is the same play.
 
 ## StationPlay's API
 
@@ -923,6 +928,13 @@ Picture sizes and the number of tuners are set on the page. Versions before 1.14
 ## Troubleshooting
 
 Start with the **Logs** tab: it shows the newest 200 entries. Check **Warnings** or **Errors** to filter, and use **Copy** to paste them into a message. `docker logs stationplay` (or the app's logs in TrueNAS) has everything.
+
+**What's playing.** The log names each station by its number and name ("station 2, Cartoon Classics"), and says what plays as it starts:
+
+- **A station's program**: its file, its picture and sound ("1080p H.264, 5.1 E-AC-3"), and how the station makes it ("made 720p at 3.5 Mbps on the Intel/AMD GPU", "HDR made ordinary", "subtitles drawn in"). Tuning in from the beginning is said on the same line.
+- **Media in StationPlay's apps**: who started what, in which app on which device, at home or away; its file, picture and sound; and how it plays: as it is, repackaged (and what changed, such as its sound made AAC stereo), or converted (to what, on the GPU or the processor, and why: what the device can't play, a picture made smaller to fit the connection, subtitles drawn in, or night mode's sound).
+- **A step down in quality**: when an app switches to a smaller version or copy, one line says from what to what and why, with the app's own reason when it sends one.
+- **Stopping**: who stopped what, where in it, and how long they watched; an app watching a station says when it stopped, and after how long.
 
 **Problems in the apps.** At the top of the **Logs** tab, StationPlay's apps say when something goes wrong as they play: a station that doesn't start or stops, something from your library that doesn't play, playing that can't keep up, or the app closing unexpectedly. Each problem shows how often it happened, on how many devices and for whom, and on what kinds of device (the app, its version, the device's model and system), marked **One kind of device** when that's all it's been on. So a problem on every kind of device points to StationPlay or the file, and one on a single kind of device points to that device or its app. They're kept 30 days; **Clear** forgets them (the log keeps its own). For more about one device, its **Send a report to StationPlay** (in the app's Options) adds what the app did lately.
 
@@ -1049,7 +1061,9 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/access.py` | Sign-in, Admins and Users, and the access log |
 | `app/viewing.py`, `app/ratings.py`, `app/titles.py` | Viewing Levels: what each person can see, ratings read as ages, and the ratings of what's on each station |
 | `app/devices.py` | Linked devices, Who's tuning in?, PINs and invite codes |
-| `app/stats.py`, `app/watching.py` | Viewing stats, and matching Plex sessions to stations |
+| `app/stats.py`, `app/watching.py` | Viewing stats, who's watching now, and matching Plex sessions to stations |
+| `app/health.py` | The server's health for the Stats tab: processor, memory, network and storage, from Linux's own files |
+| `app/playing.py` | What's playing, in words: how the log names stations, files and apps, and whose app is where |
 | `app/limits.py` | Blocking stations for some Plex users |
 | `app/logos.py`, `app/logos/` | The logo library and your own logos |
 | `app/text.py`, `app/logbuffer.py` | Cleaning up names people type; recent log entries for the Logs tab |

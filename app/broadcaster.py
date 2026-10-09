@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import ffmpeg as ff
-from . import intro, specials, subtitles, upnext
+from . import intro, playing, specials, subtitles, upnext
 from .breaks import ID_CARD
 from .broken import OPENING, PLAYING
 from .config import Settings
@@ -140,6 +140,8 @@ VIEWER_MAX_BYTES = 64 * 1024 * 1024
 # watching is stuck (normally something is sent every second or so, even
 # while a file is slow to open); its engine is restarted.
 ENGINE_SILENCE_S = 45.0
+# A program joined less than this far in is said to start.
+STARTS_S = 2.0
 # The stream running less than this far ahead of real time means this
 # server isn't converting the program as fast as it plays; that's logged.
 LOW_LEAD_S = 1.0
@@ -158,10 +160,17 @@ def now_ms() -> int:
 
 
 class Viewer:
-    """One connected client. Chunks are queued for it by the broadcaster."""
+    """One connected client. Chunks are queued for it by the broadcaster.
+    `counted`: whether its viewing counts in the stats as it ends (not the
+    HLS stream StationPlay's apps share, whose apps count one by one: see
+    hls.py). `client` and `agent`: where it's watching from, and its player
+    (for the Stats tab's Watching now)."""
 
-    def __init__(self, ident: str) -> None:
+    def __init__(self, ident: str, counted: bool = True, client: str = "", agent: str = "") -> None:
         self.ident = ident
+        self.counted = counted
+        self.client = client
+        self.agent = agent
         self.started_ms = now_ms()
         self.queue: asyncio.Queue[bytes | None] = asyncio.Queue()
         self.queued_bytes = 0
@@ -292,6 +301,14 @@ class Broadcaster:
     # on it could play: usually Plex or the media can't be reached).
     off_air_why: str = ""
     _name: str = ""
+    _number: int | None = None
+    # Where the program playing now is encoded (None while nothing is), and
+    # the last program said in the log: its slot and file, and where it was
+    # encoded (see _announce). Someone tuning in from the beginning: what
+    # the log says about it, with the program it starts (see _back_to_start).
+    encoder_now: ff.Encoder | None = None
+    _announced: tuple[tuple[int, str], str] | None = None
+    _joining: str = ""
     # When the stream last sent anything (time.monotonic()).
     _last_output: float = 0.0
     # Whether the stream has got its cushion ahead of real time this session
@@ -324,8 +341,10 @@ class Broadcaster:
 
     # Viewers -------------------------------------------------------------
 
-    def subscribe(self, ident: str) -> Viewer:
-        viewer = Viewer(ident)
+    def subscribe(
+        self, ident: str, *, counted: bool = True, client: str = "", agent: str = ""
+    ) -> Viewer:
+        viewer = Viewer(ident, counted, client, agent)
         for chunk in self._recent:
             viewer.push(chunk)
         self.viewers.add(viewer)
@@ -342,6 +361,8 @@ class Broadcaster:
         self.viewers.discard(viewer)
         if not self.viewers and self._stop_task is None:
             self._stop_task = asyncio.create_task(self._stop_after_grace())
+        if not viewer.counted:
+            return
         try:
             # (Unless the station has been deleted meanwhile.)
             if self.ctx.db.get_channel(self.channel_id) is not None:
@@ -351,7 +372,7 @@ class Broadcaster:
                 )
         except Exception:
             # Statistics never get in the way of watching.
-            log.exception("Station %s: couldn't record a viewing for its statistics", self._label)
+            log.exception("%s: couldn't record a viewing for its statistics", self._named())
 
     @property
     def running(self) -> bool:
@@ -381,6 +402,7 @@ class Broadcaster:
         self._recent.clear()
         self._recent_bytes = 0
         self.now_playing = None
+        self.encoder_now = None
 
     def _kill(self) -> None:
         proc = self._proc
@@ -400,8 +422,8 @@ class Broadcaster:
             viewer.push(chunk)
             if viewer.closed:
                 log.warning(
-                    "Station %s: disconnecting viewer %s because %s",
-                    self._label,
+                    "%s: disconnecting viewer %s because %s",
+                    self._named(),
                     viewer.ident,
                     viewer.ended_because,
                 )
@@ -421,9 +443,7 @@ class Broadcaster:
                 except asyncio.CancelledError:
                     raise
                 except Exception:
-                    log.exception(
-                        "Station %s: its stream engine failed; restarting it", self._label
-                    )
+                    log.exception("%s: its stream engine failed; restarting it", self._named())
                 try:
                     await self._recover(failures)
                 except asyncio.CancelledError:
@@ -431,7 +451,7 @@ class Broadcaster:
                 except Exception:
                     # Even recovering failed. Never let that end the stream:
                     # wait a moment and start the engine again.
-                    log.exception("Station %s: recovery failed; trying again", self._label)
+                    log.exception("%s: recovery failed; trying again", self._named())
                     await asyncio.sleep(2)
         finally:
             self._kill()
@@ -439,7 +459,10 @@ class Broadcaster:
                 # The engine ended with viewers still connected. Close their
                 # connections, so their players notice now and tune again,
                 # rather than waiting on a stream that has stopped.
-                log.warning("Station %s's stream ended; disconnecting its viewers", self._label)
+                log.warning(
+                    "The stream of %s ended; disconnecting its viewers",
+                    playing.station(self._number, self._name, mid=True),
+                )
                 for viewer in list(self.viewers):
                     viewer.close("the station's stream ended")
                 self.viewers.clear()
@@ -475,9 +498,9 @@ class Broadcaster:
             failures.popleft()
         if len(failures) >= ENGINE_FAILURES_TO_OFF_AIR:
             log.error(
-                "Station %s keeps failing and is OFF THE AIR. Trying again in %.0f minutes. "
+                "%s keeps failing and is OFF THE AIR. Trying again in %.0f minutes. "
                 'Its viewers see: "%s"',
-                self._label,
+                self._named(mid=True),
                 OFF_AIR_PAUSE_S / 60,
                 OFF_AIR_MESSAGE,
             )
@@ -496,8 +519,8 @@ class Broadcaster:
         self._crashes[key] = self._crashes.get(key, 0) + 1
         if self._crashes[key] >= 2 and key not in self._session_skip:
             log.warning(
-                "Station %s: %s keeps crashing the stream; skipping it for now",
-                self._label,
+                "%s: %s keeps crashing the stream; skipping it for now",
+                self._named(),
                 np.playing.label,
             )
             self._session_skip.add(key)
@@ -505,6 +528,8 @@ class Broadcaster:
     def _new_session(self) -> None:
         channel = self.ctx.db.get_channel(self.channel_id)
         picture = channel.picture if channel is not None else ff.STANDARD_PICTURE
+        if channel is not None:
+            self._number, self._name = channel.number, channel.name
         self._settings = ff.sized(self.ctx.settings, picture)
         self._session_skip = set()
         self._cpu_only = set()
@@ -524,10 +549,13 @@ class Broadcaster:
         self._tuned_in = True
         self._start_at = None
         self.behind_ms = 0
+        self._announced = None
+        self._joining = ""
 
-    @property
-    def _label(self) -> str:
-        return self._name or str(self.channel_id)
+    def _named(self, mid: bool = False) -> str:
+        """This station, starting a sentence: "Station 2, Cartoon Classics"
+        (see playing.station; `mid`, followed by more of the sentence)."""
+        return playing.cap(playing.station(self._number, self._name, mid=mid))
 
     def _carry_on_timeline(self) -> None:
         """After the engine failed mid-program, continue the stream's
@@ -574,9 +602,9 @@ class Broadcaster:
             cursor = self._cursor(ts)
             channel = self.ctx.db.get_channel(self.channel_id)
             if channel is None:
-                log.info("Station %s was deleted; ending its stream", self.channel_id)
+                log.info("%s was deleted; ending its stream", self._named(mid=True))
                 return
-            self._name = channel.name
+            self._number, self._name = channel.number, channel.name
             station = self.ctx.station(self.channel_id)
             burst = self._burst()
             if self._intro_due:
@@ -668,6 +696,10 @@ class Broadcaster:
                 up_next=up_next,
                 subtitles_mode="off" if bare or not self.ctx.subtitling else channel.subtitles,
             )
+            if self._joining:
+                # (Tuning in, but the program didn't start: said on its own.)
+                log.info("%s: %s", self._named(), self._joining)
+                self._joining = ""
             if result.produced_s:
                 self._tuned_in = False
             self._ts = _advance(ts, result)
@@ -687,8 +719,8 @@ class Broadcaster:
                 # subtitles couldn't be drawn. Before anything counts against
                 # the program, it's tried without them.
                 log.warning(
-                    "Station %s: %s %s; trying it again with nothing drawn over it",
-                    channel.number,
+                    "%s: %s %s; trying it again with nothing drawn over it",
+                    self._named(),
                     item.label,
                     "stopped" if result.produced_s else "didn't start",
                 )
@@ -711,8 +743,8 @@ class Broadcaster:
                 # Try to carry on with the same program from where it stopped.
                 resumes[key] = tries + 1
                 log.warning(
-                    "Station %s: %s stopped — %s. Resuming it (attempt %d of %d)",
-                    channel.number,
+                    "%s: %s stopped — %s. Resuming it (attempt %d of %d)",
+                    self._named(),
                     item.label,
                     failure.reason,
                     tries + 1,
@@ -953,22 +985,19 @@ class Broadcaster:
             return
         bumper_ms = round(await self._intro_length(channel) * 1000) if channel.has_intro else 0
         back_ms = cursor - (slot.start_ms - bumper_ms)
+        # (Said with the program, as it starts: see _announce.)
         if back_ms > MOST_BEHIND_MS:
-            log.info(
-                "Station %s: %s began more than %s ago, so joining it in progress",
-                channel.number,
-                slot.item.label,
-                fmt_offset(MOST_BEHIND_MS / 1000),
+            self._joining = (
+                f"{slot.item.label} began more than {fmt_offset(MOST_BEHIND_MS / 1000)} ago, "
+                "so joining it in progress"
             )
             return
         self._skew_ms -= back_ms
         self.behind_ms += back_ms
         self._start_at = slot.start_ms
-        log.info(
-            "Station %s: tuning in from the beginning of %s (%s behind the guide)",
-            channel.number,
-            slot.item.label,
-            fmt_offset(back_ms / 1000),
+        self._joining = (
+            f"tuning in from the beginning of {slot.item.label}, "
+            f"{fmt_offset(back_ms / 1000)} behind the guide"
         )
 
     async def _intro_length(self, channel: Channel) -> float:
@@ -988,9 +1017,9 @@ class Broadcaster:
         bumper = await asyncio.to_thread(self.ctx.bumpers.get, channel.intro_video)
         if bumper is None:
             log.warning(
-                "Station %s: its Intro Bumper video is missing, so StationPlay's own bumper "
-                "plays instead. Choose another video in the station's settings.",
-                channel.number,
+                "%s: its Intro Bumper video is missing, so StationPlay's own bumper plays "
+                "instead. Choose another video in the station's settings.",
+                self._named(),
             )
             return None
         args = ff.program_command(
@@ -1008,9 +1037,9 @@ class Broadcaster:
         if result.completed or result.stopped or result.next_ts is not None:
             return result
         log.warning(
-            "Station %s: its Intro Bumper video %r wouldn't play, so StationPlay's own bumper "
-            "plays instead",
-            channel.number,
+            "%s: its Intro Bumper video %r wouldn't play, so StationPlay's own bumper plays "
+            "instead",
+            self._named(),
             bumper.name,
         )
         return None
@@ -1059,13 +1088,12 @@ class Broadcaster:
                     if result.completed or result.stopped or result.next_ts is not None:
                         return result
         except OSError as e:
-            log.warning("Station %s: couldn't prepare its Intro Bumper (%s)", channel.number, e)
+            log.warning("%s: couldn't prepare its Intro Bumper (%s)", self._named(), e)
         finally:
             if not finding.done():
                 finding.cancel()
         log.warning(
-            "Station %s: its Intro Bumper couldn't be drawn; a plain card plays instead",
-            channel.number,
+            "%s: its Intro Bumper couldn't be drawn; a plain card plays instead", self._named()
         )
         args = ff.card_command(
             settings,
@@ -1157,8 +1185,8 @@ class Broadcaster:
             problem = f"couldn't be drawn ({e})"
         log.log(
             logging.INFO if self._ident_failing else logging.WARNING,
-            "Station %s: its %s %s; a plain card plays instead",
-            channel.number,
+            "%s: its %s %s; a plain card plays instead",
+            self._named(),
             what,
             problem,
         )
@@ -1225,18 +1253,18 @@ class Broadcaster:
         if self._unfilled_slots >= OFF_AIR_AFTER_SLOTS:
             if not self.off_air:
                 log.error(
-                    "Station %s is OFF THE AIR: nothing on it could play for %d programs in a "
-                    "row. Check the Broken files tab, and make sure Plex and your media can be "
+                    "%s is OFF THE AIR: nothing on it could play for %d programs in a row. "
+                    "Check the Broken files tab, and make sure Plex and your media can be "
                     'reached. Its viewers see: "%s"',
-                    number,
+                    self._named(mid=True),
                     self._unfilled_slots,
                     OFF_AIR_MESSAGE,
                 )
             self.off_air, self.off_air_why = True, "nothing"
         elif nothing_fits:
             log.warning(
-                "Station %s: nothing can fill the rest of %s's time slot; showing a card instead",
-                number,
+                "%s: nothing can fill the rest of %s's time slot; showing a card instead",
+                self._named(),
                 slot.item.label,
             )
         message = OFF_AIR_MESSAGE if self.off_air else SLATE_MESSAGE
@@ -1290,8 +1318,8 @@ class Broadcaster:
                 break
         if replacement:
             log.info(
-                "Station %s: %s can't play, so %s plays in its place from %s into the time slot",
-                number,
+                "%s: %s can't play, so %s plays in its place from %s into the time slot",
+                self._named(),
                 item.label,
                 replacement.label,
                 fmt_offset(offset_s),
@@ -1334,13 +1362,12 @@ class Broadcaster:
             return chosen.ready() if ready else None
         except TimeoutError:
             log.info(
-                "Station %s: this program's subtitles aren't ready yet; it plays without them "
-                "this time",
-                self._label,
+                "%s: this program's subtitles aren't ready yet; it plays without them this time",
+                self._named(),
             )
             return None
         except Exception as e:  # (subtitles are never worth a program not playing)
-            log.warning("Station %s: playing without subtitles this time (%s)", self._label, e)
+            log.warning("%s: playing without subtitles this time (%s)", self._named(), e)
             return None
 
     def _look_ahead(self, channel: Channel, station: StationSchedule, slot: Slot) -> None:
@@ -1555,6 +1582,7 @@ class Broadcaster:
         plan = pieces(item.segments, offset_s, remaining_s)
         gpu = self.ctx.gpu
         encoder = gpu.encoder_for(item.rating_key in self._cpu_only) if gpu else ff.CPU
+        self._announce(item, offset_s, resolved, probe, subs, encoder)
         # What was sent for this program altogether, across its parts.
         total = PlayResult(0.0, completed=True, next_ts=filler_ts)
         piece_ts = ts
@@ -1672,6 +1700,68 @@ class Broadcaster:
         # leftover so the next program starts on time.
         return await self._fill_gap(
             remaining_s - total.produced_s, ts, stitcher, channel_name, total
+        )
+
+    def _announce(
+        self,
+        item: Item,
+        offset_s: float,
+        resolved: ResolvedSource,
+        probe: ff.ProbeResult,
+        subs: ff.Subtitles | None,
+        encoder: ff.Encoder,
+    ) -> None:
+        """Says in the log what's starting to play (once for each program,
+        and again only if it moves to the CPU): its file, its picture and
+        sound, and how the station makes it. Someone tuning in from the
+        beginning is said with it."""
+        self.encoder_now = encoder
+        np = self.now_playing
+        key = (np.slot_start_ms if np else 0, item.rating_key)
+        last = self._announced
+        again = last is not None and last[0] == key
+        if last is not None and again and last[1] == encoder.kind:
+            return
+        self._announced = (key, encoder.kind)
+        if self._joining and np is not None and np.replaced:
+            # (Not the program the tuning in was about: another took its place.)
+            log.info("%s: %s", self._named(), self._joining)
+            self._joining = ""
+        if self._joining:
+            what = self._joining
+        elif again:
+            what = f"{item.label} carries on from {fmt_offset(offset_s)}"
+        elif offset_s >= STARTS_S:
+            what = (
+                f"joining {item.label} {fmt_offset(offset_s)} in"
+                if self._tuned_in
+                else f"{item.label} plays from {fmt_offset(offset_s)}"
+            )
+        else:
+            what = f"{item.label} starts"
+        self._joining = ""
+        made = [
+            f"made {playing.size(self.settings.video_height)} at "
+            f"{playing.mbps(self.settings.video_bitrate_kbps)} on {playing.encoder_name(encoder)}"
+        ]
+        if probe.hdr and self.ctx.tone_mapping:
+            made.append("HDR made ordinary")
+        if subs is not None:
+            made.append("subtitles drawn in")
+        log.info(
+            "%s: %s (%s: %s), %s",
+            self._named(),
+            what,
+            playing.file_name(resolved.plex_file or resolved.source or ""),
+            playing.picture_and_sound(
+                probe.width,
+                probe.height,
+                probe.video_codec,
+                playing.hdr_name(probe.hdr, probe.dolby_vision),
+                probe.audio_channels,
+                probe.audio_codec,
+            ),
+            ", ".join(made),
         )
 
     async def _fill_gap(
@@ -1797,7 +1887,7 @@ class Broadcaster:
                     break
                 if on_air and self._unfilled_slots:
                     if self.off_air:
-                        log.info("Station %s is back on the air", self._label)
+                        log.info("%s is back on the air", self._named(mid=True))
                     self._unfilled_slots = 0
                     self._last_unfilled = None
                     self.off_air = False
@@ -1832,9 +1922,9 @@ class Broadcaster:
                         # Viewers' players are about to run out of stream.
                         warned = True
                         log.warning(
-                            "Station %s is falling behind real time (%.1fs of stream buffered): "
+                            "%s is falling behind real time (%.1fs of stream buffered): "
                             "this server can't convert %s as fast as it plays",
-                            self._label,
+                            self._named(mid=True),
                             lead,
                             what or "the program",
                         )

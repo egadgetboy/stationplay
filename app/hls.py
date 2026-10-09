@@ -16,6 +16,12 @@ however it's watched.
 The pieces are files in a folder of their own under the system's temporary
 folder, deleted as they fall out of the playlist and when the stream stops.
 
+Each app watching counts as a viewing of its own in the stats, for whoever
+it's watching for (see playing.Watcher): from when it first asked for the
+playlist until it left, or last asked before it stopped asking for IDLE_S.
+(The stream itself, one viewer of the station however many apps watch it,
+doesn't count.)
+
 Night mode, for apps that can't change the sound themselves (Apple's player,
 a Roku): a second HLS stream of the same station, made only while an app
 asks for it, with the picture copied as it is and only the sound made over:
@@ -37,6 +43,8 @@ import time
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from . import playing
 
 if TYPE_CHECKING:
     from .broadcaster import Broadcaster, Viewer
@@ -108,52 +116,124 @@ class HlsStream:
     """One station's HLS (`night`: with night mode's sound), for as long as
     apps are watching it."""
 
-    def __init__(self, streams: HlsStreams, b: Broadcaster, number: int, night: bool = False) -> None:
+    def __init__(
+        self, streams: HlsStreams, b: Broadcaster, number: int, name: str = "", night: bool = False
+    ) -> None:
         self.streams = streams
         self.b = b
         self.number = number
         self.night = night
-        # (How the log names it: "station 5", or "station 5 with night mode's sound".)
-        self.label = f"station {number}" + (" with night mode's sound" if night else "")
+        # How the log names it: "station 5, Cartoon Classics", or "station 5,
+        # Cartoon Classics, with night mode's sound"; and in the middle of a
+        # sentence (label_mid).
+        self.label = playing.station(number, name, mid=night) + (
+            " with night mode's sound" if night else ""
+        )
+        self.label_mid = self.label if night else playing.station(number, name, mid=True)
         kind = "night-" if night else ""
         self.folder = Path(tempfile.mkdtemp(prefix=f"stationplay-hls-{kind}{number}-"))
         self.last_asked = time.monotonic()
-        # Who's been watching (by address), and when each last asked; and
-        # which of them are away from home.
+        # Who's been watching (by address, or away from home by their own
+        # stream's address), and when each last asked; which of them are
+        # away from home; and since when each has watched, and for whom.
         self.clients: dict[str, float] = {}
         self.away: set[str] = set()
+        self.since: dict[str, int] = {}
+        self.who: dict[str, playing.Watcher] = {}
         self.ended = False
         self.ended_because = ""
         self._stopping = False
         self._left = False
         self._proc: asyncio.subprocess.Process | None = None
         self._viewer: Viewer = b.subscribe(
-            f"night-mode app viewers on {number}" if night else f"app viewers on {number}"
+            f"night-mode app viewers on {number}" if night else f"app viewers on {number}",
+            counted=False,
         )
         self._task = asyncio.create_task(self._run(), name=f"hls-{kind}{number}")
 
-    def asked_by(self, client: str | None, away: bool = False) -> None:
-        """A player asked for the playlist or a piece."""
+    def asked_by(
+        self, client: str | None, away: bool = False, watcher: playing.Watcher | None = None
+    ) -> None:
+        """A player asked for the playlist (`client`: which app, watching
+        for `watcher`) or a piece (None)."""
         now = time.monotonic()
         self.last_asked = now
         if client is None:
             return
         if client not in self.clients:
-            log.info("An app on %s is watching %s", client, self.label)
+            who = watcher or playing.Watcher(client, away)
+            self.since[client] = _now_ms()
+            self.who[client] = who
+            log.info("%s is watching %s", who.subject(), self.label)
         self.clients[client] = now
         if away:
             self.away.add(client)
+
+    def still_watching(self, client: str) -> None:
+        """An app watching asked for a piece (one that isn't watching yet
+        starts with the playlist)."""
+        if client in self.clients:
+            self.clients[client] = time.monotonic()
 
     def left_by(self, client: str) -> None:
         """An app said it stopped watching: the stream stops now if no other
         app has asked for it lately. (An address that wasn't watching changes
         nothing, so one device can't stop another's.)"""
-        self.away.discard(client)
-        if self.clients.pop(client, None) is None:
+        if client not in self.clients:
             return
-        log.info("An app on %s stopped watching %s", client, self.label)
+        self._settle(client)
         if self.watching() == 0:
             self.stop("the last app watching it tuned away")
+
+    def viewing(self) -> list[tuple[playing.Watcher, int]]:
+        """Each app watching now (asked in the last IDLE_S), for whom, and
+        since when."""
+        return [
+            (self.who.get(c) or playing.Watcher(c, away), self.since.get(c, 0))
+            for c, away in self.watchers().items()
+        ]
+
+    def _settle(self, client: str, because: str = "") -> None:
+        """An app stopped watching (`because`: why, if it didn't say so):
+        its viewing counts, from its first ask to its last, and the log says
+        so."""
+        asked = self.clients.pop(client, None)
+        started = self.since.pop(client, None)
+        who = self.who.pop(client, None) or playing.Watcher(client, client in self.away)
+        self.away.discard(client)
+        if asked is None or started is None:
+            return
+        ended = _now_ms() - round((time.monotonic() - asked) * 1000)
+        log.info(
+            "%s stopped watching %s after %s%s",
+            who.subject(),
+            self.label_mid,
+            playing.minutes((ended - started) / 1000),
+            f" ({because})" if because else "",
+        )
+        ctx = self.b.ctx
+        try:
+            if ctx.db.get_channel(self.b.channel_id) is not None:
+                ctx.stats.record(
+                    self.b.channel_id,
+                    ctx.station(self.b.channel_id),
+                    started,
+                    ended,
+                    self.b.behind_ms,
+                    person=(who.user_id, who.person) if who.user_id is not None else None,
+                )
+        except Exception:
+            # Statistics never get in the way of watching.
+            log.exception("Couldn't record an app's viewing of %s for the stats", self.label)
+
+    def _settle_idle(self, because: str = "") -> None:
+        """Every app that hasn't asked for IDLE_S has stopped watching (all
+        of them, as the stream ends: `because`)."""
+        now = time.monotonic()
+        quiet = f"nothing asked for it for {IDLE_S:.0f} seconds"
+        for client, at in list(self.clients.items()):
+            if because or now - at > IDLE_S:
+                self._settle(client, because or quiet)
 
     @property
     def over(self) -> bool:
@@ -241,13 +321,14 @@ class HlsStream:
                     await asyncio.wait_for(self._proc.wait(), 5)  # type: ignore[union-attr]
                 last = " / ".join(said) or "no message"
                 self.ended_because = f"ffmpeg stopped making it ({last})"
-                log.warning("The stream for apps of %s stopped: %s", self.label, last)
+                log.warning("The stream for apps of %s stopped: %s", self.label_mid, last)
         except OSError as e:
             self.ended_because = f"ffmpeg couldn't start ({e})"
-            log.error("The stream for apps of %s couldn't start: %s", self.label, e)
+            log.error("The stream for apps of %s couldn't start: %s", self.label_mid, e)
         finally:
             self.ended = True
             idle.cancel()
+            self._settle_idle(f"the stream ended: {self.ended_because or 'it stopped'}")
             self._leave()
             await self._end_ffmpeg()
             if listening is not None:
@@ -273,6 +354,7 @@ class HlsStream:
     async def _stop_when_idle(self) -> None:
         while True:
             await asyncio.sleep(IDLE_CHECK_S)
+            self._settle_idle()
             if time.monotonic() - self.last_asked > IDLE_S:
                 self.stop(f"no app asked for it for {IDLE_S:.0f} seconds")
                 return
@@ -289,8 +371,8 @@ class HlsStreams:
         stream = self._by_station.get((channel_id, night))
         return None if stream is None or stream.over else stream
 
-    def start(self, b: Broadcaster, number: int, night: bool = False) -> HlsStream:
-        stream = self._by_station[(b.channel_id, night)] = HlsStream(self, b, number, night)
+    def start(self, b: Broadcaster, number: int, name: str = "", night: bool = False) -> HlsStream:
+        stream = self._by_station[(b.channel_id, night)] = HlsStream(self, b, number, name, night)
         log.info("Started the stream for apps of %s", stream.label)
         return stream
 
@@ -309,6 +391,10 @@ class HlsStreams:
                 for client in stream.watchers()
             }
         )
+
+    def streams(self) -> list[HlsStream]:
+        """The stations being sent to apps now, night mode's beside them."""
+        return [s for s in self._by_station.values() if not s.over]
 
     def watchers(self) -> dict[str, bool]:
         """Every device watching any station through the apps (see
@@ -334,6 +420,10 @@ async def _collect(proc: asyncio.subprocess.Process, said: deque[str]) -> None:
         text = line.decode(errors="replace").strip()
         if text:
             said.append(text[:200])
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
 
 
 def _read_text(path: Path) -> str | None:

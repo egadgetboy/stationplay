@@ -21,11 +21,21 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import access, capacity, catalog, converting, keyframes, ondemand, subtitles, viewing
+from . import (
+    access,
+    capacity,
+    catalog,
+    converting,
+    keyframes,
+    ondemand,
+    playing,
+    subtitles,
+    viewing,
+)
 from .appapi import APP_MAX, app_label, in_sentence, slot_program
 from .broadcaster import now_ms
 from .catalog import Entry, Media, Track
-from .ffmpeg import ProbeResult, Subtitles, to_sdr
+from .ffmpeg import Encoder, ProbeResult, Subtitles, to_sdr
 from .library import LibraryError
 from .ondemand import NotShared
 from .sources import find_first, learn_mapping, local_candidates
@@ -47,6 +57,10 @@ NOT_PLAYABLE = "Choose an episode or a movie to play"
 NO_FILE = "StationPlay can't reach this program's file right now. Try again in a moment."
 COPY_FAILED = "StationPlay couldn't make this ready to play here. Try again, or choose another."
 KEYFRAMES_WAIT_S = 20.0  # reading a file's index, at most
+# A smaller version or copy of what a device was playing this soon after is
+# a step down in quality (said in the log), and a reason an app sent this
+# soon before it (a "kept-up" problem: see problems.py) is why.
+STEP_S = 120.0
 # Copies with their picture converted at once, at most (each takes a share of
 # the server's processor; repackaging takes next to nothing). A few more
 # while the stations' GPU is in use, which converts them (see converting.py):
@@ -226,10 +240,76 @@ def tracks(found: tuple[Track, ...], audio: bool) -> list[dict]:
 
 
 def describe(e: Entry) -> str:
-    """A program, as the log names it."""
-    if e.kind == catalog.EPISODE and e.season is not None and e.episode is not None:
-        return f"{e.show_title} S{e.season:02}E{e.episode:02}"
-    return f"{e.title} ({e.year})" if e.year else e.title
+    """A program, as the log names it: "Northbound · S2 E4", "Jaws (1975)"."""
+    return playing.title(e)
+
+
+def sound_of(media: Media, track: Track | None) -> str:
+    """A version's picture and sound, with the sound track playing: "1080p
+    HEVC HDR10, 5.1 E-AC-3"."""
+    return playing.picture_and_sound(
+        media.width, media.height, media.video, ondemand.hdr_label(media) or "",
+        track.channels if track else None, track.codec if track else "",
+    )  # fmt: skip
+
+
+def how_copied(plan: converting.Plan, cant: list[str], smaller: bool, encoder: Encoder) -> str:
+    """How a copy plays, for the log: "repackaged, its sound made AAC
+    stereo, because this device can't play its sound's format (DTS)";
+    "converted to 1080p H.264 at 8 Mbps on the Intel/AMD GPU, because...";
+    "converted smaller to fit the connection: 720p H.264 at 4 Mbps on the
+    CPU, with subtitles drawn in"."""
+    if plan.copies_picture:
+        text = "repackaged"
+        if plan.audio_codec != "copy" and not plan.night:
+            text += (
+                f", its sound made {playing.sound_name(plan.audio_codec)} "
+                f"{playing.channels(plan.audio_channels)}"
+            )
+    else:
+        made = (
+            f"{playing.size(plan.height)} H.264 at {playing.mbps(plan.kbps)} on "
+            f"{playing.encoder_name(encoder)}"
+        )
+        text = (
+            f"converted smaller to fit the connection: {made}"
+            if smaller
+            else f"converted to {made}"
+        )
+    extras = [
+        what
+        for what, on in (
+            ("subtitles drawn in", plan.drawn is not None),
+            ("night mode's sound", plan.night),
+        )
+        if on
+    ]
+    if extras:
+        text += f", with {ondemand.and_list(extras)}"
+    if cant:
+        text += f", because this device can't play {ondemand.and_list(cant)}"
+    return text
+
+
+def quality(session: ondemand.PlaySession) -> tuple[int, int, str]:
+    """What a session sends, to compare with another: (its picture's
+    height, its kilobits a second, in words: "1080p at 12 Mbps")."""
+    copy = session.copy
+    if copy is not None and not copy.plan.copies_picture:
+        plan = copy.plan
+        words = f"{playing.size(plan.height)} H.264 at {playing.mbps(plan.kbps)}"
+        return plan.height, plan.kbps, words + f" on {playing.encoder_name(copy.encoder)}"
+    m = session.media
+    named = m.size_label or "its picture"
+    words = f"{named} at {playing.mbps(m.bitrate_kbps)}" if m.bitrate_kbps else named
+    return m.height, m.bitrate_kbps or 0, words
+
+
+def stepped_down(before: ondemand.PlaySession, after: ondemand.PlaySession) -> bool:
+    """Whether `after` sends less than `before` did: a smaller picture, or
+    the same with clearly less detail."""
+    was, now = quality(before), quality(after)
+    return now[0] < was[0] or (now[0] == was[0] and 0 < now[1] < was[1] * 0.85)
 
 
 def routes(app: FastAPI, ctx: AppContext) -> None:
@@ -641,6 +721,61 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             return False
         return True
 
+    def app_of(body: PlayAsk, request: Request) -> str:
+        """Which app on which device is playing: as it says, or else as its
+        sign-in says."""
+        if body.app or body.deviceName:
+            return app_label(body.app, body.deviceName)
+        token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
+        known = ctx.db.session_app(access.session_hash(token)) if token else None
+        return known or app_label("", "")
+
+    def said_start(
+        session: ondemand.PlaySession, sound: Track | None, how: str, from_plex: bool
+    ) -> None:
+        """The log's line for something starting to play in an app: who,
+        in which app, what, its file, and how it plays."""
+        log.info(
+            "%s started %s in %s, %s: %s (%s)%s, %s",
+            session.user or "Someone",
+            describe(session.entry),
+            in_sentence(session.app or app_label("", "")),
+            "away from home" if session.away else "at home",
+            playing.file_name(session.media.file or ""),
+            sound_of(session.media, sound),
+            " from Plex" if from_plex else "",
+            how,
+        )
+
+    def said_step_down(
+        before: ondemand.PlaySession | None,
+        after: ondemand.PlaySession,
+        body: PlayAsk,
+        request: Request,
+    ) -> bool:
+        """Says in the log (and True) if a device just went to a smaller
+        version or copy of what it was playing: from what to what, and why
+        (the app's own reason, if it sent one: see problems.py)."""
+        if before is None or not stepped_down(before, after):
+            return False
+        who = playing.Watcher(
+            after.client, after.away, after.user, after.user_id or None, after.app
+        )
+        fits = f" (about {playing.mbps(body.maxKbps)})" if body.maxKbps else ""
+        why = f"to fit its connection{fits}" if body.fit or body.maxKbps else "the app asked for it"
+        said = ctx.problems.said_lately(access.address(request.scope), STEP_S)
+        log.info(
+            "%s switched %s to a smaller %s, from %s to %s: %s%s",
+            who.subject(),
+            describe(after.entry),
+            "version" if after.copy is None or after.copy.plan.copies_picture else "copy",
+            quality(before)[2],
+            quality(after)[2],
+            why,
+            f"; the app said: {said}" if said else "",
+        )
+        return True
+
     async def play_copy(body: PlayAsk, request: Request, e: Entry, dev: ondemand.Device,
                         hls: frozenset[str]) -> Any:  # fmt: skip
         """Playing a copy StationPlay makes (see converting.py), for a device
@@ -776,10 +911,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         )  # fmt: skip
         token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
         task = asyncio.ensure_future(first) if first is not None else None
+        label = app_of(body, request)
+        before = ctx.plays.before(user_id, e.key, client, STEP_S)
         session = ctx.plays.start(
             user_id=user_id, user=name,
             sign_in=access.session_hash(token) if name and token else None,
-            entry=e, media=media, path=path, plex=stream, client=client, away=False,
+            entry=e, media=media, path=path, plex=stream, client=client, away=False, app=label,
             subtitles={
                 t.id: (url, t.codec)
                 for t in media.subtitles
@@ -791,16 +928,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                                        gpu=ctx.gpu, name=describe(e))  # fmt: skip
         resume = ondemand.resume_at(ctx.db.progress_of(user_id, [e.key]).get(e.key))
         session.start_s = (body.startMs if body.startMs is not None else resume) / 1000
-        label = app_label(body.app, body.deviceName)
-        log.info(
-            "%s started %s in %s, %s (%s)%s",
-            name or "Someone",
-            describe(e),
-            in_sentence(label),
-            "repackaged" if method == converting.REPACKAGE else f"converted to {height}p",
-            ondemand.and_list(why),
-            "" if path else " (from Plex)",
-        )
+        cant = ondemand.unplayable(media, dev)
+        if sound is not None and sound.codec and sound.codec not in dev.audio:
+            cant.append(f"its sound's format ({ondemand.label(sound.codec)})")
+        how = how_copied(plan, list(dict.fromkeys(cant)), smaller, session.copy.encoder)
+        if not said_step_down(before, session, body, request):
+            said_start(session, sound, how, path is None)
         here = f"/play/{session.id}"
         return {
             "session": session.id,
@@ -891,6 +1024,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if path is None and stream is None:
             raise HTTPException(503, NO_FILE)
         token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
+        before = ctx.plays.before(user_id, e.key, client, STEP_S)
         session = ctx.plays.start(
             user_id=user_id,
             user=name,
@@ -901,6 +1035,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             plex=stream,
             client=client,
             away=False,
+            app=app_of(body, request),
             subtitles={
                 t.id: (url, t.codec)
                 for t in media.subtitles
@@ -909,14 +1044,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 and (url := ctx.library.stream_url(e.key, f"/library/streams/{t.id}"))
             },
         )
-        label = app_label(body.app, body.deviceName)
-        log.info(
-            "%s started %s in %s, playing its file as it is%s",
-            name or "Someone",
-            describe(e),
-            in_sentence(label),
-            "" if path else " (from Plex)",
-        )
+        if not said_step_down(before, session, body, request):
+            said_start(session, sound or media.default_audio, "playing as it is", path is None)
         here = f"/play/{session.id}"
         return {
             "session": session.id,
@@ -957,7 +1086,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if e.kind not in (catalog.EPISODE, catalog.MOVIE):
             raise HTTPException(400, NOT_PLAYABLE)
         if body.session:
-            ctx.plays.get(body.session)  # (still watching)
+            going = ctx.plays.get(body.session)  # (still watching)
+            if going is not None and going.entry.key == e.key and body.positionMs is not None:
+                going.position_ms = body.positionMs
         old = ctx.db.progress_of(user_id, [e.key]).get(e.key)
         if body.watched is not None:
             position, watched = 0, body.watched
@@ -1071,8 +1202,16 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     @app.post("/play/{session_id}/leave", status_code=204)
     async def play_leave(session_id: str):
         session = ctx.plays.end(session_id)
-        if session is not None:
-            log.info("%s stopped %s", session.user or "Someone", describe(session.entry))
+        # (Not when a newer one took over: another sound track, a smaller version.)
+        if session is not None and not ctx.plays.newer(session):
+            at = session.position_ms
+            log.info(
+                "%s stopped %s%s (watched %s)",
+                session.user or "Someone",
+                describe(session.entry),
+                f" at {playing.clock(at / 1000)}" if at is not None else "",
+                playing.minutes(session.watched_s),
+            )
         return Response(status_code=204)
 
     # The Access tab: which libraries the apps may see ------------------------

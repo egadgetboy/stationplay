@@ -204,6 +204,10 @@ class ProbeResult:
     # scanner.what_it_costs).
     audio_codec: str = ""
     audio_rate: int = 0
+    # How the Logs tab says what a program is (see playing.py): its
+    # picture's format ("h264", "hevc"...) and its sound's channels.
+    video_codec: str = ""
+    audio_channels: int = 0
 
 
 # Reading a file someone uploaded (a logo, an Intro Bumper): only the kinds
@@ -243,7 +247,7 @@ DOLBY_VISION_ONLY = (
 )
 _ENTRIES = (
     "format=duration:stream=index,codec_type,codec_name,width,height,sample_aspect_ratio,"
-    "duration,color_transfer,color_primaries,color_space,color_range"
+    "duration,color_transfer,color_primaries,color_space,color_range,channels"
     ":stream_tags=language,DURATION,title"
     ":stream_disposition=attached_pic,forced,hearing_impaired"
 )
@@ -366,7 +370,16 @@ async def probe(
         if audio_index is not None
         else "",
         audio_rate=_rate(audio[audio_index]) if audio_index is not None else 0,
+        video_codec=str(video.get("codec_name") or ""),
+        audio_channels=_count(audio[audio_index].get("channels")) if audio_index is not None else 0,
     )
+
+
+def _count(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _rate(stream: dict[str, Any]) -> int:

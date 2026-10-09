@@ -17,7 +17,7 @@ import secrets
 import time
 import unicodedata
 from collections import OrderedDict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -85,6 +85,11 @@ SESSION_IDLE_S = 4 * 3600.0  # ended once unused this long
 WATCHING_S = 180.0  # counts as a device watching until unheard from this long
 SESSIONS_MOST = 500
 RECHECK_S = 60.0  # how often a session's sign-in is checked again
+# The same program played again on the same device this soon after is the
+# same play (another sound track, a smaller version: see PlaySessions.start),
+# and the sessions ended lately kept for telling (at most this many).
+AGAIN_S = 600.0
+ENDED_KEPT = 200
 
 
 # Sharing libraries -------------------------------------------------------------
@@ -703,19 +708,43 @@ class PlaySession:
     # as it is; and where the player starts it.
     copy: Any = None
     start_s: float = 0.0
+    app: str = ""  # which app on which device (appapi.app_label), "" if it didn't say
     started: float = field(default_factory=time.monotonic)
+    started_ms: int = field(default_factory=lambda: int(time.time() * 1000))
     seen: float = field(default_factory=time.monotonic)
     checked: float = field(default_factory=time.monotonic)
+    # What the stats count (see stats.Stats.played): how long it's been
+    # watched (the time between its requests, but for gaps longer than
+    # WATCHING_S: paused, or gone), how much of that is counted, and whether
+    # it's counted as a play; and the place in it its app last said.
+    watched_s: float = 0.0
+    counted_s: float = 0.0
+    played: bool = False
+    position_ms: int | None = None
+
+    def used(self, now: float) -> None:
+        """Something asked for it (`now`, time.monotonic())."""
+        gap = now - self.seen
+        if 0 < gap <= WATCHING_S:
+            self.watched_s += gap
+        self.seen = max(self.seen, now)
 
 
 class PlaySessions:
     """The programs being played in the apps. Each has an address of its own
     (a player can't sign in), which ends when the app says it stopped, when
     it's unused for SESSION_IDLE_S, when its sign-in ends, and when
-    StationPlay restarts. Nothing about them is kept on disk."""
+    StationPlay restarts. Nothing about them is kept on disk.
+
+    What's watched counts in the stats as it's played (`count`, every
+    minute or so) and as each session ends, by `count_with` (see
+    stats.Stats.played)."""
 
     def __init__(self) -> None:
         self._sessions: dict[str, PlaySession] = {}
+        self.count_with: Callable[[PlaySession], None] | None = None
+        # Sessions ended lately, by who played what on which device.
+        self._ended: OrderedDict[tuple[int, str, str], PlaySession] = OrderedDict()
 
     def start(self, **details: Any) -> PlaySession:
         self._tidy()
@@ -723,8 +752,29 @@ class PlaySessions:
             oldest = min(self._sessions.values(), key=lambda s: s.seen)
             self.end(oldest.id)
         session = PlaySession(id=secrets.token_urlsafe(SESSION_ID_BYTES), **details)
+        before = self.before(session.user_id, session.entry.key, session.client)
+        if before is not None:
+            # The same play, going on: what was watched before counts as it was.
+            self._count(before)
+            session.played = before.played
         self._sessions[session.id] = session
         return session
+
+    def before(
+        self, user_id: int, key: str, client: str, within_s: float = AGAIN_S
+    ) -> PlaySession | None:
+        """The last session of the same program for the same person on the
+        same device, if it was used in the last `within_s` (going still, or
+        ended)."""
+        now = time.monotonic()
+        found = [
+            s
+            for s in (*self._sessions.values(), self._ended.get((user_id, key, client)))
+            if s is not None
+            and (s.user_id, s.entry.key, s.client) == (user_id, key, client)
+            and now - s.seen <= within_s
+        ]
+        return max(found, key=lambda s: s.started, default=None)
 
     def get(self, session_id: str) -> PlaySession | None:
         """A session that's still going, now marked as used."""
@@ -735,27 +785,65 @@ class PlaySessions:
         if now - session.seen > SESSION_IDLE_S:
             self.end(session_id)
             return None
-        session.seen = now
+        session.used(now)
         return session
 
     def end(self, session_id: str) -> PlaySession | None:
-        """Ends a session (and stops its copy being made)."""
+        """Ends a session (and stops its copy being made); what was watched
+        of it counts."""
         session = self._sessions.pop(session_id, None)
-        if session is not None and session.copy is not None:
+        if session is None:
+            return None
+        if session.copy is not None:
             session.copy.stop()
+        self._count(session)
+        key = (session.user_id, session.entry.key, session.client)
+        self._ended.pop(key, None)
+        self._ended[key] = session
+        while len(self._ended) > ENDED_KEPT:
+            self._ended.popitem(last=False)
         return session
+
+    def count(self) -> None:
+        """Counts what's been watched of each session so far."""
+        for session in list(self._sessions.values()):
+            self._count(session)
+
+    def _count(self, session: PlaySession) -> None:
+        if self.count_with is not None:
+            self.count_with(session)
+
+    def now(self) -> list[PlaySession]:
+        """The sessions being watched now (used in the last WATCHING_S)."""
+        now = time.monotonic()
+        return [s for s in self._sessions.values() if now - s.seen <= WATCHING_S]
+
+    def newer(self, session: PlaySession) -> bool:
+        """Whether a newer session of the same program is going on the same
+        device for the same person (it took over: another sound track, or a
+        smaller version)."""
+        return any(
+            s is not session
+            and (s.user_id, s.entry.key, s.client)
+            == (session.user_id, session.entry.key, session.client)
+            and s.started > session.started
+            for s in self._sessions.values()
+        )
 
     def end_all(self) -> None:
         for session_id in list(self._sessions):
             self.end(session_id)
 
-    def copies(self) -> int:
+    def copies(self, on_gpu: bool = False) -> int:
         """Copies being converted (their pictures made) now, or asked for
-        lately."""
+        lately (`on_gpu`: those on the GPU)."""
         return sum(
             1
             for s in self._sessions.values()
-            if s.copy is not None and not s.copy.plan.copies_picture and s.copy.active
+            if s.copy is not None
+            and not s.copy.plan.copies_picture
+            and s.copy.active
+            and (not on_gpu or s.copy.encoder.is_gpu)
         )
 
     def watching(self) -> dict[str, bool]:

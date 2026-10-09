@@ -137,7 +137,7 @@ def test_an_app_over_the_limit_is_told_why(client):
     log = client.get("/api/logs").json()["text"]
     assert (
         "The limit of 1 device watching at once (set on the Access tab) was reached, "
-        "so an app on testclient couldn't tune to station 5" in log
+        "so an app at home (testclient) couldn't tune to station 5, Five" in log
     )
 
 

@@ -43,6 +43,8 @@ from . import specials
 from .breaks import COMMERCIALS, TRAILERS, id_card_ms, with_breaks
 from .db import Channel, Era, Item
 from .library import LibraryError
+from .playing import cap
+from .playing import station as station_named
 from .plex import PlexError, gather_all
 from .schedule import (
     StationSchedule,
@@ -466,8 +468,8 @@ class Updater:
         self._prune(channel_id, now)
         prepare(self.station(channel_id), now, now + GUIDE_FUTURE_MS)
         log.info(
-            "Station %s: %s (%d added, %d removed), starting %s",
-            channel.number,
+            "%s: %s (%d added, %d removed), starting %s",
+            cap(station_named(channel.number, channel.name)),
             {"update": "updated from Plex", "reshuffle": "reshuffled"}.get(reason, "changed"),
             plan.added,
             plan.removed,
@@ -486,7 +488,9 @@ class Updater:
                 self.ctx.db, channel, self.ctx.broken.keys(), earliest_ms, now_ms()
             )
         except Exception:
-            log.exception("Planning station %s's specials failed", channel.number)
+            log.exception(
+                "Planning the specials of %s failed", station_named(channel.number, channel.name)
+            )
             return 0
 
     async def plan_all_specials(self) -> None:
@@ -607,11 +611,18 @@ class Updater:
                 update = await self.check_station(channel.id)
             except LibraryError as e:
                 failed = True
-                log.info("Can't check station %s against Plex (%s)", channel.number, e)
+                log.info(
+                    "Can't check %s against Plex (%s)",
+                    station_named(channel.number, channel.name, mid=True),
+                    e,
+                )
                 continue
             except Exception:
                 failed = True
-                log.exception("Checking station %s against Plex failed", channel.number)
+                log.exception(
+                    "Checking %s against Plex failed",
+                    station_named(channel.number, channel.name, mid=True),
+                )
                 continue
             if self._versions.get(channel.id, 0) != version:
                 continue  # it changed while Plex was being asked; the next check sees it
@@ -621,7 +632,11 @@ class Updater:
                 continue
             self.pending[channel.id] = update
             if previous is None or previous.summary != update.summary:
-                log.info("Station %s has an update from Plex (%s)", channel.number, update.summary)
+                log.info(
+                    "%s has an update from Plex (%s)",
+                    cap(station_named(channel.number, channel.name, mid=True)),
+                    update.summary,
+                )
         self.last_check_ms = now
         if not failed:
             self._fingerprint = fingerprint

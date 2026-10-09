@@ -211,6 +211,32 @@ CREATE TABLE IF NOT EXISTS user_watched (
     seconds      REAL    NOT NULL,
     PRIMARY KEY (user_id, channel_id, day, title, kind)
 );
+-- Who watched stations in StationPlay's apps (see stats.py): seconds of each
+-- station and show or movie, by StationPlay user and day. (Plex users' are
+-- in user_watched.)
+CREATE TABLE IF NOT EXISTS app_watched (
+    user_id      INTEGER NOT NULL,     -- StationPlay's id for them
+    user_name    TEXT    NOT NULL,     -- as they were last named
+    channel_id   INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    day          TEXT    NOT NULL,     -- the local date, YYYY-MM-DD
+    title        TEXT    NOT NULL,     -- the show, or the movie
+    kind         TEXT    NOT NULL,     -- episode or movie
+    seconds      REAL    NOT NULL,
+    PRIMARY KEY (user_id, channel_id, day, title, kind)
+);
+-- What was played on demand in StationPlay's apps (see stats.py): plays and
+-- seconds of each show or movie, by StationPlay user (0 while signing in
+-- is off) and day.
+CREATE TABLE IF NOT EXISTS media_watched (
+    user_id      INTEGER NOT NULL,
+    user_name    TEXT    NOT NULL,     -- as they were last named ('' for no one)
+    day          TEXT    NOT NULL,     -- the local date, YYYY-MM-DD
+    title        TEXT    NOT NULL,     -- the show, or the movie
+    kind         TEXT    NOT NULL,     -- episode or movie
+    plays        INTEGER NOT NULL DEFAULT 0,
+    seconds      REAL    NOT NULL,
+    PRIMARY KEY (user_id, day, title, kind)
+);
 -- Where each person is in what they watch on demand in StationPlay's apps
 -- (see ondemand.py), by StationPlay user (0 while signing in is off).
 CREATE TABLE IF NOT EXISTS progress (
@@ -1631,6 +1657,15 @@ class Database:
             ).fetchone()
         return (_user(row), row["seen_ms"], row["device_id"]) if row else None
 
+    def session_app(self, token_hash: str) -> str | None:
+        """Which app a sign-in is (its app's label, '' for a browser); None
+        if there's no such sign-in."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT app FROM sessions WHERE token_hash = ?", (token_hash,)
+            ).fetchone()
+        return row["app"] if row else None
+
     def seen(self, token_hash: str, now: int) -> None:
         with self._lock, self._conn:
             self._conn.execute(
@@ -1985,8 +2020,77 @@ class Database:
     def forget_views_before(self, start_ms: int, day: str) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM views WHERE end_ms < ?", (start_ms,))
-            self._conn.execute("DELETE FROM watched WHERE day < ?", (day,))
-            self._conn.execute("DELETE FROM user_watched WHERE day < ?", (day,))
+            for table in ("watched", "user_watched", "app_watched", "media_watched"):
+                self._conn.execute(f"DELETE FROM {table} WHERE day < ?", (day,))
+
+    def add_app_watching(self, rows: list[tuple[int, str, int, str, str, str, float]]) -> None:
+        """Adds what StationPlay's users watched on stations in its apps:
+        (their id, name, station's id, day, show or movie, kind, seconds)
+        for each."""
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "INSERT INTO app_watched (user_id, user_name, channel_id, day, title, kind, "
+                "seconds) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (user_id, channel_id, day, title, kind) DO UPDATE SET "
+                "seconds = seconds + excluded.seconds, user_name = excluded.user_name",
+                rows,
+            )
+
+    def app_watched_since(self, since_day: str) -> list[tuple[int, str, int, str, str, float]]:
+        """(StationPlay's id for a user, their name as of their latest
+        viewing, station's id, show or movie, kind, seconds) watched in the
+        apps on or since a day."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT user_id, user_name, MAX(day) AS last_day, channel_id, title, kind, "
+                "SUM(seconds) AS seconds FROM app_watched WHERE day >= ? "
+                "GROUP BY user_id, user_name, channel_id, title, kind",
+                (since_day,),
+            ).fetchall()
+        names = _latest_names(rows)
+        summed: dict[tuple[int, int, str, str], float] = {}
+        for r in rows:
+            key = (r["user_id"], r["channel_id"], r["title"], r["kind"])
+            summed[key] = summed.get(key, 0.0) + r["seconds"]
+        return [
+            (user, names[user], channel_id, title, kind, seconds)
+            for (user, channel_id, title, kind), seconds in summed.items()
+        ]
+
+    def add_media_watching(self, row: tuple[int, str, str, str, str, int, float]) -> None:
+        """Adds what was played on demand: (StationPlay's id for whoever
+        played it, their name, day, show or movie, kind, plays, seconds)."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO media_watched (user_id, user_name, day, title, kind, plays, seconds) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (user_id, day, title, kind) DO UPDATE SET "
+                "plays = plays + excluded.plays, seconds = seconds + excluded.seconds, "
+                "user_name = excluded.user_name",
+                row,
+            )
+
+    def media_watched_since(self, since_day: str) -> list[tuple[int, str, str, str, int, float]]:
+        """(StationPlay's id for whoever played it, their name as of their
+        latest play, show or movie, kind, plays, seconds) played on demand
+        on or since a day."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT user_id, user_name, MAX(day) AS last_day, title, kind, "
+                "SUM(plays) AS plays, SUM(seconds) AS seconds FROM media_watched "
+                "WHERE day >= ? GROUP BY user_id, user_name, title, kind",
+                (since_day,),
+            ).fetchall()
+        names = _latest_names(rows)
+        summed: dict[tuple[int, str, str], tuple[int, float]] = {}
+        for r in rows:
+            key = (r["user_id"], r["title"], r["kind"])
+            plays, seconds = summed.get(key, (0, 0.0))
+            summed[key] = (plays + r["plays"], seconds + r["seconds"])
+        return [
+            (user, names[user], title, kind, plays, seconds)
+            for (user, title, kind), (plays, seconds) in summed.items()
+        ]
 
     def add_user_watching(self, rows: list[tuple[str, str, int, str, str, str, float]]) -> None:
         """Adds what Plex users watched: (Plex's id for them, their name,
@@ -2061,6 +2165,15 @@ class Database:
             created_ms=row["created_ms"],
             created_exact=bool(row["created_exact"]),
         )
+
+
+def _latest_names(rows: list[sqlite3.Row]) -> dict[Any, str]:
+    """Each user's name as of their latest day among `rows`."""
+    latest: dict[Any, tuple[str, str]] = {}
+    for r in rows:
+        if r["user_id"] not in latest or r["last_day"] > latest[r["user_id"]][0]:
+            latest[r["user_id"]] = (r["last_day"], r["user_name"])
+    return {user: name for user, (_, name) in latest.items()}
 
 
 def _json_list(text: str | None) -> list:
