@@ -3,6 +3,7 @@ overnight deep scan, against real damaged files."""
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import random
@@ -1226,19 +1227,28 @@ def frame_files(tmp_path_factory) -> dict[str, Path]:
     data = clean.read_bytes()
     out = {"clean_b": clean}
     for kind in ("B", "P", "I"):
-        _, pos, size, _ = next(f for f in frames if float(f[0]) >= GARBLED_S and f[3] == kind)
-        garbled = bytearray(data)
-        middle = int(pos) + int(size) // 2
-        for n in range(middle, middle + 8):
-            garbled[n] ^= 0x5A
+        # (Garbling a picture doesn't always break it in the way ffmpeg names,
+        # since the noise differs from run to run: the first pictures of the
+        # kind just after GARBLED_S are tried, at a few places in each, until
+        # one does.)
+        near = [f for f in frames if GARBLED_S <= float(f[0]) < GARBLED_S + 6 and f[3] == kind]
         out[kind] = d / f"{kind}_frame.mkv"
-        out[kind].write_bytes(garbled)
-        # (It's patched up: the test's about which of them is seen.)
-        log = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "level+info", "-i", str(out[kind]),
-             "-f", "null", "-"], capture_output=True, text=True,
-        ).stderr  # fmt: skip
-        assert f"errors in {kind} frame" in log and "corrupt decoded frame" in log, log[-2000:]
+        log = ""
+        for (_, pos, size, _), share in itertools.product(near[:6], (2, 3, 4)):
+            garbled = bytearray(data)
+            at = int(pos) + int(size) // share
+            for n in range(at, at + 8):
+                garbled[n] ^= 0x5A
+            out[kind].write_bytes(garbled)
+            # (It's patched up: the test's about which of them is seen.)
+            log = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "level+info", "-i",
+                 str(out[kind]), "-f", "null", "-"], capture_output=True, text=True,
+            ).stderr  # fmt: skip
+            if f"errors in {kind} frame" in log and "corrupt decoded frame" in log:
+                break
+        else:
+            raise AssertionError(f"no {kind}-frame garbling ffmpeg names: {log[-2000:]}")
     return out
 
 
