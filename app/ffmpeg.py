@@ -658,6 +658,12 @@ WATERMARK_TIMINGS = ("always", "start")
 WATERMARK_STYLES = ("color", "white")
 WATERMARK_START_S = 30.0
 WATERMARK_FADE_S = 1.0
+# Against burn-in on screens that keep a still picture too long: each program
+# on a station starts with its corner mark moved to the next of these
+# places, (right, down) of where the station puts it, in the stream's
+# pixels. A 3 by 3 grid 4 px apart, all within 6 px of it. (Pictures go over
+# the stream's at even pixels, so the steps are even, and exact.)
+NUDGES = ((0, 0), (4, 0), (4, 4), (0, 4), (-4, 4), (-4, 0), (-4, -4), (0, -4), (4, -4))
 
 
 @dataclass(frozen=True)
@@ -677,6 +683,9 @@ class Watermark:
     # clock_at_s is the time (seconds since 1970) the first one does.
     clock: str | None = None
     clock_at_s: float = 0.0
+    # Moved this far from where the station puts it, (right, down), in
+    # pixels: one of NUDGES, against burn-in (see nudge).
+    nudge: tuple[int, int] = (0, 0)
 
 
 @dataclass(frozen=True)
@@ -696,6 +705,12 @@ class Banner:
 # The banner comes in over BANNER_IN_S and fades out over BANNER_OUT_S.
 BANNER_IN_S = 0.5
 BANNER_OUT_S = 0.6
+
+
+def nudge(program: int) -> tuple[int, int]:
+    """Where the corner mark goes for a station's `program`th program (any
+    count that goes up by one a program): the next of NUDGES each time."""
+    return NUDGES[program % len(NUDGES)]
 
 
 def escape_text(text: str) -> str:
@@ -779,7 +794,6 @@ def _watermark(
     """(filter chains that make [wm], how to put it on [base]) for a
     watermark; making way for the Up Next Banner between the times in
     `away`, if given."""
-    margin_x, margin_y = corner_margins(settings)
     opacity = WATERMARK_TRANSPARENCIES.get(mark.transparency, 1.0)
     vertical, _, horizontal = mark.position.partition("-")
     if mark.clock:
@@ -794,8 +808,7 @@ def _watermark(
         if mark.style == "white":
             source += _WHITE.format(blur=max(1.0, size / 60))
         source += f",colorchannelmixer=aa={0.65 * opacity:.2f}"
-        x = margin_x if horizontal == "left" else f"W-w-{margin_x}"
-        y = margin_y if vertical == "top" else f"H-h-{margin_y}"
+        x, y = _corner(settings, mark, vertical, horizontal, "W-w", "H-h")
         put_on = f"[base][wm]overlay={x}:{y}:format=auto"
         if mark.until_s is None and away is None:
             return source + "[wm]", put_on
@@ -816,14 +829,26 @@ def _watermark(
             )
         return source + "[wm]", put_on
     text = escape_text((mark.text or "")[:40])
-    x = margin_x if horizontal == "left" else f"w-tw-{margin_x}"
-    y = margin_y if vertical == "top" else f"h-th-{margin_y}"
+    x, y = _corner(settings, mark, vertical, horizontal, "w-tw", "h-th")
     return "", (
         f"[base]drawtext=text='{text}':expansion=none:fontcolor=white@{0.7 * opacity:.2f}"
         f":fontsize={mark_size(settings, mark)}"
         f":shadowcolor=black@{0.6 * opacity:.2f}:shadowx=2:shadowy=2:x={x}:y={y}"
         f"{_shown(mark, away)}"
     )
+
+
+def _corner(
+    settings: Settings, mark: Watermark, vertical: str, horizontal: str, right: str, bottom: str
+) -> tuple[str, str]:
+    """Where the corner mark goes, as a filter's x and y: in its corner,
+    moved by its nudge (`right` and `bottom`: the expressions for the far
+    sides, "W-w" and "H-h" for an overlay)."""
+    margin_x, margin_y = corner_margins(settings)
+    dx, dy = mark.nudge
+    x = str(margin_x + dx) if horizontal == "left" else f"{right}-{margin_x - dx}"
+    y = str(margin_y + dy) if vertical == "top" else f"{bottom}-{margin_y - dy}"
+    return x, y
 
 
 def _shown(mark: Watermark, away: tuple[float, float] | None) -> str:
@@ -854,7 +879,6 @@ def _clock(
     """The corner clock: the time each frame airs, worked out from its
     timestamp (so it's right however far ahead of real time the stream is
     made), in the container's time zone (TZ)."""
-    margin_x, margin_y = corner_margins(settings)
     fmt = r"%H\\\:%M" if mark.clock == "24" else r"%-I\\\:%M %p"
     text = rf"%{{pts\:localtime\:{mark.clock_at_s:.3f}\:{fmt}}}"
     font = (
@@ -862,8 +886,7 @@ def _clock(
         if usable_picture(str(CLOCK_FONT)) and CLOCK_FONT.is_file()
         else ""
     )
-    x = margin_x if horizontal == "left" else f"w-tw-{margin_x}"
-    y = margin_y if vertical == "top" else f"h-th-{margin_y}"
+    x, y = _corner(settings, mark, vertical, horizontal, "w-tw", "h-th")
     return (
         f"[base]drawtext={font}text='{text}':fontcolor=white@{0.8 * opacity:.2f}"
         f":fontsize={mark_size(settings, mark)}"

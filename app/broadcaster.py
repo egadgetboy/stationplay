@@ -332,6 +332,11 @@ class Broadcaster:
     # The last Station ID card couldn't be shown (so a run of them going
     # wrong is a warning once, not one at every break).
     _ident_failing: bool = False
+    # Programs this station has started (from any session, since
+    # StationPlay started), and the slot of the last: where its corner mark
+    # goes, against burn-in (see _nudge_for).
+    _programs: int = 0
+    _program_slot: int | None = None
     # The stream's format this session: the station's picture size (see
     # ff.sized), set as it starts and the same until it stops, since
     # everything in one stream must be the same size. A new size waits for
@@ -684,7 +689,7 @@ class Broadcaster:
 
             bare = item.rating_key in self._bare
             self._look_ahead(channel, station, slot)
-            mark = None if bare else corner_mark(self.ctx, channel)
+            mark = None if bare else corner_mark(self.ctx, channel, self._nudge_for(slot))
             up_next = None if bare else self._banner_for(channel, station, slot, mark)
             result = await self._play_item(
                 item,
@@ -779,6 +784,15 @@ class Broadcaster:
                 failure.opening,
             )
             attempts[slot.start_ms] = attempt + 1
+
+    def _nudge_for(self, slot: Slot) -> tuple[int, int]:
+        """Where the corner mark goes for `slot`'s program (see ff.NUDGES):
+        each program starts with it moved to the next place, and it stays
+        there all through the program (resumed, or replaced partway too)."""
+        if slot.start_ms != self._program_slot:
+            self._program_slot = slot.start_ms
+            self._programs += 1
+        return ff.nudge(self._programs)
 
     # Between programs -----------------------------------------------------
 
@@ -2016,8 +2030,11 @@ class Broadcaster:
         return max(ts + produced, after_audio) + JOIN_GAP_S
 
 
-def corner_mark(ctx: AppContext, channel: Channel) -> ff.Watermark | None:
-    """A station's logo, name or a clock for the corner of its programs."""
+def corner_mark(
+    ctx: AppContext, channel: Channel, nudge: tuple[int, int] = (0, 0)
+) -> ff.Watermark | None:
+    """A station's logo, name or a clock for the corner of its programs
+    (`nudge`: where it's moved to for this one: see ff.NUDGES)."""
     if channel.watermark not in ("logo", "name", "clock"):
         return None
     logo = ctx.logos.path(channel.logo) if channel.watermark == "logo" and channel.logo else None
@@ -2030,6 +2047,7 @@ def corner_mark(ctx: AppContext, channel: Channel) -> ff.Watermark | None:
         until_s=ff.WATERMARK_START_S if channel.watermark_timing == "start" else None,
         style=channel.watermark_style,
         clock=channel.clock_format if channel.watermark == "clock" else None,
+        nudge=nudge,
     )
 
 
@@ -2041,8 +2059,8 @@ def station_banner(
     settings: Settings | None = None,
 ) -> upnext.UpNext:
     """A station's Up Next Banner saying `title` is on next, with its corner
-    mark `mark`, for a stream of `settings`' size (by default, the standard
-    size)."""
+    mark `mark` (wherever it's moved to), for a stream of `settings`' size
+    (by default, the standard size)."""
     logo = ctx.logos.path(channel.logo) if channel.logo else None
     return upnext.UpNext(
         title,
@@ -2050,6 +2068,7 @@ def station_banner(
         channel.up_next_seconds,
         channel.up_next_size,
         upnext.corner_logo(settings or ctx.settings, mark),
+        mark.nudge if mark else (0, 0),
     )
 
 

@@ -644,6 +644,8 @@ Plex apps load logos from StationPlay's address, so they appear on your home net
 
 A station showing its number instead of a logo shows its name. Nothing is shown during commercials, trailers or cards. Changes apply from the next program.
 
+**Burn-in protection.** So a screen that keeps a still picture too long (an OLED or plasma TV) never has the same pixels lit for hours, each program starts with the logo, name or clock moved a little: to the next of 9 places, 4 pixels apart, all within 6 pixels of the corner you chose. It stays put all through a program, the Up Next Banner's logo still lands exactly on it, and it works the same whether a station is converted on the GPU or the processor. There's no setting: every station does it.
+
 ### Up Next Banner
 
 Three minutes before each show or movie ends, a banner in the bottom-left corner shows the station's logo, **Up next**, and the next program. Set how long it stays (**Off**, 3, 5 or 10 seconds) and its **Size**; **Preview** shows it. If the corner logo is also in the bottom left, the banner takes its place while it's up. The banner skips programs shorter than 3 minutes, programs where what's next isn't known, and programs tuned into after that point. If it can't be drawn in time, the program plays without it.
