@@ -725,12 +725,17 @@ class Access:
         while len(self._tries) >= ADDRESSES_KEPT:
             del self._tries[next(iter(self._tries))]
 
-    def start_session(self, user: User, app: str = "", device_id: int | None = None) -> str:
+    def start_session(
+        self, user: User, app: str = "", device_id: int | None = None, unlocked: bool = False
+    ) -> str:
         """A new token for a browser (or `app`, one of StationPlay's: which,
-        on what device; `device_id`: a linked device, from its picker: see
+        on what device; `device_id`: a linked device, from its picker, and
+        `unlocked` when someone without a PIN was picked there: see
         devices.py) that's signed in as `user`."""
         token = secrets.token_urlsafe(32)
-        self.db.add_session(_token_hash(token), user.id, _now(), SESSIONS_KEPT, app, device_id)
+        self.db.add_session(
+            _token_hash(token), user.id, _now(), SESSIONS_KEPT, app, device_id, unlocked
+        )
         return token
 
     def remember_device(self, user: User) -> str:

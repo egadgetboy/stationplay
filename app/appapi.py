@@ -414,10 +414,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         """Someone chooses their own PIN (a passcode, as the apps say), or
         says they want none (see devices.set_own_pin): when an app asks,
         after they sign in with their password or an invite code (`askPin`),
-        or in its Options."""
+        or in its Options. Not on a sign-in made by picking them without
+        one."""
         user, signed = own_app(request)
         try:
-            has = await ctx.devices.set_own_pin(user, body.pin)
+            has = await ctx.devices.set_own_pin(user, body.pin, unlocked=signed.unlocked)
         except devices.Refused as e:
             raise HTTPException(e.status, str(e)) from None
         chose = "set a passcode" if has else "chose no passcode"

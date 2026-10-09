@@ -665,6 +665,20 @@ async def _own_pin_and_password(
         checks.ok(r.status_code == 403, "Kids can't give themselves a password",
                   f"got {r.status_code}")  # fmt: skip
 
+        # Someone with a password but no passcode, picked by whoever is at the
+        # device, isn't locked out by them.
+        made = await c.post("/api/access/users", headers=admin_h,
+                            json={"name": "Lee", "password": "lee password", "role": "user"})  # fmt: skip
+        picked = await c.post("/api/internal/picker/choose", json={"id": made.json()["id"]},
+                              headers={"StationPlay-Device": device_key})  # fmt: skip
+        lee_h = {"Authorization": f"Bearer {picked.json().get('token', '')}"}
+        for pin in ("2222", None):
+            r = await c.post("/api/internal/pin", headers=lee_h, json={"pin": pin})
+            checks.ok(r.status_code == 403 and pin_of(made.json()["id"]) == ""
+                      and picked.status_code == 200,
+                      f"picking someone without a passcode can't set theirs ({pin!r})",
+                      f"got {picked.status_code}, {r.status_code}")  # fmt: skip
+
         # The wait after wrong passcodes holds, even after a new one is set.
         await c.post("/api/internal/pin", headers=sam_h, json={"pin": "2468"})
         r = await c.post("/api/internal/picker/choose", json={"id": ids[USER["name"]], "pin": "2468"},

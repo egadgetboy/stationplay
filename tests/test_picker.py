@@ -536,6 +536,55 @@ def test_a_passcode_right_after_the_first_sign_in(app):
         assert admin.post("/api/internal/pin", json={"pin": "1111"}).status_code == 403
 
 
+def test_picking_someone_without_a_passcode_doesnt_let_you_set_theirs(app):
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        tia = admin.post(
+            "/api/access/users", json={"name": "Tia", "password": "teen password", "role": "user"}
+        ).json()
+        tv = TestClient(app)
+        key = tv.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]
+        tia_in = tv.post(
+            "/api/internal/picker/sign-in",
+            json={"name": "Tia", "password": "teen password"},
+            headers=device(key),
+        ).json()
+        assert (
+            tv.post("/api/internal/pin", json={"pin": None}, headers=bearer(tia_in["token"]))
+            .status_code == 200
+        )  # fmt: skip
+
+        # Anyone at the TV may pick her now: that sign-in can't set a
+        # passcode for her (and lock her out), or choose none.
+        picked = tv.post("/api/internal/picker/choose", json={"id": tia["id"]}, headers=device(key))
+        unlocked = bearer(picked.json()["token"])
+        for pin in ("1234", None):
+            refused = tv.post("/api/internal/pin", json={"pin": pin}, headers=unlocked)
+            assert refused.status_code == 403
+            assert refused.json()["detail"] == devices.PICKED_UNLOCKED
+        assert tv.get("/api/internal/me", headers=unlocked).json()["user"]["pin"] is False
+        # Its other uses are as before.
+        assert tv.get("/api/internal/picker", headers=device(key)).status_code == 200
+
+        # Signed in with her password on the same TV, she can.
+        again = tv.post(
+            "/api/internal/picker/sign-in",
+            json={"name": "Tia", "password": "teen password"},
+            headers=device(key),
+        ).json()
+        hers = bearer(again["token"])
+        assert tv.post("/api/internal/pin", json={"pin": "1234"}, headers=hers).status_code == 200
+        # A password change keeps the sign-in it gives as sure as the one before.
+        changed = tv.post(
+            "/api/internal/password",
+            json={"current": "teen password", "new": "new teen password"},
+            headers=hers,
+        )
+        assert changed.status_code == 200
+        new = bearer(changed.json()["token"])
+        assert tv.post("/api/internal/pin", json={"pin": "4321"}, headers=new).status_code == 200
+
+
 def test_an_admin_keeps_their_passcode_and_kids_get_one_from_an_admin(app):
     with TestClient(app) as admin:
         admin.post("/api/access/users", json=ADA)

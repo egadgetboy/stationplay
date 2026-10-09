@@ -309,8 +309,12 @@ Answers 401 when the sign-in has ended.
 Asked with the app's token (from 1.28.0): the person signed in chooses their
 own passcode, `{"pin": "1234"}` (exactly 4 digits, each 0 to 9), or none,
 `{"pin": null}` (any passcode they have is removed, and they aren't asked
-again, on any device). Their sign-in says it's them, so a new passcode needs
-nothing more, even in place of one they have. The access log says "Tia set
+again, on any device). A sign-in made with their password, an invite code
+or their passcode says it's them, so a new passcode needs nothing more, even
+in place of one they have. One made by picking them on Who's tuning in?
+without a passcode doesn't (anyone at that device could have), so it can't
+set or remove one (from 1.28.1): sign in with a password or an invite code
+first. The access log says "Tia set
 a passcode in StationPlay for Android on Tia's phone", or "Tia chose no
 passcode in ...".
 
@@ -323,7 +327,8 @@ sentence to show, for an Admin removing theirs (an Admin needs a passcode,
 or their password on a device others use too), for someone without a
 password removing theirs (it's how they sign in), and for someone with
 neither a password nor a passcode, such as "Kids" (only an Admin gives them
-one); and for a browser's sign-in, as this is for the apps. 400 while
+one); for a sign-in made by picking someone without a passcode (from
+1.28.1); and for a browser's sign-in, as this is for the apps. 400 while
 signing in is off. Wrong passcodes tried lately still count after a new one
 is chosen: 5 within 15 minutes still means a wait.
 

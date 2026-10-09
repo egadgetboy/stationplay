@@ -94,6 +94,9 @@ NO_SECRET = (
     "You don't have a password or a passcode, so only an Admin can give you a passcode, on "
     "StationPlay's Access tab."
 )
+PICKED_UNLOCKED = (
+    "To set a passcode, sign in on this device with your password or an invite code first."
+)
 
 
 class Refused(Exception):
@@ -258,6 +261,7 @@ class Devices:
         here = self.db.device_people().get(device.id, {})
         if user is None or not self.on_picker(user, here.get(user.id), at_home=not public):
             raise Refused("That person isn't on this device's list", 404)
+        unlocked = False
         if user.has_pin:
             await self._check_pin(user, pin or "")
         elif user.role == ADMIN and self._shared(device, user, here):
@@ -266,7 +270,11 @@ class Devices:
             )
             if not right:
                 raise Refused(ADMIN_PASSWORD)
-        return user, self.access.start_session(user, device.name, device.id)
+        else:
+            # (Anyone at the device may pick them, so the sign-in says nothing
+            # about who's there: see set_own_pin.)
+            unlocked = True
+        return user, self.access.start_session(user, device.name, device.id, unlocked)
 
     def _shared(self, device: Device, user: User, here: dict[int, str]) -> bool:
         """Whether a device is one others use too, for an Admin picking
@@ -388,32 +396,36 @@ class Devices:
         now = self.db.user(user.id) or user
         return not now.has_pin and not now.no_pin
 
-    async def set_own_pin(self, user: User, pin: str | None) -> bool:
+    async def set_own_pin(self, user: User, pin: str | None, *, unlocked: bool) -> bool:
         """Someone sets their own PIN, in an app they're signed in on: 4
         digits, or None for none (any they have is removed, and they're not
         asked for one again, on any device). Whether they have one now.
         Refused.
 
-        Their sign-in says it's them (it was made with their password, an
-        invite code or their PIN), so a new PIN needs nothing more. But an
-        Admin keeps theirs (on a device others use too, an Admin needs a PIN
-        or their password), and so does someone without a password, whose
-        PIN is how they sign in; and someone with neither (whom anyone at
-        home may pick, such as "Kids") gets one only from an Admin. Wrong
-        PINs for them lately still count against the new one."""
+        A sign-in made with their password, an invite code or their PIN says
+        it's them, so a new PIN needs nothing more. One made by picking them
+        without a PIN (`unlocked`) doesn't: anyone at that device could have,
+        and could lock them out. An Admin keeps theirs (on a device others
+        use too, an Admin needs a PIN or their password), and so does
+        someone without a password, whose PIN is how they sign in; and
+        someone with neither (whom anyone at home may pick, such as "Kids")
+        gets one only from an Admin. Wrong PINs for them lately still count
+        against the new one."""
         if pin is not None and not PIN.fullmatch(pin):
             raise Refused(PIN_DIGITS, 400)
-        self._may_set_own_pin(user, pin)  # (before the work of hashing it)
+        self._may_set_own_pin(user, pin, unlocked)  # (before the work of hashing it)
         hashed = await asyncio.to_thread(hash_password, pin) if pin is not None else ""
-        self._may_set_own_pin(user, pin)  # (and as things are now)
+        self._may_set_own_pin(user, pin, unlocked)  # (and as things are now)
         self.db.set_pin(user.id, hashed, no_pin=pin is None)
         return pin is not None
 
-    def _may_set_own_pin(self, user: User, pin: str | None) -> None:
+    def _may_set_own_pin(self, user: User, pin: str | None, unlocked: bool) -> None:
         now = self.db.user(user.id) or user
         password = bool(self.db.password_hash(user.id))
         if not password and not now.has_pin:
             raise Refused(NO_SECRET)
+        if unlocked:
+            raise Refused(PICKED_UNLOCKED)
         if pin is None and now.role == ADMIN and now.has_pin:
             raise Refused(ADMIN_KEEPS_PIN)
         if pin is None and not password:

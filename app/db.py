@@ -496,6 +496,7 @@ class SignedIn:
     device_id: int | None  # the linked device it's on, from its picker (see devices.py)
     app: str  # which of StationPlay's apps; "" for a browser
     active_ms: int  # when someone last used it, in a browser (see access.IDLE_SIGN_OUT_S)
+    unlocked: bool  # made by picking someone without a PIN (see devices.choose)
 
 
 @dataclass
@@ -705,6 +706,10 @@ _ADDED_COLUMNS = (
     # ...and whether they may change their own password (see access.py): an
     # Admin's choice for each person, yes to start with.
     ("users", "own_password", "INTEGER NOT NULL DEFAULT 1"),
+    # Added in 1.28.1: whether a sign-in was made by picking someone with no
+    # PIN on a device's list (see devices.py), which proves nothing about
+    # who's there, so it can't change their passcode.
+    ("sessions", "unlocked", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -1681,18 +1686,20 @@ class Database:
         keep: int,
         app: str = "",
         device_id: int | None = None,
+        unlocked: bool = False,
     ) -> None:
         """Signs a browser (or `app`, one of StationPlay's; on a linked
-        device, from its picker: `device_id`) in as a user, keeping only their
-        `keep` newest sign-ins (the rest are signed out). On a linked device,
-        whoever was signed in there before is signed out."""
+        device, from its picker: `device_id`, and `unlocked` when picked
+        without a PIN) in as a user, keeping only their `keep` newest sign-ins
+        (the rest are signed out). On a linked device, whoever was signed in
+        there before is signed out."""
         with self._lock, self._conn:
             if device_id is not None:
                 self._conn.execute("DELETE FROM sessions WHERE device_id = ?", (device_id,))
             self._conn.execute(
                 "INSERT INTO sessions (token_hash, user_id, created_ms, seen_ms, app, device_id, "
-                "active_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (token_hash, user_id, now, now, app, device_id, now),
+                "active_ms, unlocked) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (token_hash, user_id, now, now, app, device_id, now, int(unlocked)),
             )
             self._conn.execute(
                 "DELETE FROM sessions WHERE user_id = ? AND token_hash NOT IN ("
@@ -1708,13 +1715,20 @@ class Database:
         with self._lock:
             row = self._conn.execute(
                 "SELECT users.*, sessions.seen_ms, sessions.device_id, sessions.app, "
-                "sessions.active_ms FROM sessions JOIN users "
+                "sessions.active_ms, sessions.unlocked FROM sessions JOIN users "
                 "ON users.id = sessions.user_id WHERE token_hash = ? AND seen_ms >= ?",
                 (token_hash, since_ms),
             ).fetchone()
         if row is None:
             return None
-        return SignedIn(_user(row), row["seen_ms"], row["device_id"], row["app"], row["active_ms"])
+        return SignedIn(
+            _user(row),
+            row["seen_ms"],
+            row["device_id"],
+            row["app"],
+            row["active_ms"],
+            bool(row["unlocked"]),
+        )
 
     def session_app(self, token_hash: str) -> str | None:
         """Which app a sign-in is (its app's label, '' for a browser); None

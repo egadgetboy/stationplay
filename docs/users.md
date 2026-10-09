@@ -212,8 +212,11 @@ or already said they want none. Either answer holds on every device, and
 they can change it in the app's Options. A household's adults, teens, kids
 and little kids can each have one or not.
 
-- The sign-in they make it with says it's them, so choosing a new passcode
-  needs nothing more.
+- A sign-in made with their password, an invite code or their passcode
+  says it's them, so choosing a new passcode needs nothing more. One made
+  by picking them without a passcode doesn't, as anyone at that device
+  could have: it can't set one for them, and lock them out (1.28.1). They
+  sign in with their password or an invite code to set one.
 - An Admin who has one keeps it: an Admin needs a passcode, or their
   password on a device others use too. (An Admin with none who chooses No
   passcode gives their password there, as before.)
