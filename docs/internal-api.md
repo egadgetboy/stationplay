@@ -85,6 +85,29 @@ gives their password only on a device others use too.)
 Apps that don't send `"picker": true` sign in as they always have, and get
 no `deviceKey`.
 
+### A passcode, after the first sign-in
+
+From 1.28.0, the answer to signing in with a password or an invite code
+(`POST /api/internal/sign-in`, `POST /api/internal/picker/sign-in`), or with
+a code entered on StationPlay's page (`POST /api/internal/link/check`), says
+`askPin`: whether to ask this person, there and then, to choose a 4-digit
+passcode for picking themselves on Who's tuning in? (the Access tab calls it
+a PIN). It's true while they have none and haven't said they want none.
+Offer both:
+
+- **A passcode:** 4 digits, typed twice to be sure, sent with
+  `POST /api/internal/pin` as `{"pin": "1234"}`. From then on, picking them
+  on any device asks for it.
+- **No passcode:** `{"pin": null}`. They aren't asked again, on any device.
+  For an Admin, say what that means: on a device others use too, they give
+  their password instead.
+
+Leaving without choosing asks again the next time they sign in with their
+password or a code. Someone with a passcode isn't asked. The app's Options
+shows whether they have one (`user.pin` in `GET /api/internal/me`), to
+choose a new one there, or none. An Admin who has a passcode can't remove it
+in an app (it's refused, with the sentence to show): offer only a new one.
+
 On the public port, only `GET /api/v1/server` (and StationPlay's check of
 itself) answers until signing in is on. API tokens (`docs/api.md`) don't
 work here: these addresses are for the apps' own sign-ins.
@@ -132,6 +155,7 @@ again), and once it's linked, the sign-in, just once:
 | `user` | object | Who linked it |
 | `user.name` | string | Their name |
 | `user.role` | string | `admin` or `user` |
+| `askPin` | boolean | Whether to ask them now to choose a passcode, or none (from 1.28.0: see A passcode, after the first sign-in) |
 
 ## POST /api/internal/sign-in
 
@@ -157,6 +181,7 @@ devices, above).
 | `user` | object | Who signed in |
 | `user.name` | string | Their name |
 | `user.role` | string | `admin` or `user` |
+| `askPin` | boolean | Whether to ask them now to choose a passcode, or none (from 1.28.0: see A passcode, after the first sign-in) |
 
 Answers 401 for a wrong name or password, 429 while signing in waits, and
 400 when signing in is off.
@@ -226,6 +251,7 @@ device's picker from then on.
 | `user` | object | Who signed in |
 | `user.name` | string | Their name |
 | `user.role` | string | `admin` or `user` |
+| `askPin` | boolean | Whether to ask them now to choose a passcode, or none (from 1.28.0: see A passcode, after the first sign-in) |
 
 Answers 403 for a wrong name, code or password, or for someone who can't
 sign in by name (they have neither a password nor a PIN: pick them from
@@ -254,6 +280,30 @@ Answers 401 when the sign-in has ended.
 | `user` | object or null | Who it is; null while signing in is off |
 | `user.name` | string | Their name, now |
 | `user.role` | string | `admin` or `user` |
+| `user.pin` | boolean | Whether they have a passcode (from 1.28.0) |
+
+## POST /api/internal/pin
+
+Asked with the app's token (from 1.28.0): the person signed in chooses their
+own passcode, `{"pin": "1234"}` (exactly 4 digits, each 0 to 9), or none,
+`{"pin": null}` (any passcode they have is removed, and they aren't asked
+again, on any device). Their sign-in says it's them, so a new passcode needs
+nothing more, even in place of one they have. The access log says "Tia set
+a passcode in StationPlay for Android on Tia's phone", or "Tia chose no
+passcode in ...".
+
+| Field | Type | What it is |
+|---|---|---|
+| `pin` | boolean | Whether they have a passcode now |
+
+Answers 400 for a passcode that isn't 4 digits. Answers 403, with the
+sentence to show, for an Admin removing theirs (an Admin needs a passcode,
+or their password on a device others use too), for someone without a
+password removing theirs (it's how they sign in), and for someone with
+neither a password nor a passcode, such as "Kids" (only an Admin gives them
+one); and for a browser's sign-in, as this is for the apps. 400 while
+signing in is off. Wrong passcodes tried lately still count after a new one
+is chosen: 5 within 15 minutes still means a wait.
 
 ## POST /api/internal/sign-out
 

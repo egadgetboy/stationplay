@@ -133,8 +133,9 @@ hidden.
   so deciding whether a user sees a station is a few comparisons.
 - **`levels`**: name, movie age, TV age, unrated shown or not, libraries
   (all, or a list).
-- **`users`** gains: level, PIN (a hash, or none), and Show on (see below).
-  A User may have no password: they use only the pickers.
+- **`users`** gains: level, PIN (a hash, or none), whether they chose to
+  have no PIN, and Show on (see below). A User may have no password: they
+  use only the pickers.
 - **`user_stations`**: a station allowed or blocked for a user.
 - **`linked_devices`**, **`device_people`** and **`invites`**: the linked
   devices (by a hash of each one's key, with who linked each, by id and by
@@ -200,13 +201,39 @@ Safety rules:
 - Away from home, picking someone a device doesn't list there is refused,
   as for someone not on it at all.
 
+### A passcode after the first sign-in
+
+From 1.28.0, once someone has signed in with their password or an invite
+code, later sign-ins are open, or locked with a 4-digit passcode (the apps'
+word for a PIN) if they choose. The first time they sign in on a device that
+way (in an app, by name, or with a code entered on StationPlay's page),
+the app asks them to choose a passcode, or No passcode, unless they have one
+or already said they want none. Either answer holds on every device, and
+they can change it in the app's Options. A household's adults, teens, kids
+and little kids can each have one or not.
+
+- The sign-in they make it with says it's them, so choosing a new passcode
+  needs nothing more.
+- An Admin who has one keeps it: an Admin needs a passcode, or their
+  password on a device others use too. (An Admin with none who chooses No
+  passcode gives their password there, as before.)
+- Someone without a password keeps theirs: it's how they sign in.
+- Someone with neither (a "Kids" user) is never asked: they never sign in
+  by name, and only an Admin gives them a passcode.
+- Wrong passcodes still count after a new one is chosen. An Admin still
+  sets or removes anyone's PIN on the Access tab.
+- The access log says "<name> set a passcode" or "<name> chose no
+  passcode", and in which app.
+
 ## The addresses
 
 The apps' own (`docs/internal-api.md`): `"picker": true` on signing in or
 asking for a code links the device and returns its `deviceKey`;
 `GET /api/internal/picker`, `POST /api/internal/picker/choose`,
 `POST /api/internal/picker/sign-in` and `POST /api/internal/picker/remove`
-are asked with the key, in the `StationPlay-Device` header. The Access
+are asked with the key, in the `StationPlay-Device` header. Signing in
+answers `askPin`, and `POST /api/internal/pin` sets someone's own passcode
+(1.28.0). The Access
 tab's: `/api/access/viewing`, `/api/access/levels`,
 `/api/access/users/{id}/viewing` and `/stations`, `/api/access/devices`,
 `/api/access/users/{id}/picker` and `/invite`.

@@ -473,3 +473,146 @@ def test_everyone_on_all_devices_moves_to_devices_at_home_once(tmp_path):
     assert log.count(said) == 1
     # Once: started again, nothing more moves, or is said.
     assert started()[2].count(said) == 1
+
+
+def test_a_passcode_right_after_the_first_sign_in(app):
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        tia = admin.post(
+            "/api/access/users", json={"name": "Tia", "password": "teen password", "role": "user"}
+        ).json()
+        tv = TestClient(app)
+        signed = tv.post("/api/internal/sign-in", json={**ADA, **TV}).json()
+        key = signed["deviceKey"]
+        assert signed["askPin"] is True  # (Ada has no PIN, and hasn't said she wants none)
+
+        # Tia signs in on the TV with her password: asked, she chooses one.
+        tia_in = tv.post(
+            "/api/internal/picker/sign-in",
+            json={"name": "Tia", "password": "teen password"},
+            headers=device(key),
+        ).json()
+        assert tia_in["askPin"] is True
+        hers = bearer(tia_in["token"])
+        chose = tv.post("/api/internal/pin", json={"pin": "1234"}, headers=hers)
+        assert chose.status_code == 200 and chose.json() == {"pin": True}
+        assert tv.get("/api/internal/me", headers=hers).json()["user"]["pin"] is True
+        # Picking her asks for it now, on this device and every other.
+        no_pin = tv.post("/api/internal/picker/choose", json={"id": tia["id"]}, headers=device(key))
+        assert no_pin.status_code == 403
+        picked = tv.post(
+            "/api/internal/picker/choose",
+            json={"id": tia["id"], "pin": "1234"},
+            headers=device(key),
+        )
+        assert picked.status_code == 200
+        hers = bearer(picked.json()["token"])
+        # Signing in again elsewhere doesn't ask: she has one.
+        phone = tv.post(
+            "/api/internal/sign-in", json={"name": "Tia", "password": "teen password"}
+        ).json()
+        assert phone["askPin"] is False
+
+        # No passcode: removed, and not asked again, on any device.
+        none = tv.post("/api/internal/pin", json={"pin": None}, headers=hers)
+        assert none.status_code == 200 and none.json() == {"pin": False}
+        again = tv.post(
+            "/api/internal/sign-in", json={"name": "Tia", "password": "teen password"}
+        ).json()
+        assert again["askPin"] is False
+        picked = tv.post("/api/internal/picker/choose", json={"id": tia["id"]}, headers=device(key))
+        assert picked.status_code == 200
+        hers = bearer(picked.json()["token"])
+        log = admin.get("/api/logs?access_log=true").json()["text"]
+        assert "Tia set a passcode in StationPlay for Roku on Living Room Roku" in log
+        assert "Tia chose no passcode in StationPlay for Roku on Living Room Roku" in log
+
+        # Exactly 4 digits.
+        for wrong in ("123", "12345", "abcd", "12 4", "١٢٣٤", ""):
+            refused = tv.post("/api/internal/pin", json={"pin": wrong}, headers=hers)
+            assert refused.status_code == 400, wrong
+        assert tv.post("/api/internal/pin", json={}, headers=hers).status_code == 400
+        # Only from an app: not a browser's sign-in.
+        assert admin.post("/api/internal/pin", json={"pin": "1111"}).status_code == 403
+
+
+def test_an_admin_keeps_their_passcode_and_kids_get_one_from_an_admin(app):
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        kids = admin.post("/api/access/users", json={"name": "Kids", "role": "user"}).json()
+        lu = admin.post(
+            "/api/access/users", json={"name": "Lu", "role": "user", "pin": "1111"}
+        ).json()
+        admin.post(
+            "/api/access/users", json={"name": "Cy", "password": "cy password", "role": "admin"}
+        )
+        tv = TestClient(app)
+        signed = tv.post("/api/internal/sign-in", json={**ADA, **TV}).json()
+        key, ada = signed["deviceKey"], bearer(signed["token"])
+
+        # An Admin with a passcode can't remove it in an app; a new one is fine.
+        assert tv.post("/api/internal/pin", json={"pin": "4321"}, headers=ada).status_code == 200
+        kept = tv.post("/api/internal/pin", json={"pin": None}, headers=ada)
+        assert kept.status_code == 403 and kept.json()["detail"] == devices.ADMIN_KEEPS_PIN
+        assert tv.get("/api/internal/me", headers=ada).json()["user"]["pin"] is True
+        assert tv.post("/api/internal/pin", json={"pin": "8642"}, headers=ada).status_code == 200
+        # An Admin without one may choose none: they give their password on a
+        # device others use too, as before.
+        cy = tv.post("/api/internal/sign-in", json={"name": "Cy", "password": "cy password"})
+        assert cy.json()["askPin"] is True
+        cy_none = tv.post(
+            "/api/internal/pin", json={"pin": None}, headers=bearer(cy.json()["token"])
+        )
+        assert cy_none.status_code == 200
+        assert (
+            tv.post("/api/internal/sign-in", json={"name": "Cy", "password": "cy password"})
+            .json()["askPin"] is False
+        )  # fmt: skip
+
+        # Kids: picked by anyone at home, so only an Admin gives them one.
+        picked = tv.post(
+            "/api/internal/picker/choose", json={"id": kids["id"]}, headers=device(key)
+        )
+        as_kids = bearer(picked.json()["token"])
+        for pin in ("1357", None):
+            refused = tv.post("/api/internal/pin", json={"pin": pin}, headers=as_kids)
+            assert refused.status_code == 403 and refused.json()["detail"] == devices.NO_SECRET
+        # Lu has a PIN and no password: it's how she signs in, so she keeps one.
+        code = admin.post(f"/api/access/users/{lu['id']}/invite").json()["code"]
+        lu_in = tv.post(
+            "/api/internal/picker/sign-in", json={"name": "Lu", "code": code}, headers=device(key)
+        )
+        assert lu_in.status_code == 200 and lu_in.json()["askPin"] is False
+        as_lu = bearer(lu_in.json()["token"])
+        refused = tv.post("/api/internal/pin", json={"pin": None}, headers=as_lu)
+        assert refused.status_code == 403 and refused.json()["detail"] == devices.PIN_ONLY
+        assert tv.post("/api/internal/pin", json={"pin": "2222"}, headers=as_lu).status_code == 200
+        # An Admin still sets and removes anyone's PIN on the Access tab.
+        users = {u["name"]: u for u in admin.get("/api/access/users").json()}
+        removed = admin.put(f"/api/access/users/{users['Ada']['id']}/picker", json={"pin": ""})
+        assert removed.status_code == 200 and removed.json()["pin"] is False
+
+
+def test_a_new_passcode_doesnt_end_the_wait_after_wrong_ones(app):
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        tia = admin.post(
+            "/api/access/users",
+            json={"name": "Tia", "password": "teen password", "role": "user", "pin": "4321"},
+        ).json()
+        tv = TestClient(app)
+        key = tv.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]
+        phone = tv.post("/api/internal/sign-in", json={"name": "Tia", "password": "teen password"})
+        for _ in range(devices.PIN_TRIES):
+            tv.post(
+                "/api/internal/picker/choose", json={"id": tia["id"], "pin": "0000"},
+                headers=device(key),
+            )  # fmt: skip
+        hers = bearer(phone.json()["token"])
+        assert tv.post("/api/internal/pin", json={"pin": "5678"}, headers=hers).status_code == 200
+        waits = tv.post(
+            "/api/internal/picker/choose",
+            json={"id": tia["id"], "pin": "5678"},
+            headers=device(key),
+        )
+        assert waits.status_code == 429

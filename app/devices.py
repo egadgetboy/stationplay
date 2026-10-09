@@ -80,6 +80,20 @@ ADMIN_PASSWORD = (
 WRONG_SIGN_IN = (
     "That name, code or password isn't right. If you should have access here, ask an Admin."
 )
+# Someone's own PIN, in an app (which calls it a passcode): see set_own_pin.
+PIN_DIGITS = "A passcode is 4 digits"
+ADMIN_KEEPS_PIN = (
+    "An Admin needs a passcode, or their password on a device others use too, so an Admin "
+    "can't remove their passcode here. Choose a new one instead."
+)
+PIN_ONLY = (
+    "Your passcode is how you sign in, as you don't have a password, so you can't remove it "
+    "here. An Admin can, on StationPlay's Access tab."
+)
+NO_SECRET = (
+    "You don't have a password or a passcode, so only an Admin can give you a passcode, on "
+    "StationPlay's Access tab."
+)
 
 
 class Refused(Exception):
@@ -364,6 +378,42 @@ class Devices:
             )
         self.note_signed_in(device, user)
         return user, self.access.start_session(user, device.name, device.id)
+
+    # Someone's own PIN, in an app ------------------------------------------------------------
+
+    def asks_for_pin(self, user: User) -> bool:
+        """Whether an app asks someone who just signed in on it (with their
+        password or an invite code) to choose a PIN: they have none, and
+        haven't said they want none."""
+        now = self.db.user(user.id) or user
+        return not now.has_pin and not now.no_pin
+
+    async def set_own_pin(self, user: User, pin: str | None) -> bool:
+        """Someone sets their own PIN, in an app they're signed in on: 4
+        digits, or None for none (any they have is removed, and they're not
+        asked for one again, on any device). Whether they have one now.
+        Refused.
+
+        Their sign-in says it's them (it was made with their password, an
+        invite code or their PIN), so a new PIN needs nothing more. But an
+        Admin keeps theirs (on a device others use too, an Admin needs a PIN
+        or their password), and so does someone without a password, whose
+        PIN is how they sign in; and someone with neither (whom anyone at
+        home may pick, such as "Kids") gets one only from an Admin. Wrong
+        PINs for them lately still count against the new one."""
+        if pin is not None and not PIN.fullmatch(pin):
+            raise Refused(PIN_DIGITS, 400)
+        hashed = await asyncio.to_thread(hash_password, pin) if pin is not None else ""
+        now = self.db.user(user.id) or user
+        password = bool(self.db.password_hash(user.id))
+        if not password and not now.has_pin:
+            raise Refused(NO_SECRET)
+        if pin is None and now.role == ADMIN and now.has_pin:
+            raise Refused(ADMIN_KEEPS_PIN)
+        if pin is None and not password:
+            raise Refused(PIN_ONLY)
+        self.db.set_pin(user.id, hashed, no_pin=pin is None)
+        return pin is not None
 
     # An Admin's choices for someone ------------------------------------------------------
 

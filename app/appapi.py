@@ -45,7 +45,7 @@ log = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from .db import Channel, Item, User
+    from .db import Channel, Item, SignedIn, User
     from .main import AppContext
     from .schedule import Slot, StationSchedule
 
@@ -123,6 +123,10 @@ class PickerSignIn(BaseModel):
 
 class LinkCheck(BaseModel):
     poll: str = Field(max_length=100)
+
+
+class PinChange(BaseModel):
+    pin: str | None = Field(max_length=10)  # (4 digits; null: no passcode)
 
 
 class SpeedTested(BaseModel):
@@ -317,6 +321,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "device": device,
             "deviceKey": new_key,
             "user": {"name": user.name, "role": user.role},
+            "askPin": ctx.devices.asks_for_pin(user),
         }
 
     def linked_device(key: str | None, label: str, user: User) -> tuple[devices.Device, str | None]:
@@ -365,15 +370,46 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "token": pending.token,
             "deviceKey": pending.new_key,
             "user": {"name": user.name, "role": user.role},
+            "askPin": ctx.devices.asks_for_pin(user),
         }
 
     @app.get("/api/internal/me")
     async def me(request: Request):
         """Who this app is signed in as now (for its Options): their name, as
-        an Admin may have changed it since they signed in, and role. Null
-        while signing in is off."""
+        an Admin may have changed it since they signed in, their role, and
+        whether they have a PIN. Null while signing in is off."""
         user = access.signed_in(request)
-        return {"user": {"name": user.name, "role": user.role} if user else None}
+        if user is None:
+            return {"user": None}
+        return {"user": {"name": user.name, "role": user.role, "pin": user.has_pin}}
+
+    def own_app(request: Request) -> tuple[User, SignedIn]:
+        """Who an app is signed in as, and its sign-in, for what someone
+        changes of their own in it. Not a browser's sign-in: StationPlay's
+        page has its own."""
+        if not ctx.access.required:
+            raise HTTPException(400, "Signing in to StationPlay is off, so there's no need to")
+        user = access.signed_in(request)
+        token = access.bearer(request.scope)
+        found = ctx.db.session_user(access.session_hash(token), 0) if token and user else None
+        if user is None or found is None or not found.app:
+            raise HTTPException(403, "Only StationPlay's apps can do that")
+        return user, found
+
+    @app.post("/api/internal/pin")
+    async def own_pin(body: PinChange, request: Request):
+        """Someone chooses their own PIN (a passcode, as the apps say), or
+        says they want none (see devices.set_own_pin): when an app asks,
+        after they sign in with their password or an invite code (`askPin`),
+        or in its Options."""
+        user, signed = own_app(request)
+        try:
+            has = await ctx.devices.set_own_pin(user, body.pin)
+        except devices.Refused as e:
+            raise HTTPException(e.status, str(e)) from None
+        chose = "set a passcode" if has else "chose no passcode"
+        ctx.access.record(logging.INFO, f"{user.name} {chose} in {in_sentence(signed.app)}")
+        return {"pin": has}
 
     @app.post("/api/internal/sign-out")
     async def sign_out(request: Request):
@@ -460,7 +496,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             f"{user.name} ({access.role_name(user.role)}) signed in on {device.name} "
             f"from {access.where(request.scope)}",
         )
-        return {"token": token, "user": {"name": user.name, "role": user.role}}
+        return {
+            "token": token,
+            "user": {"name": user.name, "role": user.role},
+            "askPin": ctx.devices.asks_for_pin(user),
+        }
 
     @app.post("/api/internal/picker/remove")
     async def picker_remove(request: Request):

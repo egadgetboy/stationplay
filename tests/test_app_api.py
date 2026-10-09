@@ -214,8 +214,20 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         assert not phone.cookies  # (apps get a token, not a cookie)
         sam = bearer(signed["token"])
         me = check.answer(phone.get("/api/internal/me", headers=sam), "GET /api/internal/me")
-        assert me == {"user": {"name": "Sam", "role": "user"}}
+        assert me == {"user": {"name": "Sam", "role": "user", "pin": False}}
         check.answer(phone.get("/api/internal/me"), "GET /api/internal/me", 401)
+        # A passcode, as the app asks after signing in (see test_picker.py).
+        assert signed["askPin"] is True
+        pin = "POST /api/internal/pin"
+        check.answer(phone.post("/api/internal/pin", headers=sam, json={"pin": "12"}), pin, 400)
+        check.answer(phone.post("/api/internal/pin", json={"pin": "2468"}), pin, 401)
+        chose = check.answer(
+            phone.post("/api/internal/pin", headers=sam, json={"pin": "2468"}), pin
+        )
+        assert chose == {"pin": True}
+        assert phone.get("/api/internal/me", headers=sam).json()["user"]["pin"] is True
+        none = check.answer(phone.post("/api/internal/pin", headers=sam, json={"pin": None}), pin)
+        assert none == {"pin": False}
         listed = check.answer(phone.get("/api/v1/stations", headers=sam), "GET /api/v1/stations")
         assert [s["number"] for s in listed["stations"]] == [5]
         assert phone.get("/api/logs", headers=sam).status_code == 403  # a User, not an Admin
@@ -418,7 +430,8 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
 
         # A device that has signed in before keeps its device token.
         again = phone.post("/api/internal/sign-in", json={**SAM, "device": signed["device"]})
-        assert check.answer(again, "POST /api/internal/sign-in")["device"] is None
+        again_said = check.answer(again, "POST /api/internal/sign-in")
+        assert again_said["device"] is None and again_said["askPin"] is False  # (he chose none)
         out = check.answer(
             phone.post("/api/internal/sign-out", headers=sam), "POST /api/internal/sign-out"
         )
@@ -461,7 +474,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
             tv.post("/api/internal/link/check", json={"poll": started["poll"]}),
             "POST /api/internal/link/check",
         )
-        assert linked["user"] == {"name": "Pat", "role": "admin"}
+        assert linked["user"] == {"name": "Pat", "role": "admin"} and linked["askPin"] is True
         assert tv.get("/api/v1/stations", headers=bearer(linked["token"])).status_code == 200
         # (Handed over once.)
         gone = tv.post("/api/internal/link/check", json={"poll": started["poll"]})

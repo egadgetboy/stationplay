@@ -483,6 +483,7 @@ class User:
     has_pin: bool = False
     show_on: str = ""  # the pickers they're on (see devices); "": the server's default
     has_password: bool = True  # (a User may have none: they use only the apps' pickers)
+    no_pin: bool = False  # they chose to have no PIN, so they're not asked for one again
 
 
 @dataclass(frozen=True)
@@ -697,6 +698,9 @@ _ADDED_COLUMNS = (
     # id (NULL: no one there now). A device linked before then is taken as
     # linked by the user with the name it kept, if there is one.
     ("linked_devices", "linked_by_id", "INTEGER"),
+    # Added in 1.28: whether someone chose to have no PIN, when an app asked
+    # them for one (see devices.py), so they're not asked again.
+    ("users", "no_pin", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -1866,9 +1870,13 @@ class Database:
                 [(user_id, d) for d in device_ids],
             )
 
-    def set_pin(self, user_id: int, pin_hash: str) -> None:
+    def set_pin(self, user_id: int, pin_hash: str, no_pin: bool = False) -> None:
+        """Someone's PIN ('' for none), and whether that's what they chose
+        (`no_pin`: they're not asked for one again)."""
         with self._lock, self._conn:
-            self._conn.execute("UPDATE users SET pin = ? WHERE id = ?", (pin_hash, user_id))
+            self._conn.execute(
+                "UPDATE users SET pin = ?, no_pin = ? WHERE id = ?", (pin_hash, no_pin, user_id)
+            )
 
     def pin_hash(self, user_id: int) -> str:
         with self._lock:
@@ -2271,7 +2279,7 @@ def _user(row: sqlite3.Row) -> User:
     return User(
         row["id"], row["name"], row["role"], row["created_ms"], row["signed_in_ms"],
         row["max_stations"], row["level_id"], bool(row["pin"]), row["show_on"],
-        bool(row["password"]),
+        bool(row["password"]), bool(row["no_pin"]),
     )  # fmt: skip
 
 
