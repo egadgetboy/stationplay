@@ -235,6 +235,76 @@ def test_an_admin_alone_on_a_device_needs_no_password_to_pick_themselves(app):
         assert picked.status_code == 200
 
 
+def test_an_admin_on_someone_elses_device_still_needs_their_password(app):
+    """A device another user linked and uses is not the Admin's own, even
+    once that user takes themselves off its list: the Admin still needs their
+    password to pick themselves there, so no one links a TV and taps the
+    Admin to become one."""
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        sam = admin.post(
+            "/api/access/users", json={"name": "Sam", "password": "battery staple", "role": "user"}
+        )
+        assert sam.status_code == 201, sam.text
+        tv = TestClient(app)
+        signed = tv.post(
+            "/api/internal/sign-in",
+            json={"name": "Sam", "password": "battery staple", "picker": True},
+        ).json()
+        key = signed["deviceKey"]
+        # Sam takes himself off, leaving the Admin alone on the picker.
+        tv.post("/api/internal/picker/remove", headers={**device(key), **bearer(signed["token"])})
+        [ada] = tv.get("/api/internal/picker", headers=device(key)).json()["people"]
+        assert ada["name"] == "Ada"
+        refused = tv.post(
+            "/api/internal/picker/choose", json={"id": ada["id"]}, headers=device(key)
+        )
+        assert refused.status_code == 403 and "password" in refused.json()["detail"]
+        with_password = tv.post(
+            "/api/internal/picker/choose",
+            json={"id": ada["id"], "password": ADA["password"]},
+            headers=device(key),
+        )
+        assert with_password.status_code == 200
+
+
+def test_pins_cant_be_brute_forced_with_many_guesses_at_once(app):
+    """Many PIN guesses sent together can't slip past the five-tries limit:
+    each counts as wrong until it's found right, so most are turned away."""
+    import asyncio
+
+    import httpx
+
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        tia = admin.post(
+            "/api/access/users",
+            json={"name": "Tia", "password": "teen password", "role": "user", "pin": "4321"},
+        ).json()
+        tv = TestClient(app)
+        key = tv.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]
+
+        async def guesses() -> list[int]:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://sp") as c:
+
+                async def guess(pin: str):
+                    return await c.post(
+                        "/api/internal/picker/choose",
+                        json={"id": tia["id"], "pin": pin},
+                        headers=device(key),
+                    )
+
+                # Every wrong PIN but the right one, all at once.
+                pins = [f"{n:04d}" for n in range(4300, 4400) if n != 4321]
+                return [r.status_code for r in await asyncio.gather(*(guess(p) for p in pins))]
+
+        codes = admin.portal.call(guesses)
+        # At most five were ever checked; the rest were told to wait.
+        assert codes.count(403) <= devices.PIN_TRIES
+        assert 429 in codes and 200 not in codes
+
+
 def test_a_sign_in_from_a_picker_lasts_a_day_unused(app):
     ctx = app.state.ctx
     with TestClient(app) as admin:

@@ -209,13 +209,25 @@ class Devices:
             raise Refused("That person isn't on this device's list", 404)
         if user.has_pin:
             await self._check_pin(user, pin or "")
-        elif user.role == ADMIN and len(self.people(device)) > 1:
+        elif user.role == ADMIN and self._shared(device, user, here):
             right = password and await self.access.check_password(
                 user.name, password, address, public=public, known=True
             )
             if not right:
                 raise Refused(ADMIN_PASSWORD)
         return user, self.access.start_session(user, device.name, device.id)
+
+    def _shared(self, device: Device, user: User, here: dict[int, str]) -> bool:
+        """Whether a device is one others use too, for an Admin picking
+        themselves on it: anyone else on its list, or who has been (someone
+        who took themselves off it still has it), or someone else linked it.
+        Only on a device of their own may an Admin without a PIN pick
+        themselves without their password."""
+        return (
+            len(self.people(device)) > 1
+            or any(user_id != user.id for user_id in here)
+            or device.linked_by != user.name
+        )
 
     async def _check_pin(self, user: User, pin: str) -> None:
         wrong = self._wrong.setdefault(user.id, deque())
@@ -229,11 +241,14 @@ class Devices:
                 f"{'' if minutes == 1 else 's'}.",
                 429,
             )
+        # Each try counts as wrong until it's found right, so many sent at
+        # once can't get past the limit (as with passwords: see access.py).
+        wrong.append(now)
+        tries = len(wrong)
         stored = self.db.pin_hash(user.id)
         right = bool(PIN.fullmatch(pin)) and await asyncio.to_thread(password_matches, pin, stored)
         if not right:
-            wrong.append(now)
-            if len(wrong) >= PIN_TRIES:
+            if tries == PIN_TRIES:
                 self.access.record(
                     logging.WARNING, f"Too many wrong PINs for {user.name}: they wait 15 minutes"
                 )
