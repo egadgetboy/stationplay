@@ -202,8 +202,11 @@
   }
   .now { margin-top: 4px; }
   .now .label { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); font-weight: 600; }
-  .bar { height: 4px; background: var(--line); border-radius: 4px; margin: 6px 0 4px; overflow: hidden; max-width: 420px; }
-  .bar > span { display: block; height: 100%; background: var(--accent); }
+  /* How far into its program a station is: a thin line, and a mark where it is now
+     (in the text color, so it stands out from the teal). */
+  .bar { height: 2px; background: var(--line); border-radius: 1px; margin: 9px 0 7px; max-width: 420px; }
+  .bar > span { position: relative; display: block; height: 100%; background: var(--accent); border-radius: 1px; }
+  .bar > span.at::after { content: ''; position: absolute; right: -1px; top: -4px; width: 2px; height: 10px; border-radius: 1px; background: var(--ink); }
   .channel .desc { color: var(--ink-2); font-size: 14px; margin: 2px 0 10px; max-width: 70ch; }
   /* A station's details, rolled up under a line that sums them up. */
   .more { margin-top: 8px; font-size: 13px; }
@@ -2558,7 +2561,7 @@ function renderChannels() {
         n ? h('div', { class: 'now' },
           h('div', { class: 'label' }, n.special ? `On now · ${n.special}` : 'On now'),
           h('div', {}, epLabel(n)),
-          h('div', { class: 'bar' }, h('span', { style: `width:${pct.toFixed(1)}%` }))) : null,
+          h('div', { class: 'bar' }, h('span', { class: pct > 0 ? 'at' : '', style: `width:${pct.toFixed(1)}%` }))) : null,
         stationDetails(ch, check, now),
         h('div', { class: 'actions' },
           h('button', { class: 'btn', onclick: () => openGuide(ch) }, icon('<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M2 7h12M6 3v10"/>'), 'Guide'),
