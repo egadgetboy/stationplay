@@ -819,6 +819,7 @@ When StationPlay is first installed, its page is open to anyone on your network.
 - Stations made before sign-in was turned on, or by a removed user, can be changed only by Admins.
 - An Admin can change roles and set new passwords on the **Access** tab. Your name at the top of the page lets you change your own password or sign out. A new password signs that person out everywhere else.
 - A sign-in lasts 30 days after it was last used. After 5 wrong passwords from one address within 15 minutes, that address has to wait. Passwords are stored only as salted hashes.
+- StationPlay's page signs you out after an hour without activity. StationPlay's apps stay signed in.
 - Plex and IPTV apps never need a password, just like a real HDHomeRun: the tuner, guide, streams, logos and playlist stay open on your network.
 
 ### Viewing Levels

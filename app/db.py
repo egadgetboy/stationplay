@@ -457,6 +457,17 @@ class User:
     has_password: bool = True  # (a User may have none: they use only the apps' pickers)
 
 
+@dataclass(frozen=True)
+class SignedIn:
+    """A sign-in: whose it is, and how it's been used."""
+
+    user: User
+    seen_ms: int  # when it was last seen
+    device_id: int | None  # the linked device it's on, from its picker (see devices.py)
+    app: str  # which of StationPlay's apps; "" for a browser
+    active_ms: int  # when someone last used it, in a browser (see access.IDLE_SIGN_OUT_S)
+
+
 @dataclass
 class ScanRecord:
     """What checking one program's file found."""
@@ -650,6 +661,10 @@ _ADDED_COLUMNS = (
     ("users", "show_on", "TEXT NOT NULL DEFAULT ''"),
     # ...and which linked device a sign-in was made on, from its picker.
     ("sessions", "device_id", "INTEGER REFERENCES linked_devices(id) ON DELETE CASCADE"),
+    # Added in 1.26: when someone last used a browser that's signed in (see
+    # access.IDLE_SIGN_OUT_S). A browser signed in before then is taken as
+    # last used when it was last seen.
+    ("sessions", "active_ms", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -836,6 +851,8 @@ class Database:
             if column not in have:
                 with self._conn:
                     self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                    if (table, column) == ("sessions", "active_ms"):
+                        self._conn.execute("UPDATE sessions SET active_ms = seen_ms")
         old = self._conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'channel_items'"
         ).fetchone()
@@ -1608,9 +1625,9 @@ class Database:
             if device_id is not None:
                 self._conn.execute("DELETE FROM sessions WHERE device_id = ?", (device_id,))
             self._conn.execute(
-                "INSERT INTO sessions (token_hash, user_id, created_ms, seen_ms, app, device_id) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (token_hash, user_id, now, now, app, device_id),
+                "INSERT INTO sessions (token_hash, user_id, created_ms, seen_ms, app, device_id, "
+                "active_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (token_hash, user_id, now, now, app, device_id, now),
             )
             self._conn.execute(
                 "DELETE FROM sessions WHERE user_id = ? AND token_hash NOT IN ("
@@ -1620,21 +1637,31 @@ class Database:
             )
             self._conn.execute("UPDATE users SET signed_in_ms = ? WHERE id = ?", (now, user_id))
 
-    def session_user(self, token_hash: str, since_ms: int) -> tuple[User, int, int | None] | None:
+    def session_user(self, token_hash: str, since_ms: int) -> SignedIn | None:
         """Who's signed in with this token, if they were seen since `since_ms`,
-        when they were last seen, and the linked device it's on (if any)."""
+        and how (see SignedIn)."""
         with self._lock:
             row = self._conn.execute(
-                "SELECT users.*, sessions.seen_ms, sessions.device_id FROM sessions JOIN users "
+                "SELECT users.*, sessions.seen_ms, sessions.device_id, sessions.app, "
+                "sessions.active_ms FROM sessions JOIN users "
                 "ON users.id = sessions.user_id WHERE token_hash = ? AND seen_ms >= ?",
                 (token_hash, since_ms),
             ).fetchone()
-        return (_user(row), row["seen_ms"], row["device_id"]) if row else None
+        if row is None:
+            return None
+        return SignedIn(_user(row), row["seen_ms"], row["device_id"], row["app"], row["active_ms"])
 
     def seen(self, token_hash: str, now: int) -> None:
         with self._lock, self._conn:
             self._conn.execute(
                 "UPDATE sessions SET seen_ms = ? WHERE token_hash = ?", (now, token_hash)
+            )
+
+    def active(self, token_hash: str, now: int) -> None:
+        """Someone used the browser signed in with this token."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE sessions SET active_ms = ? WHERE token_hash = ?", (now, token_hash)
             )
 
     def add_device(self, token_hash: str, user_id: int, now: int, keep: int) -> None:
@@ -1816,9 +1843,11 @@ class Database:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM invites WHERE user_id = ?", (user_id,))
 
-    def end_session(self, token_hash: str) -> None:
+    def end_session(self, token_hash: str) -> bool:
+        """Signs out whoever is signed in with this token: whether anyone was."""
         with self._lock, self._conn:
-            self._conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+            cur = self._conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+        return cur.rowcount > 0
 
     # API tokens (see access.py and api.py) -----------------------------------------
 

@@ -15,10 +15,11 @@ What Plex and IPTV apps use (the tuner, its guide and streams, pictures for
 the guide) stays open on the network, as they can't sign in.
 
 Passwords are kept as scrypt hashes, and a browser is signed in by a random
-token in a cookie that's kept only as a hash. StationPlay's apps sign in the
-same way and send their token in a header instead (Authorization: Bearer;
-see appapi.py). Signing in is logged (who and from where) in the access log,
-which the Logs tab shows.
+token in a cookie that's kept only as a hash, until no one has used it for
+an hour (see IDLE_SIGN_OUT_S). StationPlay's apps sign in the same way, send
+their token in a header instead (Authorization: Bearer; see appapi.py), and
+stay signed in. Signing in is logged (who and from where) in the access
+log, which the Logs tab shows.
 
 Scripts and other apps use StationPlay's API (/api/v1, see api.py) with an
 API token an Admin makes on the Access tab: a Viewer token reads; an Admin
@@ -88,6 +89,17 @@ DEVICE_DAYS = 400
 DEVICES_KEPT = 20
 SESSIONS_KEPT = 20  # browsers signed in as one user at once, at most (the newest)
 SEEN_EVERY_MS = 5 * 60_000  # how often a session's "last seen" is saved
+# A browser (StationPlay's page, for Admins and Users alike) is signed out
+# after this long without anyone using it: clicking, typing, scrolling or
+# touching, which the page tells StationPlay about (POST /api/access/active),
+# or a change it sends. The page's own polling only reads, so it doesn't
+# count. StationPlay's apps stay signed in. It's ended on its next request
+# (when it was last used is kept with the sign-in, so a restart doesn't
+# bring it back), and its later requests are told why.
+IDLE_SIGN_OUT_S = 3600
+ACTIVE_EVERY_MS = 10_000  # how often a browser's last use is saved, at most
+IDLE_SIGNED_OUT = "You were signed out after an hour without activity."
+IDLED_KEPT = 1000  # browsers signed out that way that are told why, at most (the newest)
 PICKED_MS = 24 * 3600_000  # a sign-in from a linked device's picker lasts this long unused
 PASSWORD_MIN, PASSWORD_MAX = 8, 200
 NAME = re.compile(r"[\w .@-]{1,40}")
@@ -220,7 +232,7 @@ FOR_USERS = {
         "/api/logos/plex", "/api/bumpers", "/api/smart/split", "/api/smart/stations",
         "/api/internal/sign-out", "/api/internal/speed-test", "/api/access/link",
         "/api/internal/play", "/api/internal/progress", "/api/internal/report",
-        "/api/internal/problem", "/api/internal/picker/remove",
+        "/api/internal/problem", "/api/internal/picker/remove", "/api/access/active",
     ),
     "PUT": ("/api/channels/",),
     "DELETE": ("/api/channels/",),
@@ -241,6 +253,7 @@ FOR_WATCHERS = {
         "/api/access/me/password", "/api/internal/sign-out", "/api/internal/speed-test",
         "/api/access/link", "/api/internal/play", "/api/internal/progress",
         "/api/internal/report", "/api/internal/problem", "/api/internal/picker/remove",
+        "/api/access/active",
     ),
 }  # fmt: skip
 WATCHES_ONLY = "Your Viewing Level lets you watch, but not make or change stations"
@@ -423,6 +436,10 @@ class Access:
     # (time.monotonic(); None: not since StationPlay started), as proof that
     # apps reach StationPlay from outside (see reach.py). In memory only.
     app_outside_at: float | None = field(init=False, default=None)
+    # Browsers signed out after IDLE_SIGN_OUT_S (their tokens' hashes), so
+    # each request from one can say why, not only the one that ended it
+    # (often the page itself, before its script asks). In memory only.
+    _idled: dict[str, None] = field(init=False, default_factory=dict)
 
     def __post_init__(self) -> None:
         self._users_exist = self.db.has_users()
@@ -677,23 +694,52 @@ class Access:
 
     def session_user(self, token: str) -> User | None:
         """Who a browser is signed in as, if anyone (signed in within the
-        last SESSION_DAYS)."""
+        last SESSION_DAYS, and used within IDLE_SIGN_OUT_S; an app's sign-in
+        needs only the first)."""
         return self.session_user_hashed(session_hash(token))
 
     def session_user_hashed(self, hashed: str) -> User | None:
         """session_user, for a session known by its token's hash (an API
         token's too)."""
+        return self.session_of(hashed)[0]
+
+    def session_of(self, hashed: str, *, active: bool = False) -> tuple[User | None, bool]:
+        """session_user_hashed, and whether the sign-in ended because no one
+        used its browser for IDLE_SIGN_OUT_S (the access log says so, once).
+        `active`: someone is using it now."""
         now = _now()
         found = self.db.session_user(hashed, now - SESSION_DAYS * 86_400_000)
         if found is None:
+            if hashed in self._idled:
+                return None, True
             token = self._api_token_hashed(hashed)
-            return token.as_user() if token else None
-        user, seen_ms, device_id = found
-        if device_id is not None and now - seen_ms > PICKED_MS:
-            return None  # (a sign-in from a device's picker lasts a day unused)
-        if now - seen_ms > SEEN_EVERY_MS:
+            return (token.as_user() if token else None), False
+        user = found.user
+        if found.device_id is not None and now - found.seen_ms > PICKED_MS:
+            return None, False  # (a sign-in from a device's picker lasts a day unused)
+        if not found.app:  # (a browser's)
+            if now - found.active_ms > IDLE_SIGN_OUT_S * 1000:
+                if self.db.end_session(hashed):
+                    self.record(
+                        logging.INFO, f"{user.name} was signed out after an hour without activity"
+                    )
+                    self._idled[hashed] = None
+                    while len(self._idled) > IDLED_KEPT:
+                        del self._idled[next(iter(self._idled))]
+                return None, True
+            if active and now - found.active_ms >= ACTIVE_EVERY_MS:
+                self.db.active(hashed, now)
+        if now - found.seen_ms > SEEN_EVERY_MS:
             self.db.seen(hashed, now)
-        return user
+        return user, False
+
+    def idle_left_ms(self, token: str | None) -> int | None:
+        """How long until a browser is signed out unless someone uses it
+        (see IDLE_SIGN_OUT_S); None for anything else."""
+        found = self.db.session_user(session_hash(token), 0) if token else None
+        if found is None or found.app:
+            return None
+        return max(0, IDLE_SIGN_OUT_S * 1000 - (_now() - found.active_ms))
 
     def forget_old_sessions(self) -> None:
         self.db.forget_sessions_before(_now() - SESSION_DAYS * 86_400_000)
@@ -917,13 +963,18 @@ class Gate:
         if token and token.startswith(API_TOKEN_PREFIX):
             refused = self._api_token(scope, token)
             return None if path in OPEN else refused
-        user = state["user"] = self.access.session_user(token) if token else None
+        user, idle = None, False
+        if token:
+            # (Anything but reading is someone using StationPlay: see IDLE_SIGN_OUT_S.)
+            active = scope["method"] not in SAFE_METHODS
+            user, idle = self.access.session_of(session_hash(token), active=active)
+        state["user"], state["idle"] = user, idle
         if user is not None and app_token and state["outside"] and over_https(scope):
             self.access.app_came_from_outside()
         if path in OPEN:
             return None
         if user is None:
-            return 401, "Sign in to StationPlay"
+            return 401, IDLE_SIGNED_OUT if idle else "Sign in to StationPlay"
         if user.role != ADMIN and not _for_users(path, scope["method"]):
             return 403, ADMINS_ONLY
         if (
@@ -1169,10 +1220,25 @@ def routes(app: FastAPI, access: Access) -> None:
             # From the internet, it's never open: until there's a user,
             # there's only this to say.
             return {"required": True, "user": None, "notSetUp": NOT_SET_UP}
-        return {
+        said: dict[str, Any] = {
             "required": access.required,
             "user": _user_json(user, access.db.stations_made()) if user else None,
         }
+        # When this browser is signed out unless someone uses it, as
+        # StationPlay's clock says (so a page open in several tabs agrees);
+        # or that it was signed out that way (see IDLE_SIGN_OUT_S).
+        if user and (left := access.idle_left_ms(token)) is not None:
+            said["idleLeftMs"] = left
+        if getattr(request.state, "idle", False):
+            said["idle"] = True
+        return said
+
+    @app.post("/api/access/active")
+    async def active(request: Request):
+        """Someone is using StationPlay's page (see IDLE_SIGN_OUT_S; the Gate
+        has noted it, as it does any change): when this browser is signed
+        out unless it's used again."""
+        return {"idleLeftMs": access.idle_left_ms(request.cookies.get(COOKIE))}
 
     @app.post("/api/access/sign-in")
     async def sign_in(body: SignIn, request: Request, response: Response):

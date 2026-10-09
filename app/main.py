@@ -1367,6 +1367,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             "stationLimits": access.STATION_LIMITS,
             "newUserStations": access.NEW_USER_STATIONS,
             "apiTokenNameMax": access.API_TOKEN_NAME_MAX,
+            "idleSignedOut": access.IDLE_SIGNED_OUT,
         }
         page = page.replace("__ACCESS__", json.dumps(rules))
         page = page.replace("__PASSWORD_MIN__", str(access.PASSWORD_MIN))

@@ -1482,14 +1482,14 @@ async function api(path, opts = {}) {
     ...opts,
     body: opts.raw ?? (opts.body ? JSON.stringify(opts.body) : undefined),
   });
-  // (A wrong password when signing in is a 401 too.)
-  if (res.status === 401 && path !== '/api/access/sign-in') showSignIn();
   if (!res.ok) {
     let msg = res.statusText;
     try {
       const j = await res.json();
       msg = typeof j.detail === 'string' ? j.detail : (j.detail?.[0]?.msg || msg);
     } catch {}
+    // (A wrong password when signing in is a 401 too.)
+    if (res.status === 401 && path !== '/api/access/sign-in') showSignIn(msg === ACCESS.idleSignedOut);
     throw Object.assign(new Error(msg), { status: res.status });
   }
   // (Nothing to say: 204, or a 202 with no body.)
@@ -1499,6 +1499,9 @@ async function api(path, opts = {}) {
 
 let toastTimer;
 function toast(msg, error = false) {
+  // (Not over the sign-in page, which says what's needed: a problem then is
+  // only something the page was doing as it was signed out.)
+  if (error && signedOut()) return;
   const t = $('#toast');
   t.textContent = msg;
   t.className = 'toast' + (error ? ' error' : '');
@@ -5220,6 +5223,7 @@ const aRole = role => role === 'admin' ? 'an Admin' : 'a User';
 const signedOut = () => !$('#signinView').hidden;
 async function loadMe() {
   me = await api('/api/access/me');
+  signOutAt(me.idleLeftMs);
   document.querySelectorAll('.tab.admin').forEach(t => { t.hidden = !isAdmin(); });
   if (!FOR_EVERYONE.includes(currentTab) && !isAdmin()) showTab('stations');
   $('#footSetupWrap').hidden = !isAdmin();
@@ -5227,16 +5231,48 @@ async function loadMe() {
   if (me.user) $('#userPill').textContent = `${me.user.name} · ${roleName(me.user.role)}`;
   renderRoom();
 }
-function showSignIn() {
+// `idle`: signed out after an hour without activity.
+function showSignIn(idle = false) {
   if (signedOut()) return;
   for (const d of document.querySelectorAll('dialog[open]')) d.close();
   $('.wrap').hidden = true;
   $('#signinView').hidden = false;
   $('#signinStatus').textContent = '';
-  // From the internet, before anyone can sign in at all.
-  $('#signinNote').hidden = !me.notSetUp;
-  $('#signinNote').textContent = me.notSetUp || '';
+  // From the internet, before anyone can sign in at all; or why you were signed out.
+  const note = me.notSetUp || (idle ? ACCESS.idleSignedOut : '');
+  $('#signinNote').hidden = !note;
+  $('#signinNote').textContent = note;
   $('#signinName').focus();
+}
+// Signed out after an hour without activity (see IDLE_SIGN_OUT_S in
+// access.py). Using the page (clicking, typing, scrolling or touching) tells
+// StationPlay, at most once a minute; its own polling doesn't count.
+// StationPlay's clock decides, so using StationPlay in another tab counts
+// here too: when the time it last gave comes, the page asks it again (even
+// in a hidden tab, which doesn't poll).
+let idleTimer = null;
+function signOutAt(leftMs) {
+  clearTimeout(idleTimer);
+  if (leftMs != null) idleTimer = setTimeout(checkMe, leftMs + 1000);
+}
+let usedAt = 0;  // when StationPlay was last told
+let usedLater = null;
+function used() {
+  if (!me.user || signedOut() || usedLater) return;
+  const since = Date.now() - usedAt;
+  if (since >= 60000) tellUsed();
+  // (Used again since, not in the same click: it's told again when the minute's up.)
+  else if (since > 1000) usedLater = setTimeout(() => { usedLater = null; tellUsed(); }, 60000 - since);
+}
+function tellUsed() {
+  if (!me.user || signedOut()) return;
+  usedAt = Date.now();
+  api('/api/access/active', { method: 'POST' }).then(got => signOutAt(got.idleLeftMs)).catch(() => {});
+}
+// (Scrolling shows as the wheel, a touch or a key: not as scroll events, as
+// the page scrolls itself too, such as the Logs tab when new lines come.)
+for (const kind of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+  addEventListener(kind, used, { capture: true, passive: true });
 }
 $('#signinForm').addEventListener('submit', async e => {
   e.preventDefault();
@@ -5778,18 +5814,22 @@ function renderWho(users, problem) {
 }
 
 // Boot ---------------------------------------------------------------------------
+// Who's signed in: someone may have changed your role, or signed you out.
+const checkMe = () => {
+  if (signedOut()) return;
+  loadMe().then(() => { if (me.required && !me.user) showSignIn(me.idle); }).catch(() => {});
+};
 // Refreshed every 10 seconds while the page is showing (not in a hidden tab).
 const refresh = () => {
   if (signedOut()) return;
-  // (Someone may have changed your role, or signed you out.)
-  loadMe().then(() => { if (me.required && !me.user) showSignIn(); }).catch(() => {});
+  checkMe();
   loadStatus();
   if (!$('#editor').open) loadChannels();
   if (currentTab === 'stats') loadStats();
 };
 (async () => {
   try { await loadMe(); } catch {}
-  if (me.required && !me.user) { showSignIn(); return; }
+  if (me.required && !me.user) { showSignIn(me.idle); return; }
   const initial = location.hash.slice(1);
   if (TABS.includes(initial) && initial !== 'stations') showTab(initial);
   loadStatus();

@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from app import access, backups
 from app.config import Settings
+from app.db import Database
 from app.main import create_app
 from app.plex import PlexClient
 
@@ -482,3 +483,135 @@ def test_passwords_are_kept_only_as_hashes():
     assert not access.password_matches("correct horsE", stored)
     assert not access.password_matches("correct horse", "garbage")
     assert access.hash_password("correct horse") != stored  # salted
+
+
+# Signed out after an hour without activity (see access.IDLE_SIGN_OUT_S) -------------
+
+HOUR_MS = access.IDLE_SIGN_OUT_S * 1000
+IDLE_LINE = "Pat was signed out after an hour without activity"
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """StationPlay's clock for sign-ins, as a test moves it on: [now, in ms]."""
+    now = [access._now()]
+    monkeypatch.setattr(access, "_now", lambda: now[0])
+    return now
+
+
+def test_a_browser_is_signed_out_after_an_hour_without_activity(clock, pat, app):
+    assert pat.get("/api/access/me").json()["idleLeftMs"] == HOUR_MS
+    # The page's polling only reads: however often, it doesn't count.
+    for minutes in range(5, 60, 5):
+        clock[0] += 5 * 60_000
+        polled = pat.get("/api/access/me").json()
+        assert polled["user"]["name"] == "Pat"
+        assert polled["idleLeftMs"] == HOUR_MS - minutes * 60_000
+        assert pat.get("/api/status").status_code == 200
+        assert pat.get("/api/channels").status_code == 200
+    clock[0] += 5 * 60_000 + 1
+    # Its next request ends it, and the page is told why.
+    assert pat.get("/api/access/me").json() == {"required": True, "user": None, "idle": True}
+    # It's over: nothing brings it back, and each request is told why.
+    for _ in range(3):
+        refused = pat.get("/api/channels")
+        assert refused.status_code == 401 and refused.json()["detail"] == access.IDLE_SIGNED_OUT
+        assert pat.post("/api/access/active").status_code == 401
+        assert pat.get("/api/access/me").json() == {"required": True, "user": None, "idle": True}
+    # The access log says so, once.
+    assert pat.post("/api/access/sign-in", json=PAT).status_code == 200
+    log = pat.get("/api/logs?access_log=true").json()["text"]
+    assert log.count(IDLE_LINE) == 1
+
+
+def test_the_page_is_told_why_even_when_loading_it_ends_the_sign_in(clock, pat, app):
+    clock[0] += HOUR_MS + 1
+    page = pat.get("/")
+    assert page.status_code == 200 and access.IDLE_SIGNED_OUT in page.text
+    assert pat.get("/api/access/me").json() == {"required": True, "user": None, "idle": True}
+    # Another browser that's been used meanwhile isn't.
+    other = browser(app)
+    assert other.post("/api/access/sign-in", json=PAT).status_code == 200
+    assert other.get("/api/access/me").json()["idleLeftMs"] == HOUR_MS
+
+
+def test_using_the_page_keeps_a_browser_signed_in(clock, pat, app):
+    assert pat.post("/api/access/users", json={**SAM, "role": "user"}).status_code == 201
+    sam = browser(app)
+    assert sam.post("/api/access/sign-in", json=SAM).status_code == 200
+    for _ in range(3):
+        clock[0] += 50 * 60_000
+        for someone in (pat, sam):
+            used = someone.post("/api/access/active")
+            assert used.status_code == 200 and used.json() == {"idleLeftMs": HOUR_MS}
+    # A change sent from the page counts too (and its polling still doesn't).
+    clock[0] += 50 * 60_000
+    assert station(pat, 1).status_code == 201
+    assert sam.get("/api/channels").status_code == 200
+    clock[0] += 50 * 60_000
+    assert pat.get("/api/access/me").json()["idleLeftMs"] == 10 * 60_000
+    assert sam.get("/api/channels").status_code == 401  # (Sam only read)
+    # A change that comes too late is turned away, and says why.
+    clock[0] += 10 * 60_000 + 1
+    late = station(pat, 2)
+    assert late.status_code == 401 and late.json()["detail"] == access.IDLE_SIGNED_OUT
+    assert pat.post("/api/access/sign-in", json=PAT).status_code == 200
+    assert [c["number"] for c in pat.get("/api/channels").json()] == [1]  # (not 2)
+    log = pat.get("/api/logs?access_log=true").json()["text"]
+    assert log.count(IDLE_LINE) == 1
+    assert log.count("Sam was signed out after an hour without activity") == 1
+
+
+def test_apps_stay_signed_in_however_long_theyre_unused(clock, pat, app):
+    signed = browser(app).post("/api/internal/sign-in", json={**PAT, "app": "StationPlay for Roku"})
+    the_app = {"Authorization": f"Bearer {signed.json()['token']}"}
+    made = pat.post("/api/api-tokens", json={"name": "Script", "scope": "viewer", "days": None})
+    script = {"Authorization": f"Bearer {made.json()['token']}"}
+    clock[0] += 3 * HOUR_MS
+    assert browser(app).get("/api/v1/stations", headers=the_app).status_code == 200
+    assert browser(app).get("/api/v1/stations", headers=script).status_code == 200
+    assert pat.get("/api/channels").status_code == 401  # (the browser isn't)
+
+
+def test_a_restart_doesnt_bring_back_a_browser_left_unused(clock, pat, app, tmp_path):
+    busy = browser(app)
+    assert busy.post("/api/access/sign-in", json=PAT).status_code == 200
+    clock[0] += 30 * 60_000
+    assert busy.post("/api/access/active").status_code == 200
+    clock[0] += 40 * 60_000
+    again = create_app(
+        Settings(plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "data"),
+        PlexClient("http://plex.test", "token", transport=FakePlex().transport()),
+    )
+    with TestClient(again) as restarted:
+
+        def me(signed_in: TestClient) -> dict:
+            cookie = f"stationplay_session={signed_in.cookies['stationplay_session']}"
+            return restarted.get("/api/access/me", headers={"Cookie": cookie}).json()
+
+        assert me(pat) == {"required": True, "user": None, "idle": True}
+        used = me(busy)
+        assert used["user"]["name"] == "Pat" and used["idleLeftMs"] == 20 * 60_000
+
+
+def test_with_sign_in_off_no_one_is_signed_out(clock, app):
+    with TestClient(app) as client:
+        clock[0] += 3 * HOUR_MS
+        assert client.get("/api/access/me").json() == {"required": False, "user": None}
+        assert station(client, 1).status_code == 201
+        assert client.post("/api/access/active").json() == {"idleLeftMs": None}
+
+
+def test_browsers_signed_in_before_count_as_used_when_last_seen(tmp_path):
+    path = tmp_path / "old.db"
+    old = Database(path)
+    user = old.add_user("Pat", access.hash_password(PAT["password"]), "admin", 1, None)
+    old.add_session("browser", user.id, 1000, 20)
+    old._conn.execute("ALTER TABLE sessions DROP COLUMN active_ms")  # (as before 1.26)
+    old._conn.execute("UPDATE sessions SET seen_ms = 5000")
+    old._conn.commit()
+    old.close()
+    upgraded = Database(path)
+    found = upgraded.session_user("browser", 0)
+    upgraded.close()
+    assert found is not None and found.active_ms == 5000
