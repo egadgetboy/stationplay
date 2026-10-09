@@ -129,6 +129,11 @@ class PinChange(BaseModel):
     pin: str | None = Field(max_length=10)  # (4 digits; null: no passcode)
 
 
+class PasswordChange(BaseModel):
+    current: str = Field(max_length=access.PASSWORD_MAX)
+    new: str = Field(max_length=access.PASSWORD_MAX)
+
+
 class SpeedTested(BaseModel):
     mbps: float
     app: str = Field(default="", max_length=APP_MAX)
@@ -376,12 +381,20 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     @app.get("/api/internal/me")
     async def me(request: Request):
         """Who this app is signed in as now (for its Options): their name, as
-        an Admin may have changed it since they signed in, their role, and
-        whether they have a PIN. Null while signing in is off."""
+        an Admin may have changed it since they signed in, their role,
+        whether they have a PIN, and whether they may change their password
+        here. Null while signing in is off."""
         user = access.signed_in(request)
         if user is None:
             return {"user": None}
-        return {"user": {"name": user.name, "role": user.role, "pin": user.has_pin}}
+        return {
+            "user": {
+                "name": user.name,
+                "role": user.role,
+                "pin": user.has_pin,
+                "canChangePassword": ctx.access.own_password_refusal(user) is None,
+            }
+        }
 
     def own_app(request: Request) -> tuple[User, SignedIn]:
         """Who an app is signed in as, and its sign-in, for what someone
@@ -410,6 +423,40 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         chose = "set a passcode" if has else "chose no passcode"
         ctx.access.record(logging.INFO, f"{user.name} {chose} in {in_sentence(signed.app)}")
         return {"pin": has}
+
+    @app.post("/api/internal/password")
+    async def own_password(body: PasswordChange, request: Request):
+        """Someone changes their own password in an app, as on StationPlay's
+        page (see access.py): with their current one, within the same
+        limits on wrong ones, unless an Admin turned that off for them (or
+        they have none). Every other sign-in of theirs ends, as there; this
+        app carries on, with the new token it's given."""
+        user, signed = own_app(request)
+        if refusal := ctx.access.own_password_refusal(user):
+            raise HTTPException(403, refusal)
+        try:
+            right = await ctx.access.check_password(
+                user.name,
+                body.current,
+                access.address(request.scope),
+                public=access.outside(request.scope),
+                known=True,
+            )
+        except access.Busy as e:
+            raise HTTPException(429, str(e)) from None
+        if right is None or right.id != user.id:
+            raise HTTPException(400, "Your current password isn't right")
+        try:
+            await ctx.access.change_user(user, user, password=body.new, role=None)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        except access.NotAllowed:
+            raise HTTPException(403, access.ADMINS_ONLY) from None
+        token = ctx.access.start_session(user, signed.app, signed.device_id)
+        ctx.access.record(
+            logging.INFO, f"{user.name} changed their password in {in_sentence(signed.app)}"
+        )
+        return {"token": token}
 
     @app.post("/api/internal/sign-out")
     async def sign_out(request: Request):

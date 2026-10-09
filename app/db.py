@@ -484,6 +484,7 @@ class User:
     show_on: str = ""  # the pickers they're on (see devices); "": the server's default
     has_password: bool = True  # (a User may have none: they use only the apps' pickers)
     no_pin: bool = False  # they chose to have no PIN, so they're not asked for one again
+    own_password: bool = True  # they may change their own password (an Admin always may)
 
 
 @dataclass(frozen=True)
@@ -701,6 +702,9 @@ _ADDED_COLUMNS = (
     # Added in 1.28: whether someone chose to have no PIN, when an app asked
     # them for one (see devices.py), so they're not asked again.
     ("users", "no_pin", "INTEGER NOT NULL DEFAULT 0"),
+    # ...and whether they may change their own password (see access.py): an
+    # Admin's choice for each person, yes to start with.
+    ("users", "own_password", "INTEGER NOT NULL DEFAULT 1"),
 )
 
 
@@ -1576,6 +1580,11 @@ class Database:
             if role is not None:
                 self._conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
 
+    def set_own_password(self, user_id: int, on: bool) -> None:
+        """Whether someone may change their own password."""
+        with self._lock, self._conn:
+            self._conn.execute("UPDATE users SET own_password = ? WHERE id = ?", (on, user_id))
+
     def delete_user(self, user_id: int) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
@@ -2279,7 +2288,7 @@ def _user(row: sqlite3.Row) -> User:
     return User(
         row["id"], row["name"], row["role"], row["created_ms"], row["signed_in_ms"],
         row["max_stations"], row["level_id"], bool(row["pin"]), row["show_on"],
-        bool(row["password"]), bool(row["no_pin"]),
+        bool(row["password"]), bool(row["no_pin"]), bool(row["own_password"]),
     )  # fmt: skip
 
 

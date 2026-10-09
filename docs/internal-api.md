@@ -281,6 +281,7 @@ Answers 401 when the sign-in has ended.
 | `user.name` | string | Their name, now |
 | `user.role` | string | `admin` or `user` |
 | `user.pin` | boolean | Whether they have a passcode (from 1.28.0) |
+| `user.canChangePassword` | boolean | Whether they may change their password in the app (from 1.28.0): false for someone without a password, and for someone an Admin turned that off for. Offer Change password only when it's true |
 
 ## POST /api/internal/pin
 
@@ -304,6 +305,35 @@ neither a password nor a passcode, such as "Kids" (only an Admin gives them
 one); and for a browser's sign-in, as this is for the apps. 400 while
 signing in is off. Wrong passcodes tried lately still count after a new one
 is chosen: 5 within 15 minutes still means a wait.
+
+## POST /api/internal/password
+
+Asked with the app's token (from 1.28.0): the person signed in changes their
+own password, as on StationPlay's page. Send their current password and the
+new one:
+
+```json
+{"current": "...", "new": "..."}
+```
+
+A new password has at least 8 characters (and at most 200). As on the page,
+every other sign-in of theirs ends (other apps, browsers, and pickers),
+and the app's own token ends too: it carries on with `token`, which it keeps
+in place of the old one. The access log says "Sam changed their password in
+StationPlay for Android on Sam's phone".
+
+| Field | Type | What it is |
+|---|---|---|
+| `token` | string | The app's new token: send it from now on |
+
+Answers 400 when the current password isn't right, or the new one won't do
+(with the sentence to show), and 429 after 5 wrong ones from one address
+within 15 minutes, as signing in does. Answers 403, with the sentence to
+show, when an Admin has turned off changing their own password for them
+(`canChangePassword` in `GET /api/internal/me` says so beforehand; an Admin
+can always change their own), and for someone without a password (a
+passcode-only person, or "Kids"): an Admin gives them one. Also 403 for a
+browser's sign-in, and 400 while signing in is off.
 
 ## POST /api/internal/sign-out
 

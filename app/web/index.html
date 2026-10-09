@@ -603,6 +603,8 @@
   table.users td { vertical-align: middle; }
   table.users select { width: auto; }
   table.users .inline-add { flex-wrap: wrap; }
+  table.users .own-password { display: flex; gap: 6px; align-items: center; margin-top: 6px; font-size: 13px; color: var(--ink-2); cursor: pointer; }
+  table.users .own-password:has(input:disabled) { cursor: default; }
   .level-edit input[type=text] { max-width: 320px; }
   /* As cards (as on a phone) until the Access tab's widest table fits. */
   @media (max-width: 960px) {
@@ -5491,7 +5493,12 @@ $('#signinForm').addEventListener('submit', async e => {
 $('#userPill').addEventListener('click', () => {
   $('#accountTitle').textContent = `${me.user.name} (${roleName(me.user.role)})`;
   $('#accountForm').reset();
-  $('#accountStatus').textContent = `At least ${ACCESS.passwordMin} characters. Changing your password signs you out of other browsers.`;
+  // (An Admin can turn this off for a User; an Admin can always change their own.)
+  const may = me.user.role === 'admin' || me.user.canChangePassword !== false;
+  document.querySelectorAll('#pwCurrent, #pwNew, #accountForm [type=submit]').forEach(el => { el.disabled = !may; });
+  $('#accountStatus').textContent = may
+    ? `At least ${ACCESS.passwordMin} characters. Changing your password signs you out of other browsers and apps.`
+    : 'An Admin has turned off changing your own password. Ask an Admin if it needs changing.';
   $('#account').showModal();
 });
 $('#closeAccount').addEventListener('click', () => $('#account').close());
@@ -5647,12 +5654,23 @@ async function loadAccess() {
               loadAccess();
             } }),
             h('button', { class: 'btn', type: 'button', onclick: () => openUserStations(u) }, set ? `Stations (${set} set)` : 'Stations')));
+      // Whether they may change their own password, on this page and in the
+      // apps (an Admin always may).
+      const admin = u.role === 'admin';
+      const ownPassword = h('label', { class: 'own-password', title: admin ? 'An Admin can always change their own' : null },
+        h('input', { type: 'checkbox', checked: admin || u.canChangePassword, disabled: admin, onchange: async e => {
+          const on = e.target.checked;
+          try { await api(`/api/access/users/${u.id}`, { method: 'PUT', body: { canChangePassword: on } }); toast(on ? `${u.name} can change their own password` : `${u.name} can’t change their own password now`); }
+          catch (err) { toast(err.message, true); }
+          loadAccess();
+        } }), 'Can change their own password');
       const named = h('td', {}, h('strong', {}, u.name), u.id === me.user?.id ? h('span', { class: 'hint' }, ' (you)') : null);
       const actions = h('td', {},
         h('button', { class: 'btn', type: 'button', onclick: () => renameUser(u, named) }, 'Rename'), ' ',
         h('button', { class: 'btn', type: 'button', onclick: () => openUserDevices(u) }, 'Devices'), ' ',
         h('button', { class: 'btn', type: 'button', onclick: () => newPassword(u, actions) }, u.hasPassword ? 'New password' : 'Add a password'), ' ',
-        h('button', { class: 'btn danger', type: 'button', onclick: () => removeUser(u, users.length) }, 'Remove'));
+        h('button', { class: 'btn danger', type: 'button', onclick: () => removeUser(u, users.length) }, 'Remove'),
+        ownPassword);
       return h('tr', {},
         named,
         h('td', { 'data-label': 'Role' }, role),

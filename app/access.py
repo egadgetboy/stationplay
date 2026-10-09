@@ -150,6 +150,13 @@ SECURITY_HEADERS = (
 # scrypt: about 16 MB and a few tens of milliseconds a check.
 _SCRYPT = {"n": 2**14, "r": 8, "p": 1}
 ADMINS_ONLY = "Only an Admin can do that"
+# Changing your own password (on the page, or in an app): why not.
+OWN_PASSWORD_OFF = (
+    "An Admin has turned off changing your own password. Ask an Admin if it needs changing."
+)
+NO_PASSWORD = (
+    "You don't have a password to change. An Admin can give you one, on StationPlay's Access tab."
+)
 NOT_HTTPS = (
     "From outside your home, StationPlay's apps connect only over HTTPS. Use an https:// "
     "address, through a reverse proxy with HTTPS (see StationPlay's README)."
@@ -239,7 +246,7 @@ FOR_USERS = {
         "/api/internal/sign-out", "/api/internal/speed-test", "/api/access/link",
         "/api/internal/play", "/api/internal/progress", "/api/internal/report",
         "/api/internal/problem", "/api/internal/picker/remove", "/api/access/active",
-        "/api/internal/pin",
+        "/api/internal/pin", "/api/internal/password",
     ),
     "PUT": ("/api/channels/",),
     "DELETE": ("/api/channels/",),
@@ -260,7 +267,7 @@ FOR_WATCHERS = {
         "/api/access/me/password", "/api/internal/sign-out", "/api/internal/speed-test",
         "/api/access/link", "/api/internal/play", "/api/internal/progress",
         "/api/internal/report", "/api/internal/problem", "/api/internal/picker/remove",
-        "/api/access/active", "/api/internal/pin",
+        "/api/access/active", "/api/internal/pin", "/api/internal/password",
     ),
 }  # fmt: skip
 WATCHES_ONLY = "Your Viewing Level lets you watch, but not make or change stations"
@@ -598,9 +605,10 @@ class Access:
     ) -> None:
         """Changes a user's password, role or name, if `by` may: an Admin
         (anyone's, their own too), or (their password only) the user
-        themselves. A new name follows the rules a new user's does, and is
-        theirs from now on: signing in takes it, and everything of theirs is
-        kept by their id, so it stays theirs. ValueError; NotAllowed."""
+        themselves, unless an Admin turned that off for them. A new name
+        follows the rules a new user's does, and is theirs from now on:
+        signing in takes it, and everything of theirs is kept by their id, so
+        it stays theirs. ValueError; NotAllowed."""
         if name is not None:
             name = plain(name)
             _check_name(name)
@@ -615,6 +623,8 @@ class Access:
         current = self.db.user(user.id)
         if current is None:
             raise ValueError("That user has been removed")
+        if themselves and not self.is_admin(by) and (refusal := self.own_password_refusal(current)):
+            raise ValueError(refusal)
         if role == ADMIN and password is None and not current.has_password:
             raise ValueError(f"Give {current.name} a password before making them an Admin")
         if current.role == ADMIN and role not in (None, ADMIN) and self._last_admin(current):
@@ -627,6 +637,24 @@ class Access:
             except sqlite3.IntegrityError:
                 raise ValueError(f"There's already a user called {name}") from None
         self.db.update_user(user.id, password_hash=hashed, role=role)
+
+    def own_password_refusal(self, user: User) -> str | None:
+        """Why someone can't change their own password, if they can't: they
+        have none (an Admin gives them one), or an Admin turned that off for
+        them (never for an Admin)."""
+        now = self.db.user(user.id) or user
+        if not now.has_password:
+            return NO_PASSWORD
+        if now.role != ADMIN and not now.own_password:
+            return OWN_PASSWORD_OFF
+        return None
+
+    def set_own_password(self, user: User, by: User | None, on: bool) -> None:
+        """Whether someone may change their own password, if `by` is an
+        Admin. NotAllowed."""
+        if not self.is_admin(by):
+            raise NotAllowed
+        self.db.set_own_password(user.id, on)
 
     def _last_admin(self, user: User) -> bool:
         return not any(u.role == ADMIN and u.id != user.id for u in self.db.users())
@@ -1178,6 +1206,7 @@ class UserChange(BaseModel):
     role: str | None = None
     maxStations: int | None = None
     name: str | None = Field(default=None, max_length=100)
+    canChangePassword: bool | None = None  # (their own: an Admin always may)
 
 
 class PasswordChange(BaseModel):
@@ -1191,6 +1220,7 @@ def _user_json(user: User, made: dict[int, int]) -> dict:
         "id": user.id, "name": user.name, "role": user.role, "signedInMs": user.signed_in_ms,
         "maxStations": user.max_stations, "stationsMade": made.get(user.id, 0),
         "hasPassword": user.has_password, "pin": user.has_pin, "showOn": user.show_on or "home",
+        "canChangePassword": user.own_password,
     }  # fmt: skip
 
 
@@ -1315,6 +1345,8 @@ def routes(app: FastAPI, access: Access) -> None:
         user = signed_in(request)
         if user is None:
             raise HTTPException(400, "Sign-in is off, so there's no password to change")
+        if refusal := access.own_password_refusal(user):
+            raise HTTPException(403, refusal)
         if await password_or_refuse(user.name, body.current, request, known=True) is None:
             raise HTTPException(400, "Your current password isn't right")
         with _refusing():
@@ -1373,6 +1405,8 @@ def routes(app: FastAPI, access: Access) -> None:
             )
             if limit_given:
                 access.set_max_stations(user, by, body.maxStations)
+            if body.canChangePassword is not None:
+                access.set_own_password(user, by, body.canChangePassword)
         if by is not None and by.id == user.id and body.password is not None:
             # A new password signs them out everywhere: but not here.
             _set_cookie(response, request, access.start_session(user))
@@ -1386,6 +1420,12 @@ def routes(app: FastAPI, access: Access) -> None:
             what.append(f"changed {named}'s password")
         if limit_given and body.maxStations != user.max_stations:
             what.append(f"let {named} make {_stations_text(body.maxStations)}")
+        if body.canChangePassword is not None and body.canChangePassword != user.own_password:
+            what.append(
+                f"let {named} change their own password"
+                if body.canChangePassword
+                else f"stopped {named} from changing their own password"
+            )
         if what:
             access.record(logging.INFO, f"{by.name if by else 'Someone'} {' and '.join(what)}")
         return _user_json(user_or_404(user_id), access.db.stations_made())

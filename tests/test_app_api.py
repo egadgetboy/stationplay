@@ -214,7 +214,9 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         assert not phone.cookies  # (apps get a token, not a cookie)
         sam = bearer(signed["token"])
         me = check.answer(phone.get("/api/internal/me", headers=sam), "GET /api/internal/me")
-        assert me == {"user": {"name": "Sam", "role": "user", "pin": False}}
+        assert me == {
+            "user": {"name": "Sam", "role": "user", "pin": False, "canChangePassword": True}
+        }
         check.answer(phone.get("/api/internal/me"), "GET /api/internal/me", 401)
         # A passcode, as the app asks after signing in (see test_picker.py).
         assert signed["askPin"] is True
@@ -228,6 +230,22 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         assert phone.get("/api/internal/me", headers=sam).json()["user"]["pin"] is True
         none = check.answer(phone.post("/api/internal/pin", headers=sam, json={"pin": None}), pin)
         assert none == {"pin": False}
+        # His password, as on the page (see test_access.py): the app carries
+        # on with a new token. (And back again, for what follows.)
+        pw = "POST /api/internal/password"
+        guess = {"current": "a guess", "new": "a whole new one"}
+        check.answer(phone.post("/api/internal/password", headers=sam, json=guess), pw, 400)
+        for current, new in (
+            (SAM["password"], "a whole new one"),
+            ("a whole new one", SAM["password"]),
+        ):
+            changed = check.answer(
+                phone.post("/api/internal/password", headers=sam,
+                           json={"current": current, "new": new}), pw,
+            )  # fmt: skip
+            assert phone.get("/api/internal/me", headers=sam).status_code == 401
+            sam = bearer(changed["token"])
+            assert phone.get("/api/internal/me", headers=sam).status_code == 200
         listed = check.answer(phone.get("/api/v1/stations", headers=sam), "GET /api/v1/stations")
         assert [s["number"] for s in listed["stations"]] == [5]
         assert phone.get("/api/logs", headers=sam).status_code == 403  # a User, not an Admin

@@ -183,6 +183,116 @@ def test_a_new_password_signs_out_everywhere_else(pat, app):
     assert wrong.status_code == 400
 
 
+def test_changing_your_password_in_an_app(pat, app):
+    pat.post("/api/access/users", json={**SAM, "role": "user"})
+    phone = {"app": "StationPlay for Android", "deviceName": "Sam’s phone"}
+    signed = browser(app).post("/api/internal/sign-in", json={**SAM, **phone}).json()
+    tablet = browser(app).post("/api/internal/sign-in", json={**SAM, "app": "On a tablet"})
+    page = browser(app)
+    assert page.post("/api/access/sign-in", json=SAM).status_code == 200
+    sams = {"Authorization": f"Bearer {signed['token']}"}
+    app_ = browser(app)
+    me = app_.get("/api/internal/me", headers=sams).json()["user"]
+    assert me["canChangePassword"] is True
+
+    # As on the page: the current one, and a new one long enough.
+    wrong = app_.post(
+        "/api/internal/password", json={"current": "guess", "new": "a new one!"}, headers=sams
+    )
+    assert wrong.status_code == 400
+    assert wrong.json()["detail"] == "Your current password isn't right"
+    short = app_.post(
+        "/api/internal/password", json={"current": SAM["password"], "new": "short"}, headers=sams
+    )
+    assert short.status_code == 400 and "8 characters" in short.json()["detail"]
+    changed = app_.post(
+        "/api/internal/password", json={"current": SAM["password"], "new": "a new one!"},
+        headers=sams,
+    )  # fmt: skip
+    assert changed.status_code == 200, changed.text
+    # This app carries on, with its new token; every other sign-in of Sam's ends.
+    now = {"Authorization": f"Bearer {changed.json()['token']}"}
+    assert app_.get("/api/internal/me", headers=now).json()["user"]["name"] == "Sam"
+    assert app_.get("/api/internal/me", headers=sams).status_code == 401
+    other = {"Authorization": f"Bearer {tablet.json()['token']}"}
+    assert app_.get("/api/internal/me", headers=other).status_code == 401
+    assert page.get("/api/channels").status_code == 401
+    new_one = {**SAM, "password": "a new one!"}
+    assert browser(app).post("/api/access/sign-in", json=new_one).is_success
+    apps = [a["app"] for a in pat.get("/api/access/apps").json() if a["user"] == "Sam"]
+    assert apps == ["StationPlay for Android on Sam’s phone"]
+    log = pat.get("/api/logs?access_log=true").json()["text"]
+    assert "Sam changed their password in StationPlay for Android on Sam’s phone" in log
+
+    # An Admin turns it off for Sam: refused in the app and on the page.
+    sam_id = next(u["id"] for u in pat.get("/api/access/users").json() if u["name"] == "Sam")
+    off = pat.put(f"/api/access/users/{sam_id}", json={"canChangePassword": False})
+    assert off.status_code == 200 and off.json()["canChangePassword"] is False
+    assert app_.get("/api/internal/me", headers=now).json()["user"]["canChangePassword"] is False
+    refused = app_.post(
+        "/api/internal/password", json={"current": "a new one!", "new": "another one"},
+        headers=now,
+    )  # fmt: skip
+    assert refused.status_code == 403 and refused.json()["detail"] == access.OWN_PASSWORD_OFF
+    on_page = browser(app)
+    on_page.post("/api/access/sign-in", json=new_one)
+    refused = on_page.post(
+        "/api/access/me/password", json={"current": "a new one!", "password": "another one"}
+    )
+    assert refused.status_code == 403 and refused.json()["detail"] == access.OWN_PASSWORD_OFF
+    assert browser(app).post("/api/access/sign-in", json=new_one).is_success
+    # (A User can't turn it back on; an Admin can.)
+    back_on = {"canChangePassword": True}
+    assert on_page.put(f"/api/access/users/{sam_id}", json=back_on).status_code == 403
+    assert pat.put(f"/api/access/users/{sam_id}", json=back_on).is_success
+    log = pat.get("/api/logs?access_log=true").json()["text"]
+    assert "Pat stopped Sam from changing their own password" in log
+    assert "Pat let Sam change their own password" in log
+
+    # An Admin can always change their own.
+    pat_id = pat.get("/api/access/me").json()["user"]["id"]
+    assert pat.put(f"/api/access/users/{pat_id}", json={"canChangePassword": False}).is_success
+    mine = pat.post(
+        "/api/access/me/password", json={"current": PAT["password"], "password": "pat's new one"}
+    )
+    assert mine.status_code == 200
+
+
+def test_no_password_to_change_and_the_limit_on_wrong_ones(pat, app):
+    kids = pat.post("/api/access/users", json={"name": "Kids", "role": "user"}).json()
+    pat.post("/api/access/users", json={**SAM, "role": "user"})
+    tv = browser(app)
+    key = tv.post(
+        "/api/internal/sign-in", json={**PAT, "app": "StationPlay for Roku", "picker": True}
+    ).json()["deviceKey"]
+    picked = tv.post(
+        "/api/internal/picker/choose", json={"id": kids["id"]},
+        headers={"StationPlay-Device": key},
+    )  # fmt: skip
+    as_kids = {"Authorization": f"Bearer {picked.json()['token']}"}
+    assert tv.get("/api/internal/me", headers=as_kids).json()["user"]["canChangePassword"] is False
+    refused = tv.post(
+        "/api/internal/password", json={"current": "", "new": "a new one!"}, headers=as_kids
+    )
+    assert refused.status_code == 403 and refused.json()["detail"] == access.NO_PASSWORD
+    # Only from an app: not a browser's sign-in.
+    from_page = {"current": PAT["password"], "new": "a new one!"}
+    assert pat.post("/api/internal/password", json=from_page).status_code == 403
+    # Wrong current passwords count as wrong sign-ins do.
+    signed = tv.post("/api/internal/sign-in", json=SAM).json()
+    sams = {"Authorization": f"Bearer {signed['token']}"}
+    for _ in range(access.TRIES):
+        wrong = tv.post(
+            "/api/internal/password", json={"current": "guess", "new": "a new one!"}, headers=sams
+        )
+        assert wrong.status_code == 400
+    waits = tv.post(
+        "/api/internal/password", json={"current": SAM["password"], "new": "a new one!"},
+        headers=sams,
+    )  # fmt: skip
+    assert waits.status_code == 429
+
+
 def test_locked_out_the_reset_file_opens_it_again(pat, app, tmp_path):
     (tmp_path / "data" / access.RESET_FILE).write_text("")
     fp = FakePlex()

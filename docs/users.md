@@ -134,8 +134,8 @@ hidden.
 - **`levels`**: name, movie age, TV age, unrated shown or not, libraries
   (all, or a list).
 - **`users`** gains: level, PIN (a hash, or none), whether they chose to
-  have no PIN, and Show on (see below). A User may have no password: they
-  use only the pickers.
+  have no PIN, Show on (see below), and whether they may change their own
+  password. A User may have no password: they use only the pickers.
 - **`user_stations`**: a station allowed or blocked for a user.
 - **`linked_devices`**, **`device_people`** and **`invites`**: the linked
   devices (by a hash of each one's key, with who linked each, by id and by
@@ -225,6 +225,24 @@ and little kids can each have one or not.
 - The access log says "<name> set a passcode" or "<name> chose no
   passcode", and in which app.
 
+### Changing your password in the apps
+
+From 1.28.0, people change their own password in the apps' Options, as on
+StationPlay's page (their name at the top), with their current one: the
+same length, the same limits on wrong ones (5 from one address in 15
+minutes, then a wait), and every other sign-in of theirs ends, as on the
+page, while the app they changed it in stays signed in. The access log says
+"<name> changed their password in <the app, on the device>".
+
+- **Can change their own password** is an Admin's choice for each person
+  on the Access tab, beside their New password: on to start with, for
+  everyone already added too. When it's off, both the page's change and
+  the apps' are refused with a plain sentence, and `GET /api/internal/me`
+  says so (`canChangePassword: false`). An Admin can always change their
+  own.
+- Someone without a password (a passcode-only person, or "Kids") can't set
+  one this way: an Admin gives them one, or an invite code.
+
 ## The addresses
 
 The apps' own (`docs/internal-api.md`): `"picker": true` on signing in or
@@ -232,9 +250,9 @@ asking for a code links the device and returns its `deviceKey`;
 `GET /api/internal/picker`, `POST /api/internal/picker/choose`,
 `POST /api/internal/picker/sign-in` and `POST /api/internal/picker/remove`
 are asked with the key, in the `StationPlay-Device` header. Signing in
-answers `askPin`, and `POST /api/internal/pin` sets someone's own passcode
-(1.28.0). The Access
-tab's: `/api/access/viewing`, `/api/access/levels`,
+answers `askPin`, `POST /api/internal/pin` sets someone's own passcode, and
+`POST /api/internal/password` changes their own password (1.28.0). The
+Access tab's: `/api/access/viewing`, `/api/access/levels`,
 `/api/access/users/{id}/viewing` and `/stations`, `/api/access/devices`,
 `/api/access/users/{id}/picker` and `/invite`.
 
