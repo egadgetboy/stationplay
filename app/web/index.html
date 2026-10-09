@@ -140,6 +140,17 @@
     .pill.away .long, .pill.away .word { display: none; }
     .pill.away .short { display: inline; }
   }
+  /* Alerts: for Admins, how many there are now (it opens a list of them);
+     none, no pill. */
+  .pill.alerts { cursor: pointer; color: var(--bad); font-weight: 600; }
+  .pill.alerts:hover { border-color: var(--bad); }
+  .pill.alerts:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  #alertsDlg { width: min(520px, calc(100vw - 24px)); }
+  .alert-item { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 10px; align-items: start; }
+  .alert-item + .alert-item { border-top: 1px solid var(--line); padding-top: 14px; }
+  .alert-item .icon { display: grid; color: var(--bad); padding-top: 3px; }
+  .alert-item p { margin: 0; }
+  .alert-item .when { margin-top: 3px; font-size: 12.5px; color: var(--ink-2); }
 
   .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 4px 0 20px; overflow-x: auto; }
   .tab {
@@ -726,9 +737,10 @@
     label:has(> input[type=checkbox], > input[type=radio]):not(.pick) { padding-block: 10px; }
     .level-edit label { display: inline-block; }  /* (in a line of words, so it has that room too) */
     .chips { row-gap: 11px; }  /* (so a chip's reach doesn't cover the next row's) */
-    .chipbtn, .pill.away, .userpill, .coffee, .sel button, .linkbtn, .linkish, .toast .undo,
-    .more > summary, .arr > summary, .limit-user > summary { position: relative; }
-    .chipbtn::after, .pill.away::after, .userpill::after, .coffee::after, .sel button::after,
+    .chipbtn, .pill.away, .pill.alerts, .userpill, .coffee, .sel button, .linkbtn, .linkish,
+    .toast .undo, .more > summary, .arr > summary, .limit-user > summary { position: relative; }
+    .chipbtn::after, .pill.away::after, .pill.alerts::after, .userpill::after, .coffee::after,
+    .sel button::after,
     .logo-grid .mine .del::after, .linkbtn::after, .linkish::after, .toast .undo::after,
     .more > summary::after, .arr > summary::after, .limit-user > summary::after {
       content: ""; position: absolute; left: 50%; top: 50%;
@@ -750,6 +762,7 @@
     <span class="pill" id="plexPill"><span class="dot"></span><span>Checking Plex…</span></span>
     <span class="pill" id="livePill" hidden><span class="dot live"></span><span></span></span>
     <button class="pill away" id="awayPill" type="button" hidden><span class="dot"></span><span class="long">Away from home</span><span class="short">Away</span><span class="word"></span></button>
+    <button class="pill alerts" id="alertsPill" type="button" hidden aria-haspopup="dialog"><span class="dot bad"></span><span class="count"></span></button>
     <button class="pill userpill" id="userPill" type="button" hidden title="Your account"><span></span></button>
   </header>
 
@@ -827,6 +840,10 @@
       </div>
       <button class="btn" id="copyLogs">Copy</button>
     </div>
+    <details class="panel arr" id="notifyPanel">
+      <summary><strong>Notify a web address</strong><span class="muted" id="notifySum"></span></summary>
+      <div class="arr-body" id="notifyBody"></div>
+    </details>
     <div class="panel problems" id="problemsPanel">
       <div class="problems-head">
         <h3>Problems in the apps</h3>
@@ -1032,6 +1049,12 @@
       <button class="btn primary" type="submit">Change password</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="alertsDlg" aria-labelledby="alertsTitle">
+  <div class="dlg-head"><h3 id="alertsTitle">Alerts</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeAlerts" aria-label="Close">✕</button></div>
+  <div class="dlg-body" id="alertsBody"></div>
+  <div class="dlg-foot"><button class="btn" type="button" id="alertsNotify" style="margin-right:auto">Notify a web address…</button><button class="btn" type="button" id="alertsDone">Done</button></div>
 </dialog>
 
 <dialog id="linkApp" aria-labelledby="linkTitle">
@@ -1704,7 +1727,7 @@ function showTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
   for (const id of TABS) $('#tab-' + id).hidden = id !== name;
   if (name === 'broken') { loadArr().then(loadBroken); loadScan(); }
-  if (name === 'logs') { loadLogs(true); loadProblems(); }
+  if (name === 'logs') { loadLogs(true); loadProblems(); loadNotify(); }
   if (name === 'setup') { loadBackups(); renderPlaybackPanel(); }
   if (name === 'stats') { loadStats(); loadNow(); }
   if (name === 'access') { loadAccess(); loadApps(); loadLimits(); loadAway(); loadAppLimits(); loadAppLibraries(); loadApiTokens(); }
@@ -1755,8 +1778,9 @@ async function loadStatus() {
   $('#livePill').title = `Stations being watched right now, and how many connections there are. Each station uses one tuner (StationPlay has ${plural(status.tuners, 'tuner')}), no matter how many people watch it in Plex or another app.${full ? ' Every tuner is in use, so anyone tuning in to another station sees a card saying so.' : ''}`;
   $('#livePill').firstElementChild.className = full ? 'dot warn' : 'dot live';
   $('#livePill').lastElementChild.textContent = `${watched.length} of ${plural(status.tuners, 'tuner')} in use · ${plural(connections, 'connection')}`;
-  // (What's for Admins comes only to Admins: Away from home too.)
+  // (What's for Admins comes only to Admins: Away from home and alerts too.)
   setAway(status.away);
+  setAlerts(status.alerts);
   if (status.tunerUrl) {
     $('#tunerUrl').textContent = status.tunerUrl;
     $('#xmltvUrl').textContent = status.xmltvUrl;
@@ -4986,6 +5010,92 @@ $('#awayPill').addEventListener('click', () => {
   panel.open = true;
   panel.scrollIntoView({ block: 'start', behavior: 'smooth' });
 });
+// Admin alerts (see alerts.py on the server): what StationPlay finds wrong
+// now, as the page's status says them (for Admins only), in a pill in the
+// header that opens a list of them.
+let alertsNow = [];
+function setAlerts(list) {
+  alertsNow = isAdmin() && Array.isArray(list) ? list : [];
+  const pill = $('#alertsPill');
+  pill.hidden = !alertsNow.length;
+  pill.querySelector('.count').textContent = plural(alertsNow.length, 'alert');
+  pill.title = alertsNow.map(a => a.sentence).join('\n');
+  if ($('#alertsDlg').open) paintAlerts();
+}
+function paintAlerts() {
+  $('#alertsBody').replaceChildren(...(alertsNow.length
+    ? alertsNow.map(a => h('div', { class: 'alert-item' },
+        h('span', { class: 'icon', 'aria-hidden': 'true' }, warnIcon()),
+        h('div', {}, h('p', {}, a.sentence), h('p', { class: 'when' }, `Since ${fmtClock(a.since)}, ${ago(a.since)}`))))
+    : [h('p', { class: 'muted', style: 'margin:0' }, 'Nothing needs a look now. Each alert that’s fixed is in the Logs tab.')]));
+}
+$('#alertsPill').addEventListener('click', () => { paintAlerts(); $('#alertsDlg').showModal(); });
+$('#closeAlerts').addEventListener('click', () => $('#alertsDlg').close());
+$('#alertsDone').addEventListener('click', () => $('#alertsDlg').close());
+$('#alertsNotify').addEventListener('click', () => {
+  $('#alertsDlg').close();
+  showTab('logs');
+  const panel = $('#notifyPanel');
+  panel.open = true;
+  panel.scrollIntoView({ block: 'start', behavior: 'smooth' });
+});
+// Notify a web address of alerts (see notify.py on the server), on the Logs tab.
+const NOTIFY_FORMATS = { text: 'plain text', json: 'JSON' };
+const siteOf = url => { try { return new URL(url).host; } catch { return url; } };
+async function loadNotify() {
+  let got;
+  try { got = await api('/api/notify'); }
+  catch (e) { $('#notifySum').textContent = ''; $('#notifyBody').replaceChildren(h('p', { class: 'muted', style: 'margin:0' }, e.message)); return; }
+  $('#notifySum').textContent = got.on ? `On, to ${siteOf(got.url)}, as ${NOTIFY_FORMATS[got.format]}` : 'Off';
+  const body = $('#notifyBody');
+  if (body.dataset.editing) return;  // (not while it's being changed)
+  const edit = () => { body.dataset.editing = '1'; };
+  const on = h('input', { type: 'checkbox', checked: got.on, oninput: edit });
+  const url = h('input', { type: 'url', id: 'notifyUrl', value: got.url, placeholder: 'https://ntfy.sh/your-topic', maxlength: 500, autocomplete: 'off', spellcheck: 'false', 'aria-describedby': 'notifyUrlHint', oninput: edit, style: 'width:min(100%,420px)' });
+  const format = h('select', { id: 'notifyFormat', style: 'width:auto', 'aria-describedby': 'notifyFormatHint', onchange: edit },
+    h('option', { value: 'text' }, 'Plain text, for ntfy'), h('option', { value: 'json' }, 'JSON, for Gotify, Home Assistant and others'));
+  format.value = got.format;
+  const result = h('span', { class: 'hint', role: 'status' });
+  const last = h('p', { class: 'muted small', style: 'margin:0' });
+  const paintLast = sent => {
+    last.textContent = sent
+      ? `Last sent ${ago(sent.at)}${sent.test ? ' (a test)' : ''}: ${sent.ok ? sent.status : `it didn’t go through (${sent.status})`}.`
+      : 'Nothing sent yet.';
+  };
+  paintLast(got.last);
+  const save = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
+    result.textContent = '';
+    try { await api('/api/notify', { method: 'PUT', body: { on: on.checked, url: url.value, format: format.value } }); }
+    catch (e) { result.textContent = e.message; return; }
+    toast(on.checked ? 'Saved. Alerts will be sent to that address.' : 'Saved. Alerts aren’t sent anywhere.');
+    delete body.dataset.editing;
+    loadNotify();
+  } }, 'Save');
+  const test = h('button', { type: 'button', class: 'btn', onclick: async () => {
+    test.disabled = true;
+    test.textContent = 'Sending…';
+    result.textContent = '';
+    try {
+      const tried = await api('/api/notify/test', { method: 'POST', body: { url: url.value, format: format.value } });
+      paintLast(tried.sent);
+      result.textContent = tried.sent.ok ? 'Sent. Check that it arrived.' : `It didn’t go through: ${tried.sent.status}.`;
+    } catch (e) {
+      result.textContent = e.message;
+    } finally {
+      test.disabled = false;
+      test.textContent = 'Send a test';
+    }
+  } }, 'Send a test');
+  body.replaceChildren(
+    h('p', { style: 'margin:0' }, 'StationPlay says when something needs a look: Plex can’t be reached, the data folder is nearly full or can’t be written to, a station keeps failing to start, backups fail, the clock is badly off, or StationPlay’s apps can’t reach it from outside. Each alert shows in the header and in the log below, once when it starts and again when it’s fixed. With this on, StationPlay also sends each one to a web address of yours, such as an ntfy topic, Gotify or a Home Assistant webhook.'),
+    h('label', {}, on, ' Notify a web address when an alert starts and when it’s fixed'),
+    h('div', { class: 'field' }, h('label', { for: 'notifyUrl' }, 'Web address'), url,
+      h('span', { class: 'hint', id: 'notifyUrlHint' }, 'Only Admins see it, and the log shows only its site, as it can carry a token. StationPlay waits 5 seconds for an answer, tries once more, and follows no redirects.')),
+    h('div', { class: 'field' }, h('label', { for: 'notifyFormat' }, 'Format'), format,
+      h('span', { class: 'hint', id: 'notifyFormatHint' }, 'Plain text sends the alert as it is, titled StationPlay. JSON sends its title, message, kind, and state (started or fixed).')),
+    h('div', { class: 'scan-set' }, save, test, result),
+    last);
+}
 function reachIcon(state) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 16 16');

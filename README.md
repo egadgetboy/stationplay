@@ -947,6 +947,8 @@ Start with the **Logs** tab: it shows the newest 200 entries. Check **Warnings**
 
 **Problems in the apps.** At the top of the **Logs** tab, StationPlay's apps say when something goes wrong as they play: a station that doesn't start or stops, something from your library that doesn't play, playing that can't keep up, or the app closing unexpectedly. Each problem shows how often it happened, on how many devices and for whom, and on what kinds of device (the app, its version, the device's model and system), marked **One kind of device** when that's all it's been on. So a problem on every kind of device points to StationPlay or the file, and one on a single kind of device points to that device or its app. They're kept 30 days; **Clear** forgets them (the log keeps its own). For more about one device, its **Send a report to StationPlay** (in the app's Options) adds what the app did lately.
 
+**Alerts.** StationPlay says when something needs an Admin's look: Plex can't be reached (or won't take StationPlay's token); the data folder has less than 1 GB free, or under 2% of its disk, or can't be written to; a station keeps failing to start (3 times in 10 minutes); backups fail twice in a row; StationPlay's clock is more than 2 minutes from Plex's (by the time Plex's answers carry: without it, the clock isn't checked); or StationPlay's apps can't reach it from outside. Each is said once it has lasted a while (for Plex, three checks a minute apart) and fixed once things have been right a while, so none comes and goes: a line in the **Logs** tab when it starts and when it's fixed, and for Admins, a pill in the page's header saying how many there are now, which opens a list of them. Admins see them in StationPlay's apps too. To be told elsewhere, open **Notify a web address** at the top of the **Logs** tab, turn it on, and enter a web address: an ntfy topic (**Plain text**), or a Gotify message or Home Assistant webhook address (**JSON**: `{"title": "StationPlay", "message": "...", "kind": "...", "state": "started"}`, or `"fixed"`). **Send a test** tries it at once. StationPlay waits 5 seconds for an answer, tries once more, follows no redirect, and keeps only the answer's status; the address is shown only to Admins, and the log names only its site.
+
 **Installing and starting**
 
 - **The app keeps restarting, and the log says it can't write to `/data`.** The data folder isn't owned by the user StationPlay runs as. The message shows the `chown` command to run: fill in your data folder's path, run it, then restart the app.
@@ -1075,6 +1077,7 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/devices.py` | Linked devices, Who's tuning in?, PINs and invite codes |
 | `app/stats.py`, `app/watching.py` | Viewing stats, who's watching now, and matching Plex sessions to stations |
 | `app/health.py` | The server's health for the Stats tab: processor, memory, network and storage, from Linux's own files |
+| `app/alerts.py`, `app/notify.py` | Admin alerts, and notifying a web address of them |
 | `app/playing.py` | What's playing, in words: how the log names stations, files and apps, and whose app is where |
 | `app/limits.py` | Blocking stations for some Plex users |
 | `app/logos.py`, `app/logos/` | The logo library and your own logos |

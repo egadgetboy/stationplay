@@ -509,6 +509,43 @@ minutes counts on its first, and is said in StationPlay's log once. At most
 |---|---|---|
 | `ok` | boolean | Always true |
 
+## Admin alerts
+
+From 1.29.0, StationPlay says what it finds wrong that an Admin can act on,
+once when it starts and again when it's fixed: Plex can't be reached (or
+won't take StationPlay's token), the data folder is nearly full or can't be
+written to, a station keeps failing to start, backups are failing, the
+clock is badly off (by Plex's), and the apps can't reach StationPlay from
+outside (the outside check). Each is said only once it has held a while (3
+checks in a row a minute apart, say, or a station failing to start 3 times
+in 10 minutes), and fixed only once things have been right a while too, so
+none comes and goes. The Logs tab and the page's header say them too, and
+an Admin can have them sent to a web address (ntfy, Gotify, Home
+Assistant).
+
+For an Admin, an app shows the alerts now, with each `sentence` as it is
+and how long it's lasted, and can say when one is fixed. Ask
+`GET /api/internal/alerts` when the app opens and comes back to the front,
+and every few minutes while it's open; on Android, also every 15 minutes in
+the background (WorkManager), notifying once for each new `id`, and once
+when it's fixed. StationPlay keeps alerts in memory: after a restart, the
+list starts afresh, and what's still wrong starts again, with a new `id`.
+
+## GET /api/internal/alerts
+
+For Admins only (from 1.29.0; while signing in is off, at home, anyone):
+anyone else is answered 403. The alerts now, and those fixed in the last 24
+hours. Small and quick, to ask every few minutes.
+
+| Field | Type | What it is |
+|---|---|---|
+| `alerts` | list | The alerts now, the newest first; then those fixed in the last 24 hours, the most lately fixed first |
+| `alerts[].id` | string | Its ID: the same for as long as it lasts (one that starts again later has a new one) |
+| `alerts[].kind` | string | What it's about: `plex`, `data-full`, `data-write`, `station`, `backups`, `clock` or `outside` (kinds may be added: show the sentence) |
+| `alerts[].sentence` | string | What's wrong, in a sentence an Admin can act on, to show as it is |
+| `alerts[].since` | number | When it started |
+| `alerts[].fixed` | number or null | When it was fixed; null while it lasts |
+
 ## Your library
 
 When an Admin shares libraries with the apps (on the Access tab, under

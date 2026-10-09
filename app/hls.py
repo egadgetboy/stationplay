@@ -122,6 +122,7 @@ class HlsStream:
         self.streams = streams
         self.b = b
         self.number = number
+        self.name = name
         self.night = night
         # How the log names it: "station 5, Cartoon Classics", or "station 5,
         # Cartoon Classics, with night mode's sound"; and in the middle of a
@@ -325,6 +326,7 @@ class HlsStream:
         except OSError as e:
             self.ended_because = f"ffmpeg couldn't start ({e})"
             log.error("The stream for apps of %s couldn't start: %s", self.label_mid, e)
+            self.b.ctx.alerts.station_failed(self.b.channel_id, self.number, self.name)
         finally:
             self.ended = True
             idle.cancel()

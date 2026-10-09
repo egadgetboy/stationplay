@@ -1,7 +1,8 @@
 """Whether StationPlay's apps can reach it from outside your home, at the
 address set for watching away from home (see away.py). The Access tab, the
-setup and the page's header show it, and the apps' Admin alerts will too:
-Reach.status says what it is, in a sentence, and since when.
+setup and the page's header show it, and an Admin alert says when it's down
+(see alerts.py): Reach.status says what it is, in a sentence, and since
+when.
 
 While watching away from home is on, StationPlay asks for itself at that
 address, as an app away from home would: GET <address>/api/internal/reach,
@@ -143,7 +144,7 @@ class Finding:
 @dataclass(frozen=True)
 class Status:
     """Whether StationPlay's apps can reach it from outside, as the page
-    shows it (and the apps' Admin alerts will)."""
+    shows it (and Admin alerts go by)."""
 
     state: str  # OFF, CHECKING, UP, DOWN or CANT
     detail: str  # what it is, in a sentence or two

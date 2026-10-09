@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from app import db, jobs, reach, scanner
+from app import alerts, db, jobs, reach, scanner
 
 from .test_e2e import media  # noqa: F401  (the test media files the end-to-end tests play)
 
@@ -15,6 +15,14 @@ def no_background_scans(monkeypatch):
     station's files turn that on."""
     monkeypatch.setattr(scanner, "STARTUP_DELAY_S", 10**6)
     monkeypatch.setattr(jobs, "CHECK_NEW_STATIONS", False)
+
+
+@pytest.fixture(autouse=True)
+def no_background_alert_checks(monkeypatch):
+    """The checks for Admin alerts don't run by themselves in tests (they'd
+    ask Plex, and write to the data folder, in the middle of other tests):
+    the alerts' own tests look when they mean to."""
+    monkeypatch.setattr(alerts, "FIRST_S", 10**6)
 
 
 @pytest.fixture(autouse=True)

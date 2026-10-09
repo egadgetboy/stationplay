@@ -333,6 +333,8 @@ async def nightly_forever(ctx: AppContext) -> None:
             tonight = time.localtime().tm_hour == NIGHTLY_HOUR and age > 12 * 3600
             if tonight or age > MAX_AGE_S:
                 path = await asyncio.to_thread(make_backup, ctx)
+                ctx.alerts.backup_made()
                 log.info("Backed up StationPlay to %s", path.name)
         except Exception:
             log.exception("The nightly backup failed")
+            ctx.alerts.backup_failed()

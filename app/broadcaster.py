@@ -142,6 +142,9 @@ VIEWER_MAX_BYTES = 64 * 1024 * 1024
 ENGINE_SILENCE_S = 45.0
 # A program joined less than this far in is said to start.
 STARTS_S = 2.0
+# A program that plays this long (or to its end) is the station working
+# (see alerts.py: a station that kept failing to start is fixed).
+PLAYED_S = 60.0
 # The stream running less than this far ahead of real time means this
 # server isn't converting the program as fast as it plays; that's logged.
 LOW_LEAD_S = 1.0
@@ -444,6 +447,7 @@ class Broadcaster:
                     raise
                 except Exception:
                     log.exception("%s: its stream engine failed; restarting it", self._named())
+                    self.ctx.alerts.station_failed(self.channel_id, self._number, self._name)
                 try:
                     await self._recover(failures)
                 except asyncio.CancelledError:
@@ -702,6 +706,8 @@ class Broadcaster:
                 self._joining = ""
             if result.produced_s:
                 self._tuned_in = False
+            if result.completed or result.produced_s >= PLAYED_S:
+                self.ctx.alerts.station_played(self.channel_id, channel.number, channel.name)
             self._ts = _advance(ts, result)
             if result.stopped:
                 return
@@ -1250,6 +1256,7 @@ class Broadcaster:
         if slot.start_ms != self._last_unfilled:
             self._unfilled_slots += 1
             self._last_unfilled = slot.start_ms
+            self.ctx.alerts.station_failed(self.channel_id, number, self._name)
         if self._unfilled_slots >= OFF_AIR_AFTER_SLOTS:
             if not self.off_air:
                 log.error(

@@ -668,6 +668,21 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         spec = home.get("/api/v1/openapi.json", headers=admin)
         assert spec.status_code == 200 and spec.json()["info"]["title"] == "StationPlay API"
 
+        # Admin alerts (see test_alerts.py): for Admins only.
+        ctx.alerts.backup_failed()
+        ctx.alerts.backup_failed()
+        alerts = check.answer(home.get("/api/internal/alerts"), "GET /api/internal/alerts")
+        assert [(a["kind"], a["fixed"]) for a in alerts["alerts"]] == [("backups", None)]
+        user = bearer(again.json()["token"])
+        check.answer(
+            phone.get("/api/internal/alerts", headers=user), "GET /api/internal/alerts", 403
+        )
+        ctx.alerts.backup_made()
+        alerts = check.answer(home.get("/api/internal/alerts"), "GET /api/internal/alerts")[
+            "alerts"
+        ]
+        assert alerts[0]["fixed"] >= alerts[0]["since"]
+
         # StationPlay checking that apps reach it from outside (see
         # test_reach.py), through a reverse proxy to the public port.
         proxy = Proxy(app, PUBLIC_PORT)

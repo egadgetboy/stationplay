@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import email.utils
 import logging
 import re
 import time
@@ -131,7 +132,12 @@ class PlexClient:
                 "X-Plex-Product": "StationPlay",
                 "X-Plex-Client-Identifier": "stationplay-live-channels",
             },
+            event_hooks={"response": [self._note_clock]},
         )
+        # How far this machine's clock is ahead of Plex's, in seconds, by the
+        # Date header of Plex's latest answer (None: none said so lately).
+        # The only reference StationPlay has for its clock (see alerts.py).
+        self.clock_offset_s: float | None = None
         self._bulk = asyncio.Semaphore(BULK_REQUESTS)
         self._marker_slots = asyncio.Semaphore(MARKER_REQUESTS)
         self._choices: dict[tuple[str, str, int], tuple[float, list[dict[str, str]]]] = {}
@@ -156,6 +162,17 @@ class PlexClient:
     @property
     def configured(self) -> bool:
         return bool(self.base_url and self.token)
+
+    async def _note_clock(self, response: httpx.Response) -> None:
+        said = response.headers.get("date")
+        if not said:
+            return
+        try:
+            when = email.utils.parsedate_to_datetime(said)
+        except (TypeError, ValueError, IndexError):
+            return
+        if when.tzinfo is not None:
+            self.clock_offset_s = time.time() - when.timestamp()
 
     async def close(self) -> None:
         await self._client.aclose()

@@ -36,6 +36,7 @@ from pydantic import AfterValidator, BaseModel, Field
 from . import (
     __version__,
     access,
+    alerts,
     api,
     appapi,
     applibrary,
@@ -53,6 +54,7 @@ from . import (
     links,
     logbuffer,
     marathons,
+    notify,
     ondemand,
     playback,
     playing,
@@ -350,6 +352,15 @@ class AwayIn(BaseModel):
     mediaMbps: int | None = None
 
 
+class NotifyIn(BaseModel):
+    """Notify a web address of alerts (see notify.py): on or off, the
+    address, and its format ("text" or "json")."""
+
+    on: bool = False
+    url: str = Field(default="", max_length=notify.ADDRESS_MAX * 2)
+    format: str = Field(default=notify.TEXT, max_length=10)
+
+
 class LimitsIn(BaseModel):
     """Stations kept from some Plex users (see limits.py): on or off, each
     Plex user's id and the ids of the stations kept from them, and their
@@ -463,6 +474,9 @@ class AppContext:
     viewing: viewing.Viewing = field(init=False)  # what each user can see
     problems: problems.Problems = field(init=False)  # what the apps ran into
     languages: languages.Languages = field(init=False)  # each person's, in the apps
+    # What's wrong that an Admin can act on, and the web address told of it.
+    notify: notify.Notify = field(init=False)
+    alerts: alerts.Alerts = field(init=False)
     # Your shows and movies, wherever they come from (see library.py).
     library: Library = field(init=False)
     updater: Updater = field(init=False)
@@ -493,6 +507,8 @@ class AppContext:
         self.viewing = viewing.Viewing(self.db, self.titles)
         self.problems = problems.Problems(self.db)
         self.languages = languages.Languages(self.db)
+        self.notify = notify.Notify(self.db)
+        self.alerts = alerts.Alerts(self.notify)
         self.access.judge_watching_by(self.viewing.watches_only)
         self.updater = Updater(self)
         self.markers = MarkerFinder(self.db, self.library)
@@ -660,6 +676,8 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             asyncio.create_task(ctx.reach.run_forever()),
             asyncio.create_task(ctx.health.run_forever(lambda: stats.on_gpu(ctx))),
             asyncio.create_task(stats.count_plays_forever(ctx)),
+            asyncio.create_task(ctx.notify.run_forever()),
+            asyncio.create_task(ctx.alerts.run_forever(ctx)),
         ]
         yield
         for task in background:
@@ -1516,6 +1534,8 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             "brokenFile": str(ctx.broken.path),
             "guide": ctx.updater.as_dict(),
             "fillers": ctx.fillers.as_dict(),
+            # For the header's alerts (see alerts.py): those now.
+            "alerts": [a.as_dict() for a in ctx.alerts.now()],
             # For the header's "Away from home": while it's on, whether apps
             # can reach StationPlay from outside (see reach.py).
             "away": {
@@ -2278,12 +2298,13 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.delete("/api/channels/{channel_id}", status_code=204)
     async def delete_channel(channel_id: int, request: Request):
-        changeable(channel_id, request)
+        channel = changeable(channel_id, request)
         b = ctx.broadcasters.pop(channel_id, None)
         if b:
             await b.stop("the station was deleted")
         forget_eras([e.id for e in ctx.db.eras(channel_id)])
         ctx.db.delete_channel(channel_id)
+        ctx.alerts.station_gone(channel_id, channel.number, channel.name)
         ctx.updater.pending.pop(channel_id, None)
         return Response(status_code=204)
 
@@ -2460,7 +2481,12 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.post("/api/backups", status_code=201)
     async def backup_now():
-        path = await asyncio.to_thread(backups.make_backup, ctx)
+        try:
+            path = await asyncio.to_thread(backups.make_backup, ctx)
+        except Exception:
+            ctx.alerts.backup_failed()
+            raise
+        ctx.alerts.backup_made()
         log.info("Backed up StationPlay to %s", path.name)
         return {"name": path.name}
 
@@ -2916,6 +2942,47 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             "" if len(kept) == 1 else "s",
         )
         return await limits_json()
+
+    # Notify a web address of alerts (see notify.py and alerts.py) ------------
+
+    def notify_json() -> dict:
+        last = ctx.notify.last
+        return {
+            "on": ctx.notify.on,
+            "url": ctx.notify.url,
+            "format": ctx.notify.format,
+            "last": last.as_dict() if last else None,
+        }
+
+    @app.get("/api/notify")
+    async def notify_get():
+        return notify_json()
+
+    @app.put("/api/notify")
+    async def notify_save(body: NotifyIn, request: Request):
+        try:
+            ctx.notify.save(body.on, body.url, body.format)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        who = access.signed_in(request)
+        log.info(
+            "Notify a web address of alerts: %s%s",
+            f"on, to {notify.shown(ctx.notify.url)}, as {notify.FORMAT_NAMES[ctx.notify.format]}"
+            if ctx.notify.on
+            else "off",
+            f" (set by {who.name})" if who else "",
+        )
+        return notify_json()
+
+    @app.post("/api/notify/test")
+    async def notify_test(body: NotifyIn):
+        """Send a test, to the address given (as it's typed, before it's
+        saved) or else the one saved: how it went."""
+        try:
+            sent = await ctx.notify.test(body.url or ctx.notify.url, body.format)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        return {**notify_json(), "sent": sent.as_dict()}
 
     # StationPlay's apps away from home (see away.py) ----------------------
 

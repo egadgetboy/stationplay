@@ -818,6 +818,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "room": capacity.room(test, each),
         }
 
+    # Admin alerts (see alerts.py) -----------------------------------------------
+
+    @app.get("/api/internal/alerts")
+    async def alerts_now():
+        """For Admins (anyone else is refused: see access.FOR_USERS): what
+        StationPlay finds wrong now, and what was fixed in the last day.
+        Cheap to ask every few minutes."""
+        return {"alerts": [a.as_dict() for a in ctx.alerts.listed()]}
+
     # Problem reports (see the apps' Options: Send a report) ----------------------
 
     reported: dict[str, float] = {}
