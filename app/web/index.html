@@ -903,9 +903,9 @@
     </div>
     <div class="panel" style="margin-top:16px" id="devicesPanel" hidden>
       <div class="panel-pad"><strong>Linked devices</strong>
-      <p class="hint" style="margin:4px 0 0">TVs, phones and tablets with StationPlay’s apps that show Who’s tuning in?, so the people who use them pick themselves. Unlinking one signs it out at once; it can be linked again by signing in on it.</p></div>
+      <p class="hint" style="margin:4px 0 0">TVs, phones and tablets with StationPlay’s apps that show Who’s tuning in?, so the people who use them pick themselves. Away from home, a device lists fewer people: see Devices beside each person. Unlinking one signs it out at once; it can be linked again by signing in on it.</p></div>
       <table class="users" id="devicesTable"></table>
-      <div class="panel-pad scan-set"><label for="showOnDefault" class="small"><strong>New people show on</strong></label><select id="showOnDefault"><option value="all">Every device (a household)</option><option value="signed-in">Only where they sign in (a larger server)</option></select></div>
+      <div class="panel-pad scan-set"><label for="showOnDefault" class="small"><strong>New people show on</strong></label><select id="showOnDefault"><option value="home">Devices at home (a household)</option><option value="signed-in">Only where they sign in (a larger server)</option></select></div>
     </div>
     <form class="panel setup" style="margin-top:16px" id="addUserForm">
       <strong id="addUserTitle">Add a user</strong>
@@ -5673,7 +5673,9 @@ function renderDevices() {
     h('thead', {}, h('tr', {}, h('th', {}, 'Device'), h('th', {}, 'On its list'), h('th', {}, 'Linked'), h('th', {}, 'Last used'), h('th', {}, ''))),
     h('tbody', {}, ...linked.devices.map(d => h('tr', {},
       h('td', {}, h('strong', {}, d.name)),
-      h('td', { class: 'small', 'data-label': 'On its list' }, d.people.length ? d.people.join(', ') : 'No one'),
+      h('td', { class: 'small', 'data-label': 'On its list' }, d.people.length ? d.people.join(', ') : 'No one',
+        // (Away from home, only who's on every device, signed in on it or was chosen for it.)
+        d.peopleAway.join() !== d.people.join() ? h('div', { class: 'hint' }, `Away from home: ${d.peopleAway.join(', ') || 'no one'}`) : null),
       h('td', { class: 'small', 'data-label': 'Linked' }, d.linkedBy ? `By ${d.linkedBy}, ${when(d.linkedMs)}` : when(d.linkedMs)),
       h('td', { class: 'small', 'data-label': 'Last used' }, when(d.seenMs)),
       h('td', {}, h('button', { class: 'btn danger', type: 'button', onclick: async () => {
@@ -5720,19 +5722,24 @@ function paintUserDevices() {
     } });
     return h('label', { class: 'choice' }, input, h('span', {}, h('strong', {}, label), h('span', { class: 'hint' }, hint)));
   };
+  // The devices chosen for them: their only ones (Selected devices), or the
+  // ones they're on away from home too (Devices at home).
   const boxes = linked.devices.map(d => [d.id, h('input', { type: 'checkbox', checked: chosen.has(d.id) })]);
-  const pick = u.showOn === 'selected' ? h('div', { class: 'checks-col', style: 'margin-left:26px' },
+  const pick = ['home', 'selected'].includes(u.showOn) ? h('div', { class: 'checks-col', style: 'margin-left:26px' },
+    u.showOn === 'home' ? h('span', { class: 'small' }, 'Away from home too, on:') : null,
     ...(boxes.length ? boxes.map(([id, box]) => h('label', {}, box, ` ${linked.devices.find(d => d.id === id).name}`)) : [h('span', { class: 'muted small' }, 'No devices are linked yet.')]),
-    boxes.length ? h('div', {}, h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ showOn: 'selected', devices: boxes.filter(([, b]) => b.checked).map(([id]) => id) }, 'Saved') }, 'Save devices')) : null) : null;
+    boxes.length ? h('div', {}, h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ showOn: u.showOn, devices: boxes.filter(([, b]) => b.checked).map(([id]) => id) }, 'Saved') }, 'Save devices')) : null) : null;
   const pin = h('input', { type: 'text', inputmode: 'numeric', pattern: '[0-9]{4}', maxlength: 4, placeholder: '4 digits', autocomplete: 'off', 'aria-label': 'New PIN' });
   const invite = h('div', { class: 'small' });
   $('#userDevicesBody').replaceChildren(...[
     h('div', { class: 'playback' },
       h('strong', {}, 'Show on'),
-      radio('all', 'Every device', ' On the list of every linked device. Suits a household.'),
-      radio('selected', 'Chosen devices', ' Only on the devices you choose, such as the Kids’ Tablet.'),
-      pick,
-      radio('signed-in', 'Only where they sign in', byName ? ' On no list until they sign in on a device, by name.' : ' Needs a password or a PIN, to sign in by name.', !byName)),
+      radio('home', 'Devices at home', ' On every linked device’s list while it’s at home, on your network or through your VPN. Away from home, only on a device they signed in on, or one you choose. Suits a household.'),
+      u.showOn === 'home' ? pick : null,
+      radio('all', 'All devices', byName ? ' On every linked device’s list, at home and away: a device away from home, such as a phone at a friend’s, shows their name too.' : ' Needs a password or a PIN, as a device away from home would show their name for anyone there to pick.', !byName),
+      radio('selected', 'Selected devices', ' Only on the devices you choose, at home and away, such as a family iPad that travels.'),
+      u.showOn === 'selected' ? pick : null,
+      radio('signed-in', 'Only where they sign in', byName ? ' On no list until they sign in on a device, by name; then on that device’s, at home and away.' : ' Needs a password or a PIN, to sign in by name.', !byName)),
     h('div', { class: 'playback' },
       h('strong', {}, 'PIN'),
       h('p', { class: 'hint', style: 'margin:0' }, u.pin

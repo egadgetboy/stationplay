@@ -156,18 +156,26 @@ The person using it at the moment gets a short-lived **session** for one
 user, made by picking that user.
 
 **Who's tuning in?** shows on a device's start when more than one user can
-use it. Who's on it is each user's **Show on**:
+use it. Who's on it is each user's **Show on**, and where the device is:
+**at home** (its picker is asked on the home port, which a VPN reaches too)
+or **away from home** (the public port):
 
-- **All devices:** on every linked device's picker. Suits a household.
-- **Selected devices:** only on the devices an Admin picks, such as the
-  Living Room Roku and the Kids' Tablet.
+- **Devices at home:** on every linked device's picker while it's at home.
+  Away from home, only on a device they signed in on themselves, or one an
+  Admin chose for them. Suits a household, and is its default.
+- **All devices:** on every linked device's picker, at home and away: a
+  device away from home (a phone at a friend's) shows their name too.
+- **Selected devices:** only on the devices an Admin picks, at home and
+  away, such as the Kids' Tablet, or a family iPad that travels.
 - **Only where signed in:** on no picker until that person signs in on a
-  device; then on that device's picker.
+  device; then on that device's picker, at home and away.
 
 New users get the server's default as it is when they're added, which an
-Admin sets: All devices (a household) or Only where signed in (a larger
-server). Changing it doesn't move anyone already added; people added before
-there were pickers are on every device.
+Admin sets: Devices at home (a household) or Only where signed in (a larger
+server). Changing it doesn't move anyone already added. In 1.28.0, everyone
+on All devices (the household's default until then, which everyone added
+before there were pickers was on too) moved to Devices at home, once, and
+so did the server's default; the access log says how many people moved.
 
 The picker always has **Sign in**: the person enters their name and, the
 first time on that device, their invite code or password; after that they
@@ -176,9 +184,11 @@ switch with their PIN. Each person can **Remove me from this device**.
 Safety rules:
 
 - A user with neither a password nor a PIN (a "Kids" user, say) can be
-  **All devices** or **Selected devices** only, never signed in by name, so
-  no one can get in from anywhere by guessing a name like "Kids". (A user
-  with a password signs in with it, on the page or in an app, as today.)
+  **Devices at home** or **Selected devices** only, never signed in by
+  name, so no one can get in from anywhere by guessing a name like "Kids",
+  and no device away from home lists them unless an Admin chose it. (A
+  user with a password signs in with it, on the page or in an app, as
+  today.)
 - The first sign-in on a device takes an invite code or a password, never
   just a PIN. An **invite code** is made by an Admin for one user, works
   once, and expires after 7 days.
@@ -187,6 +197,8 @@ Safety rules:
   15-minute wait for that user, on every device.
 - The picker exists only on a device already linked. A stranger who
   installs an app never sees a name.
+- Away from home, picking someone a device doesn't list there is refused,
+  as for someone not on it at all.
 
 ## The addresses
 

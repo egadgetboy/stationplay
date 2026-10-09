@@ -164,7 +164,12 @@ Answers 401 for a wrong name or password, 429 while signing in waits, and
 ## GET /api/internal/picker
 
 Asked with the device's key (`StationPlay-Device`; see Linked devices). Who
-can be picked on this device, by name:
+can be picked on this device, by name, where it is now (from 1.28.0): at
+home (on the home network, or through a VPN), everyone shown on the
+household's devices at home; away from home (through the public port), only
+those an Admin shows on every device, those who signed in on this device,
+and those an Admin chose it for. Ask again when the app comes back to the
+front, as the device may have moved:
 
 | Field | Type | What it is |
 |---|---|---|
@@ -198,7 +203,8 @@ a device others use too (its picker lists more than one person).
 
 Answers 403 for a wrong PIN or password (with the sentence to show), 429
 after 5 wrong PINs for that person in 15 minutes (on any device), and 404
-for someone not on this device's picker. 401 always means the device isn't
+for someone not on this device's picker where it is now (away from home,
+someone listed only at home, say). 401 always means the device isn't
 linked any more, here and on every picker address: link it again.
 
 ## POST /api/internal/picker/sign-in

@@ -9,20 +9,24 @@ is using it picks themselves from its picker, and gets a sign-in on that
 device that lasts a day from when it was last used (picking again starts a
 new one, and ends whoever was signed in there before).
 
-Who's on a device's picker is each person's Show on: every device (a
-household), the devices an Admin chose for them, or only where they've
-signed in (a larger server; the server's default for new people says which
-they start with). The picker always has Sign in, by name: the first time on
-a device with an invite code (made by an Admin, once, for 7 days) or a
-password, never just a PIN; after that, they're on that device's picker.
-Anyone can take themselves off a device's picker.
+Who's on a device's picker is each person's Show on: every device while
+it's at home (a household: its picker is asked on the home port, which a
+VPN reaches too), every device at home and away, the devices an Admin chose
+for them, or only where they've signed in (a larger server; the server's
+default for new people says which they start with). Away from home (the
+public port), a device lists only who's on every device, and who signed in
+on it or was chosen for it. The picker always has Sign in, by name: the
+first time on a device with an invite code (made by an Admin, once, for 7
+days) or a password, never just a PIN; after that, they're on that device's
+picker. Anyone can take themselves off a device's picker.
 
-A PIN (4 digits, kept as a hash) is asked for when someone picks themselves,
-if they have one; an Admin without one gives their password. Five wrong
-PINs for someone means a 15-minute wait for them, on every device. Someone
-with neither a password nor a PIN (a "Kids" user, say) can't sign in by
-name, so they're on every device or chosen ones only: no one can get in from
-anywhere by guessing a name.
+A PIN (4 digits, kept as a hash; the apps call it a passcode) is asked for
+when someone picks themselves, if they have one; an Admin without one gives
+their password. Five wrong PINs for someone means a 15-minute wait for
+them, on every device. Someone with neither a password nor a PIN (a "Kids"
+user, say) can't sign in by name, so they're on devices at home or chosen
+ones only: no one can get in from anywhere by guessing a name, and no
+device away from home lists them unless an Admin chose it.
 """
 
 from __future__ import annotations
@@ -51,9 +55,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("stationplay.devices")
 
-ALL, SELECTED, SIGNED_IN = "all", "selected", "signed-in"
-SHOW_ON = (ALL, SELECTED, SIGNED_IN)
-SHOW_ON_META = "show_on_default"  # where new people are shown: ALL or SIGNED_IN
+HOME, ALL, SELECTED, SIGNED_IN = "home", "all", "selected", "signed-in"
+SHOW_ON = (HOME, ALL, SELECTED, SIGNED_IN)
+SHOW_ON_META = "show_on_default"  # where new people are shown: HOME or SIGNED_IN
+MOVED_HOME_META = "show_on_home"  # (set once everyone on ALL was moved to HOME: 1.28)
 SIGNED_IN_HERE, CHOSEN, REMOVED = "signed-in", "chosen", "removed"
 KEY_BYTES = 32
 SIGN_INS_WRONG = 10  # wrong sign-ins by name on one device before it waits...
@@ -103,6 +108,28 @@ class Devices:
     _wrong: dict[int, deque[float]] = field(default_factory=dict)
     _wrong_here: dict[int, deque[float]] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        self._move_home()
+
+    def _move_home(self) -> None:
+        """From 1.28, once: everyone shown on every device (All devices, the
+        household's default until then, and everyone added before there were
+        pickers) is shown on devices at home instead, and so are new people
+        where that was the server's default. Said in the access log."""
+        if self.db.get_meta(MOVED_HOME_META):
+            return
+        moved = self.db.move_show_on((ALL, ""), HOME)
+        if self.db.get_meta(SHOW_ON_META) == ALL:
+            self.db.set_meta(SHOW_ON_META, HOME)
+        self.db.set_meta(MOVED_HOME_META, "1")
+        if moved:
+            self.access.record(
+                logging.INFO,
+                f"Who's tuning in?: {moved} {'person now shows' if moved == 1 else 'people now show'} "
+                "on devices at home only; away from home, a device lists only who signed in on it "
+                "or was chosen for it. An Admin can choose All devices for anyone on the Access tab.",
+            )
+
     # Linking ------------------------------------------------------------------
 
     def link(self, name: str, by: User) -> tuple[Device, str]:
@@ -145,33 +172,38 @@ class Devices:
 
     @property
     def default_show_on(self) -> str:
-        return SIGNED_IN if self.db.get_meta(SHOW_ON_META) == SIGNED_IN else ALL
+        return SIGNED_IN if self.db.get_meta(SHOW_ON_META) == SIGNED_IN else HOME
 
     def set_default_show_on(self, show_on: str) -> None:
-        if show_on not in (ALL, SIGNED_IN):
-            raise ValueError("Choose All devices or Only where they sign in")
+        if show_on not in (HOME, SIGNED_IN):
+            raise ValueError("Choose Devices at home or Only where they sign in")
         self.db.set_meta(SHOW_ON_META, show_on)
 
     def show_on(self, user: User) -> str:
-        """Where someone is shown (on every device, for someone added
+        """Where someone is shown (on devices at home, for someone added
         before there were pickers)."""
-        return user.show_on if user.show_on in SHOW_ON else ALL
+        return user.show_on if user.show_on in SHOW_ON else HOME
 
     def signs_in_by_name(self, user: User) -> bool:
         """Whether someone can sign in by name: with a password or a PIN."""
         return user.has_pin or bool(self.db.password_hash(user.id))
 
-    def on_picker(self, device: Device, user: User, how: str | None) -> bool:
+    def on_picker(self, user: User, how: str | None, at_home: bool) -> bool:
+        """Whether someone is on a device's picker, as they are on it (`how`:
+        see device_people), where the device is now (`at_home`: its request
+        came in on the home port)."""
         if how == REMOVED:
             return False
         if how in (SIGNED_IN_HERE, CHOSEN):
             return True
-        return self.show_on(user) == ALL
+        show_on = self.show_on(user)
+        return show_on == ALL or (show_on == HOME and at_home)
 
-    def people(self, device: Device) -> list[User]:
-        """Who's on a device's picker, by name."""
+    def people(self, device: Device, at_home: bool = True) -> list[User]:
+        """Who's on a device's picker, by name: at home, or away from home
+        (`at_home` False: its request came in on the public port)."""
         here = self.db.device_people().get(device.id, {})
-        return [u for u in self.db.users() if self.on_picker(device, u, here.get(u.id))]
+        return [u for u in self.db.users() if self.on_picker(u, here.get(u.id), at_home)]
 
     def chosen_devices(self) -> dict[int, list[int]]:
         """The devices an Admin chose for each person (Selected devices)."""
@@ -204,13 +236,13 @@ class Devices:
         address: str = "",
         public: bool = False,
     ) -> tuple[User, str]:
-        """Signs in on a device as someone on its picker: their PIN if they
-        have one, or (an Admin without one, on a device others use too) their
-        password. The person and the sign-in's token. Refused, or
-        access.Busy."""
+        """Signs in on a device as someone on its picker, where it is now
+        (`public`: away from home): their PIN if they have one, or (an Admin
+        without one, on a device others use too) their password. The person
+        and the sign-in's token. Refused, or access.Busy."""
         user = self.db.user(user_id)
         here = self.db.device_people().get(device.id, {})
-        if user is None or not self.on_picker(device, user, here.get(user.id)):
+        if user is None or not self.on_picker(user, here.get(user.id), at_home=not public):
             raise Refused("That person isn't on this device's list", 404)
         if user.has_pin:
             await self._check_pin(user, pin or "")
@@ -228,7 +260,8 @@ class Devices:
         who took themselves off it still has it), or someone else linked it
         (by who they are, not their name, which can change or be someone
         else's later). Only on a device of their own may an Admin without a
-        PIN pick themselves without their password."""
+        PIN pick themselves without their password. (Its list is the one it
+        has at home, the longer, wherever it is now.)"""
         return (
             len(self.people(device)) > 1
             or any(user_id != user.id for user_id in here)
@@ -343,28 +376,25 @@ class Devices:
         else:
             hashed = ""
             now = self.db.user(user.id) or user
-            if self.show_on(now) == SIGNED_IN and not self.db.password_hash(user.id):
+            why = _needs_one(now.name, self.show_on(now))
+            if why and not self.db.password_hash(user.id):
                 raise ValueError(
-                    f"{user.name} needs a PIN or a password to sign in by name. Choose All "
-                    "devices or Selected devices for them first."
+                    f"{why} Choose Devices at home or Selected devices for them first."
                 )
         self.db.set_pin(user.id, hashed)
         self._wrong.pop(user.id, None)
 
     def set_show_on(self, user: User, show_on: str, devices: list[int] | None) -> None:
         """Where someone is shown ("default": the server's default for new
-        people, as it is now), and (for Selected devices) which devices.
-        ValueError."""
+        people, as it is now), and (for Selected devices, or away from home
+        for Devices at home) which devices. ValueError."""
         if show_on not in (*SHOW_ON, "default"):
             raise ValueError("Choose where they're shown")
         now = self.db.user(user.id) or user
         if show_on == "default":
             show_on = self.default_show_on
-        if show_on == SIGNED_IN and not self.signs_in_by_name(now):
-            raise ValueError(
-                f"{user.name} needs a PIN or a password to sign in by name. Give them one, or "
-                "choose All devices or Selected devices."
-            )
+        if not self.signs_in_by_name(now) and (why := _needs_one(now.name, show_on)):
+            raise ValueError(f"{why} Give them one, or choose Devices at home or Selected devices.")
         self.db.set_show_on(user.id, show_on)
         if devices is not None:
             self.db.set_chosen_devices(user.id, devices)
@@ -385,6 +415,17 @@ class Devices:
         return secrets.compare_digest(access.session_hash(raw), found[0])
 
 
+def _needs_one(name: str, show_on: str) -> str | None:
+    """Why someone with neither a password nor a PIN can't be shown this
+    way, if they can't: they'd sign in by name, or be on devices away from
+    home that no one chose for them, for anyone there to pick."""
+    if show_on == SIGNED_IN:
+        return f"{name} needs a PIN or a password to sign in by name."
+    if show_on == ALL:
+        return f"{name} needs a PIN or a password to show on devices away from home."
+    return None
+
+
 def looks_like_code(text: str) -> bool:
     raw = text.replace("-", "").replace(" ", "").upper()
     return len(raw) == 8 and all(c in CODE_LETTERS for c in raw)
@@ -399,7 +440,8 @@ def _now() -> int:
 
 class PickerChange(BaseModel):
     """What's given changes: a PIN ("" for none), where they're shown
-    ("default": the server's default), and the devices for "selected"."""
+    ("default": the server's default), and the devices chosen for them (for
+    "selected", or away from home for "home")."""
 
     pin: str | None = Field(default=None, max_length=10)
     showOn: str | None = None
@@ -411,7 +453,8 @@ class ShowOnDefault(BaseModel):
 
 
 SHOW_ON_WORDS = {
-    ALL: "every device",
+    HOME: "devices at home",
+    ALL: "all devices, away from home too",
     SELECTED: "the devices chosen for them",
     SIGNED_IN: "only where they sign in",
     "default": "the server's default",
@@ -435,6 +478,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     async def linked_devices() -> dict[str, Any]:
         found = d.devices()
         people = {dev.id: [u.name for u in d.people(dev)] for dev in found}
+        away = {dev.id: [u.name for u in d.people(dev, at_home=False)] for dev in found}
         names = {u.id: u.name for u in ctx.db.users()}  # (as they're named now)
         return {
             "default": d.default_show_on,
@@ -445,7 +489,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     "linkedBy": names.get(dev.linked_by_id or 0, dev.linked_by),
                     "linkedMs": dev.created_ms,
                     "seenMs": dev.seen_ms,
-                    "people": people[dev.id],
+                    "people": people[dev.id],  # (at home)
+                    "peopleAway": away[dev.id],
                 }
                 for dev in found
             ],

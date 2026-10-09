@@ -852,9 +852,9 @@ StationPlay learns the ratings of what's on each station as it checks Plex for u
 
 StationPlay's apps can share one device among several people, such as the living room TV. The first time someone signs in on the device (with their password, or a code entered on StationPlay's page), it's **linked**. From then on, it opens on **Who's tuning in?**, and whoever is watching picks themselves.
 
-- **Who's on the list.** Choose **Devices** beside a person's name: **Every device** (a household), **Chosen devices** (such as the Kids' Tablet), or **Only where they sign in** (a larger server). New people start as **New people show on** says, under **Linked devices**.
+- **Who's on the list.** Choose **Devices** beside a person's name: **Devices at home** (a household: on every device while it's at home, or through your VPN; away from home, only on a device they signed in on, or one you choose), **All devices** (away from home too), **Selected devices** (such as a family iPad that travels), or **Only where they sign in** (a larger server). New people start as **New people show on** says, under **Linked devices**.
 - **PINs.** A person can have a 4-digit PIN, which the device asks for when they pick themselves. An Admin without a PIN gives their password. Five wrong PINs for someone means a 15-minute wait for them, on every device.
-- **No password needed.** A User can have no password, such as a "Kids" user who only picks themselves on the TV. Someone with neither a password nor a PIN can't sign in by name, so they're shown on every device or chosen devices only.
+- **No password needed.** A User can have no password, such as a "Kids" user who only picks themselves on the TV. Someone with neither a password nor a PIN can't sign in by name, so they're shown on devices at home or selected devices only.
 - **Sign in on a new device.** Choose **Sign in** on Who's tuning in?, then enter your name and your password, or an **invite code** an Admin made for you under **Devices** (it works once, for 7 days). After that, you're on that device's list. Anyone can take themselves off a device's list.
 - **Unlinking.** **Linked devices** on the **Access** tab lists each device and who's on its list. **Unlink** signs it out at once.
 

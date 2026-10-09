@@ -281,8 +281,9 @@ CREATE TABLE IF NOT EXISTS linked_devices (
     seen_ms      INTEGER NOT NULL,
     linked_by    TEXT    NOT NULL DEFAULT ''
 );
--- Who's on a device's picker other than as everyone on every device is:
--- signed in there, or chosen for it by an Admin; or who took themselves off.
+-- Who's on a device's picker other than as their Show on says (see
+-- devices.py): signed in there, or chosen for it by an Admin; or who took
+-- themselves off.
 CREATE TABLE IF NOT EXISTS device_people (
     device_id    INTEGER NOT NULL REFERENCES linked_devices(id) ON DELETE CASCADE,
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1825,8 +1826,8 @@ class Database:
         return str(row["name"])
 
     def device_people(self) -> dict[int, dict[int, str]]:
-        """How each person is on each device's picker, other than as
-        everyone on every device is: by device, then person."""
+        """How each person is on each device's picker, other than as their
+        Show on says: by device, then person."""
         with self._lock:
             rows = self._conn.execute("SELECT * FROM device_people").fetchall()
         out: dict[int, dict[int, str]] = {}
@@ -1884,6 +1885,16 @@ class Database:
     def set_show_on(self, user_id: int, show_on: str) -> None:
         with self._lock, self._conn:
             self._conn.execute("UPDATE users SET show_on = ? WHERE id = ?", (show_on, user_id))
+
+    def move_show_on(self, was: tuple[str, ...], now: str) -> int:
+        """Everyone shown in one of the ways in `was` is shown as `now`
+        instead: how many."""
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                f"UPDATE users SET show_on = ? WHERE show_on IN ({', '.join('?' * len(was))})",
+                (now, *was),
+            )
+        return cur.rowcount
 
     def set_invite(self, user_id: int, code_hash: str, expires_ms: int) -> None:
         with self._lock, self._conn:

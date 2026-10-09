@@ -408,10 +408,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.get("/api/internal/picker")
     async def picker(request: Request):
+        """Who's on this device's picker where it is now: at home (on the
+        home port, through a VPN too), or away from home (the public port),
+        where it lists only who's on every device, signed in on it or was
+        chosen for it."""
         device = this_device(request)
+        at_home = not access.outside(request.scope)
         return {
             "device": device.name,
-            "people": [person_json(u) for u in ctx.devices.people(device)],
+            "people": [person_json(u) for u in ctx.devices.people(device, at_home)],
         }
 
     @app.post("/api/internal/picker/choose")

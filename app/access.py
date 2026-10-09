@@ -1164,7 +1164,7 @@ class NewUser(BaseModel):
     role: str = USER
     maxStations: int | None = NEW_USER_STATIONS  # (null: no limit)
     # On the apps' pickers (see devices.py): a PIN, and where they're shown
-    # ("default": the server's default), and the devices for "selected".
+    # ("default": the server's default), and the devices chosen for them.
     pin: str | None = Field(default=None, max_length=10)
     showOn: str = "default"
     devices: list[int] | None = Field(default=None, max_length=1000)
@@ -1189,7 +1189,7 @@ def _user_json(user: User, made: dict[int, int]) -> dict:
     return {
         "id": user.id, "name": user.name, "role": user.role, "signedInMs": user.signed_in_ms,
         "maxStations": user.max_stations, "stationsMade": made.get(user.id, 0),
-        "hasPassword": user.has_password, "pin": user.has_pin, "showOn": user.show_on or "all",
+        "hasPassword": user.has_password, "pin": user.has_pin, "showOn": user.show_on or "home",
     }  # fmt: skip
 
 

@@ -5,6 +5,8 @@ and an Admin unlinking a device."""
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -17,6 +19,7 @@ from .fakeplex import FakePlex
 
 ADA = {"name": "Ada", "password": "correct horse"}
 TV = {"app": "StationPlay for Roku", "deviceName": "Living Room Roku", "picker": True}
+PUBLIC_PORT = 8443
 
 
 @pytest.fixture
@@ -26,6 +29,28 @@ def app(tmp_path):
     fp.add_episode("201", "100", 1, 1, "Ep", "/x/1.mkv", 22 * 60_000)
     settings = Settings(plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "data")
     return create_app(settings, PlexClient("http://plex.test", "token", transport=fp.transport()))
+
+
+def two_ports(tmp_path):
+    """StationPlay with a public port, as a reverse proxy reaches it from
+    the internet."""
+    settings = Settings(
+        plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "data",
+        public_port=PUBLIC_PORT,
+    )  # fmt: skip
+    return create_app(
+        settings, PlexClient("http://plex.test", "token", transport=FakePlex().transport())
+    )
+
+
+def away_from_home(app) -> TestClient:
+    """A device away from home: through the public port, over HTTPS, as
+    the reverse proxy in front says."""
+    return TestClient(
+        app,
+        base_url=f"http://testserver:{PUBLIC_PORT}",
+        headers={"X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.5"},
+    )
 
 
 def device(key: str) -> dict[str, str]:
@@ -49,7 +74,7 @@ def test_a_household_tv(app):
         # PIN, only where she signs in.
         kids = admin.post("/api/access/users", json={"name": "Kids", "role": "user"})
         assert kids.status_code == 201, kids.text
-        assert not kids.json()["hasPassword"] and kids.json()["showOn"] == "all"
+        assert not kids.json()["hasPassword"] and kids.json()["showOn"] == "home"
         tia = admin.post(
             "/api/access/users",
             json={"name": "Tia", "password": "teen password", "role": "user", "pin": "4321",
@@ -190,6 +215,9 @@ def test_who_can_be_shown_where(app):
         kids = admin.post("/api/access/users", json={"name": "Kids", "role": "user"}).json()
         made_admin = admin.put(f"/api/access/users/{kids['id']}", json={"role": "admin"})
         assert made_admin.status_code == 400 and "password" in made_admin.json()["detail"]
+        # Nor on devices away from home that no one chose for them.
+        everywhere = admin.put(f"/api/access/users/{kids['id']}/picker", json={"showOn": "all"})
+        assert everywhere.status_code == 400 and "away from home" in everywhere.json()["detail"]
         assert admin.post(
             "/api/access/sign-in", json={"name": "Kids", "password": ""}
         ).status_code in (401, 422)
@@ -334,3 +362,114 @@ def test_an_app_without_a_picker_signs_in_as_before(app):
         assert signed["deviceKey"] is None and signed["token"]
         assert admin.get("/api/access/devices").json()["devices"] == []
         assert phone.get("/api/internal/picker", headers=device("nope")).status_code == 401
+
+
+def test_devices_at_home_list_the_household_and_away_only_their_own(tmp_path):
+    app = two_ports(tmp_path)
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        made = {
+            name: admin.post("/api/access/users", json={"name": name, "role": "user", **more}).json()
+            for name, more in (
+                ("Kids", {}), ("Tia", {"password": "teen password"}),
+                ("Bo", {"password": "bo password"}),
+            )
+        }  # fmt: skip
+        # Devices at home: the household's default, for everyone.
+        assert {u["showOn"] for u in admin.get("/api/access/users").json()} == {"home"}
+        assert admin.get("/api/access/devices").json()["default"] == "home"
+        home = TestClient(app)
+        key = home.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]
+        assert people(home, key) == ["Ada", "Bo", "Kids", "Tia"]
+
+        # The same device away from home: only Ada, who signed in on it.
+        away = away_from_home(app)
+        assert people(away, key) == ["Ada"]
+        for name in ("Kids", "Tia"):
+            picked = away.post(
+                "/api/internal/picker/choose", json={"id": made[name]["id"]}, headers=device(key)
+            )
+            assert picked.status_code == 404, name
+        # (Back home, they're there.)
+        kids = home.post(
+            "/api/internal/picker/choose", json={"id": made["Kids"]["id"]}, headers=device(key)
+        )
+        assert kids.status_code == 200
+
+        # All devices: away from home too.
+        tv_id = admin.get("/api/access/devices").json()["devices"][0]["id"]
+        bo = admin.put(f"/api/access/users/{made['Bo']['id']}/picker", json={"showOn": "all"})
+        assert bo.status_code == 200 and bo.json()["showOn"] == "all"
+        assert people(away, key) == ["Ada", "Bo"]
+        # An Admin chooses the device for Kids, away from home too (the family
+        # iPad that travels); and Tia signs in on it away from home.
+        chose = admin.put(
+            f"/api/access/users/{made['Kids']['id']}/picker",
+            json={"showOn": "home", "devices": [tv_id]},
+        )
+        assert chose.status_code == 200 and chose.json()["showOn"] == "home"
+        tia = away.post(
+            "/api/internal/picker/sign-in",
+            json={"name": "Tia", "password": "teen password"},
+            headers=device(key),
+        )
+        assert tia.status_code == 200, tia.text
+        assert people(away, key) == ["Ada", "Bo", "Kids", "Tia"]
+        kids = away.post(
+            "/api/internal/picker/choose", json={"id": made["Kids"]["id"]}, headers=device(key)
+        )
+        assert kids.status_code == 200
+        # Selected devices: only there, at home and away.
+        admin.put(
+            f"/api/access/users/{made['Kids']['id']}/picker",
+            json={"showOn": "selected", "devices": []},
+        )
+        assert "Kids" not in people(home, key) and "Kids" not in people(away, key)
+        admin.put(f"/api/access/users/{made['Bo']['id']}/picker", json={"showOn": "home"})
+        [listed] = admin.get("/api/access/devices").json()["devices"]
+        assert (listed["people"], listed["peopleAway"]) == (["Ada", "Bo", "Tia"], ["Ada", "Tia"])
+        log = admin.get("/api/logs?access_log=true").json()["text"]
+        assert "Ada set Bo to show on all devices, away from home too" in log
+        assert "Ada set Bo to show on devices at home" in log
+
+
+def test_everyone_on_all_devices_moves_to_devices_at_home_once(tmp_path):
+    app = two_ports(tmp_path)
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        for name, more in (
+            ("Kids", {}), ("Tia", {"password": "teen password", "showOn": "signed-in"}),
+            ("Lu", {"password": "lu password", "showOn": "selected"}),
+            ("Bo", {"password": "bo password"}),
+        ):  # fmt: skip
+            assert admin.post(
+                "/api/access/users", json={"name": name, "role": "user", **more}
+            ).status_code == 201  # fmt: skip
+    # As 1.27 left it: Ada added before there were pickers, Kids and Bo on
+    # every device, and every device the server's default.
+    db = sqlite3.connect(tmp_path / "data" / "stationplay.db")
+    with db:
+        db.execute("UPDATE users SET show_on = '' WHERE name = 'Ada'")
+        db.execute("UPDATE users SET show_on = 'all' WHERE name IN ('Kids', 'Bo')")
+        db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('show_on_default', 'all')")
+        db.execute("DELETE FROM meta WHERE key = 'show_on_home'")
+    db.close()
+
+    def started() -> tuple[dict[str, str], str, str]:
+        with TestClient(two_ports(tmp_path)) as admin:
+            admin.post("/api/access/sign-in", json=ADA)
+            users = {u["name"]: u["showOn"] for u in admin.get("/api/access/users").json()}
+            default = admin.get("/api/access/devices").json()["default"]
+            return users, default, admin.get("/api/logs?access_log=true").json()["text"]
+
+    users, default, log = started()
+    assert users == {"Ada": "home", "Bo": "home", "Kids": "home", "Lu": "selected",
+                     "Tia": "signed-in"}  # fmt: skip
+    assert default == "home"
+    said = (
+        "Who's tuning in?: 3 people now show on devices at home only; away from home, a device "
+        "lists only who signed in on it or was chosen for it."
+    )
+    assert log.count(said) == 1
+    # Once: started again, nothing more moves, or is said.
+    assert started()[2].count(said) == 1
