@@ -1381,11 +1381,26 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     # Web page + JSON API -------------------------------------------------
 
     @app.get("/apple-touch-icon.png")
-    async def home_screen_icon():
-        """The page's icon on a phone's home screen (iPhones and iPads don't
-        use the SVG one in the page)."""
+    @app.get("/icon-192.png")
+    @app.get("/icon-512.png")
+    @app.get("/icon-maskable-512.png")
+    async def home_screen_icon(request: Request):
+        """The page's icons on a phone's home screen (iPhones and iPads don't
+        use the SVG one in the page), and as an app (see web_app)."""
         return FileResponse(
-            WEB_DIR / "apple-touch-icon.png", headers={"Cache-Control": "max-age=86400"}
+            WEB_DIR / request.url.path.lstrip("/"), headers={"Cache-Control": "max-age=86400"}
+        )
+
+    @app.get("/manifest.webmanifest")
+    async def web_app():
+        """What a browser needs to install the page as an app (added to a
+        phone's home screen, or installed on a computer), which opens in a
+        window of its own. There's no service worker: the page is always the
+        one StationPlay serves now."""
+        return FileResponse(
+            WEB_DIR / "manifest.webmanifest",
+            media_type="application/manifest+json",
+            headers={"Cache-Control": "max-age=86400"},
         )
 
     @app.get("/", response_class=HTMLResponse)

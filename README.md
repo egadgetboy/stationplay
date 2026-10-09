@@ -273,7 +273,7 @@ If your media share takes more than 8 seconds to answer, StationPlay treats it a
 **Using StationPlay's page from the internet.** StationPlay can open a second port only for its web page, set with `PUBLIC_PORT` (3311 in the YAML and Compose files; it must be different from `PORT`). On that port:
 
 - The addresses Plex and other apps use (the tuner, guides, streams and playlist) don't exist.
-- Signing in is always required. Until StationPlay has its first user, it shows only a message to add one from your home network, so no one can make themselves the first Admin from outside.
+- Signing in is always required. Before it, there's only the sign-in page, with its icons and what a browser needs to install the page as an app (see **As an app** under [First-time setup](#first-time-setup)). Until StationPlay has its first user, it shows only a message to add one from your home network, so no one can make themselves the first Admin from outside.
 - Wrong passwords are limited per visitor address (5 in 15 minutes) and for the internet as a whole (100 in 15 minutes). A browser that has signed in before isn't held up by the internet-wide limit.
 
 `PUBLIC_PORT` sits behind something that reaches it from the internet: a Cloudflare Tunnel, or a reverse proxy with HTTPS. [Reaching StationPlay from outside your home](#reaching-stationplay-from-outside-your-home) explains each, and the other ways in. If you don't need it, remove the `3311` port line and `PUBLIC_PORT`.
@@ -453,6 +453,8 @@ The first time an Admin opens StationPlay's page, the setup asks a few questions
 **After an update.** When a new version brings a question that needs an Admin's answer, such as a new feature to turn on or a new choice, the setup opens once by itself with just those questions (and the checks, if something needs a look). Everything else stays as you set it.
 
 **Light or dark.** StationPlay's page follows your device's light or dark setting. To keep it light or dark in one browser, choose **Light** or **Dark** under **Appearance** at the foot of the page; **Automatic** follows the device again. The choice is kept in that browser only, so each person and device can have their own.
+
+**As an app.** StationPlay's page fits a phone, a tablet and a computer, in either orientation. You can also add it to a phone's or tablet's home screen, or install it on a computer, and it opens in a window of its own, like an app: in Safari on an iPhone or iPad, **Share → Add to Home Screen**; on Android, **Add to Home screen** in Chrome's menu; on a computer, **Install** in Chrome's or Edge's address bar, or **File → Add to Dock** in Safari on a Mac. Install it from the address you sign in at, such as your reverse proxy's `https://` address (Chrome and Edge install only from an `https://` address). Nothing is kept on the device: the app always shows StationPlay's page as it is now, so it needs StationPlay to be reachable.
 
 ## Making stations
 
@@ -1003,6 +1005,8 @@ The tests need ffmpeg on the `PATH` (the HDR and real-world tests also need ffmp
 
 **The setup's questions.** When a release adds something an Admin needs to answer (a feature that's off until they turn it on, or a new choice), it goes in the setup: a new question in `QUESTIONS` in `app/setup.py`, with its step on the page (`SETUP_PAGES` in `app/web/index.html`); or, for a question that gains a choice, its version raised by one. After the update, the setup opens once by itself with just that question.
 
+**The page at every screen size.** Before a release, `python tools/page_sizes.py /tmp/page-sizes` (it needs Playwright and Pillow) runs StationPlay with stand-in data and saves a screenshot of every tab and dialog at phone, tablet and computer sizes, light and dark, signed in as an Admin and as a User. It lists anything that scrolls sideways, is cut off, or is too small to tap.
+
 **Releases.** Each release's notes are in `docs/releases/v<version>.md`, whose first lines name the commit of that version (`commit: <its full ID>`). When one is added to `main`, `.github/workflows/release.yml` publishes it on GitHub: the tag at that commit, the notes, and the release's files built from that commit (`stationplay-<version>.zip`, `stationplay.yaml` and `docker-compose.yml`). It checks that the commit is on `main` and is that version, leaves releases already published alone, and marks the newest as the latest.
 
 ### The logo library
@@ -1069,7 +1073,7 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/logos.py`, `app/logos/` | The logo library and your own logos |
 | `app/text.py`, `app/logbuffer.py` | Cleaning up names people type; recent log entries for the Logs tab |
 | `app/assets/` | Sounds and other files the app draws with |
-| `app/web/index.html` | The web page |
+| `app/web/index.html`, `app/web/manifest.webmanifest` | The web page, and what installing it as an app takes (with its icons, made by `tools/app_icons.py`) |
 | `tests/` | Unit and end-to-end tests |
 | `Dockerfile`, `stationplay.yaml`, `docker-compose.yml` | The image, the TrueNAS app, and the Compose file |
 | `docs/` | StationPlay's logo; StationPlay's API (`api.md`, `openapi-v1.json`); the apps' own addresses (`internal-api.md`); the designs of the library (`library.md`), of watching it on demand (`on-demand.md`), and of who sees what (`users.md`); each release's notes (`releases/`) |

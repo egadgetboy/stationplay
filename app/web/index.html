@@ -6,6 +6,17 @@
 <title>StationPlay</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 85.55 100'%3E%3Cstyle%3Epath{stroke:%23000}@media (prefers-color-scheme:dark){path{stroke:%23fff}}%3C/style%3E%3Cpath d='M3.14 87.74L3.14 12.26A9.12 9.12 0 0 1 17.06 4.5L78.09 42.24A9.12 9.12 0 0 1 78.09 57.76L17.06 95.5A9.12 9.12 0 0 1 3.14 87.74Z' fill='none' stroke-width='6.28'/%3E%3Cpath d='M12.56 82.53L12.56 17.47A2.61 2.61 0 0 1 16.53 15.25L69.15 47.78A2.61 2.61 0 0 1 69.15 52.22L16.53 84.75A2.61 2.61 0 0 1 12.56 82.53Z' fill='%230ea609' stroke='none' style='stroke:none'/%3E%3C/svg%3E">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<!-- As an app (added to a home screen, or installed on a computer): in a
+     window of its own, in the page's colors, below an iPhone's status bar.
+     (The manifest is asked for with this browser's cookies, for a sign-in
+     in front of StationPlay, such as Cloudflare Access.) -->
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+<meta name="theme-color" content="#f4f2ee" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#11161b" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="StationPlay">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <style>
   :root {
     --bg: #f4f2ee;
@@ -133,6 +144,10 @@
   .tabrow { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); margin: 4px 0 20px; }
   .tabrow .tabs { flex: 1; min-width: 0; border-bottom: 0; margin: 0 0 -1px; align-self: stretch; }
   .tabrow .tab { margin-bottom: 0; }
+  /* When they don't fit in one row even without the coffee link (a phone),
+     a second row (see fitCoffee). */
+  .tabrow .tabs.rows { flex-wrap: wrap; }
+  .tabs.rows .tab { padding: 10px; }
   .coffee {
     display: inline-flex; align-items: center; gap: 8px; flex: none; padding: 4px 12px 4px 4px;
     border-radius: 999px; font-size: 13px; background: var(--panel); border: 1px solid var(--line);
@@ -231,7 +246,7 @@
   .setup { padding: 18px; display: grid; gap: 14px; }
   .playback { display: grid; gap: 14px; }
   .wstep { margin: 6px 0 0; font-size: 15px; }
-  /* The setup: its steps down the side (above, on a phone: just which step), and each step's page. */
+  /* The setup: its steps down the side (above, on a phone or a short screen: just which step), and each step's page. */
   #setupDlg { width: min(940px, calc(100vw - 24px)); }
   .setup-grid { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 22px; align-items: start; }
   .setup-nav { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; position: sticky; top: 0; }
@@ -254,7 +269,7 @@
   .setup-check > .dot { margin-top: 7px; }
   .setup-check .head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .chip.warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
-  @media (max-width: 720px) {
+  @media (max-width: 720px), (max-height: 500px) {
     .setup-grid { grid-template-columns: minmax(0, 1fr); }
     .setup-nav { display: none; }
   }
@@ -266,6 +281,7 @@
     padding: 6px 10px; border-radius: 8px; word-break: break-all;
   }
   .copyrow .what { width: 150px; font-weight: 600; font-size: 14px; }
+  @media (max-width: 560px) { .copyrow .what { width: 100%; } }  /* (on a phone, above its address) */
   #backupList { padding: 10px 18px; display: grid; gap: 8px; }
   #backupList .what { width: auto; min-width: 180px; }
   ol.steps, ul.steps { margin: 0; padding-left: 20px; }
@@ -281,17 +297,23 @@
     table.broken thead { display: none; }
     table.broken tr { display: block; border-bottom: 1px solid var(--line); padding: 8px 0; }
     table.broken td { display: block; border: 0; padding: 4px 12px; }
+    table.broken td[data-label]::before { content: attr(data-label) ": "; color: var(--ink-2); }
   }
 
   /* Dialog */
   dialog {
     border: 1px solid var(--line); border-radius: 14px; padding: 0; width: min(760px, calc(100vw - 24px));
-    background: var(--panel); color: var(--ink); box-shadow: 0 20px 60px rgba(0,0,0,.25); max-height: calc(100vh - 24px);
+    background: var(--panel); color: var(--ink); box-shadow: 0 20px 60px rgba(0,0,0,.25);
+    max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px);
   }
+  /* Its head and buttons stay in sight, and only its body scrolls, however
+     tall they are. (100dvh, above: the screen's height as it is now, with a
+     phone browser's bars showing.) */
+  dialog[open], dialog > form { display: flex; flex-direction: column; min-height: 0; }
   dialog::backdrop { background: rgba(10, 14, 18, .45); }
   .dlg-head { display: flex; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--line); }
   .dlg-head h3 { margin: 0; font-size: 17px; }
-  .dlg-body { padding: 18px; display: grid; gap: 16px; overflow: auto; max-height: calc(100vh - 160px); }
+  .dlg-body { padding: 18px; display: grid; grid-auto-rows: max-content; gap: 16px; overflow: auto; flex: 1 1 auto; min-height: 0; }
   .dlg-foot { display: flex; gap: 8px; justify-content: flex-end; padding: 14px 18px; border-top: 1px solid var(--line); }
   #notice { width: min(480px, calc(100vw - 24px)); }
   #notice .dlg-body { gap: 12px; }
@@ -303,6 +325,7 @@
     width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2);
   }
   input[type=time] { width: auto; }
+  select { max-width: 100%; }  /* (never wider than its box, even one as wide as its longest choice) */
   input:focus, select:focus, .btn:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .seg { display: inline-flex; justify-self: start; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
   .seg button { border: 0; background: var(--panel-2); padding: 8px 14px; cursor: pointer; }
@@ -335,7 +358,7 @@
   .picker-tools .zoom svg { display: block; }
   .pick.all { font-weight: 600; background: var(--accent-soft); }
   .pick.done { cursor: default; color: var(--ink-3); }
-  #colList { max-height: min(420px, calc(100vh - 340px)); }
+  #colList { max-height: clamp(160px, calc(100vh - 340px), 420px); max-height: clamp(160px, calc(100dvh - 340px), 420px); }
   .selected { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-height: 100px; overflow: auto; }
   /* The station editor: the station and what's on it, and its settings in
      groups that each say in a line how they're set (opened to change them).
@@ -358,8 +381,8 @@
   .editor-basics { grid-area: basics; display: grid; gap: 14px; }
   .editor-content { grid-area: content; }
   .editor-groups { grid-area: groups; display: grid; gap: 8px; }
-  .editor-content .picker-list { height: clamp(220px, calc(100vh - 420px), 560px); max-height: none; }
-  .editor-content .fbox { max-height: clamp(220px, calc(100vh - 540px), 520px); }
+  .editor-content .picker-list { height: clamp(220px, calc(100vh - 420px), 560px); height: clamp(220px, calc(100dvh - 420px), 560px); max-height: none; }
+  .editor-content .fbox { max-height: clamp(220px, calc(100vh - 540px), 520px); max-height: clamp(220px, calc(100dvh - 540px), 520px); }
   @media (max-width: 880px) {
     .editor-body { grid-template-columns: minmax(0, 1fr); grid-template-areas: "basics" "content" "groups"; grid-template-rows: none; }
     .editor-content .picker-list { height: 340px; }
@@ -404,6 +427,7 @@
   @media (max-width: 480px) {
     .opt { grid-template-columns: minmax(0, 1fr); }
     .opt-label { padding-top: 0; }
+    .opt .seg button { padding: 7px 9px; }  /* (five choices on a phone's one line) */
   }
   .sel { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; font-size: 13px; }
   .sel button { border: 0; background: none; cursor: pointer; color: var(--ink-3); font-size: 16px; line-height: 1; padding: 0 4px; }
@@ -498,8 +522,9 @@
   .arr { padding: 12px 14px; margin-bottom: 12px; font-size: 13px; }
   .arr > summary { cursor: pointer; list-style: none; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
   .arr > summary::-webkit-details-marker { display: none; }
-  .arr > summary::before { content: "\25B8"; color: var(--ink-3); }
-  .arr[open] > summary::before { content: "\25BE"; }
+  /* (Before its name's first line, however the name wraps.) */
+  .arr > summary > strong::before { content: "\25B8"; color: var(--ink-3); font-weight: 400; margin-right: 8px; }
+  .arr[open] > summary > strong::before { content: "\25BE"; }
   .arr-body { display: grid; gap: 12px; margin-top: 10px; }
   #addUserForm + .arr, #addUserForm + .arr[hidden] + .arr { margin-top: 16px; }
   .arr-body ul { margin: 0; padding-left: 20px; }
@@ -537,7 +562,7 @@
   .sel.filter { background: var(--accent-soft); border-color: transparent; cursor: pointer; }
 
   /* Signing in */
-  #signinView { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+  #signinView { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 16px; }
   .signin { width: min(380px, 100%); padding: 24px; display: grid; gap: 14px; }
   .brand.stacked { flex-direction: column; gap: 14px; margin: 4px 0 10px; }
   .brand.stacked .mark { height: 76px; }
@@ -549,13 +574,16 @@
   .adduser { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; align-items: end; }
   table.users td { vertical-align: middle; }
   table.users select { width: auto; }
+  table.users .inline-add { flex-wrap: wrap; }
   .level-edit input[type=text] { max-width: 320px; }
-  @media (max-width: 720px) {
+  /* As cards (as on a phone) until the Access tab's widest table fits. */
+  @media (max-width: 960px) {
     table.users thead { display: none; }
     table.users tr { display: block; border-bottom: 1px solid var(--line); padding: 8px 0; }
     table.users td { display: block; border: 0; padding: 4px 12px; }
     /* (Without the header row, each cell says what it is.) */
     table.users td[data-label]::before { content: attr(data-label) ": "; color: var(--ink-2); }
+    table.users td .inline-add { display: inline-flex; vertical-align: middle; }  /* (after its label) */
   }
 
   /* Stats */
@@ -615,7 +643,8 @@
     table.now td.now-what { grid-area: what; }
     table.now td.now-how { grid-area: how; }
     table.now td.now-app { grid-area: app; }
-    table.now td.now-how::before, table.now td.now-app::before { content: attr(data-k); display: block; font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; }
+    table.now td.now-how::before, table.now td.now-app::before { content: attr(data-label); display: block; font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; }
+    table.now td.now-who { white-space: normal; }
   }
   .hours { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 2px; align-items: end; height: 120px; border-bottom: 1px solid var(--line); }
   .hours span { background: var(--bar); border-radius: 4px 4px 0 0; min-height: 0; }
@@ -623,11 +652,12 @@
   @media (max-width: 760px) {
     .stats-cols { grid-template-columns: minmax(0, 1fr); }
     table.stats thead { display: none; }
-    table.stats tr { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--line); padding: 8px 0; }
+    table.stats tr { display: grid; grid-template-columns: 1fr 1fr; grid-auto-flow: row dense; border-bottom: 1px solid var(--line); padding: 8px 0; }
     table.stats td { display: block; border: 0; padding: 3px 12px; }
     table.stats td.num { text-align: left; }
-    table.stats td[data-k]::before { content: attr(data-k) ": "; color: var(--ink-3); }
+    table.stats td[data-label]::before { content: attr(data-label) ": "; color: var(--ink-3); }
     table.stats td.first, table.stats td.wide { grid-column: 1 / -1; }
+    table.stats td.wide { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; }
   }
 
   /* Logs */
@@ -640,7 +670,10 @@
   .logline.ERROR { background: var(--bad-soft); }
   .logline.ERROR .lvl { color: var(--bad); }
   .logline .msg { word-break: break-word; white-space: pre-wrap; }  /* (an app's report runs over lines) */
-  @media (max-width: 720px) { .logline { grid-template-columns: 1fr; gap: 2px; } }
+  @media (max-width: 720px) {  /* (when and how bad above what, on a phone) */
+    .logline { grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; }
+    .logline .msg { grid-column: 1 / -1; }
+  }
   .problems { padding: 16px 18px; margin-bottom: 18px; }
   .problems-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .problems-head h3 { margin: 0; font-size: 16px; }
@@ -651,6 +684,27 @@
   .checks { display: flex; gap: 14px; align-items: center; }
   .checks label { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; cursor: pointer; }
   .checks input { accent-color: var(--accent); width: 16px; height: 16px; }
+
+  /* On a touch screen, whatever is tapped is at least 40px each way:
+     buttons, boxes and tabs as they are, a checkbox's or a choice's words
+     with room above and below, and smaller things (chips, pills, little
+     buttons) by reaching past their edges, so they look the same. */
+  @media (pointer: coarse) {
+    .btn, .seg button, .tab, .setup-nav button, select, input[type=text], input[type=url],
+    input[type=number], input[type=search], input[type=password], input[type=time] { min-height: 40px; }
+    .btn, .seg button { min-width: 40px; justify-content: center; }
+    label:has(> input[type=checkbox], > input[type=radio]):not(.pick) { padding-block: 10px; }
+    .level-edit label { display: inline-block; }  /* (in a line of words, so it has that room too) */
+    .chips { row-gap: 11px; }  /* (so a chip's reach doesn't cover the next row's) */
+    .chipbtn, .pill.away, .userpill, .coffee, .sel button, .linkbtn, .linkish, .toast .undo,
+    .more > summary, .arr > summary, .limit-user > summary { position: relative; }
+    .chipbtn::after, .pill.away::after, .userpill::after, .coffee::after, .sel button::after,
+    .logo-grid .mine .del::after, .linkbtn::after, .linkish::after, .toast .undo::after,
+    .more > summary::after, .arr > summary::after, .limit-user > summary::after {
+      content: ""; position: absolute; left: 50%; top: 50%;
+      width: max(100%, 40px); height: max(100%, 40px); transform: translate(-50%, -50%);
+    }
+  }
 </style>
 </head>
 <body>
@@ -1645,10 +1699,15 @@ async function copyText(text) {
 
 // Status ---------------------------------------------------------------------
 let status = null;
+let pageVersion = null;  // (StationPlay's version when this page was loaded)
 async function loadStatus() {
   try {
     status = await api('/api/status');
   } catch { return; }
+  // After an update, StationPlay's page as it is now, as soon as nothing's
+  // open (an app's window, from a home screen, has no reload button).
+  pageVersion ??= status.version;
+  if (status.version !== pageVersion && !document.querySelector('dialog[open]')) { location.reload(); return; }
   $('#appVersion').textContent = status.version ? `StationPlay ${status.version} · ` : '';
   const pill = $('#plexPill');
   pill.firstElementChild.className = 'dot ' + (status.plex.ok ? 'ok' : 'bad');
@@ -2228,13 +2287,15 @@ $('#noticeOk').addEventListener('click', () => $('#notice').close());
 // The Buy Me a Coffee link is never why a tab is out of sight: it's its cup
 // and words if the tabs all fit beside them, else just its cup if they fit
 // beside that, else left out if that makes them fit; when they don't fit
-// even then (a phone: they scroll), it's its cup. Looked at again when the
-// window or a tab changes size (a tab shown or hidden, the Broken files
-// count). (Only the row and the tabs are watched, which the link's own size
-// doesn't change, so it settles at once.)
+// even then (a phone), it's its cup, and the tabs go on to a second row, so
+// every one is in sight. Looked at again when the window or a tab changes
+// size (a tab shown or hidden, the Broken files count). (Only the row and
+// the tabs are watched, which the link's own size doesn't change, so it
+// settles at once.)
 function fitCoffee() {
   const nav = $('nav.tabs'), link = $('.coffee');
   const fits = () => nav.scrollWidth <= nav.clientWidth + 1;
+  nav.classList.remove('rows');
   link.hidden = false;
   link.classList.remove('compact');
   if (fits()) return;
@@ -2243,6 +2304,7 @@ function fitCoffee() {
   link.hidden = true;
   if (fits()) return;
   link.hidden = false;
+  nav.classList.add('rows');
 }
 if ('ResizeObserver' in window) {
   const watch = new ResizeObserver(fitCoffee);
@@ -2265,7 +2327,18 @@ appearance.addEventListener('change', () => {
     : 'stationplay_theme=; path=/; max-age=0; SameSite=Lax';
   if (theme) document.documentElement.dataset.theme = theme;
   else delete document.documentElement.dataset.theme;
+  fitThemeColor();
 });
+// The window's own color (an installed app's title bar, a phone browser's
+// bars): the page's background, light or dark as the device is, or as
+// chosen under Appearance.
+const themeColors = [...document.querySelectorAll('meta[name="theme-color"]')].map(m => [m, m.content]);
+function fitThemeColor() {
+  const chosen = document.documentElement.dataset.theme;
+  const background = getComputedStyle(document.body).backgroundColor;
+  for (const [meta, own] of themeColors) meta.content = chosen ? background : own;
+}
+fitThemeColor();
 
 function renderMediaAccess(m) {
   const el = $('#mediaAccess');
@@ -4625,7 +4698,7 @@ function renderBroken() {
           + (r.lastChecked ? ` · rechecked ${new Date(r.lastChecked).toLocaleString()}` : '')),
         stationButtons(r),
         r.replace && r.replace.state ? arrLine(r.replace) : null),
-      h('td', { class: 'small' }, new Date(r.lastFailed).toLocaleString()),
+      h('td', { class: 'small', 'data-label': 'Last failed' }, new Date(r.lastFailed).toLocaleString()),
       h('td', {}, h('div', { class: 'row-btns' },
         h('button', { class: 'btn', title: 'The file is fine. Put this program back on the air.', onclick: () => retry(r) }, 'Retry'),
         arrButton(r))))))));
@@ -5510,10 +5583,10 @@ async function loadAccess() {
         h('button', { class: 'btn danger', type: 'button', onclick: () => removeUser(u, users.length) }, 'Remove'));
       return h('tr', {},
         h('td', {}, h('strong', {}, u.name), u.id === me.user?.id ? h('span', { class: 'hint' }, ' (you)') : null),
-        h('td', {}, role),
+        h('td', { 'data-label': 'Role' }, role),
         levelCell,
         stations,
-        h('td', { class: 'small' }, u.signedInMs ? new Date(u.signedInMs).toLocaleString() : 'Never'),
+        h('td', { class: 'small', 'data-label': 'Last signed in' }, u.signedInMs ? new Date(u.signedInMs).toLocaleString() : 'Never'),
         actions);
     })));
 }
@@ -5824,13 +5897,13 @@ async function loadStats() {
       h('th', { class: 'num' }, 'Average'), h('th', {}, 'Last watched'), h('th', {}, 'Most watched'))),
     h('tbody', {}, ...(s.stations.length ? s.stations.map(x => h('tr', {},
       h('td', { class: 'first' }, stationBadge(x)),
-      h('td', { class: 'num', 'data-k': 'Viewings' }, x.views.toLocaleString()),
-      h('td', { class: 'wide' }, h('div', { class: 'hcell', title: `${x.hours.toFixed(2)} hours` },
+      h('td', { class: 'num', 'data-label': 'Viewings' }, x.views.toLocaleString()),
+      h('td', { class: 'wide', 'data-label': 'Watched' }, h('div', { class: 'hcell', title: `${x.hours.toFixed(2)} hours` },
         h('div', {}, h('div', { class: 'hbar', style: `width:${(x.hours / most * 100).toFixed(1)}%` })),
         h('span', { class: 'small' }, x.hours ? hoursText(x.hours) : '—'))),
-      h('td', { class: 'num', 'data-k': 'Average' }, x.views ? `${Math.round(x.averageMinutes)} min` : '—'),
-      h('td', { class: 'small', 'data-k': 'Last watched' }, x.lastMs ? ago(x.lastMs) : '—'),
-      h('td', { class: 'small', 'data-k': 'Most watched' }, x.top || '—')))
+      h('td', { class: 'num', 'data-label': 'Average' }, x.views ? `${Math.round(x.averageMinutes)} min` : '—'),
+      h('td', { class: 'small', 'data-label': 'Last watched' }, x.lastMs ? ago(x.lastMs) : '—'),
+      h('td', { class: 'small', 'data-label': 'Most watched' }, x.top || '—')))
       : [h('tr', {}, h('td', { colspan: 6, class: 'muted' }, 'No stations yet.'))])));
   renderTop(s.people, s.media, s.usersProblem);
   const topMost = Math.max(...s.programs.map(p => p.hours), 0) || 1;
@@ -6002,10 +6075,10 @@ function renderNow(rows) {
         h('td', { class: 'now-what' },
           r.station ? [h('div', {}, stationLine(r.station)), sub(r.station.program)]
             : [h('div', {}, r.media.title), sub('Media, on demand')]),
-        h('td', { class: 'now-how', 'data-k': 'How' }, h('div', {}, HOW[how.method] || how.method),
+        h('td', { class: 'now-how', 'data-label': 'How' }, h('div', {}, HOW[how.method] || how.method),
           sub([size, how.on ? `on the ${how.on}` : null].filter(Boolean).join(' ')),
           ...(how.notes || []).map(n => sub(`With ${n}`))),
-        h('td', { class: 'now-app', 'data-k': 'App and device' }, h('div', {}, r.app || (r.plex ? 'Plex' : 'An app')), sub(r.address)),
+        h('td', { class: 'now-app', 'data-label': 'App and device' }, h('div', {}, r.app || (r.plex ? 'Plex' : 'An app')), sub(r.address)),
         h('td', { class: 'now-since', title: new Date(r.sinceMs).toLocaleString() }, ago(r.sinceMs)));
     }))));
 }

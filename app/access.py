@@ -185,9 +185,13 @@ FOR_PLEX_UNDER = ("/stream/", "/auto/", "/art/", "/hls/")
 # is what lets it in (a player can't sign in; see away.py).
 AWAY_UNDER = "/hls/k/"
 # Open to anyone, signed in or not: the page itself (it asks you to sign
-# in), and signing in.
+# in), its icons and its manifest (for installing it as an app, which a
+# browser may do from the sign-in page), and signing in.
 # (And what StationPlay's apps ask first: see appapi.py.)
-PAGE = frozenset({"/", "/link", "/apple-touch-icon.png", "/api/access/me", "/api/v1/server"})
+PAGE = frozenset({
+    "/", "/link", "/apple-touch-icon.png", "/manifest.webmanifest", "/icon-192.png",
+    "/icon-512.png", "/icon-maskable-512.png", "/api/access/me", "/api/v1/server",
+})  # fmt: skip
 # Where StationPlay checks that its apps can reach it from outside (see
 # reach.py): open on both ports, to anyone, before there's a user, and over
 # plain HTTP too. It says nothing unless it's asked with the value a check
