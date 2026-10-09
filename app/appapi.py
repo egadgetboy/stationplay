@@ -255,6 +255,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             access.NOT_SET_UP if access.outside(request.scope) and not ctx.access.required else None
         )
         away = ctx.away.address if ctx.away.on else None
+        # (Your library: at home, or through a VPN; and through the public
+        # port while watching away from home is on.)
+        media = ctx.media_here(access.outside(request.scope))
         return {
             "name": settings.friendly_name,
             "id": ctx.device_id,
@@ -267,10 +270,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "features": [
                 *FEATURES,
                 *(["away"] if away else []),
-                # (Your library: at home, or through a VPN, for now.)
-                *(["library"] if ctx.shared.on and not access.outside(request.scope) else []),
+                *(["library"] if media else []),
                 # (Copies of what a device can't play as it is: see converting.py.)
-                *(["convert"] if ctx.shared.on and not access.outside(request.scope) else []),
+                *(["convert"] if media else []),
+                # (Even sound for a show's episodes, while it's on: see applibrary.py.)
+                *(["even-sound"] if media and ctx.shared.even_sound else []),
             ],
         }
 
@@ -362,6 +366,14 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "deviceKey": pending.new_key,
             "user": {"name": user.name, "role": user.role},
         }
+
+    @app.get("/api/internal/me")
+    async def me(request: Request):
+        """Who this app is signed in as now (for its Options): their name, as
+        an Admin may have changed it since they signed in, and role. Null
+        while signing in is off."""
+        user = access.signed_in(request)
+        return {"user": {"name": user.name, "role": user.role} if user else None}
 
     @app.post("/api/internal/sign-out")
     async def sign_out(request: Request):

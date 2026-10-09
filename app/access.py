@@ -40,11 +40,12 @@ From the internet (through a Cloudflare Tunnel, or another reverse proxy),
 StationPlay is reached on its public port (PUBLIC_PORT), never the one Plex
 uses. There, what Plex and IPTV apps use isn't offered at all, signing in is
 always needed (until there's a user, nothing but the sign-in page is shown:
-the first user is added on the home network), each visitor's address is the
-one the reverse proxy or Cloudflare passes on (see address), and wrong
-passwords from the internet as a whole are limited too (but not on a
-browser you've signed in on before, so strangers' wrong passwords can't keep
-you out).
+the first user is added on the home network), a program played on demand is
+offered only at the address of one a signed-in app started there (see
+play_outside), each visitor's address is the one the reverse proxy or
+Cloudflare passes on (see address), and wrong passwords from the internet
+as a whole are limited too (but not on a browser you've signed in on
+before, so strangers' wrong passwords can't keep you out).
 """
 
 from __future__ import annotations
@@ -207,8 +208,9 @@ OPEN = (
     | FOR_PLEX
 )
 # Programs played on demand in StationPlay's apps: each at an address of its
-# own, which is what lets a player in (see ondemand.py). On the home network
-# only, for now.
+# own, which is what lets a player in (see ondemand.py). On the home network;
+# and on the public port, only a program a signed-in app started there,
+# while it and that sign-in last (see play_outside, and applibrary.py).
 PLAY_UNDER = "/play/"
 # What StationPlay's apps use, and the API: from the internet, only over
 # HTTPS (passwords, sign-ins, tokens and stream addresses must never cross it
@@ -228,7 +230,7 @@ FOR_USERS = {
         "/poster/", "/logos/", "/bumpers/", "/plex-logo/", "/api/v1/stations", "/api/v1/guide",
         "/api/v1/status", "/api/access/link/", "/api/internal/speed-test",
         "/api/internal/libraries", "/api/internal/libraries/", "/api/internal/home",
-        "/api/internal/search", "/api/internal/items/", "/api/internal/art/",
+        "/api/internal/search", "/api/internal/items/", "/api/internal/art/", "/api/internal/me",
     ),
     "POST": (
         "/api/access/me/password", "/api/channels", "/api/channels/", "/api/collections/stations",
@@ -251,7 +253,7 @@ FOR_WATCHERS = {
         "/api/v1/stations", "/api/v1/guide", "/api/v1/status", "/api/access/link/",
         "/api/internal/speed-test", "/api/internal/libraries", "/api/internal/libraries/",
         "/api/internal/home", "/api/internal/search", "/api/internal/items/",
-        "/api/internal/art/",
+        "/api/internal/art/", "/api/internal/me",
     ),
     "POST": (
         "/api/access/me/password", "/api/internal/sign-out", "/api/internal/speed-test",
@@ -436,6 +438,11 @@ class Access:
     # Someone's PIN and where they're shown on the apps' pickers (devices.py,
     # which sets this).
     picker: Any = field(init=False, default=None)
+    # Whether a program played on demand (by its play session's id) may be
+    # asked for on the public port: a session that's going, which a
+    # signed-in app started there (applibrary.py, which sets this). Until
+    # it's set, none may.
+    play_outside: Callable[[str], bool] | None = field(init=False, default=None)
     # When a signed-in app last came in through the public port over HTTPS
     # (time.monotonic(); None: not since StationPlay started), as proof that
     # apps reach StationPlay from outside (see reach.py). In memory only.
@@ -580,16 +587,28 @@ class Access:
         self._users_exist = bool(others)
 
     async def change_user(
-        self, user: User, by: User | None, *, password: str | None, role: str | None
+        self,
+        user: User,
+        by: User | None,
+        *,
+        password: str | None,
+        role: str | None,
+        name: str | None = None,
     ) -> None:
-        """Changes a user's password or role, if `by` may: an Admin, or (their
-        password only) the user themselves. ValueError; NotAllowed."""
+        """Changes a user's password, role or name, if `by` may: an Admin
+        (anyone's, their own too), or (their password only) the user
+        themselves. A new name follows the rules a new user's does, and is
+        theirs from now on: signing in takes it, and everything of theirs is
+        kept by their id, so it stays theirs. ValueError; NotAllowed."""
+        if name is not None:
+            name = plain(name)
+            _check_name(name)
         if password is not None:
             _check_password(password)
         if role is not None and role not in ROLES:
             raise ValueError("The role must be Admin or User")
         hashed = await asyncio.to_thread(hash_password, password) if password is not None else None
-        themselves = by is not None and by.id == user.id and role is None
+        themselves = by is not None and by.id == user.id and role is None and name is None
         if not (themselves or self.is_admin(by)):
             raise NotAllowed
         current = self.db.user(user.id)
@@ -601,6 +620,11 @@ class Access:
             raise ValueError(
                 "StationPlay needs at least one Admin. Make someone else an Admin first."
             )
+        if name is not None and name != current.name:
+            try:
+                self.db.rename_user(user.id, name)  # (first: it's what can still fail)
+            except sqlite3.IntegrityError:
+                raise ValueError(f"There's already a user called {name}") from None
         self.db.update_user(user.id, password_hash=hashed, role=role)
 
     def _last_admin(self, user: User) -> bool:
@@ -933,7 +957,7 @@ class Gate:
         send = _with_security_headers(send)
         if (
             public
-            and (path in FOR_PLEX or path.startswith((*FOR_PLEX_UNDER, PLAY_UNDER)))
+            and (path in FOR_PLEX or path.startswith(FOR_PLEX_UNDER))
             and not path.startswith(AWAY_UNDER)
         ):
             await _refuse(send, 404, "Not Found")
@@ -960,6 +984,8 @@ class Gate:
             if state["outside"] and path not in PAGE and path != REACH:
                 return 403, NOT_SET_UP
             return None
+        if path.startswith(PLAY_UNDER) and state["outside"] and not self._plays_outside(path):
+            return 404, "Not Found"  # (made at home, ended, or never there)
         if path.startswith((AWAY_UNDER, PLAY_UNDER)):
             return None  # (its address says whose it is)
         app_token = bearer(scope)
@@ -988,6 +1014,13 @@ class Gate:
         ):
             return 403, WATCHES_ONLY
         return None
+
+    def _plays_outside(self, path: str) -> bool:
+        """Whether a play session's address (/play/<id>/...) may be asked
+        for on the public port (see Access.play_outside)."""
+        session_id = path[len(PLAY_UNDER) :].partition("/")[0]
+        allowed = self.access.play_outside
+        return bool(session_id) and allowed is not None and allowed(session_id)
 
     def _api_token(self, scope: dict, token: str) -> tuple[int, str] | None:
         """_decide, for a request made with an API token."""
@@ -1143,6 +1176,7 @@ class UserChange(BaseModel):
     password: str | None = Field(default=None, max_length=PASSWORD_MAX)
     role: str | None = None
     maxStations: int | None = None
+    name: str | None = Field(default=None, max_length=100)
 
 
 class PasswordChange(BaseModel):
@@ -1333,19 +1367,24 @@ def routes(app: FastAPI, access: Access) -> None:
         with _refusing():
             if limit_given:
                 _check_limit(body.maxStations)  # (before anything changes)
-            await access.change_user(user, by, password=body.password, role=body.role)
+            await access.change_user(
+                user, by, password=body.password, role=body.role, name=body.name
+            )
             if limit_given:
                 access.set_max_stations(user, by, body.maxStations)
         if by is not None and by.id == user.id and body.password is not None:
             # A new password signs them out everywhere: but not here.
             _set_cookie(response, request, access.start_session(user))
         what = []
+        named = user_or_404(user_id).name  # (as they're named now)
+        if named != user.name:
+            what.append(f"renamed {user.name} to {named}")
         if body.role is not None and body.role != user.role:
-            what.append(f"made {user.name} {a_role(body.role)}")
+            what.append(f"made {named} {a_role(body.role)}")
         if body.password is not None:
-            what.append(f"changed {user.name}'s password")
+            what.append(f"changed {named}'s password")
         if limit_given and body.maxStations != user.max_stations:
-            what.append(f"let {user.name} make {_stations_text(body.maxStations)}")
+            what.append(f"let {named} make {_stations_text(body.maxStations)}")
         if what:
             access.record(logging.INFO, f"{by.name if by else 'Someone'} {' and '.join(what)}")
         return _user_json(user_or_404(user_id), access.db.stations_made())

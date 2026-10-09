@@ -53,6 +53,12 @@ there). From both, one status:
 One problem alone never makes it down: StationPlay checks again a minute
 later. A line is logged when it goes down (with why) and when it's back,
 and once when it can't check from here: never one for each check.
+
+Media in the apps plays through the same address (see applibrary.py), so
+Ready covers it too, with nothing more to check: the apps ask for it, and
+their players for its programs, as they do for stations (through the same
+proxy to the public port, over HTTPS, signed in, a program's own address
+letting its player in). Ready says so while a library is shared.
 """
 
 from __future__ import annotations
@@ -168,6 +174,9 @@ class Reach:
 
     # In tests, what answers at the address (see tests/conftest.py).
     transport: httpx.AsyncBaseTransport | None = None
+    # Whether Media is shared with the apps (it plays away from home too);
+    # main.py sets this.
+    media: Callable[[], bool] | None = None
 
     def __init__(
         self,
@@ -464,7 +473,9 @@ class Reach:
                 "through the public port. Add a user on the Access tab."
             )
             return Finding(SIGN_IN_OFF, detail, "Sign-in is off", reached=True, sure=True)
-        detail = f"Ready. Apps away from home reach StationPlay at {address}."
+        detail = f"Ready. Apps away from home reach StationPlay at {address}" + (
+            ", for your stations and Media." if self.media and self.media() else "."
+        )
         return Finding(READY, detail, "Ready", reached=True)
 
     def _other(self, address: str, got: httpx.Response) -> Finding:

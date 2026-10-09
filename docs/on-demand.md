@@ -40,14 +40,17 @@ library layer it builds on is in `docs/library.md`.
   night mode's sound; browsing narrowed by genre or to what's unwatched, and
   by letter; cast and crew, taglines, and others like a title.
 - **1.25.0:** copies converted on the GPU, as stations use it (see Copies).
-- **Later:** the Admin's quality cap away from home, and watching on demand
-  through the public port (copies can then be made to fit an upload);
-  fragmented MP4 copies, so Apple's player can have an HEVC picture as it
-  is.
+- **1.27.0:** watching on demand through the public port, while watching
+  away from home is on, with the Admin's quality away from home (see Away
+  from home); and even sound for a show's episodes (see Even sound).
+- **Later:** fragmented MP4 copies, so Apple's player can have an HEVC
+  picture as it is.
 
 The `features` an app sees (`GET /api/v1/server`) say what this server
-offers where the app is: `library` once a library is shared (and, in 1.21.0,
-only at home); `convert` from 1.24.0.
+offers where the app is: `library` once a library is shared, at home (and
+from 1.27.0, through the public port too while watching away from home is
+on); `convert` from 1.24.0, where `library` is; `even-sound` from 1.27.0,
+where `library` is, while an Admin has it on.
 
 ## Sharing libraries
 
@@ -136,18 +139,64 @@ The answer is a play session:
 | `subtitles` | The subtitle tracks; ones in separate files have a `url` to load beside the video |
 
 `/play/<session>/…` addresses need no sign-in (a player can't sign in):
-the session ID, 32 random characters, is what lets the player in, as the
-`/hls/k/` keys do. The file comes from where StationPlay reads it for
-stations: straight from disk when it can see it, otherwise from Plex. Range
-requests are answered either way, so players seek freely. `POST
-/play/<session>/leave` ends a session (the app stopped playing); a session
-also ends 4 hours after it was last used, when its sign-in ends, when its
-library is no longer shared, and when StationPlay restarts.
+the session ID, 32 random characters (192 bits, from `secrets`), is what
+lets the player in, as the `/hls/k/` keys do. The file comes from where
+StationPlay reads it for stations: straight from disk when it can see it,
+otherwise from Plex. Range requests are answered either way, so players
+seek freely. `POST /play/<session>/leave` ends a session (the app stopped
+playing); a session also ends 4 hours after it was last used, when its
+sign-in ends, when its library is no longer shared, and when StationPlay
+restarts. Through the public port, only a session started there is offered
+(see Away from home).
 
 A session counts as a device watching, for the Admin's limits (see
 `capacity.py`), from its start until 3 minutes after it was last heard from
 (a file request or a progress report). One more device than the limits
 allow is answered 503 with `limit` and `most`, as for stations.
+
+## Away from home
+
+From 1.27.0, while an Admin has watching away from home on (on the Access
+tab, with the address the apps use from outside: see `away.py`), the apps
+get Media through the public port too (a VPN looks like home, so nothing
+changes there). A signed-in app does there whatever it may at home:
+browsing, details, search, pictures, progress and playing, as it is or as a
+copy, within the same Viewing Levels and limits. With watching away from
+home off, the library's addresses answer 403 there, and `features` doesn't
+list `library`.
+
+- **Play addresses.** On the public port, `/play/<session>/…` is offered
+  only for a session that's going, which a signed-in app started through
+  the public port, while watching away from home is on, and only over HTTPS
+  (as everything for the apps is there). Its sign-in is checked each time
+  it's asked for there (at home, every minute), so it stops the moment the
+  sign-in ends; turning watching away from home off ends every session
+  started there. Anything else (a guessed address, one started at home, or
+  one that has ended) is answered 404. Only a session started there that's
+  still going gets past the Gate (`access.Access.play_outside`); the Gate
+  answers the rest itself, before anything else sees them.
+- **Quality away from home** (an Admin's setting, kept with watching away
+  from home): **Original** plays each title as it would at home; **Up to**
+  1 to 200 Mbps plays a version within it as it would at home (the best the
+  device plays as it is, as at home), and with none within it, converts one
+  down to fit: a converted copy whose picture and sound need no more than
+  the cap (as `fit` makes one for a connection, without its headroom). Any
+  copy converted away from home stays within it. An app that doesn't take
+  copies is told why it can't play one over it (422). What a version needs
+  is Plex's bitrate, or else its size over its length; one whose need isn't
+  known isn't held against it. The apps' own "can't keep up" still works on
+  top of it. The Access tab shows, beside it, the upload StationPlay's apps
+  measured with their connection tests from outside, as a guide.
+- **Limits.** A device playing through the public port is counted by its
+  app's own key (as its stations are: apps behind one reverse proxy are
+  told apart), against the Admin's limit on devices away from home as well
+  as the overall one. Copies converted away from home count toward the
+  copies converted at once, with those at home.
+- **Logs and Stats** say "away from home" for these plays, as for stations,
+  and the access log notes each one started there.
+- **Checking the address** (`reach.py`): Media goes through the same proxy,
+  to the same port, over HTTPS, as stations do, so a Ready check covers it,
+  and says so while a library is shared.
 
 ## Copies
 
@@ -201,6 +250,37 @@ the session ends; ffmpeg stops when nothing has asked for two minutes.
 - Subtitles drawn in: a picture track (PGS, VobSub) laid over the picture;
   text in the file read out into a file of its own first, once (as the
   stations do); a subtitle file of its own fetched first.
+
+## Even sound
+
+From 1.27.0, every episode played on demand comes at the loudness the
+stations' episodes have (`ffmpeg.LOUDNESS_TARGET`, -24 LUFS, with ffmpeg's
+loudnorm in one pass), so all of a show's episodes match, in order or
+shuffled, in any app. Movies are never touched, as on the stations. On to
+start: an Admin can turn **Even sound for a show's episodes** off on the
+Access tab's Media panel (kept in `meta` as `app_even_sound`).
+
+- **How.** As night mode's sound is made for an app that can't make it: a
+  copy that keeps the picture as it is and makes only the sound
+  (repackaged), for an app that takes copies (`device.hls`). Its sound is
+  what the device would get anyway (`converting.sound_for`), made again
+  rather than copied: Dolby Digital 5.1 where the device plays it and the
+  sound has more than two channels, otherwise AAC stereo. Even sound comes
+  first in its filters; with night mode too, night mode's after it, so its
+  compressing starts from the same loudness in every episode and its
+  limiter is last.
+- **Never a picture made again for it.** Where the picture can't be kept as
+  it is (a picture the copy's pieces can't carry for that player, or a file
+  without an index to cut it by), an episode the device plays as it is
+  plays as it is. A copy made for another reason (converted, a smaller
+  picture, subtitles drawn in, night mode) has even sound too.
+- **The cost.** The episode's sound is made again, so sound sent as it is to
+  a receiver (Dolby Atmos, DTS) comes as ordinary 5.1 or stereo. Hence the
+  switch.
+- **The apps.** `features` lists `even-sound` while it's on, and a copy's
+  `why` says "even sound for the show's episodes", for the player's info.
+  An app that doesn't send `device.hls` (older apps) gets the file as
+  before.
 
 ## Skip intro and Skip credits
 

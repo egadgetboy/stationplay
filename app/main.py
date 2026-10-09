@@ -340,8 +340,13 @@ class ArrWhenIn(BaseModel):
 
 
 class AwayIn(BaseModel):
+    """Watching away from home: on or off, at the address apps use from
+    outside; and, if it's given, how fast Media may play there (mediaMbps:
+    null for Original; see away.py)."""
+
     on: bool
     address: str = Field(default="", max_length=away.ADDRESS_MAX)
+    mediaMbps: int | None = None
 
 
 class LimitsIn(BaseModel):
@@ -477,6 +482,7 @@ class AppContext:
         self.reach = reach.Reach(self.away, self.access, self.settings)
         self.capacity = capacity.Capacity(self.db)
         self.shared = ondemand.Shared(self.db)
+        self.reach.media = lambda: self.shared.on
         self.catalog = ondemand.Catalog(self.library, self.shared)
         self.stats = stats.Stats(self.db)
         self.plays.count_with = self.stats.played  # (Media played in the apps counts too)
@@ -491,6 +497,13 @@ class AppContext:
         self.scanner = Scanner(self)
         self.who_watches = stats.WhoWatches(self)
         self.limits = limits.Limits(self.db)
+
+    def media_here(self, outside: bool) -> bool:
+        """Whether Media is offered to the apps where a request came from
+        (`outside`: the public port): once an Admin shares a library, at
+        home (or through a VPN), and through the public port while watching
+        away from home is on, signed in (see applibrary.py)."""
+        return self.shared.on and (not outside or (self.away.on and self.access.required))
 
     def app_watchers(self) -> dict[str, bool]:
         """The devices watching in StationPlay's apps now, stations and the
@@ -982,10 +995,6 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             raise HTTPException(404, f"There's no station {number}")
         return user
 
-    def away_client(key: str, user: User) -> str:
-        # (By its key, not its address: apps behind one proxy are told apart.)
-        return f"{user.name}'s app away from home ({key[:6]})"
-
     def away_watcher(key: str, user: User, request: Request) -> playing.Watcher:
         """Who's watching at an app's own address: its person, and which app
         (as it said when it asked for the stations: see appapi.py)."""
@@ -1011,7 +1020,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         user = away_user(key, number, recheck=True)
         watching_away(key, user, number, request)
         return await hls_playlist_for(
-            number, away_client(key, user), away_=True, watcher=away_watcher(key, user, request)
+            number, away.client(key), away_=True, watcher=away_watcher(key, user, request)
         )
 
     @app.get("/hls/k/{key}/{number}/logo.png")
@@ -1023,15 +1032,14 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.get("/hls/k/{key}/{number}/{piece}")
     async def hls_piece_away(key: str, number: int, piece: str):
-        user = away_user(key, number)
-        return await hls_piece_of(number, piece, away_client(key, user))
+        away_user(key, number)
+        return await hls_piece_of(number, piece, away.client(key))
 
     @app.post("/hls/k/{key}/{number}/leave", status_code=204)
     async def hls_leave_away(key: str, number: int):
-        user = ctx.away.user_of(key, recheck=False)
-        if user is None:
+        if ctx.away.user_of(key, recheck=False) is None:
             return Response(status_code=204, headers=hls.HEADERS)
-        return hls_left(number, away_client(key, user))
+        return hls_left(number, away.client(key))
 
     @app.get("/hls/k/{key}/{number}/night/index.m3u8")
     async def hls_night_playlist_away(key: str, number: int, request: Request):
@@ -1039,7 +1047,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         watching_away(key, user, number, request)
         return await hls_playlist_for(
             number,
-            away_client(key, user),
+            away.client(key),
             away_=True,
             night=True,
             watcher=away_watcher(key, user, request),
@@ -1047,15 +1055,14 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.get("/hls/k/{key}/{number}/night/{piece}")
     async def hls_night_piece_away(key: str, number: int, piece: str):
-        user = away_user(key, number)
-        return await hls_piece_of(number, piece, away_client(key, user), night=True)
+        away_user(key, number)
+        return await hls_piece_of(number, piece, away.client(key), night=True)
 
     @app.post("/hls/k/{key}/{number}/night/leave", status_code=204)
     async def hls_night_leave_away(key: str, number: int):
-        user = ctx.away.user_of(key, recheck=False)
-        if user is None:
+        if ctx.away.user_of(key, recheck=False) is None:
             return Response(status_code=204, headers=hls.HEADERS)
-        return hls_left(number, away_client(key, user), night=True)
+        return hls_left(number, away.client(key), night=True)
 
     @app.options("/hls/{rest:path}")
     async def hls_preflight():
@@ -2910,6 +2917,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     # StationPlay's apps away from home (see away.py) ----------------------
 
     def away_json() -> dict:
+        # (The fastest recent connection test from outside: the home's upload,
+        # as a guide to how fast Media away from home can play.)
+        upload = ctx.capacity.best("away", now_ms())
         return {
             "on": ctx.away.on,
             "address": ctx.away.address,
@@ -2921,6 +2931,10 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             or None,
             # Whether apps can reach StationPlay there (see reach.py).
             "reach": ctx.reach.status().as_dict(),
+            # Media away from home: up to this many Mbps (null: Original).
+            "mediaMbps": ctx.away.media_mbps,
+            "mediaMbpsMost": away.MEDIA_MBPS_MOST,
+            "upload": upload.as_dict() if upload else None,
         }
 
     @app.get("/api/away")
@@ -2928,11 +2942,19 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         return away_json()
 
     @app.put("/api/away")
-    async def away_save(body: AwayIn):
+    async def away_save(body: AwayIn, request: Request):
+        cap_given = "mediaMbps" in body.model_fields_set  # (the setup doesn't send it)
+        cap_was = ctx.away.media_mbps
         try:
+            if cap_given:
+                away.check_cap(body.mediaMbps)  # (before anything changes)
             ctx.away.save(body.on, body.address)
+            if cap_given:
+                ctx.away.save_media(body.mediaMbps)
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
+        if not ctx.away.on:
+            ctx.plays.end_all(away=True)  # (Media playing away from home stops too)
         ctx.reach.saved()  # (checked at once)
         ctx.access.record(
             logging.INFO,
@@ -2940,6 +2962,14 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             if ctx.away.on
             else "Watching away from home in StationPlay's apps is off",
         )
+        if ctx.away.media_mbps != cap_was:
+            who = access.signed_in(request)
+            ctx.access.record(
+                logging.INFO,
+                "Media away from home in StationPlay's apps: "
+                + (f"up to {ctx.away.media_mbps} Mbps" if ctx.away.media_mbps else "Original")
+                + (f" (set by {who.name})" if who else ""),
+            )
         return away_json()
 
     @app.post("/api/away/check")

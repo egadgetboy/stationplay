@@ -19,6 +19,11 @@ The address set here (what the apps reach StationPlay at from outside) is
 told to the apps (/api/v1/server), so an app set up at home remembers it and
 uses it when home doesn't answer. Whether it really reaches StationPlay is
 checked while this is on (see reach.py).
+
+Media plays through the public port too, while this is on (see
+applibrary.py), as fast as the Admin allows: Original (the file as it would
+play at home), or up to a number of Mbps (MEDIA_MBPS_MOST at most), above
+which a program is converted down to fit.
 """
 
 from __future__ import annotations
@@ -48,6 +53,15 @@ KEYS_KEPT = 1000  # app sign-ins with a key at once, at most (the oldest go)
 SEEN_KEPT = 1000  # (who's watching what, for the access log)
 SEEN_AGAIN_S = 3600.0  # a viewing is logged again after this long
 ADDRESS_MAX = 200
+MEDIA_MBPS_MOST = 200  # the highest the Admin's cap on Media away from home can be
+
+
+def client(key: str) -> str:
+    """Which app it is, away from home, among the devices watching (see
+    capacity.py): by its key, not its address, so apps behind one reverse
+    proxy are told apart; and the same for its stations and its Media. It's
+    never shown."""
+    return f"away {key}"
 
 
 @dataclass
@@ -87,6 +101,19 @@ def normalize_address(text: str) -> str:
     return f"{parts.scheme}://{host}" + (f":{port}" if port else "")
 
 
+def _a_cap(mbps: int) -> bool:
+    return 1 <= mbps <= MEDIA_MBPS_MOST
+
+
+def check_cap(mbps: int | None) -> None:
+    """ValueError unless `mbps` is a cap Media away from home can have (None:
+    Original)."""
+    if mbps is not None and not _a_cap(mbps):
+        raise ValueError(
+            f"For Media away from home, choose Original, or up to 1 to {MEDIA_MBPS_MOST} Mbps"
+        )
+
+
 def port_problem(address: str, port: int, public_port: int) -> str:
     """What's wrong with an https:// address on one of StationPlay's own
     ports ("" if nothing is): StationPlay never speaks HTTPS itself, so that
@@ -118,6 +145,7 @@ class Away:
         self.access = access
         self.on = False
         self.address = ""
+        self.media_mbps: int | None = None  # the cap on Media away from home (None: Original)
         self._keys: dict[str, _Key] = {}  # key -> whose
         self._by_session: dict[str, str] = {}  # sign-in's token hash -> key
         self._seen: dict[tuple[str, int], float] = {}  # (key, station) -> when logged
@@ -137,16 +165,39 @@ class Away:
             self.address = ""
         if not self.address:
             self.on = False
+        cap = got.get("mediaMbps")
+        self.media_mbps = (
+            cap if isinstance(cap, int) and not isinstance(cap, bool) and _a_cap(cap) else None
+        )
 
     def save(self, on: bool, address: str) -> None:
         """Turns it on or off, with the address apps use from outside.
         ValueError if that won't do."""
         address = normalize_address(address) if address.strip() or on else ""
         self.on, self.address = on, address
-        self.db.set_meta(META, json.dumps({"on": on, "address": address}))
+        self._keep()
         if not on:
             self._keys.clear()
             self._by_session.clear()
+
+    def save_media(self, mbps: int | None) -> None:
+        """How fast Media away from home may play: up to `mbps` (None:
+        Original, as at home). ValueError if that won't do."""
+        check_cap(mbps)
+        self.media_mbps = mbps
+        self._keep()
+
+    @property
+    def media_kbps(self) -> int | None:
+        """The cap on Media away from home, in kilobits a second (None:
+        Original)."""
+        return self.media_mbps * 1000 if self.media_mbps else None
+
+    def _keep(self) -> None:
+        self.db.set_meta(
+            META,
+            json.dumps({"on": self.on, "address": self.address, "mediaMbps": self.media_mbps}),
+        )
 
     @property
     def apps(self) -> int:

@@ -47,9 +47,10 @@ read it (the Keychain on Apple devices, Android's Keystore, a Roku's own
 storage for the app), and never show it.
 
 From the internet (the public port), apps connect only over HTTPS: anything
-under `/api/v1`, `/api/internal` or `/hls/k/` that didn't come over HTTPS
-(as the reverse proxy in front says, with `X-Forwarded-Proto`) is refused
-with 403, but for StationPlay's check of itself (`GET /api/internal/reach`).
+under `/api/v1`, `/api/internal`, `/hls/k/` or `/play/` that didn't come over
+HTTPS (as the reverse proxy in front says, with `X-Forwarded-Proto`) is
+refused with 403, but for StationPlay's check of itself (`GET
+/api/internal/reach`).
 On the home network, and through a VPN, plain HTTP is fine.
 
 Wrong passwords are limited as on the page: after 5 wrong ones from one
@@ -235,6 +236,19 @@ takes them off this device's picker, and signs them out. Answers
 |---|---|---|
 | `ok` | boolean | Always true |
 
+## GET /api/internal/me
+
+Who this app is signed in as now (from 1.27.0), for its Options: an Admin
+can rename people, so ask again when it's shown rather than keep the name
+from signing in. (Who's tuning in? lists everyone as they're named now.)
+Answers 401 when the sign-in has ended.
+
+| Field | Type | What it is |
+|---|---|---|
+| `user` | object or null | Who it is; null while signing in is off |
+| `user.name` | string | Their name, now |
+| `user.role` | string | `admin` or `user` |
+
 ## POST /api/internal/sign-out
 
 Ends the token it's sent with. Answers `{"ok": true}`.
@@ -352,9 +366,13 @@ When an Admin shares libraries with the apps (on the Access tab, under
 **Media in StationPlay's apps**), the apps can browse them and play
 their shows and movies on demand. Until then, `features` doesn't list
 `library`, and these addresses answer 404 ("No libraries are shared with
-StationPlay's apps"). For now, this is on the home network (or through a
-VPN, which looks like home): through the public port they answer 403, and
-`features` doesn't list `library` there.
+StationPlay's apps"). That's on the home network (or through a VPN, which
+looks like home), and from 1.27.0, through the public port too while
+watching away from home is on (`features` lists `away`): there, a signed-in
+app does what it may at home, and `features` lists `library` there too.
+Through the public port with watching away from home off, these addresses
+answer 403, and `features` doesn't list `library` there. Ask
+`GET /api/v1/server` again where the app is (at home, or away) to know.
 
 Anything that isn't in a shared library answers 404, the same as something
 that doesn't exist. When the library can't be reached (Plex is down, say),
@@ -592,6 +610,17 @@ H.264, at most 1080p, ordinary rather than HDR). A copy is also made, with
 - `night: true`: night mode's sound (as the stations' `nightHls`), for an
   app that can't make it itself.
 
+From 1.27.0, while `features` lists `even-sound` (an Admin's switch, on to
+start), every episode (never a movie) comes at the stations' loudness, so a
+show's episodes match: with `device.hls`, an episode the device plays as it
+is comes as a `repackage` copy, its picture as it is and only its sound made
+again (what the device would get anyway, but not copied: so sound sent as
+it is to a receiver comes as 5.1 or stereo), and its `why` is `["even sound
+for the show's episodes"]`; any other copy of an episode has it too, and
+says so in its `why`. Where the picture can't be kept as it is, the episode
+plays as it is (`direct`). Show the copy's `why` in the player's info.
+Without `device.hls`, an episode plays as it did before.
+
 Send `startMs` too: where the player will start (by default, where this
 person stopped). A copy's playlist says to start there, and StationPlay
 starts making it there. `audio` (a sound track's ID) plays that track; a copy
@@ -606,8 +635,18 @@ the reasons). StationPlay converts at most 3 copies at once, or 6 on a GPU
 `detail`.
 
 An Admin's limits on devices watching count programs played this way too
-(see Playing a station in `docs/api.md`): one more device is answered 503
+(see Playing a station in `docs/api.md`), and through the public port, the
+limit on devices away from home as well: one more device is answered 503
 with `limit` and `most`.
+
+Away from home (through the public port, from 1.27.0), a program plays at
+the quality an Admin chose for Media away from home: as it would at home,
+or up to a number of Mbps. With a cap, the best version within it plays (as
+it is, or as a copy, as at home); with none within it, a copy is converted
+down to fit (`why` says so: "a smaller copy, within the 10 Mbps allowed away
+from home"), and any copy converted there stays within it. An app that
+doesn't send `device.hls` is answered 422 for a program over the cap, with
+`detail` and `why`. `maxKbps` and `fit` work on top of it, as at home.
 
 Skip intro and Skip credits are for episodes only. Show Skip intro while
 the player is inside `markers.intro`, and Skip credits inside
@@ -632,9 +671,9 @@ so plainly.
 |---|---|---|
 | `session` | string | This playing's ID (for progress reports) |
 | `method` | string | How it plays: `direct` (the file as it is), `repackage` or `convert` (a copy; from 1.24.0) |
-| `url` | string | What the player plays (it needs no token): the file, such as `/play/<session>/file.mkv`, whose ranges are answered so the player can seek; or a copy's HLS playlist, `/play/<session>/index.m3u8`, listing the whole program from its start (a jump far ahead takes a few seconds more to start) |
+| `url` | string | What the player plays (it needs no token): the file, such as `/play/<session>/file.mkv`, whose ranges are answered so the player can seek; or a copy's HLS playlist, `/play/<session>/index.m3u8`, listing the whole program from its start (a jump far ahead takes a few seconds more to start). Relative to where the app asked: a program started through the public port plays there (and at home), one started at home never plays through the public port |
 | `why` | list or null | Why a copy is made (null for `direct`) |
-| `why[]` | string | One reason, such as "its sound's format (DTS)" |
+| `why[]` | string | One reason, such as "its sound's format (DTS)", or "even sound for the show's episodes" (from 1.27.0) |
 | `audioTrack` | string or null | The sound track in a copy (null for `direct`, where the player chooses among `audio`) |
 | `drawnSubtitle` | string or null | The subtitle track drawn into a copy's picture, if any |
 | `leave` | string | Where to `POST` when the player stops |
@@ -652,7 +691,7 @@ so plainly.
 | `versions[].why` | list or null | Why not, as in a 422's `why` (null when it can) |
 | `versions[].why[]` | string | One reason |
 | `versions[].fits` | boolean or null | Whether the connection keeps up with it (`maxKbps`); null when that, or what it needs, isn't known |
-| `whenSlow` | string | What the Admin chose for when playing can't keep up here: `offer` (stop, and offer a smaller playable version from where the viewer is) or `switch` (switch to it on its own, and say so) |
+| `whenSlow` | string | What the Admin chose for when playing can't keep up here (at home, or away from home through the public port): `offer` (stop, and offer a smaller playable version from where the viewer is) or `switch` (switch to it on its own, and say so) |
 | `markers` | object | As in its details |
 | `markers.intro` | list or null | As in its details |
 | `markers.intro[]` | number | As in its details |
@@ -679,8 +718,10 @@ so plainly.
 
 The `url` (and subtitles' `url`) stop working when the app `POST`s to
 `leave`, after 4 hours unused, when the app's sign-in ends, when its library
-is no longer shared, and when StationPlay restarts (404); choose the program
-again to play it again.
+is no longer shared, when watching away from home is turned off (for one
+started through the public port), and when StationPlay restarts (404);
+choose the program again to play it again. Through the public port, a
+sign-in that ends stops its programs at once.
 
 ## POST /api/internal/progress
 

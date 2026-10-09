@@ -3,6 +3,15 @@ and playing it (under /api/internal; see docs/on-demand.md, and
 docs/internal-api.md for the contract), the play sessions' own addresses,
 and the Access tab's setting.
 
+At home (and through a VPN, which looks like home), and through the public
+port while watching away from home is on (see away.py): there, a signed-in
+app does what it may at home, within the same Viewing Levels and limits, and
+a program it starts plays at the Admin's quality away from home. A program's
+own addresses (/play/<session>/...) are offered on the public port only for
+a program an app started there, and only while it and that app's sign-in
+last (see access.Access.play_outside, and session_or_404); one started at
+home is never offered there.
+
 The deciding is in ondemand.py; this is the asking and answering.
 """
 
@@ -23,6 +32,7 @@ from pydantic import BaseModel, Field
 
 from . import (
     access,
+    away,
     capacity,
     catalog,
     converting,
@@ -48,11 +58,14 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 NONE_SHARED = "No libraries are shared with StationPlay's apps"
-AT_HOME = (
-    "Your library can be watched in StationPlay's apps on your home network (or through a "
-    "VPN) for now."
+AWAY_OFF = (
+    "Your library can be watched away from home once an Admin turns on StationPlay's apps "
+    "away from home, on the Access tab."
 )
 PLAY_ENDED = "That program's address has ended. Choose it again to play it."
+# Even sound for a show's episodes, as a copy's `why` says it (the apps show
+# it in their player).
+EVEN_WHY = "even sound for the show's episodes"
 NOT_PLAYABLE = "Choose an episode or a movie to play"
 NO_FILE = "StationPlay can't reach this program's file right now. Try again in a moment."
 COPY_FAILED = "StationPlay couldn't make this ready to play here. Try again, or choose another."
@@ -133,6 +146,7 @@ class WhenSlow(BaseModel):
 class SharedLibraries(BaseModel):
     libraries: list[str] = Field(max_length=ondemand.LIBRARIES_MOST)
     whenSlow: WhenSlow | None = None
+    evenSound: bool | None = None  # (None: as it is)
 
 
 # What the apps are told ----------------------------------------------------------------
@@ -253,12 +267,20 @@ def sound_of(media: Media, track: Track | None) -> str:
     )  # fmt: skip
 
 
-def how_copied(plan: converting.Plan, cant: list[str], smaller: bool, encoder: Encoder) -> str:
+def how_copied(
+    plan: converting.Plan,
+    cant: list[str],
+    smaller: bool,
+    encoder: Encoder,
+    cap_kbps: int | None = None,
+) -> str:
     """How a copy plays, for the log: "repackaged, its sound made AAC
     stereo, because this device can't play its sound's format (DTS)";
     "converted to 1080p H.264 at 8 Mbps on the Intel/AMD GPU, because...";
     "converted smaller to fit the connection: 720p H.264 at 4 Mbps on the
-    CPU, with subtitles drawn in"."""
+    CPU, with subtitles drawn in"; away from home, a file over the Admin's
+    cap (`cap_kbps`): "converted smaller to fit the 10 Mbps allowed away from
+    home: 1080p H.264 at 8 Mbps on the CPU"."""
     if plan.copies_picture:
         text = "repackaged"
         if plan.audio_codec != "copy" and not plan.night:
@@ -271,15 +293,18 @@ def how_copied(plan: converting.Plan, cant: list[str], smaller: bool, encoder: E
             f"{playing.size(plan.height)} H.264 at {playing.mbps(plan.kbps)} on "
             f"{playing.encoder_name(encoder)}"
         )
-        text = (
-            f"converted smaller to fit the connection: {made}"
-            if smaller
-            else f"converted to {made}"
-        )
+        if smaller:
+            text = f"converted smaller to fit the connection: {made}"
+        elif cap_kbps:
+            allowed = f"the {playing.mbps(cap_kbps)} allowed away from home"
+            text = f"converted smaller to fit {allowed}: {made}"
+        else:
+            text = f"converted to {made}"
     extras = [
         what
         for what, on in (
             ("subtitles drawn in", plan.drawn is not None),
+            ("even sound", plan.even),
             ("night mode's sound", plan.night),
         )
         if on
@@ -334,10 +359,33 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         return (user.id, user.name) if user else (0, "")
 
     def shared_here(request: Request) -> None:
-        if access.outside(request.scope):
-            raise HTTPException(403, AT_HOME)
+        if access.outside(request.scope) and not ctx.away.on:
+            raise HTTPException(403, AWAY_OFF)
         if not ctx.shared.on:
             raise HTTPException(404, NONE_SHARED)
+
+    def device_of(request: Request) -> tuple[str, str]:
+        """Which device is playing, among those watching (see capacity.py),
+        and its tag (see PlaySession.tag): at home, its address; through the
+        public port, its app's own key, as for its stations (see away.py)."""
+        if not access.outside(request.scope):
+            return (request.client.host if request.client else "?"), ""
+        token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
+        user = access.signed_in(request)
+        key = ctx.away.key_for(access.session_hash(token), user) if token and user else None
+        if key is None:
+            raise HTTPException(403, AWAY_OFF)
+        return away.client(key), key[:6]
+
+    def plays_outside(session_id: str) -> bool:
+        """Whether a program's own addresses may be asked for on the public
+        port (see access.Access.play_outside): it's going, a signed-in app
+        started it there, and watching away from home is still on. (Its
+        sign-in is checked as it's asked for: see session_or_404.)"""
+        session = ctx.plays.find(session_id)
+        return session is not None and session.away and session.sign_in is not None and ctx.away.on
+
+    ctx.access.play_outside = plays_outside
 
     class Asking:
         """Answers for what the library says: not shared (404), or the
@@ -523,7 +571,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         user = access.signed_in(request)
         viewer = viewer_of(request)
         found: list[Entry] = []
-        if ctx.shared.on and not access.outside(request.scope):
+        if ctx.media_here(access.outside(request.scope)):
             with Asking():
                 found = await seen_only(viewer, await cat.search(words))
             found = [e for e in found if library_seen(viewer, e.library)]
@@ -747,22 +795,65 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             how,
         )
 
+    def noted_away(session: ondemand.PlaySession, request: Request) -> None:
+        """Something started playing through the public port: in the access
+        log too, as a station watched away from home is (once a play: not
+        again for another sound track, or a smaller version)."""
+        if session.away:
+            ctx.access.record(
+                logging.INFO,
+                f"{session.user or 'Someone'} is playing {describe(session.entry)} away from "
+                f"home, from {access.where(request.scope)}",
+            )
+
+    def over_the_limit(
+        over: tuple[str, int], body: PlayAsk, request: Request, e: Entry, tag: str
+    ) -> JSONResponse:
+        """One more device than an Admin's limits allow (see capacity.py):
+        said in the log, and told why."""
+        limit, most = over
+        user_id, name = person(request)
+        away_ = access.outside(request.scope)
+        home = request.client.host if request.client else "?"
+        where = access.address(request.scope) if away_ else home
+        who = playing.Watcher(where, away_, name, user_id or None, app_of(body, request), tag)
+        log.warning(
+            "The limit of %s watching%s at once (set on the Access tab) was reached, so %s "
+            "couldn't play %s",
+            capacity.devices(most),
+            " away from home" if limit == "away" else "",
+            who.subject(start=False),
+            describe(e),
+        )
+        return JSONResponse(
+            {"detail": capacity.refused_because(limit, most), "limit": limit, "most": most},
+            status_code=503,
+        )
+
     def said_step_down(
         before: ondemand.PlaySession | None,
         after: ondemand.PlaySession,
         body: PlayAsk,
         request: Request,
+        cap: int | None = None,
     ) -> bool:
         """Says in the log (and True) if a device just went to a smaller
         version or copy of what it was playing: from what to what, and why
-        (the app's own reason, if it sent one: see problems.py)."""
+        (the app's own reason, if it sent one: see problems.py; or away
+        from home, the Admin's cap, `cap`, where a version is over it)."""
         if before is None or not stepped_down(before, after):
             return False
         who = playing.Watcher(
-            after.client, after.away, after.user, after.user_id or None, after.app
-        )
+            access.address(request.scope) if after.away else after.client,
+            after.away, after.user, after.user_id or None, after.app, after.tag,
+        )  # fmt: skip
         fits = f" (about {playing.mbps(body.maxKbps)})" if body.maxKbps else ""
-        why = f"to fit its connection{fits}" if body.fit or body.maxKbps else "the app asked for it"
+        if body.fit or body.maxKbps:
+            why = f"to fit its connection{fits}"
+        elif cap and any(ondemand.over_cap(m, cap) for m in after.entry.media):
+            why = f"to fit the {playing.mbps(cap)} allowed away from home"
+        else:
+            why = "the app asked for it"
         said = ctx.problems.said_lately(access.address(request.scope), STEP_S)
         log.info(
             "%s switched %s to a smaller %s, from %s to %s: %s%s",
@@ -776,12 +867,30 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         )
         return True
 
-    async def play_copy(body: PlayAsk, request: Request, e: Entry, dev: ondemand.Device,
-                        hls: frozenset[str]) -> Any:  # fmt: skip
+    async def play_copy(
+        body: PlayAsk,
+        request: Request,
+        e: Entry,
+        dev: ondemand.Device,
+        hls: frozenset[str],
+        client: str,
+        tag: str,
+        cap: int | None,
+        even: bool,
+        only_sound: Media | None = None,
+    ) -> Any:
         """Playing a copy StationPlay makes (see converting.py), for a device
         that can't play the file as it is, or for subtitles drawn in, a
-        smaller picture made to fit, or night mode's sound."""
+        smaller picture made to fit, night mode's sound, or away from home,
+        a file over the Admin's cap (`cap`, in kbps) converted down to fit
+        it; with even sound for a show's episodes (`even`), whatever it's
+        made for. (`client` and `tag`: the device, as device_of says.)
+
+        `only_sound`: a version the device plays as it is, copied only for
+        even sound: its picture kept as it is, and only its sound made. None
+        (play it as it is, then) if its picture can't be kept."""
         user_id, name = person(request)
+        away_ = access.outside(request.scope)
         versions = [m for m in ondemand.best_first(e.media) if m.id] or list(e.media)
         asked = [m for m in versions if body.version and m.id == body.version]
         smaller = body.fit and body.maxKbps is not None
@@ -792,11 +901,13 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             return JSONResponse({"detail": cant_copy(why), "why": why}, status_code=422)
 
         # The version: the one asked for; or the best one whose picture can
-        # be kept; or for converting, the smallest that's still big enough.
-        media = asked[0] if asked else None
+        # be kept (away from home, within the cap); or for converting, the
+        # smallest that's still big enough.
+        media = only_sound or (asked[0] if asked else None)
         if media is None:
             keepable = [m for m in versions
-                        if converting.picture_copyable(m, ondemand.unplayable(m, dev), hls)]  # fmt: skip
+                        if converting.picture_copyable(m, ondemand.unplayable(m, dev), hls)
+                        and not ondemand.over_cap(m, cap)]  # fmt: skip
             if keepable and not (body.subtitle or smaller):
                 media = keepable[0]
             else:
@@ -804,8 +915,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 media = tall[-1] if tall else versions[0]
         if media.parts > 1:
             return refuse([f"it's split into {media.parts} files"])
+        capped = ondemand.over_cap(media, cap)
         why = ondemand.unplayable(media, dev)
         sound = converting.audio_track(media, body.audio)
+        even = even and sound is not None  # (no sound, nothing to even)
+        if only_sound and not even:
+            return None
         if sound is not None and sound.codec and sound.codec not in dev.audio:
             label = f"its sound's format ({ondemand.label(sound.codec)})"
             if label not in why:
@@ -815,11 +930,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             why.append("its subtitles, drawn into the picture")
         if smaller:
             why.append("a smaller picture, to fit the connection")
+        if capped and cap:
+            why.append(f"a smaller copy, within the {playing.mbps(cap)} allowed away from home")
+        if even:
+            why.append(EVEN_WHY)
         if body.night:
             why.append("night mode's sound")
         duration_s = (media.duration_ms or e.duration_ms or 0) / 1000
         if duration_s <= 0:
-            return refuse(["how long it is isn't known"])
+            return None if only_sound else refuse(["how long it is isn't known"])
         path, stream = await source_of(e, media)
         source = path or stream
         if source is None:
@@ -827,7 +946,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         # Keeping the picture as it is, where it can be (its keyframes
         # known from the file's index); otherwise converting it.
         starts: tuple[float, ...] = ()
-        if converting.picture_copyable(media, why, hls) and shown is None and not smaller:
+        keep = converting.picture_copyable(media, why, hls) and not (shown or smaller or capped)
+        if keep:
             try:
                 found = await asyncio.wait_for(
                     keyframes.keyframes(reader(path, stream), media.container), KEYFRAMES_WAIT_S
@@ -836,6 +956,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 found = None
             if found:
                 starts = converting.pieces_at(found, duration_s)
+        if only_sound and not starts:
+            return None  # (only the picture as it is will do: the file plays as it is)
+        audio_codec, channels = converting.sound_for(sound, dev.audio, body.night, even)
         if starts:
             method, height, kbps, tone_map = converting.REPACKAGE, 0, 0, ""
         else:
@@ -852,11 +975,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             on_gpu = ctx.gpu is not None and ctx.gpu.encoder_for_copies().is_gpu
             if ctx.plays.copies() >= (CONVERTING_MOST_GPU if on_gpu else CONVERTING_MOST):
                 raise HTTPException(503, BUSY_CONVERTING)
+            # (Away from home, never more than the cap, whatever it's converted for.)
             height, kbps = converting.convert_size(
-                media, dev.video["h264"][1], body.maxKbps if smaller else None
-            )
+                media, dev.video["h264"][1], body.maxKbps if smaller else None,
+                cap, converting.sound_kbps(audio_codec, channels),
+            )  # fmt: skip
             starts = converting.pieces_every(duration_s)
-        audio_codec, channels = converting.sound_for(sound, dev.audio, body.night)
         # Subtitles drawn in: a picture track as it is; text in the file,
         # read out first; a file of its own, fetched first.
         drawn: Subtitles | None = None
@@ -888,13 +1012,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     first = subtitles.extract(settings, job)
             else:
                 return refuse(["its subtitles"])
-        client = request.client.host if request.client else "?"
-        if (over := ctx.capacity.refusal(ctx.app_watchers(), client, False)) is not None:
-            limit, most = over
-            return JSONResponse(
-                {"detail": capacity.refused_because(limit, most), "limit": limit, "most": most},
-                status_code=503,
-            )
+        if (over := ctx.capacity.refusal(ctx.app_watchers(), client, away_)) is not None:
+            return over_the_limit(over, body, request, e, tag)
         folder = converting.new_folder()
         if fetch_from is not None and shown is not None:
             target = (
@@ -906,17 +1025,19 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         plan = converting.Plan(
             method=method, why=tuple(why), starts=starts, duration_s=duration_s, audio=sound,
             audio_codec=audio_codec, audio_channels=channels, picture=media.video,
-            night=body.night, height=height,
+            night=body.night, even=even, height=height,
             kbps=kbps, tone_map=tone_map, subtitles=drawn, drawn=shown.id if shown else None,
         )  # fmt: skip
         token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
         task = asyncio.ensure_future(first) if first is not None else None
         label = app_of(body, request)
         before = ctx.plays.before(user_id, e.key, client, STEP_S)
+        again = ctx.plays.before(user_id, e.key, client) is not None
         session = ctx.plays.start(
             user_id=user_id, user=name,
             sign_in=access.session_hash(token) if name and token else None,
-            entry=e, media=media, path=path, plex=stream, client=client, away=False, app=label,
+            entry=e, media=media, path=path, plex=stream, client=client, away=away_, app=label,
+            tag=tag,
             subtitles={
                 t.id: (url, t.codec)
                 for t in media.subtitles
@@ -931,9 +1052,13 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         cant = ondemand.unplayable(media, dev)
         if sound is not None and sound.codec and sound.codec not in dev.audio:
             cant.append(f"its sound's format ({ondemand.label(sound.codec)})")
-        how = how_copied(plan, list(dict.fromkeys(cant)), smaller, session.copy.encoder)
-        if not said_step_down(before, session, body, request):
+        how = how_copied(
+            plan, list(dict.fromkeys(cant)), smaller, session.copy.encoder, cap if capped else None
+        )
+        if not said_step_down(before, session, body, request, cap):
             said_start(session, sound, how, path is None)
+        if not again:
+            noted_away(session, request)
         here = f"/play/{session.id}"
         return {
             "session": session.id,
@@ -948,7 +1073,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "bitrateKbps": plan.kbps_needed or media.bitrate_kbps,
             "version": media.id or None,
             "versions": playable_versions(e, dev, body.maxKbps),
-            "whenSlow": ctx.shared.when_slow["home"],
+            "whenSlow": ctx.shared.when_slow["away" if away_ else "home"],
             "markers": _markers(e),
             "audio": tracks(media.audio, True),
             "subtitles": [
@@ -979,35 +1104,49 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             body.device.hdr,
             body.device.audio,
         )
-        media, why = ondemand.choose(e, dev, body.version, body.maxKbps)
+        # Away from home (through the public port), at the Admin's quality
+        # there: a version within the cap plays as it would at home, and one
+        # over it is converted down to fit (see away.py).
+        away_ = access.outside(request.scope)
+        client, tag = device_of(request)
+        cap = ctx.away.media_kbps if away_ else None
+        media, why = ondemand.choose(e, dev, body.version, body.maxKbps, cap)
         hls = frozenset(h.strip().lower() for h in body.device.hls)
         sound = converting.audio_track(media, body.audio) if media is not None else None
+        capped = media is not None and ondemand.over_cap(media, cap)
         as_it_is = (
             media is not None
+            and not capped
             and not (body.subtitle or body.fit or body.night)
             and (sound is None or not sound.codec or sound.codec in dev.audio)
         )
+        # Even sound for a show's episodes (as the stations' episodes have it,
+        # whatever the order or the app), where an Admin has it on: never a
+        # movie.
+        even = ctx.shared.even_sound and e.kind == catalog.EPISODE
         if not as_it_is and "ts" in hls:
-            return await play_copy(body, request, e, dev, hls)
+            return await play_copy(body, request, e, dev, hls, client, tag, cap, even)
         if media is None:
             log.info(
                 "A StationPlay app can't play %s as it is (%s)", describe(e), ondemand.and_list(why)
             )
             return JSONResponse({"detail": ondemand.cant_play(why), "why": why}, status_code=422)
-        client = request.client.host if request.client else "?"
-        if (over := ctx.capacity.refusal(ctx.app_watchers(), client, False)) is not None:
-            limit, most = over
-            log.warning(
-                "The limit of %s watching at once (set on the Access tab) was reached, so an "
-                "app on %s couldn't play %s",
-                capacity.devices(most),
-                client,
-                describe(e),
-            )
-            return JSONResponse(
-                {"detail": capacity.refused_because(limit, most), "limit": limit, "most": most},
-                status_code=503,
-            )
+        if capped and cap:
+            # (An app that can't take a copy made to fit.)
+            need = playing.mbps(ondemand.needs_kbps(media) or 0)
+            why = [f"it needs {need}, more than the {playing.mbps(cap)} allowed away from home"]
+            log.info("A StationPlay app can't play %s away from home (%s)", describe(e), why[0])
+            return JSONResponse({"detail": too_fast(need, cap), "why": why}, status_code=422)
+        if even and "ts" in hls and sound is not None:
+            # (As night mode's sound is made for an app that can't make it:
+            # the picture as it is, only the sound made. Where the picture
+            # can't be kept as it is, the file plays as it is: even sound
+            # never costs a picture made again.)
+            copied = await play_copy(body, request, e, dev, hls, client, tag, cap, even, media)
+            if copied is not None:
+                return copied
+        if (over := ctx.capacity.refusal(ctx.app_watchers(), client, away_)) is not None:
+            return over_the_limit(over, body, request, e, tag)
         path = None
         if media.file:
             found, _timed_out = await find_first(
@@ -1025,6 +1164,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(503, NO_FILE)
         token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
         before = ctx.plays.before(user_id, e.key, client, STEP_S)
+        again = ctx.plays.before(user_id, e.key, client) is not None
         session = ctx.plays.start(
             user_id=user_id,
             user=name,
@@ -1034,8 +1174,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             path=path,
             plex=stream,
             client=client,
-            away=False,
+            away=away_,
             app=app_of(body, request),
+            tag=tag,
             subtitles={
                 t.id: (url, t.codec)
                 for t in media.subtitles
@@ -1044,8 +1185,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 and (url := ctx.library.stream_url(e.key, f"/library/streams/{t.id}"))
             },
         )
-        if not said_step_down(before, session, body, request):
+        if not said_step_down(before, session, body, request, cap):
             said_start(session, sound or media.default_audio, "playing as it is", path is None)
+        if not again:
+            noted_away(session, request)
         here = f"/play/{session.id}"
         return {
             "session": session.id,
@@ -1060,7 +1203,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "bitrateKbps": media.bitrate_kbps,
             "version": media.id or None,
             "versions": playable_versions(e, dev, body.maxKbps),
-            "whenSlow": ctx.shared.when_slow["home"],
+            "whenSlow": ctx.shared.when_slow["away" if away_ else "home"],
             "markers": _markers(e),
             "audio": tracks(media.audio, True),
             "subtitles": [
@@ -1086,9 +1229,18 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if e.kind not in (catalog.EPISODE, catalog.MOVIE):
             raise HTTPException(400, NOT_PLAYABLE)
         if body.session:
-            going = ctx.plays.get(body.session)  # (still watching)
-            if going is not None and going.entry.key == e.key and body.positionMs is not None:
-                going.position_ms = body.positionMs
+            # (Still watching: its own session only, and through the public
+            # port, only one started there.)
+            going = ctx.plays.find(body.session)
+            if (
+                going is not None
+                and going.entry.key == e.key
+                and going.user_id == user_id
+                and (going.away or not access.outside(request.scope))
+            ):
+                ctx.plays.get(body.session)
+                if body.positionMs is not None:
+                    going.position_ms = body.positionMs
         old = ctx.db.progress_of(user_id, [e.key]).get(e.key)
         if body.watched is not None:
             position, watched = 0, body.watched
@@ -1107,27 +1259,38 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     # The play sessions' own addresses (a player can't sign in) ---------------
 
-    def session_or_404(session_id: str) -> ondemand.PlaySession:
-        """A play session that's still good: its library still shared, and
-        its sign-in (if signing in is on) still good."""
-        session = ctx.plays.get(session_id)
-        if session is None:
+    def session_or_404(session_id: str, request: Request) -> ondemand.PlaySession:
+        """A play session that's still good, now marked as used: its library
+        still shared, and its sign-in (if signing in is on) still good.
+        Through the public port, only one an app started there, while
+        watching away from home is on, with its sign-in checked every time
+        (at home, every RECHECK_S)."""
+        outside = access.outside(request.scope)
+        session = ctx.plays.find(session_id)
+        if session is None or (outside and not session.away):
             raise HTTPException(404, PLAY_ENDED)
         now = time.monotonic()
-        ended = not cat.shared_library(session.entry) or (
-            ctx.access.required and session.sign_in is None
+        ended = (
+            not cat.shared_library(session.entry)
+            or (ctx.access.required and session.sign_in is None)
+            or (session.away and not ctx.away.on)
         )
-        if not ended and session.sign_in and now - session.checked > ondemand.RECHECK_S:
+        if (
+            not ended
+            and session.sign_in
+            and (outside or now - session.checked > ondemand.RECHECK_S)
+        ):
             ended = ctx.access.session_user_hashed(session.sign_in) is None
             session.checked = now
         if ended:
             ctx.plays.end(session_id)
             raise HTTPException(404, PLAY_ENDED)
+        session.used(now)
         return session
 
     @app.api_route("/play/{session_id}/file.{ext}", methods=["GET", "HEAD"])
     async def play_file(session_id: str, ext: str, request: Request):
-        session = session_or_404(session_id)
+        session = session_or_404(session_id, request)
         kind = _TYPES.get(session.media.container, "application/octet-stream")
         if session.path is not None:
             if not await asyncio.to_thread(Path(session.path).is_file):
@@ -1148,8 +1311,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         return await _from_plex(proxy(), session.plex, request, kind)
 
     @app.get("/play/{session_id}/index.m3u8")
-    async def copy_playlist(session_id: str):
-        session = session_or_404(session_id)
+    async def copy_playlist(session_id: str, request: Request):
+        session = session_or_404(session_id, request)
         if session.copy is None:
             raise HTTPException(404, PLAY_ENDED)
         return Response(
@@ -1160,7 +1323,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.get("/play/{session_id}/piece-{n}.ts")
     async def copy_piece(session_id: str, n: int, request: Request):
-        session = session_or_404(session_id)
+        session = session_or_404(session_id, request)
         if session.copy is None:
             raise HTTPException(404, PLAY_ENDED)
         found = await session.copy.piece(n, request.is_disconnected)
@@ -1174,8 +1337,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         return FileResponse(found, media_type="video/mp2t", headers={"Cache-Control": "no-store"})
 
     @app.get("/play/{session_id}/subtitles/{track}.{ext}")
-    async def play_subtitles(session_id: str, track: str, ext: str):
-        session = session_or_404(session_id)
+    async def play_subtitles(session_id: str, track: str, ext: str, request: Request):
+        session = session_or_404(session_id, request)
         found = session.subtitles.get(track)
         if found is None:
             raise HTTPException(404, "There's no such subtitle track")
@@ -1200,15 +1363,19 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         )
 
     @app.post("/play/{session_id}/leave", status_code=204)
-    async def play_leave(session_id: str):
+    async def play_leave(session_id: str, request: Request):
+        going = ctx.plays.find(session_id)
+        if going is None or (access.outside(request.scope) and not going.away):
+            return Response(status_code=204)  # (nothing of its own to end)
         session = ctx.plays.end(session_id)
         # (Not when a newer one took over: another sound track, a smaller version.)
         if session is not None and not ctx.plays.newer(session):
             at = session.position_ms
             log.info(
-                "%s stopped %s%s (watched %s)",
+                "%s stopped %s%s%s (watched %s)",
                 session.user or "Someone",
                 describe(session.entry),
+                " away from home" if session.away else "",
                 f" at {playing.clock(at / 1000)}" if at is not None else "",
                 playing.minutes(session.watched_s),
             )
@@ -1230,6 +1397,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             ],
             "shared": list(ctx.shared.keys),
             "whenSlow": ctx.shared.when_slow,
+            "evenSound": ctx.shared.even_sound,
             "problem": problem,
             "playing": len(ctx.plays.watching()),
         }
@@ -1250,12 +1418,19 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     )
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
+        who = access.signed_in(request)
+        if body.evenSound is not None and body.evenSound != ctx.shared.even_sound:
+            ctx.shared.save_even_sound(body.evenSound)
+            log.info(
+                "Even sound for a show's episodes in StationPlay's apps: %s%s",
+                "on" if body.evenSound else "off (each episode's sound as it is)",
+                f" (set by {who.name})" if who else "",
+            )
         ctx.app_pictures.clear()  # (programs playing from one unshared stop at their next ask)
         try:
             names = {str(s["key"]): s.get("title") or "" for s in await ctx.library.libraries()}
         except LibraryError:
             names = {}
-        who = access.signed_in(request)
         chosen = ", ".join(names.get(k, f"library {k}") for k in keys) or "none"
         log.info(
             "Libraries in StationPlay's apps: %s%s", chosen, f" (set by {who.name})" if who else ""
@@ -1280,6 +1455,16 @@ def cant_copy(why: list[str]) -> str:
     return (
         f"This device can't play this file as it is ({ondemand.and_list(why)}), and StationPlay "
         "can't make a copy of it that the device can."
+    )
+
+
+def too_fast(need: str, cap_kbps: int) -> str:
+    """Why an app that can't take a copy can't play a file away from home
+    that's over the Admin's cap, in a sentence."""
+    return (
+        f"This file needs {need}, more than the {playing.mbps(cap_kbps)} an Admin allows for "
+        "Media away from home, and this app can't take a copy made to fit. Watch it at home, "
+        "or update the app."
     )
 
 

@@ -542,6 +542,7 @@ def now(ctx: AppContext, now_ms: int) -> list[dict]:
     watching stations, and what the apps are playing on demand."""
     rows: list[dict] = []
     fresh = now_ms - ctx.who_watches.looked_ms <= 2 * POLL_S * 1000
+    names = {u.id: u.name for u in ctx.db.users()}  # (as they're named now)
     for cid, b in list(ctx.broadcasters.items()):
         channel = ctx.db.get_channel(cid)
         if channel is None or not b.viewers:
@@ -566,13 +567,15 @@ def now(ctx: AppContext, now_ms: int) -> list[dict]:
             continue
         what = _station_now(ctx, stream.b, channel.number, channel.name, now_ms)
         how = _station_how(stream.b, night=stream.night)
-        rows += [_app_row(who, since, how, station=what) for who, since in stream.viewing()]
+        rows += [_app_row(who, since, how, names, station=what) for who, since in stream.viewing()]
     for session in ctx.plays.now():
+        # (Away from home, told apart by its app's own address, as stations are.)
         who = playing.Watcher(
-            session.client, session.away, session.user, session.user_id or None, session.app
-        )
+            session.client, session.away, session.user, session.user_id or None, session.app,
+            session.tag,
+        )  # fmt: skip
         rows.append(
-            _app_row(who, session.started_ms, _media_how(session),
+            _app_row(who, session.started_ms, _media_how(session), names,
                      media={"title": playing.title(session.entry)})
         )  # fmt: skip
     rows.sort(key=lambda r: r["sinceMs"] or now_ms)
@@ -607,9 +610,14 @@ def _row(
     }
 
 
-def _app_row(who: playing.Watcher, since_ms: int, how: dict, **what: dict | None) -> dict:
+def _app_row(
+    who: playing.Watcher, since_ms: int, how: dict, names: dict[int, str], **what: dict | None
+) -> dict:
+    """A row for an app watching (`names`: StationPlay's users' names now,
+    by id: someone renamed while watching shows by their new one)."""
+    person = names.get(who.user_id, who.person) if who.user_id is not None else who.person
     return _row(
-        who.person, False, who.app, "away" if who.away else "home", who.key or who.address,
+        person, False, who.app, "away" if who.away else "home", who.key or who.address,
         since_ms, how, **what,
     )  # fmt: skip
 
@@ -643,7 +651,8 @@ def _media_how(session: PlaySession) -> dict:
                 "mbps": _mbps(m.bitrate_kbps), "on": None, "notes": []}  # fmt: skip
     plan = copy.plan
     notes = [n for n, on in (("subtitles drawn in", plan.subtitles is not None),
-                             ("night mode's sound", plan.night)) if on]  # fmt: skip
+                             ("even sound", plan.even), ("night mode's sound", plan.night))
+             if on]  # fmt: skip
     if plan.copies_picture:
         return {"method": "repackage", "picture": m.size_label or None,
                 "mbps": _mbps(m.bitrate_kbps), "on": None, "notes": notes}  # fmt: skip

@@ -38,6 +38,9 @@ META = "app_libraries"
 SLOW_META = "app_when_slow"
 WHEN_SLOW = ("offer", "switch")
 SLOW_DEFAULTS = {"home": "offer", "away": "switch"}
+# Even sound for a show's episodes (see applibrary.py): on unless an Admin
+# turns it off ("0").
+EVEN_META = "app_even_sound"
 LIBRARIES_MOST = 100
 NOT_SHARED = "That isn't in a library shared with StationPlay's apps"
 UNREACHABLE = "Your library can't be reached right now. Try again in a moment."
@@ -80,7 +83,9 @@ STARTED_MS = 60_000
 WATCHED_SHARE = 0.9
 
 # Play sessions (see PlaySessions).
-SESSION_ID_BYTES = 24  # (32 characters)
+# (32 characters: 192 random bits, from secrets, so no one can guess one,
+# even through the public port.)
+SESSION_ID_BYTES = 24
 SESSION_IDLE_S = 4 * 3600.0  # ended once unused this long
 WATCHING_S = 180.0  # counts as a device watching until unheard from this long
 SESSIONS_MOST = 500
@@ -102,6 +107,13 @@ class Shared:
         self.db = db
         self.keys: tuple[str, ...] = self._load()
         self.when_slow: dict[str, str] = self._load_slow()
+        # Every episode played brought to the stations' loudness, so a show's
+        # episodes match (see applibrary.py); movies never are.
+        self.even_sound: bool = db.get_meta(EVEN_META) != "0"
+
+    def save_even_sound(self, on: bool) -> None:
+        self.even_sound = on
+        self.db.set_meta(EVEN_META, "1" if on else "0")
 
     def _load_slow(self) -> dict[str, str]:
         try:
@@ -544,14 +556,39 @@ def fits(media: Media, max_kbps: int | None) -> bool | None:
     return media.bitrate_kbps * FIT_HEADROOM <= max_kbps
 
 
+def needs_kbps(media: Media) -> int | None:
+    """What a version needs, in kilobits a second: as the library says, or
+    else from its file's size and length (None if neither is known)."""
+    if media.bitrate_kbps:
+        return media.bitrate_kbps
+    if media.size and media.duration_ms:
+        return max(1, round(media.size * 8 / media.duration_ms))
+    return None
+
+
+def over_cap(media: Media, cap_kbps: int | None) -> bool:
+    """Whether a version needs more than the Admin's cap on Media away from
+    home (`cap_kbps`; None: Original). What isn't known isn't held against
+    it."""
+    need = needs_kbps(media)
+    return bool(cap_kbps and need and need > cap_kbps)
+
+
 def choose(
-    entry: Entry, dev: Device, version: str | None = None, max_kbps: int | None = None
+    entry: Entry,
+    dev: Device,
+    version: str | None = None,
+    max_kbps: int | None = None,
+    cap_kbps: int | None = None,
 ) -> tuple[Media | None, list[str]]:
     """The version of a program's file to play as it is on a device: the one
     asked for; or else the best the device can play that the connection
     keeps up with (as the app measured it: `max_kbps`), or with none that
-    does, the smallest it can play. None, and why not, if it can't play any.
-    A version that's gone counts as not asked for."""
+    does, the smallest it can play. Away from home, with the Admin's cap
+    (`cap_kbps`), only those within it, or with none within it, the smallest
+    (which is then converted down to fit: see applibrary.py). None, and why
+    not, if it can't play any. A version that's gone counts as not asked
+    for."""
     asked = next((m for m in entry.media if version and m.id == version), None)
     if asked is not None:
         why = unplayable(asked, dev)
@@ -566,6 +603,8 @@ def choose(
             playable.append(media)
     if not playable:
         return None, first_why
+    if cap_kbps:
+        playable = [m for m in playable if not over_cap(m, cap_kbps)] or playable[-1:]
     if max_kbps:
         fitting = [m for m in playable if fits(m, max_kbps) is not False]
         return (fitting[0] if fitting else playable[-1]), []
@@ -701,7 +740,7 @@ class PlaySession:
     path: str | None  # the file, where StationPlay can read it itself
     plex: str | None  # otherwise, where Plex streams it from
     client: str  # which device (as for stations' streams)
-    away: bool
+    away: bool  # (started through the public port: only then is it offered there)
     # Subtitle files of their own: track id -> (where they're fetched, codec).
     subtitles: dict[str, tuple[str, str]] = field(default_factory=dict)
     # A copy StationPlay makes of it (converting.Copy), if it doesn't play
@@ -709,6 +748,9 @@ class PlaySession:
     copy: Any = None
     start_s: float = 0.0
     app: str = ""  # which app on which device (appapi.app_label), "" if it didn't say
+    # Away from home: the start of its app's own address (see away.py), which
+    # tells apps behind one reverse proxy apart in Stats, as for stations.
+    tag: str = ""
     started: float = field(default_factory=time.monotonic)
     started_ms: int = field(default_factory=lambda: int(time.time() * 1000))
     seen: float = field(default_factory=time.monotonic)
@@ -778,14 +820,19 @@ class PlaySessions:
 
     def get(self, session_id: str) -> PlaySession | None:
         """A session that's still going, now marked as used."""
+        session = self.find(session_id)
+        if session is not None:
+            session.used(time.monotonic())
+        return session
+
+    def find(self, session_id: str) -> PlaySession | None:
+        """A session that's still going, without marking it as used."""
         session = self._sessions.get(session_id)
         if session is None:
             return None
-        now = time.monotonic()
-        if now - session.seen > SESSION_IDLE_S:
+        if time.monotonic() - session.seen > SESSION_IDLE_S:
             self.end(session_id)
             return None
-        session.used(now)
         return session
 
     def end(self, session_id: str) -> PlaySession | None:
@@ -830,9 +877,12 @@ class PlaySessions:
             for s in self._sessions.values()
         )
 
-    def end_all(self) -> None:
-        for session_id in list(self._sessions):
-            self.end(session_id)
+    def end_all(self, away: bool = False) -> None:
+        """Ends every session (`away`: those started through the public
+        port, as watching away from home is turned off)."""
+        for session_id, session in list(self._sessions.items()):
+            if session.away or not away:
+                self.end(session_id)
 
     def copies(self, on_gpu: bool = False) -> int:
         """Copies being converted (their pictures made) now, or asked for

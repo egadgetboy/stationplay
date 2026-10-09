@@ -10,7 +10,7 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
-from app import catalog, ondemand
+from app import applibrary, catalog, converting, ondemand
 from app import plex as plex_module
 from app.catalog import Entry, Media, Track
 from app.config import Settings
@@ -603,23 +603,322 @@ def test_each_person_has_their_own_place(app):
         assert app.state.ctx.db.progress_of(sam_id, ["300"]) == {}
 
 
-def test_away_from_home_waits_for_now(app):
+# Away from home, through the public port -------------------------------------------------
+
+# A phone that takes copies (see test_converting.py).
+PHONE = {
+    "containers": ["mp4", "mkv"],
+    "video": [{"codec": "h264", "width": 1920, "height": 1080, "bitDepth": 8}],
+    "hdr": [],
+    "audio": ["aac"],
+    "hls": ["ts"],
+}
+AWAY = {"on": True, "address": "https://tv.example.com"}
+
+
+def internet(app, **headers) -> TestClient:
+    """An app away from home: through a reverse proxy with HTTPS, to the
+    public port."""
+    return TestClient(
+        app,
+        base_url=f"http://testserver:{PUBLIC_PORT}",
+        headers={"X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.7", **headers},
+    )
+
+
+def signed_in(client: TestClient, who: dict, app: str = "Pixel") -> dict[str, str]:
+    signed = client.post("/api/internal/sign-in", json={**who, "deviceName": app})
+    assert signed.status_code == 200, signed.text
+    return {"Authorization": f"Bearer {signed.json()['token']}"}
+
+
+def test_media_away_from_home_waits_until_its_turned_on(app):
     with TestClient(app) as home:
         home.put("/api/app-libraries", json={"libraries": ["2"]})
         assert home.post("/api/access/users", json=ADMIN).status_code == 201
-        internet = TestClient(
-            app, base_url=f"http://testserver:{PUBLIC_PORT}", headers={"X-Forwarded-Proto": "https"}
-        )
-        token = internet.post("/api/internal/sign-in", json=ADMIN).json()["token"]
-        auth = {"Authorization": f"Bearer {token}"}
-        assert "library" not in internet.get("/api/v1/server").json()["features"]
-        refused = internet.get("/api/internal/libraries", headers=auth)
-        assert refused.status_code == 403 and "home network" in refused.json()["detail"]
+        phone = internet(app)
+        auth = signed_in(phone, ADMIN)
+        assert "library" not in phone.get("/api/v1/server").json()["features"]
+        for address in ("/api/internal/libraries", "/api/internal/home", "/api/internal/items/300",
+                        "/api/internal/art/300"):  # fmt: skip
+            refused = phone.get(address, headers=auth)
+            assert refused.status_code == 403, address
+            assert "Admin turns on StationPlay's apps away from home" in refused.json()["detail"]
+        assert play(phone, "300", **auth).status_code == 403
+        progress = {"key": "300", "positionMs": 600_000}
+        assert phone.post("/api/internal/progress", json=progress, headers=auth).status_code == 403
         # Search still finds what's on the stations; the library, at home.
-        assert internet.get("/api/internal/search?q=movie", headers=auth).json()["items"] == []
+        assert phone.get("/api/internal/search?q=movie", headers=auth).json()["items"] == []
         assert len(home.get("/api/internal/search?q=movie").json()["items"]) == 2
         played = play(home, "300").json()  # (at home, where a cookie signs in)
-        assert internet.get(played["url"]).status_code == 404
+        assert phone.get(played["url"]).status_code == 404
+        # On: the apps get Media through the public port, as at home.
+        assert home.put("/api/away", json=AWAY).status_code == 200
+        features = phone.get("/api/v1/server").json()["features"]
+        assert {"away", "library", "convert"} <= set(features)
+        assert [x["key"] for x in phone.get("/api/internal/libraries", headers=auth).json()[
+            "libraries"]] == ["2"]  # fmt: skip
+        assert len(phone.get("/api/internal/search?q=movie", headers=auth).json()["items"]) == 2
+        poster = phone.get("/api/internal/art/300?kind=poster&w=300", headers=auth)
+        assert poster.status_code == 200 and poster.content == b"poster 300"
+        # Without a library shared, there's no Media anywhere.
+        home.put("/api/app-libraries", json={"libraries": []})
+        assert "library" not in phone.get("/api/v1/server").json()["features"]
+        assert phone.get("/api/internal/libraries", headers=auth).status_code == 404
+
+
+def test_media_plays_away_from_home(app, plex, tmp_path, caplog):
+    caplog.set_level(logging.INFO)
+    # (A play session's ID is its address's only secret: at least 128 random bits.)
+    assert ondemand.SESSION_ID_BYTES * 8 >= 128
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
+        assert home.post("/api/access/users", json=ADMIN).status_code == 201
+        home.put("/api/away", json=AWAY)
+        phone = internet(app)
+        auth = signed_in(phone, ADMIN)
+        # From disk: ranges and all, through the proxy, with no sign-in for the player.
+        played = phone.post(
+            "/api/internal/play",
+            json={"key": "300", "device": TV, "app": "StationPlay for Android",
+                  "deviceName": "Pixel"},
+            headers=auth,
+        )  # fmt: skip
+        assert played.status_code == 200, played.text
+        movie = played.json()
+        assert movie["method"] == "direct" and movie["whenSlow"] == "switch"  # (away's choice)
+        assert len(movie["session"]) == 32
+        player = internet(app)  # (no token)
+        whole = (tmp_path / "movie.mkv").read_bytes()
+        part = player.get(movie["url"], headers={"Range": "bytes=100-199"})
+        assert part.status_code == 206 and part.content == whole[100:200]
+        assert part.headers["content-range"] == f"bytes 100-199/{len(whole)}"
+        assert player.head(movie["url"]).headers["content-length"] == str(len(whole))
+        [subs] = [t for t in movie["subtitles"] if t["external"]]
+        assert player.get(subs["url"]).text.endswith("Hi\n")
+        # Only over HTTPS, as everything for the apps is there.
+        plain_http = TestClient(app, base_url=f"http://testserver:{PUBLIC_PORT}")
+        assert plain_http.get(movie["url"]).status_code == 403
+        # From Plex, where StationPlay can't read the file.
+        episode = play(phone, "201", **auth).json()
+        data = plex.files["201"]
+        part = player.get(episode["url"], headers={"Range": "bytes=10-"})
+        assert part.status_code == 206 and part.content == data[10:]
+        # Progress, from the session started there.
+        moved = phone.post(
+            "/api/internal/progress",
+            json={"key": "300", "positionMs": 600_000, "session": movie["session"]},
+            headers=auth,
+        )
+        assert moved.json() == {"positionMs": 600_000, "watched": False}
+        assert app.state.ctx.plays.find(movie["session"]).position_ms == 600_000
+        # The log and the access log say it's away from home; so does Stats.
+        assert (
+            "Pat started The Movie (1999) in StationPlay for Android on Pixel, away from home: "
+            "movie.mkv" in caplog.text
+        )
+        log = home.get("/api/logs?access_log=true").json()["text"]
+        assert (
+            "Pat is playing The Movie (1999) away from home, from 203.0.113.7 (over the internet)"
+            in log
+        )
+        watching = home.get("/api/stats/now").json()["watching"]
+        row = next(r for r in watching if r["media"] and r["media"]["title"] == "The Movie (1999)")
+        assert (row["who"], row["where"], len(row["address"])) == ("Pat", "away", 6)
+        assert row["address"] != "testclient" and row["address"] in [
+            k[:6] for k in app.state.ctx.away._keys
+        ]
+        # Leaving ends it; then its address is as good as never there.
+        assert player.post(movie["leave"]).status_code == 204
+        assert "Pat stopped The Movie (1999) away from home at 10:00" in caplog.text
+        gone = player.get(movie["url"])
+        assert gone.status_code == 404 and player.get("/play/" + "x" * 32 + "/file.mkv").json() == (
+            gone.json()
+        )
+
+
+def test_a_program_away_from_home_ends_with_its_sign_in(app):
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["2"]})
+        assert home.post("/api/access/users", json=ADMIN).status_code == 201
+        sam = {"name": "Sam", "password": "battery staple", "role": "user"}
+        assert home.post("/api/access/users", json=sam).status_code == 201
+        home.put("/api/away", json=AWAY)
+        phone = internet(app)
+
+        def playing(auth: dict[str, str]) -> str:
+            got = play(phone, "300", **auth)
+            assert got.status_code == 200, got.text
+            assert phone.get(got.json()["url"]).status_code == 200
+            return got.json()["url"]
+
+        # Signing out ends it at once (checked every time, from outside).
+        auth = signed_in(phone, sam)
+        url = playing(auth)
+        phone.post("/api/internal/sign-out", headers=auth)
+        assert phone.get(url).status_code == 404
+        # So does a new password.
+        auth = signed_in(phone, sam)
+        url = playing(auth)
+        sam_id = next(u["id"] for u in home.get("/api/access/users").json() if u["name"] == "Sam")
+        home.put(f"/api/access/users/{sam_id}", json={"password": "a new one, at last"})
+        assert phone.get(url).status_code == 404
+        # And an Admin signing the app out on the Access tab.
+        sam["password"] = "a new one, at last"
+        auth = signed_in(phone, sam, "Sam's Phone")
+        url = playing(auth)
+        [app_row] = [a for a in home.get("/api/access/apps").json() if a["app"].endswith("Phone")]
+        assert home.delete(f"/api/access/apps/{app_row['id']}").status_code == 204
+        assert phone.get(url).status_code == 404
+        # And watching away from home being turned off.
+        auth = signed_in(phone, sam)
+        url = playing(auth)
+        home.put("/api/away", json={**AWAY, "on": False})
+        assert phone.get(url).status_code == 404
+        home.put("/api/away", json=AWAY)
+        assert phone.get(url).status_code == 404  # (ended: not back)
+
+
+def test_a_program_started_at_home_isnt_offered_through_the_public_port(app):
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["2"]})
+        assert home.post("/api/access/users", json=ADMIN).status_code == 201
+        home.put("/api/away", json=AWAY)
+        at_home = play(home, "300").json()
+        outsider = internet(app)
+        assert outsider.get(at_home["url"]).status_code == 404
+        assert outsider.head(at_home["url"]).status_code == 404
+        # Nor can it be ended, or kept going, from there.
+        assert outsider.post(at_home["leave"]).status_code == 404
+        auth = signed_in(outsider, ADMIN)
+        kept = {"key": "300", "positionMs": 900_000, "session": at_home["session"]}
+        assert outsider.post("/api/internal/progress", json=kept, headers=auth).status_code == 200
+        assert app.state.ctx.plays.find(at_home["session"]).position_ms is None
+        assert home.get(at_home["url"]).status_code == 200  # (still going, at home)
+        # A guessed address gets nothing, signed in or not.
+        for guess in ("/play/guess/file.mkv", "/play/" + "A" * 32 + "/index.m3u8", "/play//leave"):
+            assert outsider.get(guess, headers=auth).status_code == 404, guess
+        # One started through the public port plays at home too (a VPN, say).
+        away = play(outsider, "300", **auth).json()
+        assert home.get(away["url"]).status_code == 200
+
+
+def test_media_away_from_home_counts_against_the_limits(app):
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
+        assert home.post("/api/access/users", json=ADMIN).status_code == 201
+        home.put("/api/away", json=AWAY)
+        assert home.put("/api/app-limits", json={"devices": 0, "away": 1}).status_code == 200
+        phone, tablet = internet(app), internet(app)
+        on_phone, on_tablet = signed_in(phone, ADMIN), signed_in(tablet, ADMIN, "Tablet")
+        assert play(phone, "300", **on_phone).status_code == 200
+        # (The same app again: still one device. Its stations count as the same device too.)
+        assert play(phone, "201", **on_phone).status_code == 200
+        ctx = app.state.ctx
+        assert sum(ctx.app_watchers().values()) == 1
+        refused = play(tablet, "300", **on_tablet)
+        assert refused.status_code == 503
+        assert (refused.json()["limit"], refused.json()["most"]) == ("away", 1)
+        assert "watching away from home at once" in refused.json()["detail"]
+        # At home, the limit away from home doesn't apply.
+        assert play(home, "300").status_code == 200
+        # Copies converted away from home count with those at home.
+        busy = home.put("/api/app-limits", json={"devices": 0, "away": 0})
+        assert busy.status_code == 200
+        for _ in range(applibrary.CONVERTING_MOST):
+            got = tablet.post("/api/internal/play", json={"key": "301", "device": PHONE},
+                              headers=on_tablet)  # fmt: skip
+            assert got.status_code == 200 and got.json()["method"] == "convert", got.text
+        assert ctx.plays.copies() == applibrary.CONVERTING_MOST
+        one_more = home.post("/api/internal/play", json={"key": "301", "device": PHONE})
+        assert one_more.status_code == 503 and one_more.json()["detail"] == (
+            applibrary.BUSY_CONVERTING
+        )
+
+
+def test_the_quality_away_from_home(app, caplog):
+    caplog.set_level(logging.INFO)
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
+        assert home.post("/api/access/users", json=ADMIN).status_code == 201
+        assert home.get("/api/away").json()["mediaMbps"] is None  # (Original, to start)
+        home.put("/api/away", json=AWAY)
+        phone = internet(app)
+        auth = signed_in(phone, ADMIN)
+        # The upload StationPlay's apps measured from outside, as a guide.
+        phone.post("/api/internal/speed-test", json={"mbps": 23.4}, headers=auth)
+        got = home.get("/api/away").json()
+        assert (got["upload"]["mbps"], got["upload"]["where"]) == (23.4, "away")
+        assert got["mediaMbpsMost"] == 200
+        for wrong in (0, 201, -5):
+            refused = home.put("/api/away", json={**AWAY, "mediaMbps": wrong})
+            assert refused.status_code == 400, wrong
+        assert home.get("/api/away").json()["mediaMbps"] is None  # (nothing changed)
+        # Original: as at home (the 1080p version, at 8 Mbps).
+        assert play(phone, "300", **auth).json()["version"] == "30000"
+        # Up to 5 Mbps: the version within it, as it is.
+        assert home.put("/api/away", json={**AWAY, "mediaMbps": 5}).json()["mediaMbps"] == 5
+        log = home.get("/api/logs?access_log=true").json()["text"]
+        assert "Media away from home in StationPlay's apps: up to 5 Mbps (set by Pat)" in log
+        within = play(phone, "300", **auth).json()
+        assert (within["method"], within["version"]) == ("direct", "30001")
+        assert play(home, "300").json()["version"] == "30000"  # (at home, as before)
+        # The setup's saving (without it) leaves it as it is.
+        assert home.put("/api/away", json=AWAY).json()["mediaMbps"] == 5
+        # Up to 3 Mbps: none is within it, so one is converted down to fit.
+        home.put("/api/away", json={**AWAY, "mediaMbps": 3})
+        down = phone.post("/api/internal/play", json={"key": "300", "device": PHONE},
+                          headers=auth).json()  # fmt: skip
+        assert down["method"] == "convert" and down["bitrateKbps"] <= 3000
+        assert down["why"][-1] == "a smaller copy, within the 3 Mbps allowed away from home"
+        assert (
+            "switched The Movie (1999) to a smaller copy, from 720p at 4 Mbps to 480p H.264 at 2 "
+            "Mbps on the CPU: to fit the 3 Mbps allowed away from home" in caplog.text
+        )
+        copy = app.state.ctx.plays.find(down["session"]).copy
+        assert applibrary.how_copied(copy.plan, [], False, copy.encoder, 3_000) == (
+            "converted smaller to fit the 3 Mbps allowed away from home: 480p H.264 at 2 Mbps on "
+            "the CPU"
+        )
+        # An app that can't take a copy is told why.
+        refused = play(phone, "300", **auth)
+        assert refused.status_code == 422
+        assert refused.json()["why"] == [
+            "it needs 4 Mbps, more than the 3 Mbps allowed away from home"
+        ]
+        # The apps' own "can't keep up" goes further down still.
+        slower = phone.post(
+            "/api/internal/play",
+            json={"key": "300", "device": PHONE, "maxKbps": 1_500, "fit": True},
+            headers=auth,
+        ).json()
+        assert slower["method"] == "convert" and slower["bitrateKbps"] <= 1_000 + 192
+        # A copy converted for another reason stays within it too.
+        other = phone.post("/api/internal/play", json={"key": "301", "device": PHONE},
+                           headers=auth).json()  # fmt: skip
+        assert other["method"] == "convert" and other["bitrateKbps"] <= 3000
+        # Original again.
+        assert home.put("/api/away", json={**AWAY, "mediaMbps": None}).json()["mediaMbps"] is None
+        assert play(phone, "300", **auth).json()["version"] == "30000"
+
+
+def test_the_cap_converts_down_to_fit():
+    four_k = Media(container="mkv", video="hevc", width=3840, height=2160)
+    convert = converting.convert_size
+    assert convert(four_k, 1080, None, 20_000) == (1080, 8_000)
+    assert convert(four_k, 1080, None, 6_000) == (720, 4_000)
+    assert convert(four_k, 1080, None, 6_000, 640) == (720, 4_000)
+    assert convert(four_k, 1080, None, 4_500, 640) == (480, 2_000)
+    assert convert(four_k, 1080, None, 2_000) == (480, 1_808)
+    assert convert(four_k, 1080, None, 1_000) == (480, 808)
+    assert convert(four_k, 1080, None, 300) == (480, 300)  # (however low)
+    assert convert(four_k, 1080, 9_000, 20_000) == (720, 4_000)  # (the connection's lower)
+    # What a version needs: as the library says, or from its size and length.
+    assert ondemand.needs_kbps(Media(container="mkv", video="h264", bitrate_kbps=900)) == 900
+    sized = Media(container="mkv", video="h264", size=75_000_000, duration_ms=60_000)
+    assert ondemand.needs_kbps(sized) == 10_000 and ondemand.over_cap(sized, 9_000)
+    assert not ondemand.over_cap(Media(container="mkv", video="h264"), 1_000)  # (not known)
+    assert not ondemand.over_cap(sized, None)
 
 
 def test_only_numbered_keys_go_to_plex_together():
