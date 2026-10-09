@@ -42,14 +42,15 @@ library layer it builds on is in `docs/library.md`.
 - **1.25.0:** copies converted on the GPU, as stations use it (see Copies).
 - **1.27.0:** watching on demand through the public port, while watching
   away from home is on, with the Admin's quality away from home (see Away
-  from home).
+  from home); and even sound for a show's episodes (see Even sound).
 - **Later:** fragmented MP4 copies, so Apple's player can have an HEVC
   picture as it is.
 
 The `features` an app sees (`GET /api/v1/server`) say what this server
 offers where the app is: `library` once a library is shared, at home (and
 from 1.27.0, through the public port too while watching away from home is
-on); `convert` from 1.24.0, where `library` is.
+on); `convert` from 1.24.0, where `library` is; `even-sound` from 1.27.0,
+where `library` is, while an Admin has it on.
 
 ## Sharing libraries
 
@@ -248,6 +249,37 @@ the session ends; ffmpeg stops when nothing has asked for two minutes.
 - Subtitles drawn in: a picture track (PGS, VobSub) laid over the picture;
   text in the file read out into a file of its own first, once (as the
   stations do); a subtitle file of its own fetched first.
+
+## Even sound
+
+From 1.27.0, every episode played on demand comes at the loudness the
+stations' episodes have (`ffmpeg.LOUDNESS_TARGET`, -24 LUFS, with ffmpeg's
+loudnorm in one pass), so all of a show's episodes match, in order or
+shuffled, in any app. Movies are never touched, as on the stations. On to
+start: an Admin can turn **Even sound for a show's episodes** off on the
+Access tab's Media panel (kept in `meta` as `app_even_sound`).
+
+- **How.** As night mode's sound is made for an app that can't make it: a
+  copy that keeps the picture as it is and makes only the sound
+  (repackaged), for an app that takes copies (`device.hls`). Its sound is
+  what the device would get anyway (`converting.sound_for`), made again
+  rather than copied: Dolby Digital 5.1 where the device plays it and the
+  sound has more than two channels, otherwise AAC stereo. Even sound comes
+  first in its filters; with night mode too, night mode's after it, so its
+  compressing starts from the same loudness in every episode and its
+  limiter is last.
+- **Never a picture made again for it.** Where the picture can't be kept as
+  it is (a picture the copy's pieces can't carry for that player, or a file
+  without an index to cut it by), an episode the device plays as it is
+  plays as it is. A copy made for another reason (converted, a smaller
+  picture, subtitles drawn in, night mode) has even sound too.
+- **The cost.** The episode's sound is made again, so sound sent as it is to
+  a receiver (Dolby Atmos, DTS) comes as ordinary 5.1 or stereo. Hence the
+  switch.
+- **The apps.** `features` lists `even-sound` while it's on, and a copy's
+  `why` says "even sound for the show's episodes", for the player's info.
+  An app that doesn't send `device.hls` (older apps) gets the file as
+  before.
 
 ## Skip intro and Skip credits
 

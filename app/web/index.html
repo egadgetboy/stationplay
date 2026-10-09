@@ -5202,9 +5202,14 @@ async function loadAppLibraries() {
   const body = $('#appLibrariesBody');
   if (body.dataset.editing) return;  // (not while it's being changed)
   const fields = libraryFields(got, () => { body.dataset.editing = '1'; });
+  // Even sound for a show's episodes (see applibrary.py on the server): on to start.
+  const even = h('input', { type: 'checkbox', id: 'evenSound', checked: got.evenSound, oninput: () => { body.dataset.editing = '1'; } });
+  const evenField = h('div', { class: 'arr-body', style: 'margin:0;gap:6px' },
+    h('label', { for: 'evenSound' }, even, ' ', h('strong', {}, 'Even sound for a show’s episodes')),
+    h('span', { class: 'hint' }, 'Every episode plays at the same loudness as the episodes on your stations, so a show’s episodes match, in any order, and none is much louder or quieter than the next. Movies aren’t changed. The picture plays as it is and only the sound is made again, which costs next to nothing (where the picture can’t be kept as it is, the episode plays as it is). The cost: sound a device would send as it is to a receiver or soundbar, such as Dolby Atmos or DTS, comes as ordinary 5.1 or stereo instead. Turn this off to play each episode’s sound as it is.'));
   const result = h('span', { class: 'hint', role: 'status' });
   const save = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
-    const chosen = fields.values();
+    const chosen = { ...fields.values(), evenSound: even.checked };
     try { await api('/api/app-libraries', { method: 'PUT', body: chosen }); }
     catch (e) { result.textContent = e.message; return; }
     toast(chosen.libraries.length ? 'Saved. StationPlay’s apps can show the libraries you chose.' : 'Saved. StationPlay’s apps don’t show any library.');
@@ -5213,6 +5218,7 @@ async function loadAppLibraries() {
   } }, 'Save');
   body.replaceChildren(
     ...fields.nodes,
+    evenField,
     h('div', { class: 'scan-set' }, save, result),
     ...(got.playing ? [h('p', { class: 'muted small', style: 'margin:0' }, `Playing from your library now: ${plural(got.playing, 'device')}.`)] : []));
 }

@@ -645,7 +645,8 @@ def _media_how(session: PlaySession) -> dict:
                 "mbps": _mbps(m.bitrate_kbps), "on": None, "notes": []}  # fmt: skip
     plan = copy.plan
     notes = [n for n, on in (("subtitles drawn in", plan.subtitles is not None),
-                             ("night mode's sound", plan.night)) if on]  # fmt: skip
+                             ("even sound", plan.even), ("night mode's sound", plan.night))
+             if on]  # fmt: skip
     if plan.copies_picture:
         return {"method": "repackage", "picture": m.size_label or None,
                 "mbps": _mbps(m.bitrate_kbps), "on": None, "notes": notes}  # fmt: skip

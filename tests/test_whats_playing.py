@@ -231,8 +231,8 @@ def test_media_playing_says_who_what_and_how(app, caplog):
         assert lines(caplog) == [
             "Pat started Northbound · S2 E4 in StationPlay for Android on Pixel, at home: "
             "northbound.s02e04.mkv (1080p HEVC, 5.1 E-AC-3) from Plex, converted to 1080p H.264 "
-            "at 8 Mbps on the CPU, because this device can't play its file type (MKV), its "
-            "picture's format (HEVC) and its sound's format (Dolby Digital Plus)"
+            "at 8 Mbps on the CPU, with even sound, because this device can't play its file type "
+            "(MKV), its picture's format (HEVC) and its sound's format (Dolby Digital Plus)"
         ]
         caplog.clear()
         night = home.post(
@@ -250,9 +250,12 @@ def test_media_playing_says_who_what_and_how(app, caplog):
         plan = app.state.ctx.plays.get(night.json()["session"]).copy.plan
         assert applibrary.how_copied(plan, ["its file type (MKV)"], True, CPU) == (
             "converted smaller to fit the connection: 480p H.264 at 1.8 Mbps on the CPU, with "
-            "night mode's sound, because this device can't play its file type (MKV)"
+            "even sound and night mode's sound, because this device can't play its file type "
+            "(MKV)"
         )
-        repackaged = replace(plan, method=converting.REPACKAGE, night=False, audio_codec="aac")
+        repackaged = replace(
+            plan, method=converting.REPACKAGE, night=False, even=False, audio_codec="aac"
+        )
         assert applibrary.how_copied(repackaged, ["its sound's format (DTS)"], False, CPU) == (
             "repackaged, its sound made AAC stereo, because this device can't play its sound's "
             "format (DTS)"

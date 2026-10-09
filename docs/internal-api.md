@@ -597,6 +597,17 @@ H.264, at most 1080p, ordinary rather than HDR). A copy is also made, with
 - `night: true`: night mode's sound (as the stations' `nightHls`), for an
   app that can't make it itself.
 
+From 1.27.0, while `features` lists `even-sound` (an Admin's switch, on to
+start), every episode (never a movie) comes at the stations' loudness, so a
+show's episodes match: with `device.hls`, an episode the device plays as it
+is comes as a `repackage` copy, its picture as it is and only its sound made
+again (what the device would get anyway, but not copied: so sound sent as
+it is to a receiver comes as 5.1 or stereo), and its `why` is `["even sound
+for the show's episodes"]`; any other copy of an episode has it too, and
+says so in its `why`. Where the picture can't be kept as it is, the episode
+plays as it is (`direct`). Show the copy's `why` in the player's info.
+Without `device.hls`, an episode plays as it did before.
+
 Send `startMs` too: where the player will start (by default, where this
 person stopped). A copy's playlist says to start there, and StationPlay
 starts making it there. `audio` (a sound track's ID) plays that track; a copy
@@ -649,7 +660,7 @@ so plainly.
 | `method` | string | How it plays: `direct` (the file as it is), `repackage` or `convert` (a copy; from 1.24.0) |
 | `url` | string | What the player plays (it needs no token): the file, such as `/play/<session>/file.mkv`, whose ranges are answered so the player can seek; or a copy's HLS playlist, `/play/<session>/index.m3u8`, listing the whole program from its start (a jump far ahead takes a few seconds more to start). Relative to where the app asked: a program started through the public port plays there (and at home), one started at home never plays through the public port |
 | `why` | list or null | Why a copy is made (null for `direct`) |
-| `why[]` | string | One reason, such as "its sound's format (DTS)" |
+| `why[]` | string | One reason, such as "its sound's format (DTS)", or "even sound for the show's episodes" (from 1.27.0) |
 | `audioTrack` | string or null | The sound track in a copy (null for `direct`, where the player chooses among `audio`) |
 | `drawnSubtitle` | string or null | The subtitle track drawn into a copy's picture, if any |
 | `leave` | string | Where to `POST` when the player stops |

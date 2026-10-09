@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app import applibrary, converting
+from app import applibrary, converting, hls, ondemand
 from app import ffmpeg as ff
 from app import gpu as gpu_module
 from app.catalog import Media, Track
@@ -165,6 +165,19 @@ def library(tmp_path):
         fp.add_movie("400", "A Copy", str(movie), int(LENGTH_S * 1000), section="2")
         fp.describe("400", audio="ac3", width=320, height=180)
         fp.add_subtitles("400", "srt", "English")
+        # An episode whose sound is far quieter than the stations' (about -42 LUFS).
+        episode = tmp_path / "episode.mkv"
+        make(episode, "-c:v", "libx264", "-x264-params", "keyint=48:scenecut=0", "-c:a", "aac",
+             "-af", "volume=-20dB")  # fmt: skip
+        fp.add_show("500", "Quiet Show")
+        fp.add_episode("501", "500", 1, 1, "Pilot", str(episode), int(LENGTH_S * 1000))
+        fp.describe("501", width=320, height=180)
+        # The same file again: a movie, which even sound never touches.
+        fp.add_movie("402", "A Quiet Movie", str(episode), int(LENGTH_S * 1000), section="2")
+        fp.describe("402", width=320, height=180)
+    fp.add_show("510", "Another Show")
+    fp.add_episode("511", "510", 1, 1, "In HEVC", "/tv/hevc.mkv", 60_000)
+    fp.describe("511", video="hevc", width=1920, height=1080)
     fp.add_movie("401", "Dolby Vision", "/films/dv.mkv", 60_000, section="2")
     fp.describe("401", video="hevc", width=3840, height=2160, bitDepth=10,
                 DOVIPresent=True, DOVIProfile=5)  # fmt: skip
@@ -606,3 +619,159 @@ def test_copies_failing_on_the_gpu_never_take_it_from_the_stations(caplog):
     assert gpu.encoder_for(False) == VAAPI and gpu.state == "gpu" and gpu.strikes == 0
     assert gpu.as_dict()["copiesOnCpu"] is True
     assert any("Stations keep using it" in r.getMessage() for r in caplog.records)
+
+
+# Even sound for a show's episodes ---------------------------------------------------------
+
+# (The phone plays the quiet episode's file as it is, and takes copies.)
+PLAYS_IT = PHONE
+
+
+def loudness(data: bytes) -> float:
+    """A piece's loudness (integrated, LUFS), as ffmpeg's EBU R128 meter
+    reads it."""
+    said = subprocess.run(
+        ["ffmpeg", "-nostats", "-i", "-", "-af", "ebur128", "-f", "null", "-"],
+        input=data, capture_output=True, check=True,
+    ).stderr.decode()  # fmt: skip
+    return float(said.rsplit("I:", 1)[1].split()[0])
+
+
+def test_the_stations_loudness_is_as_it_was():
+    """Even sound in Media uses the stations' own normalization, which is
+    unchanged: -24 LUFS, one pass, for episodes only."""
+    assert ff.LOUDNESS_TARGET == "I=-24:TP=-2:LRA=11"
+    assert ff._audio_filter(True) == (
+        "aresample=48000:async=1:first_pts=0,loudnorm=I=-24:TP=-2:LRA=11,aresample=48000,apad"
+    )
+    assert ff._audio_filter(False) == "aresample=48000:async=1:first_pts=0,apad"
+    assert converting.EVEN_SOUND.startswith(f"loudnorm={ff.LOUDNESS_TARGET},")
+
+
+def test_how_even_sound_is_made():
+    """The sound the device would get anyway, made again rather than copied,
+    the normalization first and night mode's after it."""
+    aac = Track("1", "aac", channels=2)
+    ac3 = Track("2", "ac3", channels=6)
+    truehd = Track("3", "truehd", channels=8)
+    assert converting.sound_for(aac, frozenset({"aac"}), False, even=True) == ("aac", 2)
+    assert converting.sound_for(ac3, frozenset({"aac", "ac3"}), False, even=True) == ("ac3", 6)
+    assert converting.sound_for(truehd, frozenset({"truehd", "ac3"}), False, even=True) == (
+        "ac3", 6
+    )  # fmt: skip
+    assert converting.sound_for(ac3, frozenset({"aac", "ac3"}), True, even=True) == ("aac", 2)
+    assert converting.sound_for(ac3, frozenset({"aac", "ac3"}), False) == ("copy", 6)
+    plan = converting.Plan(
+        method=converting.REPACKAGE, why=(), starts=(0.0, 6.0), duration_s=12.0, audio=ac3,
+        audio_codec="ac3", audio_channels=6, picture="h264", even=True,
+    )  # fmt: skip
+    args = converting.command("ffmpeg", "/tv/a.mkv", plan, 0)
+    assert part_at(["-c:v", "copy"], args) > 0
+    assert part_at(["-af", converting.EVEN_SOUND, "-c:a", "ac3", "-b:a", "640k", "-ac", "6"],
+                   args) > 0  # fmt: skip
+    both = converting.command("ffmpeg", "/tv/a.mkv", replace(plan, night=True, audio_codec="aac",
+                                                            audio_channels=2), 0)  # fmt: skip
+    chain = both[both.index("-af") + 1]
+    assert chain == f"{converting.EVEN_SOUND},{hls.NIGHT_SOUND}"
+    assert chain.index("loudnorm=I=-24") < chain.index("acompressor")
+    # Night mode's alone, as before.
+    night = converting.command("ffmpeg", "/tv/a.mkv", replace(plan, even=False, night=True,
+                                                             audio_codec="aac"), 0)  # fmt: skip
+    assert part_at(["-af", hls.NIGHT_SOUND, "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar",
+                    "48000"], night) > 0  # fmt: skip
+    plain = converting.command("ffmpeg", "/tv/a.mkv", replace(plan, even=False), 0)
+    assert "-af" not in plain and not any("loudnorm" in a for a in plain)
+
+
+@needs_ffmpeg
+def test_an_episode_comes_at_the_stations_loudness(app, caplog):
+    caplog.set_level(logging.INFO)
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
+        assert home.get("/api/app-libraries").json()["evenSound"] is True  # (on, to start)
+        assert "even-sound" in home.get("/api/v1/server").json()["features"]
+        played = home.post("/api/internal/play", json={"key": "501", "device": PLAYS_IT})
+        assert played.status_code == 200, played.text
+        answer = played.json()
+        # The picture as it is, and only the sound made: the device plays the file.
+        assert answer["method"] == "repackage" and answer["why"] == [applibrary.EVEN_WHY]
+        assert answer["why"] == ["even sound for the show's episodes"]
+        assert all(v["playable"] for v in answer["versions"])
+        copy = app.state.ctx.plays.find(answer["session"]).copy
+        assert copy.plan.even and copy.plan.audio_codec == "aac"
+        args = converting.command("ffmpeg", copy.source, copy.plan, 0)
+        assert args[args.index("-af") + 1] == f"loudnorm={ff.LOUDNESS_TARGET},aresample=48000"
+        assert "repackaged, its sound made AAC stereo, with even sound" in caplog.text
+        here = answer["url"].rsplit("/", 1)[0]
+        source = (copy.source and Path(copy.source).read_bytes()) or b""
+        assert loudness(source) < -35  # (as the file is)
+        for n in (0, 2):  # (from the start, and from anywhere)
+            piece = home.get(f"{here}/piece-{n}.ts")
+            assert piece.status_code == 200
+            assert loudness(piece.content) == pytest.approx(-24, abs=1.5), n
+            assert picture_of(piece.content)["codec_name"] == "h264"
+        home.post(answer["leave"])
+        # A movie isn't touched: the same file plays as it is.
+        movie = home.post("/api/internal/play", json={"key": "402", "device": PLAYS_IT}).json()
+        assert (movie["method"], movie["why"]) == ("direct", None)
+        # Nor is a movie's copy made for another reason.
+        copied = home.post("/api/internal/play", json={"key": "400", "device": PHONE}).json()
+        assert copied["why"] == ["its sound's format (Dolby Digital)"]
+        assert not app.state.ctx.plays.find(copied["session"]).copy.plan.even
+        # An app that doesn't take copies gets the episode as before.
+        older = {k: v for k, v in PLAYS_IT.items() if k != "hls"}
+        before = home.post("/api/internal/play", json={"key": "501", "device": older}).json()
+        assert (before["method"], before["why"]) == ("direct", None)
+
+
+@needs_ffmpeg
+def test_even_sound_with_night_mode_and_other_copies(app):
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
+        night = home.post(
+            "/api/internal/play", json={"key": "501", "device": PLAYS_IT, "night": True}
+        ).json()
+        assert night["method"] == "repackage"
+        assert night["why"] == ["even sound for the show's episodes", "night mode's sound"]
+        plan = app.state.ctx.plays.find(night["session"]).copy.plan
+        assert converting.sound_chain(plan) == f"{converting.EVEN_SOUND},{hls.NIGHT_SOUND}"
+        home.post(night["leave"])
+        # A copy converted for another reason has even sound too (an episode's).
+        fit = home.post(
+            "/api/internal/play",
+            json={"key": "501", "device": PLAYS_IT, "maxKbps": 1_500, "fit": True},
+        ).json()
+        assert fit["method"] == "convert" and fit["why"] == [
+            "a smaller picture, to fit the connection", "even sound for the show's episodes"
+        ]  # fmt: skip
+        home.post(fit["leave"])
+        # Where the picture can't be kept as it is (HEVC, for a player that takes
+        # only H.264 in a copy), the episode plays as it is: even sound never
+        # costs a picture made again.
+        tv = {**PLAYS_IT, "video": [*PLAYS_IT["video"], {"codec": "hevc", "width": 1920,
+                                                           "height": 1080, "bitDepth": 8}]}  # fmt: skip
+        hevc = home.post("/api/internal/play", json={"key": "511", "device": tv}).json()
+        assert (hevc["method"], hevc["why"]) == ("direct", None)
+
+
+@needs_ffmpeg
+def test_even_sound_can_be_turned_off(app, caplog):
+    caplog.set_level(logging.INFO)
+    with TestClient(app) as home:
+        home.post("/api/access/users", json={"name": "Pat", "password": "correct horse"})
+        home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
+        off = home.put("/api/app-libraries", json={"libraries": ["1", "2"], "evenSound": False})
+        assert off.status_code == 200 and off.json()["evenSound"] is False
+        assert (
+            "Even sound for a show's episodes in StationPlay's apps: off (each episode's sound as "
+            "it is) (set by Pat)" in caplog.text
+        )
+        assert "even-sound" not in home.get("/api/v1/server").json()["features"]
+        played = home.post("/api/internal/play", json={"key": "501", "device": PLAYS_IT}).json()
+        assert (played["method"], played["why"]) == ("direct", None)
+        # (Kept, as it was set; saving without it leaves it as it is.)
+        home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
+        assert app.state.ctx.shared.even_sound is False
+        assert ondemand.Shared(app.state.ctx.db).even_sound is False
+        home.put("/api/app-libraries", json={"libraries": ["1", "2"], "evenSound": True})
+        assert "even-sound" in home.get("/api/v1/server").json()["features"]

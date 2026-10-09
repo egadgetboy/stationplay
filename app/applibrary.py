@@ -63,6 +63,9 @@ AWAY_OFF = (
     "away from home, on the Access tab."
 )
 PLAY_ENDED = "That program's address has ended. Choose it again to play it."
+# Even sound for a show's episodes, as a copy's `why` says it (the apps show
+# it in their player).
+EVEN_WHY = "even sound for the show's episodes"
 NOT_PLAYABLE = "Choose an episode or a movie to play"
 NO_FILE = "StationPlay can't reach this program's file right now. Try again in a moment."
 COPY_FAILED = "StationPlay couldn't make this ready to play here. Try again, or choose another."
@@ -143,6 +146,7 @@ class WhenSlow(BaseModel):
 class SharedLibraries(BaseModel):
     libraries: list[str] = Field(max_length=ondemand.LIBRARIES_MOST)
     whenSlow: WhenSlow | None = None
+    evenSound: bool | None = None  # (None: as it is)
 
 
 # What the apps are told ----------------------------------------------------------------
@@ -300,6 +304,7 @@ def how_copied(
         what
         for what, on in (
             ("subtitles drawn in", plan.drawn is not None),
+            ("even sound", plan.even),
             ("night mode's sound", plan.night),
         )
         if on
@@ -871,12 +876,19 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         client: str,
         tag: str,
         cap: int | None,
+        even: bool,
+        only_sound: Media | None = None,
     ) -> Any:
         """Playing a copy StationPlay makes (see converting.py), for a device
         that can't play the file as it is, or for subtitles drawn in, a
         smaller picture made to fit, night mode's sound, or away from home,
         a file over the Admin's cap (`cap`, in kbps) converted down to fit
-        it. (`client` and `tag`: the device, as device_of says.)"""
+        it; with even sound for a show's episodes (`even`), whatever it's
+        made for. (`client` and `tag`: the device, as device_of says.)
+
+        `only_sound`: a version the device plays as it is, copied only for
+        even sound: its picture kept as it is, and only its sound made. None
+        (play it as it is, then) if its picture can't be kept."""
         user_id, name = person(request)
         away_ = access.outside(request.scope)
         versions = [m for m in ondemand.best_first(e.media) if m.id] or list(e.media)
@@ -891,7 +903,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         # The version: the one asked for; or the best one whose picture can
         # be kept (away from home, within the cap); or for converting, the
         # smallest that's still big enough.
-        media = asked[0] if asked else None
+        media = only_sound or (asked[0] if asked else None)
         if media is None:
             keepable = [m for m in versions
                         if converting.picture_copyable(m, ondemand.unplayable(m, dev), hls)
@@ -906,6 +918,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         capped = ondemand.over_cap(media, cap)
         why = ondemand.unplayable(media, dev)
         sound = converting.audio_track(media, body.audio)
+        even = even and sound is not None  # (no sound, nothing to even)
+        if only_sound and not even:
+            return None
         if sound is not None and sound.codec and sound.codec not in dev.audio:
             label = f"its sound's format ({ondemand.label(sound.codec)})"
             if label not in why:
@@ -917,11 +932,13 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             why.append("a smaller picture, to fit the connection")
         if capped and cap:
             why.append(f"a smaller copy, within the {playing.mbps(cap)} allowed away from home")
+        if even:
+            why.append(EVEN_WHY)
         if body.night:
             why.append("night mode's sound")
         duration_s = (media.duration_ms or e.duration_ms or 0) / 1000
         if duration_s <= 0:
-            return refuse(["how long it is isn't known"])
+            return None if only_sound else refuse(["how long it is isn't known"])
         path, stream = await source_of(e, media)
         source = path or stream
         if source is None:
@@ -939,7 +956,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 found = None
             if found:
                 starts = converting.pieces_at(found, duration_s)
-        audio_codec, channels = converting.sound_for(sound, dev.audio, body.night)
+        if only_sound and not starts:
+            return None  # (only the picture as it is will do: the file plays as it is)
+        audio_codec, channels = converting.sound_for(sound, dev.audio, body.night, even)
         if starts:
             method, height, kbps, tone_map = converting.REPACKAGE, 0, 0, ""
         else:
@@ -1006,7 +1025,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         plan = converting.Plan(
             method=method, why=tuple(why), starts=starts, duration_s=duration_s, audio=sound,
             audio_codec=audio_codec, audio_channels=channels, picture=media.video,
-            night=body.night, height=height,
+            night=body.night, even=even, height=height,
             kbps=kbps, tone_map=tone_map, subtitles=drawn, drawn=shown.id if shown else None,
         )  # fmt: skip
         token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
@@ -1101,8 +1120,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             and not (body.subtitle or body.fit or body.night)
             and (sound is None or not sound.codec or sound.codec in dev.audio)
         )
+        # Even sound for a show's episodes (as the stations' episodes have it,
+        # whatever the order or the app), where an Admin has it on: never a
+        # movie.
+        even = ctx.shared.even_sound and e.kind == catalog.EPISODE
         if not as_it_is and "ts" in hls:
-            return await play_copy(body, request, e, dev, hls, client, tag, cap)
+            return await play_copy(body, request, e, dev, hls, client, tag, cap, even)
         if media is None:
             log.info(
                 "A StationPlay app can't play %s as it is (%s)", describe(e), ondemand.and_list(why)
@@ -1114,6 +1137,14 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             why = [f"it needs {need}, more than the {playing.mbps(cap)} allowed away from home"]
             log.info("A StationPlay app can't play %s away from home (%s)", describe(e), why[0])
             return JSONResponse({"detail": too_fast(need, cap), "why": why}, status_code=422)
+        if even and "ts" in hls and sound is not None:
+            # (As night mode's sound is made for an app that can't make it:
+            # the picture as it is, only the sound made. Where the picture
+            # can't be kept as it is, the file plays as it is: even sound
+            # never costs a picture made again.)
+            copied = await play_copy(body, request, e, dev, hls, client, tag, cap, even, media)
+            if copied is not None:
+                return copied
         if (over := ctx.capacity.refusal(ctx.app_watchers(), client, away_)) is not None:
             return over_the_limit(over, body, request, e, tag)
         path = None
@@ -1366,6 +1397,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             ],
             "shared": list(ctx.shared.keys),
             "whenSlow": ctx.shared.when_slow,
+            "evenSound": ctx.shared.even_sound,
             "problem": problem,
             "playing": len(ctx.plays.watching()),
         }
@@ -1386,12 +1418,19 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     )
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
+        who = access.signed_in(request)
+        if body.evenSound is not None and body.evenSound != ctx.shared.even_sound:
+            ctx.shared.save_even_sound(body.evenSound)
+            log.info(
+                "Even sound for a show's episodes in StationPlay's apps: %s%s",
+                "on" if body.evenSound else "off (each episode's sound as it is)",
+                f" (set by {who.name})" if who else "",
+            )
         ctx.app_pictures.clear()  # (programs playing from one unshared stop at their next ask)
         try:
             names = {str(s["key"]): s.get("title") or "" for s in await ctx.library.libraries()}
         except LibraryError:
             names = {}
-        who = access.signed_in(request)
         chosen = ", ".join(names.get(k, f"library {k}") for k in keys) or "none"
         log.info(
             "Libraries in StationPlay's apps: %s%s", chosen, f" (set by {who.name})" if who else ""

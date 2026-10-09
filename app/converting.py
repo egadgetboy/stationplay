@@ -2,7 +2,9 @@
 its file as it is (see docs/on-demand.md): **repackaged**, the picture kept
 as it is in a new package, the sound converted where the device needs it;
 or **converted**, the picture made into H.264 too (smaller, ordinary rather
-than HDR, or with subtitles drawn in).
+than HDR, or with subtitles drawn in). An episode's sound is also made again
+for even sound across a show's episodes, and night mode's for an app that
+can't make it (see sound_chain).
 
 A copy is HLS: a playlist listing the whole program from its start, in
 pieces of about PIECE_S seconds, so the player shows its whole length and
@@ -46,7 +48,16 @@ from typing import TYPE_CHECKING
 
 from . import catalog
 from .catalog import Media, Track
-from .ffmpeg import CPU, SUBTITLE_STYLE, Encoder, Subtitles, filter_path, hw_input_args, redact
+from .ffmpeg import (
+    CPU,
+    LOUDNESS_TARGET,
+    SUBTITLE_STYLE,
+    Encoder,
+    Subtitles,
+    filter_path,
+    hw_input_args,
+    redact,
+)
 
 if TYPE_CHECKING:
     from .gpu import GpuManager
@@ -91,6 +102,10 @@ AUDIO_KBPS = 192
 SURROUND_KBPS = 640
 # Sound kept as it is in a copy, when the device plays it (MPEG-TS carries these).
 TS_AUDIO = frozenset({"aac", "ac3", "eac3", "mp3", "mp2"})
+# Even sound for a show's episodes (see applibrary.py): the stations' own
+# loudness normalization (ffmpeg.LOUDNESS_TARGET, in one pass), which works
+# at 192 kHz inside, so it's brought back to 48 kHz after.
+EVEN_SOUND = f"loudnorm={LOUDNESS_TARGET},aresample=48000"
 
 REPACKAGE = "repackage"
 CONVERT = "convert"
@@ -117,6 +132,7 @@ class Plan:
     picture: str = ""  # the file's picture's format ("h264", "hevc")
     audio_channels: int = 2
     night: bool = False
+    even: bool = False  # even sound for a show's episodes (see sound_chain)
     # Converting the picture:
     height: int = 0
     kbps: int = 0
@@ -251,27 +267,17 @@ def command(
         # (Converted: its times from the program's start, whatever the file's
         # own first time, as the pieces were planned.)
         times = ["-start_at_zero"]
-    if plan.night:
-        from .hls import NIGHT_SOUND  # (hls.py's, the stations' night sound)
-
-        sound = [
-            "-af",
-            NIGHT_SOUND,
-            "-c:a",
-            "aac",
-            "-b:a",
-            f"{AUDIO_KBPS}k",
-            "-ac",
-            "2",
-            "-ar",
-            "48000",
-        ]
-    elif plan.audio_codec == "copy":
+    chain = sound_chain(plan)
+    # (Sound that goes through filters is made again, never copied.)
+    codec = "aac" if chain and plan.audio_codec == "copy" else plan.audio_codec
+    if codec == "copy":
         sound = ["-c:a", "copy"]
-    elif plan.audio_codec == "ac3":
+    elif codec == "ac3":
         sound = ["-c:a", "ac3", "-b:a", f"{SURROUND_KBPS}k", "-ac", str(plan.audio_channels)]
     else:
         sound = ["-c:a", "aac", "-b:a", f"{AUDIO_KBPS}k", "-ac", "2", "-ar", "48000"]
+    if chain:
+        sound = ["-af", chain, *sound]
     return [
         *args, *video, *audio_map, *sound,
         "-sn", "-dn", "-map_metadata", "-1", "-map_chapters", "-1",
@@ -282,6 +288,19 @@ def command(
         "-output_ts_offset", f"{TS_OFFSET_S:g}",
         "-f", "mpegts", "-mpegts_start_pid", str(VIDEO_PID), "pipe:1",
     ]  # fmt: skip
+
+
+def sound_chain(plan: Plan) -> str:
+    """The filters a copy's sound goes through ("" for none): even sound
+    for a show's episodes (EVEN_SOUND), then night mode's (hls.NIGHT_SOUND).
+    Even sound comes first, so night mode's compressing works from the same
+    loudness in every episode, and its limiter, last, keeps the peaks its
+    lift makes in check."""
+    from .hls import NIGHT_SOUND  # (hls.py's, the stations' night sound)
+
+    return ",".join(
+        filters for filters, on in ((EVEN_SOUND, plan.even), (NIGHT_SOUND, plan.night)) if on
+    )
 
 
 def _converted_picture(plan: Plan, first: int, video_index: int, encoder: Encoder) -> list[str]:
@@ -389,13 +408,19 @@ def sound_kbps(audio_codec: str, channels: int) -> int:
     return AUDIO_KBPS
 
 
-def sound_for(track: Track | None, device_audio: frozenset[str], night: bool) -> tuple[str, int]:
-    """How a copy's sound is made: ("copy" | "aac" | "ac3", channels)."""
+def sound_for(
+    track: Track | None, device_audio: frozenset[str], night: bool, even: bool = False
+) -> tuple[str, int]:
+    """How a copy's sound is made: ("copy" | "aac" | "ac3", channels). With
+    even sound (`even`), it's what the device would get anyway, but made
+    again rather than copied, since its loudness changes: Dolby Digital 5.1
+    where the device plays it and the sound has more than two channels,
+    otherwise AAC stereo."""
     if track is None:
         return "aac", 2
     if night:
         return "aac", 2
-    if track.codec in device_audio and track.codec in TS_AUDIO:
+    if track.codec in device_audio and track.codec in TS_AUDIO and not even:
         return "copy", track.channels or 2
     if (track.channels or 2) > 2 and "ac3" in device_audio:
         return "ac3", min(6, track.channels or 6)

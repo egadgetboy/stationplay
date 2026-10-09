@@ -38,6 +38,9 @@ META = "app_libraries"
 SLOW_META = "app_when_slow"
 WHEN_SLOW = ("offer", "switch")
 SLOW_DEFAULTS = {"home": "offer", "away": "switch"}
+# Even sound for a show's episodes (see applibrary.py): on unless an Admin
+# turns it off ("0").
+EVEN_META = "app_even_sound"
 LIBRARIES_MOST = 100
 NOT_SHARED = "That isn't in a library shared with StationPlay's apps"
 UNREACHABLE = "Your library can't be reached right now. Try again in a moment."
@@ -104,6 +107,13 @@ class Shared:
         self.db = db
         self.keys: tuple[str, ...] = self._load()
         self.when_slow: dict[str, str] = self._load_slow()
+        # Every episode played brought to the stations' loudness, so a show's
+        # episodes match (see applibrary.py); movies never are.
+        self.even_sound: bool = db.get_meta(EVEN_META) != "0"
+
+    def save_even_sound(self, on: bool) -> None:
+        self.even_sound = on
+        self.db.set_meta(EVEN_META, "1" if on else "0")
 
     def _load_slow(self) -> dict[str, str]:
         try:

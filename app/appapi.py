@@ -273,6 +273,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 *(["library"] if media else []),
                 # (Copies of what a device can't play as it is: see converting.py.)
                 *(["convert"] if media else []),
+                # (Even sound for a show's episodes, while it's on: see applibrary.py.)
+                *(["even-sound"] if media and ctx.shared.even_sound else []),
             ],
         }
 
