@@ -399,19 +399,19 @@ The proxy (Caddy or Nginx Proxy Manager, say) takes HTTPS connections from the i
 
 1. **A domain name** pointing at your home's internet address (with dynamic DNS if that address changes), such as `tv.example.com`.
 2. **Port 443 forwarded** on your router to the computer running the proxy.
-3. **The proxy**, with a certificate (both proxies below get a free one from Let's Encrypt), passing requests to `http://<your-server-ip>:3311`, and setting `CF-Connecting-IP` to each visitor's address. StationPlay counts wrong passwords by that address, so the proxy must set it itself, replacing any value a visitor sends.
+3. **The proxy**, with a certificate (both proxies below get a free one from Let's Encrypt), passing requests to `http://<your-server-ip>:3311`, and passing on each visitor's address in `X-Real-IP` or `X-Forwarded-For`. Nginx Proxy Manager and NPMplus do both by default. StationPlay counts wrong passwords by that address and shows it in the access log, so the proxy must set it itself, replacing any value a visitor sends. (StationPlay takes `CF-Connecting-IP` only when a request came through Cloudflare, so a visitor can't send it to pose as someone else.)
 
 **Caddy** (the whole `Caddyfile`):
 
 ```
 tv.example.com {
     reverse_proxy 192.168.1.20:3311 {
-        header_up CF-Connecting-IP {remote_host}
+        header_up X-Real-IP {remote_host}
     }
 }
 ```
 
-**Nginx Proxy Manager:** add a proxy host for `tv.example.com` forwarding to `192.168.1.20` port `3311`. On its **SSL** tab, request a Let's Encrypt certificate and turn on **Force SSL**. On its **Advanced** tab, add `proxy_set_header CF-Connecting-IP $remote_addr;`.
+**Nginx Proxy Manager** (or NPMplus): add a proxy host for `tv.example.com` forwarding to `192.168.1.20` port `3311`. On its **SSL** tab, request a Let's Encrypt certificate and turn on **Force SSL**. It passes on each visitor's address by itself.
 
 Then, on the **Access** tab at home, add the first user (an Admin) with a long password if you haven't, and turn on **StationPlay's apps away from home** with `https://tv.example.com`. Leave the port out: that's the proxy's address, and StationPlay itself never speaks HTTPS. Within a few seconds, the status under it should say **Ready**. If it says the proxy points at the wrong port, point it at 3311, never 3310.
 

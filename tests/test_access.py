@@ -252,6 +252,110 @@ def test_ipv6_addresses_are_counted_by_network():
     assert access.counted_as("192.0.2.1") == "192.0.2.1"
 
 
+# A visitor's address on the public port (see access.address) -----------------------
+
+PROXY = "172.16.39.1"  # NPMplus, as its Docker network's gateway
+CLOUDFLARE_EDGE, CLOUDFLARE_EDGE_6 = "172.70.42.9", "2a06:98c0:3600::103"
+
+
+def coming(headers: dict[str, str] | list[tuple[str, str]], *, public: bool = True) -> dict:
+    """A request as it reaches StationPlay from the proxy, with these headers:
+    on the public port, or the home port."""
+    pairs = headers.items() if isinstance(headers, dict) else headers
+    return {
+        "type": "http", "client": (PROXY, 51234), "state": {"outside": public},
+        "headers": [(name.lower().encode(), value.encode()) for name, value in pairs],
+    }  # fmt: skip
+
+
+VISITORS = [
+    # (what reaches StationPlay, the visitor's address)
+    # NPMplus (and Nginx Proxy Manager) say who in X-Real-IP and X-Forwarded-For.
+    ({"X-Real-IP": "203.0.113.5", "X-Forwarded-For": "203.0.113.5",
+      "X-Forwarded-Proto": "https"}, "203.0.113.5"),
+    # A visitor's own CF-Connecting-IP (and X-Forwarded-For) through NGINX.
+    ({"CF-Connecting-IP": "198.51.100.7", "X-Real-IP": "203.0.113.5",
+      "X-Forwarded-For": "198.51.100.7, 203.0.113.5"}, "203.0.113.5"),
+    ({"CF-Connecting-IP": "198.51.100.7", "X-Forwarded-For": "198.51.100.7, 203.0.113.5"},
+     "203.0.113.5"),
+    # Only X-Forwarded-For (as Caddy sends it), and in more than one line.
+    ({"X-Forwarded-For": "203.0.113.5"}, "203.0.113.5"),
+    ([("X-Forwarded-For", "198.51.100.7"), ("X-Forwarded-For", "203.0.113.5")], "203.0.113.5"),
+    # Cloudflare in front of NGINX: NGINX saw Cloudflare, which says who.
+    ({"CF-Connecting-IP": "203.0.113.5", "X-Real-IP": CLOUDFLARE_EDGE,
+      "X-Forwarded-For": f"203.0.113.5, {CLOUDFLARE_EDGE}"}, "203.0.113.5"),
+    ({"CF-Connecting-IP": "203.0.113.5", "X-Forwarded-For": f"198.51.100.7, {CLOUDFLARE_EDGE}"},
+     "203.0.113.5"),
+    ({"CF-Connecting-IP": "2001:db8::5", "X-Real-IP": CLOUDFLARE_EDGE_6}, "2001:db8::5"),
+    # A Cloudflare Tunnel straight to StationPlay.
+    ({"CF-Connecting-IP": "203.0.113.5", "CF-Visitor": '{"scheme":"https"}'}, "203.0.113.5"),
+    ({"CF-Connecting-IP": "203.0.113.5", "X-Forwarded-For": "203.0.113.5"}, "203.0.113.5"),
+    # IPv6, and IPv4 in IPv6's form.
+    ({"X-Real-IP": "2001:DB8::5"}, "2001:db8::5"),
+    ({"X-Forwarded-For": "203.0.113.9, 2001:db8::5"}, "2001:db8::5"),
+    ({"X-Real-IP": "::ffff:203.0.113.5"}, "203.0.113.5"),
+    # Anything but an IP address: where the request came from, then.
+    ({"X-Real-IP": "not an address", "X-Forwarded-For": "203.0.113.5"}, PROXY),
+    ({"X-Forwarded-For": "203.0.113.5, unknown"}, PROXY),
+    ({"X-Forwarded-For": "203.0.113.5:4711"}, PROXY),
+    ({"X-Forwarded-For": "203.0.113.5,"}, PROXY),
+    ({"X-Real-IP": "[2001:db8::5]"}, PROXY),
+    ({"X-Real-IP": "fe80::1%eth0 is me"}, PROXY),
+    ({"X-Real-IP": ""}, PROXY),
+    ({"CF-Connecting-IP": "203.0.113.5<b>"}, PROXY),
+    ({"CF-Connecting-IP": "garbage", "X-Real-IP": CLOUDFLARE_EDGE}, PROXY),
+    ({}, PROXY),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("headers", "visitor"), VISITORS)
+def test_a_visitors_address_is_the_one_the_nearest_proxy_saw(headers, visitor):
+    request = coming(headers)
+    assert access.address(request) == visitor
+    assert access.where(request) == f"{visitor} (over the internet)"
+    # The home port never takes a header's word for it.
+    at_home = coming(headers, public=False)
+    assert access.address(at_home) == PROXY
+
+
+def test_the_access_log_names_visitors_through_a_reverse_proxy(tmp_path):
+    public_port = 3311
+    settings = Settings(
+        plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "data",
+        public_port=public_port,
+    )  # fmt: skip
+    app = create_app(
+        settings, PlexClient("http://plex.test", "token", transport=FakePlex().transport())
+    )
+
+    def through_npmplus(address: str, **more: str) -> TestClient:
+        said = {"X-Real-IP": address, "X-Forwarded-For": address, "X-Forwarded-Proto": "https"}
+        return TestClient(app, base_url=f"http://testserver:{public_port}", headers=said | more)
+
+    with TestClient(app) as home:
+        assert home.post("/api/access/users", json=PAT).status_code == 201
+        guesser = through_npmplus("198.51.100.7")
+        for _ in range(access.TRIES):
+            wrong = guesser.post("/api/access/sign-in", json={**PAT, "password": "nope nope"})
+            assert wrong.status_code == 401
+        assert guesser.post("/api/access/sign-in", json=PAT).status_code == 429
+        # Saying it's someone else, as Cloudflare would, doesn't help.
+        forged = through_npmplus("198.51.100.7", **{"CF-Connecting-IP": "203.0.113.99"})
+        assert forged.post("/api/access/sign-in", json=PAT).status_code == 429
+        # Others aren't held up by it.
+        signed = through_npmplus("203.0.113.5").post("/api/access/sign-in", json=PAT)
+        assert signed.status_code == 200
+        # At home, the proxy's word isn't taken.
+        lying = TestClient(app, headers={"X-Real-IP": "203.0.113.5"})
+        wrong = lying.post("/api/access/sign-in", json={**PAT, "password": "nope nope"})
+        assert wrong.status_code == 401
+        log = home.get("/api/logs?access_log=true").json()["text"]
+    assert "Failed sign-in as 'Pat' from 198.51.100.7 (over the internet)" in log
+    assert "Pat (Admin) signed in from 203.0.113.5 (over the internet)" in log
+    assert "Failed sign-in as 'Pat' from testclient" in log
+    assert "203.0.113.99" not in log
+
+
 def test_changes_from_another_sites_page_are_refused(app):
     with TestClient(app) as client:
         body = {"number": 1, "sources": [{"type": "show", "ratingKey": "100"}]}

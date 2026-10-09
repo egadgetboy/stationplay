@@ -40,9 +40,10 @@ StationPlay is reached on its public port (PUBLIC_PORT), never the one Plex
 uses. There, what Plex and IPTV apps use isn't offered at all, signing in is
 always needed (until there's a user, nothing but the sign-in page is shown:
 the first user is added on the home network), each visitor's address is the
-one the tunnel passes on (CF-Connecting-IP), and wrong passwords from the
-internet as a whole are limited too (but not on a browser you've signed in
-on before, so strangers' wrong passwords can't keep you out).
+one the reverse proxy or Cloudflare passes on (see address), and wrong
+passwords from the internet as a whole are limited too (but not on a
+browser you've signed in on before, so strangers' wrong passwords can't keep
+you out).
 """
 
 from __future__ import annotations
@@ -103,6 +104,21 @@ ADDRESSES_KEPT = 10_000  # the most addresses whose wrong passwords are counted
 # Wrong passwords on the public port, from every address together, before
 # signing in from the internet waits (the home network doesn't).
 PUBLIC_TRIES = 100
+# Cloudflare's own addresses, as it publishes them at
+# https://www.cloudflare.com/ips/ (taken October 8, 2026; last changed there
+# September 28, 2023). A request from one came through Cloudflare, so the
+# visitor's address it passes on (CF-Connecting-IP) is Cloudflare's word.
+CLOUDFLARE = tuple(
+    ipaddress.ip_network(network)
+    for network in (
+        "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
+        "141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
+        "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+        "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+        "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32",
+        "2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32",
+    )
+)  # fmt: skip
 # Passwords checked at once, at most: each check takes a moment and memory,
 # deliberately, and StationPlay has streams to serve.
 CHECKS_AT_ONCE = 2
@@ -280,14 +296,64 @@ def a_role(role: str) -> str:
 def address(scope: dict) -> str:
     """The address a request came from: on the home network, the address
     it came from (a reverse proxy's, if it came through one), as that can't
-    be faked; on the public port, the visitor's, as the tunnel says."""
-    if outside(scope):
-        for name, value in scope.get("headers") or ():
-            if name == b"cf-connecting-ip":
-                with contextlib.suppress(ValueError):
-                    return str(ipaddress.ip_address(value.decode("latin-1").strip()))
+    be faked; on the public port, the visitor's, as the nearest proxy saw it
+    (see _visitor), or failing that, the address it came from."""
+    if outside(scope) and (found := _visitor(scope)):
+        return found
     client = scope.get("client")
     return client[0] if client else "unknown"
+
+
+def _visitor(scope: dict) -> str | None:
+    """Who a request on the public port is from, as the nearest proxy saw
+    them: X-Real-IP (which NGINX-style proxies, NPMplus included, set to
+    the address they saw), or else the last address in X-Forwarded-For (the
+    one the nearest proxy added: those before it can be anything a visitor
+    sent). CF-Connecting-IP only when the request came through Cloudflare:
+    the address found is one of Cloudflare's own, or there's neither header
+    (a Cloudflare Tunnel straight to StationPlay). Otherwise anyone could
+    send that header, and a proxy would pass it on. None if what's there
+    isn't an IP address."""
+    real: bytes | None = None
+    forwarded: bytes | None = None
+    connecting: bytes | None = None
+    for name, value in scope.get("headers") or ():
+        if name == b"x-real-ip":
+            real = value
+        elif name == b"x-forwarded-for":
+            forwarded = value if forwarded is None else forwarded + b"," + value
+        elif name == b"cf-connecting-ip":
+            connecting = value
+    if real is not None:
+        found = _ip(real)
+    elif forwarded is not None:
+        found = _ip(forwarded.rsplit(b",", 1)[-1])
+    else:
+        return _ip(connecting) if connecting is not None else None
+    if found and connecting is not None and _cloudflares(found):
+        return _ip(connecting)
+    return found
+
+
+def _ip(value: bytes) -> str | None:
+    """A header's value as an IP address, if that's what it is (no zone,
+    which no visitor's address has; an IPv4 address in IPv6 form as
+    itself)."""
+    text = value.decode("latin-1").strip()
+    if "%" in text:
+        return None
+    try:
+        ip = ipaddress.ip_address(text)
+    except ValueError:
+        return None
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        return str(ip.ipv4_mapped)
+    return str(ip)
+
+
+def _cloudflares(address_: str) -> bool:
+    ip = ipaddress.ip_address(address_)
+    return any(ip in network for network in CLOUDFLARE)
 
 
 def outside(scope: dict) -> bool:
@@ -310,9 +376,10 @@ def counted_as(address_: str) -> str:
 
 
 def where(scope: dict) -> str:
-    """Where a request came from, for the access log: its address, and the
-    address it says it came from first when it came through a proxy (as a
-    reverse proxy says; anyone could say so, so it's only for reading)."""
+    """Where a request came from, for the access log: its address (see
+    address); and on the home network, the address it says it came from
+    first when it came through a proxy (as a reverse proxy says; anyone
+    could say so, so it's only for reading)."""
     address_ = address(scope)
     if outside(scope):
         return f"{address_} (over the internet)"
