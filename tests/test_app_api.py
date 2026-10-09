@@ -195,6 +195,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         assert now["start"] <= time.time() * 1000 < now["end"] == upcoming["start"]
         refused = home.post("/api/internal/sign-in", json=PAT)
         check.answer(refused, "POST /api/internal/sign-in", 400)
+        assert check.answer(home.get("/api/internal/me"), "GET /api/internal/me") == {"user": None}
 
         # Signing in on: an app signs in, and sends its token.
         assert home.post("/api/access/users", json=PAT).status_code == 201
@@ -212,6 +213,9 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         assert signed["user"] == {"name": "Sam", "role": "user"} and signed["device"]
         assert not phone.cookies  # (apps get a token, not a cookie)
         sam = bearer(signed["token"])
+        me = check.answer(phone.get("/api/internal/me", headers=sam), "GET /api/internal/me")
+        assert me == {"user": {"name": "Sam", "role": "user"}}
+        check.answer(phone.get("/api/internal/me"), "GET /api/internal/me", 401)
         listed = check.answer(phone.get("/api/v1/stations", headers=sam), "GET /api/v1/stations")
         assert [s["number"] for s in listed["stations"]] == [5]
         assert phone.get("/api/logs", headers=sam).status_code == 403  # a User, not an Admin

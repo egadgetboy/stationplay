@@ -91,7 +91,8 @@ class Device:
     name: str
     created_ms: int
     seen_ms: int
-    linked_by: str
+    linked_by: str  # who linked it, by name (kept if they're removed)
+    linked_by_id: int | None = None  # and by id, which is what says it's theirs
 
 
 @dataclass
@@ -110,8 +111,8 @@ class Devices:
         key = secrets.token_urlsafe(KEY_BYTES)
         now = _now()
         name = plain(name)[:NAME_MOST] or "A StationPlay app"
-        device_id = self.db.add_linked_device(access.session_hash(key), name, now, by.name)
-        return Device(device_id, name, now, now, by.name), key
+        device_id = self.db.add_linked_device(access.session_hash(key), name, now, by.name, by.id)
+        return Device(device_id, name, now, now, by.name, by.id), key
 
     def device(self, key: str | None, name: str | None = None) -> Device | None:
         """The linked device with this key (noting that it was used, and its
@@ -125,13 +126,17 @@ class Devices:
         name = plain(name)[:NAME_MOST] if name else None
         if now - row["seen_ms"] > access.SEEN_EVERY_MS or (name and name != row["name"]):
             self.db.device_seen(row["id"], now, name if name != row["name"] else None)
-        return Device(row["id"], name or row["name"], row["created_ms"], now, row["linked_by"])
+        return Device(
+            row["id"], name or row["name"], row["created_ms"], now, row["linked_by"],
+            row["linked_by_id"],
+        )  # fmt: skip
 
     def devices(self) -> list[Device]:
         return [
-            Device(r["id"], r["name"], r["created_ms"], r["seen_ms"], r["linked_by"])
+            Device(r["id"], r["name"], r["created_ms"], r["seen_ms"], r["linked_by"],
+                   r["linked_by_id"])
             for r in self.db.linked_devices()
-        ]
+        ]  # fmt: skip
 
     def unlink(self, device_id: int) -> str | None:
         return self.db.unlink_device(device_id)
@@ -220,13 +225,14 @@ class Devices:
     def _shared(self, device: Device, user: User, here: dict[int, str]) -> bool:
         """Whether a device is one others use too, for an Admin picking
         themselves on it: anyone else on its list, or who has been (someone
-        who took themselves off it still has it), or someone else linked it.
-        Only on a device of their own may an Admin without a PIN pick
-        themselves without their password."""
+        who took themselves off it still has it), or someone else linked it
+        (by who they are, not their name, which can change or be someone
+        else's later). Only on a device of their own may an Admin without a
+        PIN pick themselves without their password."""
         return (
             len(self.people(device)) > 1
             or any(user_id != user.id for user_id in here)
-            or device.linked_by != user.name
+            or device.linked_by_id != user.id
         )
 
     async def _check_pin(self, user: User, pin: str) -> None:
@@ -429,13 +435,14 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     async def linked_devices() -> dict[str, Any]:
         found = d.devices()
         people = {dev.id: [u.name for u in d.people(dev)] for dev in found}
+        names = {u.id: u.name for u in ctx.db.users()}  # (as they're named now)
         return {
             "default": d.default_show_on,
             "devices": [
                 {
                     "id": dev.id,
                     "name": dev.name,
-                    "linkedBy": dev.linked_by,
+                    "linkedBy": names.get(dev.linked_by_id or 0, dev.linked_by),
                     "linkedMs": dev.created_ms,
                     "seenMs": dev.seen_ms,
                     "people": people[dev.id],

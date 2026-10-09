@@ -5619,12 +5619,14 @@ async function loadAccess() {
               loadAccess();
             } }),
             h('button', { class: 'btn', type: 'button', onclick: () => openUserStations(u) }, set ? `Stations (${set} set)` : 'Stations')));
+      const named = h('td', {}, h('strong', {}, u.name), u.id === me.user?.id ? h('span', { class: 'hint' }, ' (you)') : null);
       const actions = h('td', {},
+        h('button', { class: 'btn', type: 'button', onclick: () => renameUser(u, named) }, 'Rename'), ' ',
         h('button', { class: 'btn', type: 'button', onclick: () => openUserDevices(u) }, 'Devices'), ' ',
         h('button', { class: 'btn', type: 'button', onclick: () => newPassword(u, actions) }, u.hasPassword ? 'New password' : 'Add a password'), ' ',
         h('button', { class: 'btn danger', type: 'button', onclick: () => removeUser(u, users.length) }, 'Remove'));
       return h('tr', {},
-        h('td', {}, h('strong', {}, u.name), u.id === me.user?.id ? h('span', { class: 'hint' }, ' (you)') : null),
+        named,
         h('td', { 'data-label': 'Role' }, role),
         levelCell,
         stations,
@@ -5872,6 +5874,29 @@ $('#saveUserStations').addEventListener('click', async () => {
   closeUserStations();
   loadAccess();
 });
+// A new name for someone (an Admin's, themselves included): signing in takes
+// it from then on, and everything of theirs stays theirs.
+function renameUser(u, cell) {
+  const input = h('input', { type: 'text', value: u.name, maxlength: 40, autocomplete: 'off', 'aria-label': `New name for ${u.name}` });
+  const save = async () => {
+    const name = input.value.trim();
+    if (!name || name === u.name) { loadAccess(); return; }
+    try { await api(`/api/access/users/${u.id}`, { method: 'PUT', body: { name } }); }
+    catch (err) { toast(err.message, true); return; }
+    toast(`${u.name} is now ${name}. They sign in as ${name} from now on.`);
+    if (u.id === me.user?.id) await loadMe();
+    loadAccess();
+  };
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); save(); }
+    if (e.key === 'Escape') loadAccess();
+  });
+  cell.replaceChildren(h('div', { class: 'inline-add' }, input,
+    h('button', { class: 'btn primary', type: 'button', onclick: save }, 'Save'),
+    h('button', { class: 'btn', type: 'button', onclick: loadAccess }, 'Cancel')));
+  input.focus();
+  input.select();
+}
 function newPassword(u, cell) {
   const input = h('input', { type: 'password', minlength: ACCESS.passwordMin, maxlength: ACCESS.passwordMax, autocomplete: 'new-password', placeholder: 'New password', 'aria-label': `New password for ${u.name}` });
   const save = async () => {

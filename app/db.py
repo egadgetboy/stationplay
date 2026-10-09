@@ -271,7 +271,8 @@ CREATE TABLE IF NOT EXISTS user_stations (
 );
 -- StationPlay's apps linked to this server (see devices.py), by a hash of
 -- the key each keeps: what each is, when it was linked and last used, and
--- who linked it (their name, kept if they're removed).
+-- who linked it (their name, kept if they're removed; and from 1.27, their
+-- id, linked_by_id, which is what says it's theirs).
 CREATE TABLE IF NOT EXISTS linked_devices (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     key_hash     TEXT    NOT NULL UNIQUE,
@@ -691,6 +692,10 @@ _ADDED_COLUMNS = (
     # access.IDLE_SIGN_OUT_S). A browser signed in before then is taken as
     # last used when it was last seen.
     ("sessions", "active_ms", "INTEGER NOT NULL DEFAULT 0"),
+    # Added in 1.27, as names can change: who linked each device, by their
+    # id (NULL: no one there now). A device linked before then is taken as
+    # linked by the user with the name it kept, if there is one.
+    ("linked_devices", "linked_by_id", "INTEGER"),
 )
 
 
@@ -879,6 +884,11 @@ class Database:
                     self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
                     if (table, column) == ("sessions", "active_ms"):
                         self._conn.execute("UPDATE sessions SET active_ms = seen_ms")
+                    if (table, column) == ("linked_devices", "linked_by_id"):
+                        self._conn.execute(
+                            "UPDATE linked_devices SET linked_by_id = (SELECT id FROM users "
+                            "WHERE users.name = linked_devices.linked_by)"
+                        )
         old = self._conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'channel_items'"
         ).fetchone()
@@ -1533,6 +1543,21 @@ class Database:
             ).fetchall()
         return {r["created_by"]: r["n"] for r in rows}
 
+    def rename_user(self, user_id: int, name: str) -> None:
+        """Gives a user a new name; sqlite3.IntegrityError if someone else
+        has it (in any case). Everything of theirs is kept by their id, so it
+        stays theirs; what's kept with their name to show it (their viewing
+        in the stats, the devices they linked) takes the new one."""
+        with self._lock, self._conn:
+            self._conn.execute("UPDATE users SET name = ? WHERE id = ?", (name, user_id))
+            for table in ("app_watched", "media_watched"):
+                self._conn.execute(
+                    f"UPDATE {table} SET user_name = ? WHERE user_id = ?", (name, user_id)
+                )
+            self._conn.execute(
+                "UPDATE linked_devices SET linked_by = ? WHERE linked_by_id = ?", (name, user_id)
+            )
+
     def update_user(
         self, user_id: int, *, password_hash: str | None = None, role: str | None = None
     ) -> None:
@@ -1751,12 +1776,14 @@ class Database:
 
     # Linked devices and their pickers (see devices.py) ----------------------------
 
-    def add_linked_device(self, key_hash: str, name: str, now: int, linked_by: str) -> int:
+    def add_linked_device(
+        self, key_hash: str, name: str, now: int, linked_by: str, linked_by_id: int
+    ) -> int:
         with self._lock, self._conn:
             cur = self._conn.execute(
-                "INSERT INTO linked_devices (key_hash, name, created_ms, seen_ms, linked_by) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (key_hash, name, now, now, linked_by),
+                "INSERT INTO linked_devices (key_hash, name, created_ms, seen_ms, linked_by, "
+                "linked_by_id) VALUES (?, ?, ?, ?, ?, ?)",
+                (key_hash, name, now, now, linked_by, linked_by_id),
             )
         return int(cur.lastrowid or 0)
 
@@ -2055,14 +2082,15 @@ class Database:
     def add_app_watching(self, rows: list[tuple[int, str, int, str, str, str, float]]) -> None:
         """Adds what StationPlay's users watched on stations in its apps:
         (their id, name, station's id, day, show or movie, kind, seconds)
-        for each."""
+        for each. (Kept with their name now: the one given may be from
+        before they were renamed.)"""
         with self._lock, self._conn:
             self._conn.executemany(
                 "INSERT INTO app_watched (user_id, user_name, channel_id, day, title, kind, "
-                "seconds) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                f"seconds) VALUES (?, {_NAME_NOW}, ?, ?, ?, ?, ?) "
                 "ON CONFLICT (user_id, channel_id, day, title, kind) DO UPDATE SET "
                 "seconds = seconds + excluded.seconds, user_name = excluded.user_name",
-                rows,
+                [(r[0], r[0], *r[1:]) for r in rows],
             )
 
     def app_watched_since(self, since_day: str) -> list[tuple[int, str, int, str, str, float]]:
@@ -2088,15 +2116,16 @@ class Database:
 
     def add_media_watching(self, row: tuple[int, str, str, str, str, int, float]) -> None:
         """Adds what was played on demand: (StationPlay's id for whoever
-        played it, their name, day, show or movie, kind, plays, seconds)."""
+        played it, their name, day, show or movie, kind, plays, seconds).
+        (Kept with their name now, as add_app_watching.)"""
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO media_watched (user_id, user_name, day, title, kind, plays, seconds) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                f"VALUES (?, {_NAME_NOW}, ?, ?, ?, ?, ?) "
                 "ON CONFLICT (user_id, day, title, kind) DO UPDATE SET "
                 "plays = plays + excluded.plays, seconds = seconds + excluded.seconds, "
                 "user_name = excluded.user_name",
-                row,
+                (row[0], row[0], *row[1:]),
             )
 
     def media_watched_since(self, since_day: str) -> list[tuple[int, str, str, str, int, float]]:
@@ -2194,6 +2223,12 @@ class Database:
             created_ms=row["created_ms"],
             created_exact=bool(row["created_exact"]),
         )
+
+
+# A StationPlay user's name now, by their id (the first value given), or else
+# the name given (the second): someone renamed while they watched is kept
+# under their new name.
+_NAME_NOW = "COALESCE((SELECT name FROM users WHERE id = ?), ?)"
 
 
 def _latest_names(rows: list[sqlite3.Row]) -> dict[Any, str]:

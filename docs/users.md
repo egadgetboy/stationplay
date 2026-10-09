@@ -41,6 +41,21 @@ Admin and User stay as they are. A User can make stations up to the limit
 an Admin sets, and **None** is added to that limit: a User with None only
 watches. (Manager comes in Phase 3.)
 
+## Names
+
+From 1.27.0, an Admin can rename anyone on the Access tab, themselves and
+other Admins too, with the rules a new name has (up to 40 letters, numbers,
+spaces and `. _ - @`, and no one else's, whatever its case). Signing in
+takes the new name from then on. Everything of a person's is kept by their
+id, never their name, so it stays theirs: their sign-ins (the page's and
+the apps'), linked devices (who linked one is kept by id too, so an Admin
+given a removed person's name never has their device for their own),
+stations, Viewing Level, progress and stats (the stats and the Access tab
+show the new name, even for viewing counted after, from a play that began
+before). The access log says "<Admin> renamed <old> to <new>". The apps
+show the new name the next time they ask: Who's tuning in? lists it, and
+`GET /api/internal/me` says who an app is signed in as, for its Options.
+
 ## Viewing Levels
 
 A Viewing Level says what its users can see. Every user has one; Admins
@@ -122,9 +137,10 @@ hidden.
   A User may have no password: they use only the pickers.
 - **`user_stations`**: a station allowed or blocked for a user.
 - **`linked_devices`**, **`device_people`** and **`invites`**: the linked
-  devices (by a hash of each one's key), who's on each picker other than
-  as Show on says (signed in there, chosen by an Admin, or taken off), and
-  each person's invite code (a hash), while it lasts.
+  devices (by a hash of each one's key, with who linked each, by id and by
+  name), who's on each picker other than as Show on says (signed in there,
+  chosen by an Admin, or taken off), and each person's invite code (a
+  hash), while it lasts.
 
 The library in the apps (browsing, search, details, pictures, playing)
 already asks Plex about each title, which sends its rating and library, so

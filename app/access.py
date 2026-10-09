@@ -230,7 +230,7 @@ FOR_USERS = {
         "/poster/", "/logos/", "/bumpers/", "/plex-logo/", "/api/v1/stations", "/api/v1/guide",
         "/api/v1/status", "/api/access/link/", "/api/internal/speed-test",
         "/api/internal/libraries", "/api/internal/libraries/", "/api/internal/home",
-        "/api/internal/search", "/api/internal/items/", "/api/internal/art/",
+        "/api/internal/search", "/api/internal/items/", "/api/internal/art/", "/api/internal/me",
     ),
     "POST": (
         "/api/access/me/password", "/api/channels", "/api/channels/", "/api/collections/stations",
@@ -253,7 +253,7 @@ FOR_WATCHERS = {
         "/api/v1/stations", "/api/v1/guide", "/api/v1/status", "/api/access/link/",
         "/api/internal/speed-test", "/api/internal/libraries", "/api/internal/libraries/",
         "/api/internal/home", "/api/internal/search", "/api/internal/items/",
-        "/api/internal/art/",
+        "/api/internal/art/", "/api/internal/me",
     ),
     "POST": (
         "/api/access/me/password", "/api/internal/sign-out", "/api/internal/speed-test",
@@ -587,16 +587,28 @@ class Access:
         self._users_exist = bool(others)
 
     async def change_user(
-        self, user: User, by: User | None, *, password: str | None, role: str | None
+        self,
+        user: User,
+        by: User | None,
+        *,
+        password: str | None,
+        role: str | None,
+        name: str | None = None,
     ) -> None:
-        """Changes a user's password or role, if `by` may: an Admin, or (their
-        password only) the user themselves. ValueError; NotAllowed."""
+        """Changes a user's password, role or name, if `by` may: an Admin
+        (anyone's, their own too), or (their password only) the user
+        themselves. A new name follows the rules a new user's does, and is
+        theirs from now on: signing in takes it, and everything of theirs is
+        kept by their id, so it stays theirs. ValueError; NotAllowed."""
+        if name is not None:
+            name = plain(name)
+            _check_name(name)
         if password is not None:
             _check_password(password)
         if role is not None and role not in ROLES:
             raise ValueError("The role must be Admin or User")
         hashed = await asyncio.to_thread(hash_password, password) if password is not None else None
-        themselves = by is not None and by.id == user.id and role is None
+        themselves = by is not None and by.id == user.id and role is None and name is None
         if not (themselves or self.is_admin(by)):
             raise NotAllowed
         current = self.db.user(user.id)
@@ -608,6 +620,11 @@ class Access:
             raise ValueError(
                 "StationPlay needs at least one Admin. Make someone else an Admin first."
             )
+        if name is not None and name != current.name:
+            try:
+                self.db.rename_user(user.id, name)  # (first: it's what can still fail)
+            except sqlite3.IntegrityError:
+                raise ValueError(f"There's already a user called {name}") from None
         self.db.update_user(user.id, password_hash=hashed, role=role)
 
     def _last_admin(self, user: User) -> bool:
@@ -1159,6 +1176,7 @@ class UserChange(BaseModel):
     password: str | None = Field(default=None, max_length=PASSWORD_MAX)
     role: str | None = None
     maxStations: int | None = None
+    name: str | None = Field(default=None, max_length=100)
 
 
 class PasswordChange(BaseModel):
@@ -1349,19 +1367,24 @@ def routes(app: FastAPI, access: Access) -> None:
         with _refusing():
             if limit_given:
                 _check_limit(body.maxStations)  # (before anything changes)
-            await access.change_user(user, by, password=body.password, role=body.role)
+            await access.change_user(
+                user, by, password=body.password, role=body.role, name=body.name
+            )
             if limit_given:
                 access.set_max_stations(user, by, body.maxStations)
         if by is not None and by.id == user.id and body.password is not None:
             # A new password signs them out everywhere: but not here.
             _set_cookie(response, request, access.start_session(user))
         what = []
+        named = user_or_404(user_id).name  # (as they're named now)
+        if named != user.name:
+            what.append(f"renamed {user.name} to {named}")
         if body.role is not None and body.role != user.role:
-            what.append(f"made {user.name} {a_role(body.role)}")
+            what.append(f"made {named} {a_role(body.role)}")
         if body.password is not None:
-            what.append(f"changed {user.name}'s password")
+            what.append(f"changed {named}'s password")
         if limit_given and body.maxStations != user.max_stations:
-            what.append(f"let {user.name} make {_stations_text(body.maxStations)}")
+            what.append(f"let {named} make {_stations_text(body.maxStations)}")
         if what:
             access.record(logging.INFO, f"{by.name if by else 'Someone'} {' and '.join(what)}")
         return _user_json(user_or_404(user_id), access.db.stations_made())

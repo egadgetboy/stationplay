@@ -236,6 +236,19 @@ takes them off this device's picker, and signs them out. Answers
 |---|---|---|
 | `ok` | boolean | Always true |
 
+## GET /api/internal/me
+
+Who this app is signed in as now (from 1.27.0), for its Options: an Admin
+can rename people, so ask again when it's shown rather than keep the name
+from signing in. (Who's tuning in? lists everyone as they're named now.)
+Answers 401 when the sign-in has ended.
+
+| Field | Type | What it is |
+|---|---|---|
+| `user` | object or null | Who it is; null while signing in is off |
+| `user.name` | string | Their name, now |
+| `user.role` | string | `admin` or `user` |
+
 ## POST /api/internal/sign-out
 
 Ends the token it's sent with. Answers `{"ok": true}`.

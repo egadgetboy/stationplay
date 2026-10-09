@@ -270,6 +270,7 @@ async def _attacks(checks: Checks, app, home: str, net: str) -> None:
             ("PUT", "/api/scan"), ("GET", "/api/access/users"), ("PUT", "/api/app-libraries"),
             ("DELETE", "/api/logos/upload-0123456789"), ("GET", "/api/arr"),
             ("GET", "/api/away"), ("PUT", "/api/api-tokens/outside"),
+            ("PUT", f"/api/access/users/{kit['id']}"),  # (renaming someone, say)
         ):  # fmt: skip
             r = await c.request(method, path, headers=sam_h)
             checks.ok(r.status_code == 403, f"a User can't {method} {path}", f"got {r.status_code}")

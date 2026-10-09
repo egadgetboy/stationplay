@@ -367,6 +367,14 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "user": {"name": user.name, "role": user.role},
         }
 
+    @app.get("/api/internal/me")
+    async def me(request: Request):
+        """Who this app is signed in as now (for its Options): their name, as
+        an Admin may have changed it since they signed in, and role. Null
+        while signing in is off."""
+        user = access.signed_in(request)
+        return {"user": {"name": user.name, "role": user.role} if user else None}
+
     @app.post("/api/internal/sign-out")
     async def sign_out(request: Request):
         token = access.bearer(request.scope)
