@@ -379,7 +379,7 @@ A VPN is the most private: nothing at all is open to the internet, and to Statio
 
 **StationPlay checks that the apps can reach it.** While that's on, StationPlay asks for itself at the address, as an app away from home would: a few seconds after it starts, at once when you save the address, every 5 minutes, and when you choose **Check now**. Only the check it's waiting for gets an answer, so StationPlay knows it reached itself, not just something, and how: through which port, and over HTTPS or not. It says **Ready** when an `https://` address reaches the public port over HTTPS (or a VPN address reaches StationPlay), and otherwise what's wrong, in a sentence: a proxy that points at port 3310, an address without HTTPS, a name that isn't found, a certificate that has expired or isn't trusted, the proxy's own error, something else answering, or a redirect. The status sits under the address on the Access tab and in the setup, and for Admins, **Away from home** in the page's header says **Up**, **Down**, **Checking** or **Can't check** on every tab (choose it to open the Access tab's panel). One problem alone never makes it **Down**: StationPlay checks again a minute later. The log says when it goes down, and why, and when it's back.
 
-**When nothing answers from home.** Many routers don't let devices at home use the home's own internet address (this is called NAT loopback, or hairpinning), so a check from your server can fail while apps away from home work fine. StationPlay calls that **Down** only once a check from home has worked since it started. When a signed-in app has come in through the public port in the last 15 minutes, it's **Up**, and the panel says when an app last came in from outside. Otherwise it says **Can't check**, and why: to be sure, open your address on a phone using mobile data, not Wi-Fi.
+**When your router answers from home.** Many routers don't let devices at home use the home's own internet address (this is called NAT loopback, or hairpinning). From inside your home, the address then reaches the router itself, which answers with its own sign-in page, certificate or redirect, or not at all, while apps away from home work fine. So StationPlay counts what could be the router (nothing answering, a certificate for another name or one that isn't trusted, something else answering, or a redirect) only once a check from home has worked since it started. A proxy error, a name that isn't found, an expired certificate, or StationPlay's own answer saying what's wrong always counts. When a signed-in app has come in through the public port in the last 15 minutes, it's **Up**, and the panel says when an app last came in from outside. Otherwise it says **Can't check**, and why: to be sure, open your address on a phone using mobile data, not Wi-Fi. **The fix:** a DNS host override in your router (such as OPNsense's or pfSense's Unbound host overrides) that points your address's name at the reverse proxy's address on your home network. Devices at home, StationPlay included, then reach the proxy directly.
 
 ### Tailscale
 
@@ -399,19 +399,19 @@ The proxy (Caddy or Nginx Proxy Manager, say) takes HTTPS connections from the i
 
 1. **A domain name** pointing at your home's internet address (with dynamic DNS if that address changes), such as `tv.example.com`.
 2. **Port 443 forwarded** on your router to the computer running the proxy.
-3. **The proxy**, with a certificate (both proxies below get a free one from Let's Encrypt), passing requests to `http://<your-server-ip>:3311`, and setting `CF-Connecting-IP` to each visitor's address. StationPlay counts wrong passwords by that address, so the proxy must set it itself, replacing any value a visitor sends.
+3. **The proxy**, with a certificate (both proxies below get a free one from Let's Encrypt), passing requests to `http://<your-server-ip>:3311`, and passing on each visitor's address in `X-Real-IP` or `X-Forwarded-For`. Nginx Proxy Manager and NPMplus do both by default. StationPlay counts wrong passwords by that address and shows it in the access log, so the proxy must set it itself, replacing any value a visitor sends. (StationPlay takes `CF-Connecting-IP` only when a request came through Cloudflare, so a visitor can't send it to pose as someone else.)
 
 **Caddy** (the whole `Caddyfile`):
 
 ```
 tv.example.com {
     reverse_proxy 192.168.1.20:3311 {
-        header_up CF-Connecting-IP {remote_host}
+        header_up X-Real-IP {remote_host}
     }
 }
 ```
 
-**Nginx Proxy Manager:** add a proxy host for `tv.example.com` forwarding to `192.168.1.20` port `3311`. On its **SSL** tab, request a Let's Encrypt certificate and turn on **Force SSL**. On its **Advanced** tab, add `proxy_set_header CF-Connecting-IP $remote_addr;`.
+**Nginx Proxy Manager** (or NPMplus): add a proxy host for `tv.example.com` forwarding to `192.168.1.20` port `3311`. On its **SSL** tab, request a Let's Encrypt certificate and turn on **Force SSL**. It passes on each visitor's address by itself.
 
 Then, on the **Access** tab at home, add the first user (an Admin) with a long password if you haven't, and turn on **StationPlay's apps away from home** with `https://tv.example.com`. Leave the port out: that's the proxy's address, and StationPlay itself never speaks HTTPS. Within a few seconds, the status under it should say **Ready**. If it says the proxy points at the wrong port, point it at 3311, never 3310.
 
@@ -819,6 +819,7 @@ When StationPlay is first installed, its page is open to anyone on your network.
 - Stations made before sign-in was turned on, or by a removed user, can be changed only by Admins.
 - An Admin can change roles and set new passwords on the **Access** tab. Your name at the top of the page lets you change your own password or sign out. A new password signs that person out everywhere else.
 - A sign-in lasts 30 days after it was last used. After 5 wrong passwords from one address within 15 minutes, that address has to wait. Passwords are stored only as salted hashes.
+- StationPlay's page signs you out after an hour without activity. StationPlay's apps stay signed in.
 - Plex and IPTV apps never need a password, just like a real HDHomeRun: the tuner, guide, streams, logos and playlist stay open on your network.
 
 ### Viewing Levels

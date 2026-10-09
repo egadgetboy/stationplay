@@ -21,10 +21,19 @@ network's, reached StationPlay), or what's wrong: the reverse proxy points
 at the home port, which never asks for a password; not over HTTPS; sign-in
 is off; the name isn't found; the certificate; no HTTPS there; the proxy's
 own error (it couldn't reach StationPlay); something else answering; a
-redirect. Or it couldn't connect (or look up the name just then), which can
-be a real outage, or a router that doesn't let devices at home use the
-home's own internet address (NAT loopback), when apps away from home still
-work.
+redirect. Or it couldn't connect (or look up the name just then).
+
+Some of those are problems wherever the check comes from: StationPlay's
+own answer saying what's wrong, the proxy's error, a name that isn't found,
+a certificate for this very name that has expired (or isn't valid yet, or
+was revoked), and an https:// address on StationPlay's own port. The rest
+may be the home's router: many don't let devices at home use the home's own
+internet address (NAT loopback) and answer it themselves, with their own
+sign-in page, certificate or redirect, or not at all, while apps away from
+home still work. Those count only once a check from here has reached
+StationPlay (since it started), which shows the router lets it through. A
+DNS override in the router, pointing the name at the reverse proxy's
+address at home, lets StationPlay check from here.
 
 The apps have their say too: StationPlay notes when a signed-in app last
 came in through the public port (access.py; main.py, for a station played
@@ -32,13 +41,14 @@ there). From both, one status:
 
   off         Watching away from home is off.
   checking    No result yet, or a problem found once and not yet confirmed.
-  up          The latest check was Ready; or it couldn't connect, but an app
-              came in through the public port in the last 15 minutes.
-  down        Two checks in a row, at least a minute apart, found a problem.
-              Not connecting counts only once a check from here has reached
-              StationPlay (since it started), which shows the router allows it.
-  cant-check  It couldn't connect, no check from here has reached StationPlay
-              yet, and no app has come in lately: it can't tell from here.
+  up          The latest check was Ready; or it found what may be the router
+              (or couldn't look up the name), but an app came in through the
+              public port in the last 15 minutes.
+  down        Two checks in a row, at least a minute apart, found a problem
+              that counts.
+  cant-check  It found what may be the router (or couldn't look up the
+              name), no check from here has reached StationPlay yet, and no
+              app has come in lately: it can't tell from here.
 
 One problem alone never makes it down: StationPlay checks again a minute
 later. A line is logged when it goes down (with why) and when it's back,
@@ -109,12 +119,19 @@ UNKNOWN_ISSUER = frozenset({2, 20, 21, 27})
 class Finding:
     """What a check found: its kind (READY, or what's wrong), a sentence or
     two for the page, a few words for summaries, and whether this
-    StationPlay answered (which shows checks from here can reach it)."""
+    StationPlay answered (which shows checks from here can reach it).
+
+    A problem is `sure` when it's one wherever the check comes from.
+    Otherwise it may be the home's router answering for the outside address
+    (see _record), and `found` says what the address did, for a sentence:
+    "answers with a self-signed certificate"."""
 
     kind: str
     detail: str
     short: str
     reached: bool = False
+    sure: bool = False
+    found: str = ""
 
 
 @dataclass(frozen=True)
@@ -240,11 +257,9 @@ class Reach:
 
     def _record(self, finding: Finding) -> None:
         now = self.clock()
-        # Not connecting is a problem only once a check from here has reached
-        # StationPlay: the router lets checks from here through, then.
-        problem = finding.kind not in (READY, NO_CONNECT, NO_LOOKUP) or (
-            finding.kind == NO_CONNECT and self._reached
-        )
+        # What may be the router counts only once a check from here has
+        # reached StationPlay: the router lets checks from here through, then.
+        problem = finding.kind not in (READY, NO_LOOKUP) and (finding.sure or self._reached)
         self._reached = self._reached or finding.reached
         if problem and not self._failures:
             self._failing_since = now
@@ -314,7 +329,7 @@ class Reach:
             return CHECKING
         if latest.kind == READY:
             return UP
-        if latest.kind in (NO_CONNECT, NO_LOOKUP) and self._app_lately():
+        if not latest.sure and self._app_lately():
             return UP
         if self._confirmed():
             return DOWN
@@ -337,17 +352,23 @@ class Reach:
         if state == UP and latest.kind == READY:
             return latest.detail, latest.short
         if state == UP:
-            from_here = (
-                "couldn't connect, which is common: many routers don't let devices at home use "
-                "the home's own internet address"
-                if latest.kind == NO_CONNECT
-                else f"couldn't look up {_host(address)}"
-            )
+            if latest.kind == NO_CONNECT:
+                from_here = (
+                    "Checking from here couldn't connect, which is common: many routers don't "
+                    "let devices at home use the home's own internet address."
+                )
+            elif latest.kind == NO_LOOKUP:
+                from_here = f"Checking from here couldn't look up {_host(address)}."
+            else:
+                from_here = (
+                    f"From here, {address} {latest.found}: likely your router, answering for "
+                    "your home's own internet address."
+                )
             return (
-                f"Apps away from home are reaching StationPlay. Checking from here {from_here}.",
+                f"Apps away from home are reaching StationPlay. {from_here}",
                 "Apps are getting in",
             )
-        if state == DOWN and latest.kind == NO_CONNECT:
+        if state == DOWN and not latest.sure:
             return (
                 f"{latest.detail} Checks from here got through earlier, so this isn't your "
                 "router: apps away from home can't reach StationPlay either.",
@@ -355,23 +376,7 @@ class Reach:
             )
         if state == DOWN:
             return latest.detail, latest.short
-        # Can't check from here: a name it couldn't look up says so itself.
-        why = ""
-        if latest.kind == NO_CONNECT and _looks_local(_host(address)):
-            why = (
-                " That can be a real problem, or this server may not reach that address "
-                "itself, in which case apps on your VPN still work. StationPlay can't tell "
-                f"which from here: to be sure, open {address} on a phone on the VPN, using "
-                "mobile data."
-            )
-        elif latest.kind == NO_CONNECT:
-            why = (
-                " That can be a real outage, or a router that doesn't let devices at home use "
-                "your home's own internet address (called NAT loopback), in which case apps "
-                "away from home still work. StationPlay can't tell which from here: to be sure, "
-                f"open {address} on a phone using mobile data, not Wi-Fi."
-            )
-        return f"{latest.detail}{why}", "Can't check from here"
+        return _cant_check(latest, address), "Can't check from here"
 
     # What a check finds -------------------------------------------------------
 
@@ -416,7 +421,7 @@ class Reach:
                     "proxy at that port instead."
                 )
             )
-            return Finding(WRONG_PORT, detail, "Wrong port", reached=True)
+            return Finding(WRONG_PORT, detail, "Wrong port", reached=True, sure=True)
         if not secure and not await _local(_host(address)):
             # (An http:// address with a name on the internet.)
             if not outside:
@@ -442,7 +447,7 @@ class Reach:
                     f"Warning: {address} doesn't use HTTPS, so apps' sign-ins would cross the "
                     "internet unencrypted. Use your reverse proxy's https:// address instead."
                 )
-            return Finding(NOT_HTTPS, detail, "Not over HTTPS", reached=True)
+            return Finding(NOT_HTTPS, detail, "Not over HTTPS", reached=True, sure=True)
         if outside and not https:
             detail = (
                 f"{address} reaches StationPlay's public port, but your reverse proxy doesn't "
@@ -452,13 +457,13 @@ class Reach:
                 else f"{address} reaches StationPlay's public port, which takes apps only over "
                 f"HTTPS. Through a VPN, use the home port instead: {_with_port(address, port)}."
             )
-            return Finding(NOT_HTTPS, detail, "Not over HTTPS", reached=True)
+            return Finding(NOT_HTTPS, detail, "Not over HTTPS", reached=True, sure=True)
         if outside and not self.access.required:
             detail = (
                 f"{address} reaches StationPlay, but sign-in is off, so apps can't sign in "
                 "through the public port. Add a user on the Access tab."
             )
-            return Finding(SIGN_IN_OFF, detail, "Sign-in is off", reached=True)
+            return Finding(SIGN_IN_OFF, detail, "Sign-in is off", reached=True, sure=True)
         detail = f"Ready. Apps away from home reach StationPlay at {address}."
         return Finding(READY, detail, "Ready", reached=True)
 
@@ -466,6 +471,11 @@ class Reach:
         """What a check found when something other than this StationPlay
         answered."""
         said = f"{got.status_code} {got.reason_phrase}".strip()
+        found = (
+            "answers with a page that isn't StationPlay's"
+            if got.status_code == 200
+            else f"answers with {said} instead of StationPlay's answer"
+        )
         if got.is_redirect:
             return _redirect(address, got)
         if got.status_code in PROXY_ERRORS:
@@ -480,21 +490,21 @@ class Reach:
                 f"The reverse proxy at {address} answered with an error ({said}): it couldn't "
                 f"reach StationPlay. {where}"
             )
-            return Finding(PROXY_ERROR, detail, "Proxy error")
+            return Finding(PROXY_ERROR, detail, "Proxy error", sure=True)
         if got.status_code in (401, 403):
             detail = (
                 f"Something in front of StationPlay turned the check away at {address} "
                 f"({said}), such as an access list or a sign-in in your reverse proxy. Apps "
                 "can't get past it: let this address through to StationPlay."
             )
-            return Finding(ELSEWHERE, detail, "Blocked")
+            return Finding(ELSEWHERE, detail, "Blocked", found=found)
         what = "with a page that isn't StationPlay's" if got.status_code == 200 else said
         detail = (
             f"Something other than this StationPlay answered at {address} ({what}). Check "
             "that the address leads to this StationPlay, through your reverse proxy if you "
             "use one."
         )
-        return Finding(ELSEWHERE, detail, "Something else answered")
+        return Finding(ELSEWHERE, detail, "Something else answered", found=found)
 
     def _failed(self, address: str, e: httpx.HTTPError) -> Finding:
         """What a check found when nothing answered (never with what the
@@ -520,7 +530,7 @@ class Reach:
                 f"The name {host} isn't found. Check the address for typos, and that your "
                 f"domain's DNS points {host} at your home's internet address."
             )
-            return Finding(NO_NAME, detail, "Name not found")
+            return Finding(NO_NAME, detail, "Name not found", sure=True)
         if (unaccepted := _cause(e, ssl.SSLCertVerificationError)) is not None:
             return _certificate(address, host, unaccepted)
         if _cause(e, ssl.SSLError) is not None:
@@ -528,12 +538,44 @@ class Reach:
             detail = f"{address} doesn't answer over HTTPS. " + (
                 problem or "Check that the address leads to your reverse proxy."
             )
-            return Finding(NO_HTTPS, detail, "No HTTPS there")
+            # (An https:// address on StationPlay's own port is wrong from anywhere.)
+            found = "doesn't answer over HTTPS"
+            return Finding(NO_HTTPS, detail, "No HTTPS there", sure=bool(problem), found=found)
         if _cause(e, ConnectionRefusedError) is not None:
             return _no_answer(f"Nothing answered at {address}: the connection was refused.")
         if isinstance(e, httpx.ConnectError):
             return _no_answer(f"StationPlay couldn't connect to {address}.")
         return _no_answer(f"{address} closed the connection without answering.")
+
+
+def _cant_check(latest: Finding, address: str) -> str:
+    """Why it can't check from here, in a few sentences: what it found,
+    what that may be, and how to be sure."""
+    host = _host(address)
+    if latest.kind == NO_LOOKUP:
+        return latest.detail  # (a name it couldn't look up says so itself)
+    found = latest.detail if latest.kind == NO_CONNECT else f"From here, {address} {latest.found}."
+    if _looks_local(host):
+        return (
+            f"{found} That can be a real problem, or this server may not reach that address "
+            "itself, in which case apps on your VPN still work. StationPlay can't tell "
+            f"which from here: to be sure, open {address} on a phone on the VPN, using "
+            "mobile data."
+        )
+    maybe = (
+        "That can be a real outage, or a router that doesn't let devices at home use your "
+        "home's own internet address (called NAT loopback), in which case apps away from "
+        "home still work. StationPlay can't tell which from here."
+        if latest.kind == NO_CONNECT
+        else "That's likely your router itself: many routers answer for your home's own "
+        "internet address when it's used from inside your home, while apps away from home "
+        "still work."
+    )
+    return (
+        f"{found} {maybe} To be sure, open {address} on a phone using mobile data, not "
+        "Wi-Fi. So StationPlay can check from here, add a DNS override in your router that "
+        f"points {host} at your reverse proxy's address on your home network."
+    )
 
 
 def _no_answer(detail: str) -> Finding:
@@ -542,42 +584,49 @@ def _no_answer(detail: str) -> Finding:
 
 def _certificate(address: str, host: str, unaccepted: ssl.SSLCertVerificationError) -> Finding:
     """What a check found when the certificate wasn't accepted: why, from
-    the error (OpenSSL's reason, or failing that, its words)."""
+    the error (OpenSSL's reason, or failing that, its words). OpenSSL checks
+    who issued a certificate and the name it's for first, so one found
+    expired, not valid yet or revoked is a trusted one for this very name:
+    not the router's."""
     code = getattr(unaccepted, "verify_code", None)
     words = str(getattr(unaccepted, "verify_message", None) or unaccepted).lower()
     trust = "Use a certificate from Let's Encrypt in your reverse proxy."
     if code == EXPIRED or (code is None and "expired" in words):
         detail = f"The HTTPS certificate for {host} has expired. Renew it in your reverse proxy."
-        return Finding(CERTIFICATE, detail, "Certificate expired")
+        return Finding(CERTIFICATE, detail, "Certificate expired", sure=True)
     if code == NOT_YET or (code is None and "not yet valid" in words):
         detail = (
             f"The HTTPS certificate for {host} isn't valid yet. Check the date and time on "
             "this server and on your reverse proxy's."
         )
-        return Finding(CERTIFICATE, detail, "Certificate not valid yet")
+        return Finding(CERTIFICATE, detail, "Certificate not valid yet", sure=True)
     if code in WRONG_NAME or (code is None and "mismatch" in words):
         detail = (
             f"The HTTPS certificate at {address} is for another name, not {host}. Get one for "
             f"{host} in your reverse proxy."
         )
-        return Finding(CERTIFICATE, detail, "Certificate for another name")
+        found = "answers with a certificate for another name"
+        return Finding(CERTIFICATE, detail, "Certificate for another name", found=found)
     if code in SELF_SIGNED or (code is None and ("self-signed" in words or "self signed" in words)):
         detail = (
             f"The HTTPS certificate at {address} isn't trusted: it's self-signed, so apps "
             f"won't connect. {trust}"
         )
-        return Finding(CERTIFICATE, detail, "Certificate not trusted")
+        found = "answers with a self-signed certificate"
+        return Finding(CERTIFICATE, detail, "Certificate not trusted", found=found)
     if code in UNKNOWN_ISSUER or (code is None and "issuer" in words):
         detail = (
             f"The HTTPS certificate at {address} isn't trusted: devices don't know who issued "
             f"it (or the proxy doesn't send the whole chain), so apps won't connect. {trust}"
         )
-        return Finding(CERTIFICATE, detail, "Certificate not trusted")
+        found = "answers with a certificate devices don't trust"
+        return Finding(CERTIFICATE, detail, "Certificate not trusted", found=found)
     if code == REVOKED or (code is None and "revoked" in words):
         detail = f"The HTTPS certificate for {host} has been revoked. {trust}"
-        return Finding(CERTIFICATE, detail, "Certificate revoked")
+        return Finding(CERTIFICATE, detail, "Certificate revoked", sure=True)
     detail = f"The HTTPS certificate at {address} wasn't accepted, so apps won't connect. {trust}"
-    return Finding(CERTIFICATE, detail, "Certificate problem")
+    found = "answers with a certificate that isn't accepted"
+    return Finding(CERTIFICATE, detail, "Certificate problem", found=found)
 
 
 def _redirect(address: str, got: httpx.Response) -> Finding:
@@ -592,8 +641,9 @@ def _redirect(address: str, got: httpx.Response) -> Finding:
             f"{address} redirects somewhere else instead of reaching StationPlay. Apps can't "
             "follow that: the address must reach StationPlay itself."
         )
-        return Finding(REDIRECT, detail, "Redirected")
+        return Finding(REDIRECT, detail, "Redirected", found="redirects somewhere else")
     if to.path == REACH and (to.scheme == "https" or urlsplit(address).scheme == "http"):
+        shown = there
         detail = f"{address} redirects to {there}. Use {there} as the address instead."
     else:
         shown = there + (to.path[:80] if to.path not in ("", "/") else "")
@@ -601,7 +651,7 @@ def _redirect(address: str, got: httpx.Response) -> Finding:
             f"{address} redirects to {shown} instead of reaching StationPlay (a sign-in page, "
             "perhaps). Apps can't follow that: the address must reach StationPlay itself."
         )
-    return Finding(REDIRECT, detail, "Redirected")
+    return Finding(REDIRECT, detail, "Redirected", found=f"redirects to {shown}")
 
 
 def _from_stationplay(got: httpx.Response) -> bool:

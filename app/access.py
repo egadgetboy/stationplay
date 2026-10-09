@@ -15,10 +15,11 @@ What Plex and IPTV apps use (the tuner, its guide and streams, pictures for
 the guide) stays open on the network, as they can't sign in.
 
 Passwords are kept as scrypt hashes, and a browser is signed in by a random
-token in a cookie that's kept only as a hash. StationPlay's apps sign in the
-same way and send their token in a header instead (Authorization: Bearer;
-see appapi.py). Signing in is logged (who and from where) in the access log,
-which the Logs tab shows.
+token in a cookie that's kept only as a hash, until no one has used it for
+an hour (see IDLE_SIGN_OUT_S). StationPlay's apps sign in the same way, send
+their token in a header instead (Authorization: Bearer; see appapi.py), and
+stay signed in. Signing in is logged (who and from where) in the access
+log, which the Logs tab shows.
 
 Scripts and other apps use StationPlay's API (/api/v1, see api.py) with an
 API token an Admin makes on the Access tab: a Viewer token reads; an Admin
@@ -40,9 +41,10 @@ StationPlay is reached on its public port (PUBLIC_PORT), never the one Plex
 uses. There, what Plex and IPTV apps use isn't offered at all, signing in is
 always needed (until there's a user, nothing but the sign-in page is shown:
 the first user is added on the home network), each visitor's address is the
-one the tunnel passes on (CF-Connecting-IP), and wrong passwords from the
-internet as a whole are limited too (but not on a browser you've signed in
-on before, so strangers' wrong passwords can't keep you out).
+one the reverse proxy or Cloudflare passes on (see address), and wrong
+passwords from the internet as a whole are limited too (but not on a
+browser you've signed in on before, so strangers' wrong passwords can't keep
+you out).
 """
 
 from __future__ import annotations
@@ -87,6 +89,17 @@ DEVICE_DAYS = 400
 DEVICES_KEPT = 20
 SESSIONS_KEPT = 20  # browsers signed in as one user at once, at most (the newest)
 SEEN_EVERY_MS = 5 * 60_000  # how often a session's "last seen" is saved
+# A browser (StationPlay's page, for Admins and Users alike) is signed out
+# after this long without anyone using it: clicking, typing, scrolling or
+# touching, which the page tells StationPlay about (POST /api/access/active),
+# or a change it sends. The page's own polling only reads, so it doesn't
+# count. StationPlay's apps stay signed in. It's ended on its next request
+# (when it was last used is kept with the sign-in, so a restart doesn't
+# bring it back), and its later requests are told why.
+IDLE_SIGN_OUT_S = 3600
+ACTIVE_EVERY_MS = 10_000  # how often a browser's last use is saved, at most
+IDLE_SIGNED_OUT = "You were signed out after an hour without activity."
+IDLED_KEPT = 1000  # browsers signed out that way that are told why, at most (the newest)
 PICKED_MS = 24 * 3600_000  # a sign-in from a linked device's picker lasts this long unused
 PASSWORD_MIN, PASSWORD_MAX = 8, 200
 NAME = re.compile(r"[\w .@-]{1,40}")
@@ -103,6 +116,21 @@ ADDRESSES_KEPT = 10_000  # the most addresses whose wrong passwords are counted
 # Wrong passwords on the public port, from every address together, before
 # signing in from the internet waits (the home network doesn't).
 PUBLIC_TRIES = 100
+# Cloudflare's own addresses, as it publishes them at
+# https://www.cloudflare.com/ips/ (taken October 8, 2026; last changed there
+# September 28, 2023). A request from one came through Cloudflare, so the
+# visitor's address it passes on (CF-Connecting-IP) is Cloudflare's word.
+CLOUDFLARE = tuple(
+    ipaddress.ip_network(network)
+    for network in (
+        "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
+        "141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
+        "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+        "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+        "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32",
+        "2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32",
+    )
+)  # fmt: skip
 # Passwords checked at once, at most: each check takes a moment and memory,
 # deliberately, and StationPlay has streams to serve.
 CHECKS_AT_ONCE = 2
@@ -204,7 +232,7 @@ FOR_USERS = {
         "/api/logos/plex", "/api/bumpers", "/api/smart/split", "/api/smart/stations",
         "/api/internal/sign-out", "/api/internal/speed-test", "/api/access/link",
         "/api/internal/play", "/api/internal/progress", "/api/internal/report",
-        "/api/internal/problem", "/api/internal/picker/remove",
+        "/api/internal/problem", "/api/internal/picker/remove", "/api/access/active",
     ),
     "PUT": ("/api/channels/",),
     "DELETE": ("/api/channels/",),
@@ -225,6 +253,7 @@ FOR_WATCHERS = {
         "/api/access/me/password", "/api/internal/sign-out", "/api/internal/speed-test",
         "/api/access/link", "/api/internal/play", "/api/internal/progress",
         "/api/internal/report", "/api/internal/problem", "/api/internal/picker/remove",
+        "/api/access/active",
     ),
 }  # fmt: skip
 WATCHES_ONLY = "Your Viewing Level lets you watch, but not make or change stations"
@@ -280,14 +309,64 @@ def a_role(role: str) -> str:
 def address(scope: dict) -> str:
     """The address a request came from: on the home network, the address
     it came from (a reverse proxy's, if it came through one), as that can't
-    be faked; on the public port, the visitor's, as the tunnel says."""
-    if outside(scope):
-        for name, value in scope.get("headers") or ():
-            if name == b"cf-connecting-ip":
-                with contextlib.suppress(ValueError):
-                    return str(ipaddress.ip_address(value.decode("latin-1").strip()))
+    be faked; on the public port, the visitor's, as the nearest proxy saw it
+    (see _visitor), or failing that, the address it came from."""
+    if outside(scope) and (found := _visitor(scope)):
+        return found
     client = scope.get("client")
     return client[0] if client else "unknown"
+
+
+def _visitor(scope: dict) -> str | None:
+    """Who a request on the public port is from, as the nearest proxy saw
+    them: X-Real-IP (which NGINX-style proxies, NPMplus included, set to
+    the address they saw), or else the last address in X-Forwarded-For (the
+    one the nearest proxy added: those before it can be anything a visitor
+    sent). CF-Connecting-IP only when the request came through Cloudflare:
+    the address found is one of Cloudflare's own, or there's neither header
+    (a Cloudflare Tunnel straight to StationPlay). Otherwise anyone could
+    send that header, and a proxy would pass it on. None if what's there
+    isn't an IP address."""
+    real: bytes | None = None
+    forwarded: bytes | None = None
+    connecting: bytes | None = None
+    for name, value in scope.get("headers") or ():
+        if name == b"x-real-ip":
+            real = value
+        elif name == b"x-forwarded-for":
+            forwarded = value if forwarded is None else forwarded + b"," + value
+        elif name == b"cf-connecting-ip":
+            connecting = value
+    if real is not None:
+        found = _ip(real)
+    elif forwarded is not None:
+        found = _ip(forwarded.rsplit(b",", 1)[-1])
+    else:
+        return _ip(connecting) if connecting is not None else None
+    if found and connecting is not None and _cloudflares(found):
+        return _ip(connecting)
+    return found
+
+
+def _ip(value: bytes) -> str | None:
+    """A header's value as an IP address, if that's what it is (no zone,
+    which no visitor's address has; an IPv4 address in IPv6 form as
+    itself)."""
+    text = value.decode("latin-1").strip()
+    if "%" in text:
+        return None
+    try:
+        ip = ipaddress.ip_address(text)
+    except ValueError:
+        return None
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        return str(ip.ipv4_mapped)
+    return str(ip)
+
+
+def _cloudflares(address_: str) -> bool:
+    ip = ipaddress.ip_address(address_)
+    return any(ip in network for network in CLOUDFLARE)
 
 
 def outside(scope: dict) -> bool:
@@ -310,9 +389,10 @@ def counted_as(address_: str) -> str:
 
 
 def where(scope: dict) -> str:
-    """Where a request came from, for the access log: its address, and the
-    address it says it came from first when it came through a proxy (as a
-    reverse proxy says; anyone could say so, so it's only for reading)."""
+    """Where a request came from, for the access log: its address (see
+    address); and on the home network, the address it says it came from
+    first when it came through a proxy (as a reverse proxy says; anyone
+    could say so, so it's only for reading)."""
     address_ = address(scope)
     if outside(scope):
         return f"{address_} (over the internet)"
@@ -356,6 +436,10 @@ class Access:
     # (time.monotonic(); None: not since StationPlay started), as proof that
     # apps reach StationPlay from outside (see reach.py). In memory only.
     app_outside_at: float | None = field(init=False, default=None)
+    # Browsers signed out after IDLE_SIGN_OUT_S (their tokens' hashes), so
+    # each request from one can say why, not only the one that ended it
+    # (often the page itself, before its script asks). In memory only.
+    _idled: dict[str, None] = field(init=False, default_factory=dict)
 
     def __post_init__(self) -> None:
         self._users_exist = self.db.has_users()
@@ -610,23 +694,52 @@ class Access:
 
     def session_user(self, token: str) -> User | None:
         """Who a browser is signed in as, if anyone (signed in within the
-        last SESSION_DAYS)."""
+        last SESSION_DAYS, and used within IDLE_SIGN_OUT_S; an app's sign-in
+        needs only the first)."""
         return self.session_user_hashed(session_hash(token))
 
     def session_user_hashed(self, hashed: str) -> User | None:
         """session_user, for a session known by its token's hash (an API
         token's too)."""
+        return self.session_of(hashed)[0]
+
+    def session_of(self, hashed: str, *, active: bool = False) -> tuple[User | None, bool]:
+        """session_user_hashed, and whether the sign-in ended because no one
+        used its browser for IDLE_SIGN_OUT_S (the access log says so, once).
+        `active`: someone is using it now."""
         now = _now()
         found = self.db.session_user(hashed, now - SESSION_DAYS * 86_400_000)
         if found is None:
+            if hashed in self._idled:
+                return None, True
             token = self._api_token_hashed(hashed)
-            return token.as_user() if token else None
-        user, seen_ms, device_id = found
-        if device_id is not None and now - seen_ms > PICKED_MS:
-            return None  # (a sign-in from a device's picker lasts a day unused)
-        if now - seen_ms > SEEN_EVERY_MS:
+            return (token.as_user() if token else None), False
+        user = found.user
+        if found.device_id is not None and now - found.seen_ms > PICKED_MS:
+            return None, False  # (a sign-in from a device's picker lasts a day unused)
+        if not found.app:  # (a browser's)
+            if now - found.active_ms > IDLE_SIGN_OUT_S * 1000:
+                if self.db.end_session(hashed):
+                    self.record(
+                        logging.INFO, f"{user.name} was signed out after an hour without activity"
+                    )
+                    self._idled[hashed] = None
+                    while len(self._idled) > IDLED_KEPT:
+                        del self._idled[next(iter(self._idled))]
+                return None, True
+            if active and now - found.active_ms >= ACTIVE_EVERY_MS:
+                self.db.active(hashed, now)
+        if now - found.seen_ms > SEEN_EVERY_MS:
             self.db.seen(hashed, now)
-        return user
+        return user, False
+
+    def idle_left_ms(self, token: str | None) -> int | None:
+        """How long until a browser is signed out unless someone uses it
+        (see IDLE_SIGN_OUT_S); None for anything else."""
+        found = self.db.session_user(session_hash(token), 0) if token else None
+        if found is None or found.app:
+            return None
+        return max(0, IDLE_SIGN_OUT_S * 1000 - (_now() - found.active_ms))
 
     def forget_old_sessions(self) -> None:
         self.db.forget_sessions_before(_now() - SESSION_DAYS * 86_400_000)
@@ -850,13 +963,18 @@ class Gate:
         if token and token.startswith(API_TOKEN_PREFIX):
             refused = self._api_token(scope, token)
             return None if path in OPEN else refused
-        user = state["user"] = self.access.session_user(token) if token else None
+        user, idle = None, False
+        if token:
+            # (Anything but reading is someone using StationPlay: see IDLE_SIGN_OUT_S.)
+            active = scope["method"] not in SAFE_METHODS
+            user, idle = self.access.session_of(session_hash(token), active=active)
+        state["user"], state["idle"] = user, idle
         if user is not None and app_token and state["outside"] and over_https(scope):
             self.access.app_came_from_outside()
         if path in OPEN:
             return None
         if user is None:
-            return 401, "Sign in to StationPlay"
+            return 401, IDLE_SIGNED_OUT if idle else "Sign in to StationPlay"
         if user.role != ADMIN and not _for_users(path, scope["method"]):
             return 403, ADMINS_ONLY
         if (
@@ -1102,10 +1220,25 @@ def routes(app: FastAPI, access: Access) -> None:
             # From the internet, it's never open: until there's a user,
             # there's only this to say.
             return {"required": True, "user": None, "notSetUp": NOT_SET_UP}
-        return {
+        said: dict[str, Any] = {
             "required": access.required,
             "user": _user_json(user, access.db.stations_made()) if user else None,
         }
+        # When this browser is signed out unless someone uses it, as
+        # StationPlay's clock says (so a page open in several tabs agrees);
+        # or that it was signed out that way (see IDLE_SIGN_OUT_S).
+        if user and (left := access.idle_left_ms(token)) is not None:
+            said["idleLeftMs"] = left
+        if getattr(request.state, "idle", False):
+            said["idle"] = True
+        return said
+
+    @app.post("/api/access/active")
+    async def active(request: Request):
+        """Someone is using StationPlay's page (see IDLE_SIGN_OUT_S; the Gate
+        has noted it, as it does any change): when this browser is signed
+        out unless it's used again."""
+        return {"idleLeftMs": access.idle_left_ms(request.cookies.get(COOKIE))}
 
     @app.post("/api/access/sign-in")
     async def sign_in(body: SignIn, request: Request, response: Response):
