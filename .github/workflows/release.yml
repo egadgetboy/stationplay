@@ -1,20 +1,30 @@
 # Publishes StationPlay's releases on GitHub, from docs/releases/: each
-# v<version>.md there names the commit of that version (its "Version X"
-# commit on main) and holds its notes. For each one not yet published, this
-# makes the tag at that commit and the release, with the release's files
-# built from that commit: stationplay-<version>.zip (unzipping to src),
-# stationplay.yaml and docker-compose.yml. A release already published is
-# left as it is. The newest version is marked the latest release.
+# v<version>.md there names the commit of that version (on main) and holds
+# its notes. For each one not yet published, this makes the tag at that
+# commit and the release, with the release's files built from that commit:
+# stationplay-<version>.zip (unzipping to src), stationplay.yaml and
+# docker-compose.yml. A release already published is left as it is. The
+# newest version is marked the latest release.
+#
+# A version is published only once the image workflow's tests have passed
+# on its commit, or on a later main commit with nothing but release notes
+# changed since (a version's commit, then its notes on top, is how releases
+# are made). So this runs when an image run on main finishes, not when main
+# changes: a version whose tests are still running waits for them, and one
+# whose tests failed isn't published, with a line on the run's page saying
+# why.
 name: release
 
 on:
-  push:
+  workflow_run:
+    workflows: [image]
+    types: [completed]
     branches: [main]
-    paths: [docs/releases/**, .github/workflows/release.yml]
   workflow_dispatch:
 
 permissions:
   contents: write
+  actions: read # (the image workflow's runs)
 
 concurrency:
   group: release
@@ -22,22 +32,29 @@ concurrency:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: main
           fetch-depth: 0 # (every version's commit)
       - name: Publish what's new
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          newest=$(ls docs/releases/v*.md | sed 's|.*/v\(.*\)\.md|\1|' | sort -V | tail -1)
-          for version in $(ls docs/releases/v*.md | sed 's|.*/v\(.*\)\.md|\1|' | sort -V); do
+          published=$(gh release list --limit 1000 --json tagName --jq '.[].tagName')
+          # The image workflow's recent runs on main: commit, run, status.
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/image.yml/runs?branch=main&per_page=100" \
+            --jq '.workflow_runs[] | "\(.head_sha) \(.id) \(.status)"')
+          versions=$(ls docs/releases/v*.md | sed 's|.*/v\(.*\)\.md|\1|' | sort -V)
+          newest=$(tail -1 <<< "$versions")
+          refused=0
+          for version in $versions; do
             tag="v$version"
             file="docs/releases/$tag.md"
-            if gh release view "$tag" > /dev/null 2>&1; then
+            if grep -qxF "$tag" <<< "$published"; then
               echo "$tag: already published"
               continue
             fi
@@ -57,6 +74,40 @@ jobs:
                 echo "::error::$tag already exists, at another commit"; exit 1
               fi
             fi
+            # Its tests: an image run on main at its commit, or at a later
+            # one with nothing but release notes changed since, that passed
+            # the Test step (or is still running).
+            passed="" running="" failed=""
+            while read -r sha run status; do
+              [ -n "$sha" ] || continue
+              git merge-base --is-ancestor "$commit" "$sha" 2>/dev/null || continue
+              git merge-base --is-ancestor "$sha" origin/main || continue
+              git diff --quiet "$commit" "$sha" -- . ':(exclude)docs/releases' || continue
+              if [ "$status" != completed ]; then
+                running=$run
+                continue
+              fi
+              tested=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" \
+                --jq '[.jobs[].steps[]? | select(.name == "Test") | .conclusion] | first // ""')
+              if [ "$tested" = success ]; then
+                passed=$run
+                break
+              fi
+              failed=$run
+            done <<< "$runs"
+            if [ -z "$passed" ]; then
+              if [ -n "$running" ]; then
+                echo "::notice::$tag waits for its tests (image run $running): it's published when they pass"
+              elif [ -n "$failed" ]; then
+                echo "::error::$tag isn't published: its tests didn't pass (image run $failed)"
+                refused=1
+              else
+                echo "::error::$tag isn't published: the image workflow hasn't tested its commit ${commit:0:7}, or a later main commit with nothing but release notes since"
+                refused=1
+              fi
+              continue
+            fi
+            echo "$tag: its tests passed (image run $passed)"
             # The release's files, from that commit.
             out="$RUNNER_TEMP/$tag"
             mkdir -p "$out"
@@ -72,3 +123,4 @@ jobs:
               "$out/stationplay-$version.zip" "$out/stationplay.yaml" "$out/docker-compose.yml"
             echo "::notice::Published $tag"
           done
+          exit "$refused"
