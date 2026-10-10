@@ -76,7 +76,8 @@ def status(state: str, short: str = "Ready") -> reach.Status:
 
 
 def checks(tmp_path, plex: Plex | None = None, outside: str = reach.OFF) -> SimpleNamespace:
-    """What the checks look at: Plex, the data folder, the outside check."""
+    """What the checks look at: Plex, the data folder, the outside check,
+    and the Broken files tab (nothing on it needs an Admin)."""
     folder = tmp_path / "data"
     folder.mkdir(exist_ok=True)
     return SimpleNamespace(
@@ -84,6 +85,7 @@ def checks(tmp_path, plex: Plex | None = None, outside: str = reach.OFF) -> Simp
         settings=SimpleNamespace(data_dir=folder),
         reach=SimpleNamespace(status=lambda: status(outside, "Proxy error")),
         away=SimpleNamespace(address="https://tv.example.com"),
+        reports=SimpleNamespace(needing=list),
     )
 
 
@@ -253,6 +255,51 @@ def test_a_station_failing_to_start_and_backups_failing():
     assert [a.kind for a in found.now()] == ["backups"]
     found.backup_made()
     assert found.now() == [] and told.said[-1][1:] == ("backups", "fixed")
+
+
+def test_whats_on_the_broken_files_tab_is_said_at_most_once_an_hour():
+    told = Told()
+    now = [0.0]
+    found = Alerts(told, clock=lambda: now[0])  # type: ignore[arg-type]
+    found.files([])
+    assert found.now() == [] and told.said == []
+    tia = (1_000, "report:204", "Tia reported No sound on Northbound S2 E4")
+    found.files([tia])
+    [alert] = found.now()
+    said = (
+        "There is 1 file to look at on the Broken files tab: Tia reported No sound on "
+        "Northbound S2 E4."
+    )
+    assert (alert.kind, alert.sentence) == ("files", said)
+    assert told.said == [(said, "files", "started")]
+    first = alert.id
+    # More within the hour: it says what it is now, but it's the same alert.
+    now[0] = 1800.0
+    found.files([tia, (2_000, "file:205", "StationPlay found Northbound S2 E5 broken")])
+    [alert] = found.now()
+    assert alert.id == first and len(told.said) == 1
+    assert alert.sentence == (
+        "There are 2 files to look at on the Broken files tab: StationPlay found Northbound S2 "
+        "E5 broken."
+    )
+    # Nothing new an hour later: still the same.
+    now[0] = 7200.0
+    found.files([tia, (2_000, "file:205", "StationPlay found Northbound S2 E5 broken")])
+    assert found.now()[0].id == first and len(told.said) == 1
+    # Something new, an hour or more after it was said: said again, with a
+    # new ID (the old one isn't said to be fixed).
+    sonarr = (3_000, "file:206", "Sonarr couldn't find a file of Northbound S2 E6 that plays")
+    found.files([tia, sonarr])
+    [alert] = found.now()
+    assert alert.id != first and alert.sentence.endswith(
+        "Sonarr couldn't find a file of Northbound S2 E6 that plays."
+    )
+    assert [s[2] for s in told.said] == ["started", "started"]
+    assert [a.id for a in found.listed()] == [alert.id]
+    # Nothing needs an Admin: fixed.
+    found.files([])
+    assert found.now() == []
+    assert told.said[-1] == ("Nothing on the Broken files tab needs you now.", "files", "fixed")
 
 
 def test_alerts_fixed_more_than_a_day_ago_arent_listed(monkeypatch):

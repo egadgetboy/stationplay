@@ -30,6 +30,15 @@ only once things have been right a while too, so none comes and goes:
               check's own Down (see reach.py: two checks in a row, a minute
               apart, found a problem that counts). Fixed when it's Up again,
               or watching away from home is turned off.
+  files       Something on the Broken files tab needs an Admin (see
+              reports.py): a person's report, a file StationPlay found broken
+              or damaged that isn't being replaced by itself, or one Sonarr
+              or Radarr couldn't replace. It says how many, and the newest.
+              Fixed when nothing does. To be said at most once an hour: when
+              new things come an hour or more after it was last said, it
+              ends, unsaid, and starts again with a new ID (the apps notify
+              once for each ID; the web address is told the same); before
+              that, it only says what it is now.
 
 Each has an ID that stays the same while it lasts (a new one starting
 later has a new ID), its kind, a sentence an Admin can act on, when it
@@ -64,7 +73,8 @@ log = logging.getLogger(__name__)
 
 PLEX, DATA_FULL, DATA_WRITE = "plex", "data-full", "data-write"
 STATION, BACKUPS, CLOCK, OUTSIDE = "station", "backups", "clock", "outside"
-KINDS = (PLEX, DATA_FULL, DATA_WRITE, STATION, BACKUPS, CLOCK, OUTSIDE)
+FILES = "files"
+KINDS = (PLEX, DATA_FULL, DATA_WRITE, STATION, BACKUPS, CLOCK, OUTSIDE, FILES)
 CHECK_S = 60.0  # how often what's checked is looked at
 FIRST_S = 20.0  # the first look, after StationPlay starts
 PLEX_WAIT_S = 10.0  # the longest Plex is waited for, in a check
@@ -78,6 +88,8 @@ STATION_FAILS, STATION_WINDOW_S = 3, 600.0
 BACKUP_FAILS = 2
 # The clock: off from Plex's by more than this; right again under this.
 CLOCK_OFF_S, CLOCK_RIGHT_S = 120.0, 60.0
+# The Broken files tab: said again (with a new ID) at most this often.
+FILES_AGAIN_S = 3600.0
 
 
 @dataclass
@@ -130,6 +142,10 @@ class Alerts:
         self._streaks: dict[tuple[str, str], _Streak] = {}
         self._station_fails: dict[int, deque[float]] = {}
         self._backup_fails = 0
+        # The Broken files tab: what needed an Admin when it was last looked
+        # at, and when the alert was last said (started).
+        self._files_seen: set[str] = set()
+        self._files_said = 0.0
 
     # What's said ----------------------------------------------------------------
 
@@ -230,6 +246,36 @@ class Alerts:
         self._backup_fails = 0
         self.fix(BACKUPS, "StationPlay made a backup again.")
 
+    # The Broken files tab ----------------------------------------------------------
+
+    def files(self, things: list[tuple[int, str, str]]) -> None:
+        """What needs an Admin on the Broken files tab now (see the module's
+        notes, and reports.Reports.needing): (when, which, what) for each."""
+        seen = {which for _, which, _ in things}
+        new = seen - self._files_seen
+        self._files_seen = seen
+        if not things:
+            self.fix(FILES, "Nothing on the Broken files tab needs you now.")
+            return
+        n = len(things)
+        _, _, newest = max(things)
+        sentence = (
+            f"There {'is' if n == 1 else 'are'} {n} file{'' if n == 1 else 's'} to look at on "
+            f"the Broken files tab: {newest[:1].upper()}{newest[1:]}."
+        )
+        going = self._now.get((FILES, ""))
+        if going is not None and new and self.clock() - self._files_said >= FILES_AGAIN_S:
+            # (New things, an hour or more after it was said: said again, anew.)
+            del self._now[(FILES, "")]
+            self._files_said = self.clock()
+            self.start(FILES, sentence)
+            again = self._now[(FILES, "")]
+            again.since_ms = max(again.since_ms, going.since_ms + 1)  # (a new ID, however soon)
+            return
+        if going is None:
+            self._files_said = self.clock()
+        self.start(FILES, sentence)
+
     # Checking --------------------------------------------------------------------
 
     async def run_forever(self, ctx: AppContext) -> None:
@@ -245,11 +291,13 @@ class Alerts:
             await asyncio.sleep(CHECK_S)
 
     async def look(self, ctx: AppContext) -> None:
-        """Checks Plex (and the clock, by its answer), the data folder, and
-        whether the apps reach StationPlay from outside."""
+        """Checks Plex (and the clock, by its answer), the data folder,
+        whether the apps reach StationPlay from outside, and what needs an
+        Admin on the Broken files tab."""
         await self._look_at_plex(ctx)
         await asyncio.to_thread(self._look_at_data, ctx.settings.data_dir)
         self._look_outside(ctx.reach.status(), ctx.away.address)
+        self.files(await asyncio.to_thread(ctx.reports.needing))
 
     async def _look_at_plex(self, ctx: AppContext) -> None:
         plex = ctx.plex

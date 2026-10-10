@@ -332,3 +332,33 @@ def test_replace_and_find_a_better_copy(world, caplog):  # noqa: F811
     [listed] = [e for e in c.get("/api/broken").json() if e["key"] == "301"]
     assert listed["section"] == "being replaced"
     assert c.get("/api/reports").json()["reports"] == []
+
+
+def test_an_admin_is_told_what_needs_them(app):
+    """Through what Admins already get (Admin alerts, and a web address): one
+    alert, saying how many and the newest."""
+    with TestClient(app) as admin:
+        start(admin)
+        ctx = app.state.ctx
+        phone = TestClient(app)
+        tia = sign_in_app(app, TIA)
+        assert report(phone, tia, choice="no-sound", key="204").status_code == 200
+        ctx.alerts.files(ctx.reports.needing())
+        assert ctx.alerts.now() == []  # (being checked: nothing for an Admin yet)
+        episode, media = _first_version(ctx, admin, "202")
+        ctx.broken.record(sc.item_of(episode, media), "Deep scan: the sound drops out around "
+                          "3:00", 4, media.file, media.size, problem="damaged")  # fmt: skip
+        assert report(phone, tia, choice="wrong-language", key="201").status_code == 200
+        ctx.alerts.files(ctx.reports.needing())
+        [alert] = admin.get("/api/internal/alerts").json()["alerts"]
+        assert alert["kind"] == "files" and alert["sentence"] == (
+            "There are 2 files to look at on the Broken files tab: Tia reported Wrong language "
+            "on Northbound S2 E1."
+        )
+        assert admin.get("/api/status").json()["filesCount"] == 2
+        # Dismissed, and the file put back on the air: nothing needs an Admin.
+        admin.post("/api/reports/201/dismiss")
+        assert admin.delete("/api/broken/202").status_code == 204
+        ctx.alerts.files(ctx.reports.needing())
+        [fixed] = admin.get("/api/internal/alerts").json()["alerts"]
+        assert fixed["fixed"] and fixed["kind"] == "files"

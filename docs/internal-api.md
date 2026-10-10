@@ -681,6 +681,18 @@ none comes and goes. The Logs tab and the page's header say them too, and
 an Admin can have them sent to a web address (ntfy, Gotify, Home
 Assistant).
 
+From 1.30.0, there's one more kind, `files`: something on the Broken files
+tab needs an Admin (a person's report, a file StationPlay found broken or
+damaged that isn't being replaced by itself, or one Sonarr or Radarr
+couldn't replace), "There are 3 files to look at on the Broken files tab:
+Tia reported No sound on Northbound S2 E4." It says how many, and the
+newest, as more come; it's fixed when nothing there needs an Admin. So an
+Admin is told at most once an hour: when new things come an hour or more
+after it was last said, it starts again with a new `id`, and the old one
+is no longer listed (it isn't fixed: don't say it was). The apps need
+nothing new for it: notify once for each `id`, as for any alert. The web
+address is told the same.
+
 For an Admin, an app shows the alerts now, with each `sentence` as it is
 and how long it's lasted, and can say when one is fixed. Ask
 `GET /api/internal/alerts` when the app opens and comes back to the front,
@@ -699,7 +711,7 @@ hours. Small and quick, to ask every few minutes.
 |---|---|---|
 | `alerts` | list | The alerts now, the newest first; then those fixed in the last 24 hours, the most lately fixed first |
 | `alerts[].id` | string | Its ID: the same for as long as it lasts (one that starts again later has a new one) |
-| `alerts[].kind` | string | What it's about: `plex`, `data-full`, `data-write`, `station`, `backups`, `clock` or `outside` (kinds may be added: show the sentence) |
+| `alerts[].kind` | string | What it's about: `plex`, `data-full`, `data-write`, `station`, `backups`, `clock`, `outside` or `files` (from 1.30.0; kinds may be added: show the sentence) |
 | `alerts[].sentence` | string | What's wrong, in a sentence an Admin can act on, to show as it is |
 | `alerts[].since` | number | When it started |
 | `alerts[].fixed` | number or null | When it was fixed; null while it lasts |
