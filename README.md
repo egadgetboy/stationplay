@@ -1184,7 +1184,7 @@ The tests need ffmpeg on the `PATH`. The HDR and real-world tests also need ffmp
 
 `.github/workflows/image.yml` is optional. If you keep the code on GitHub, it builds the image and runs the tests inside it whenever `main` changes, without publishing anything: the Dockerfile's test stage is the image that ships, with its own FFmpeg and Python, plus the tests. The tests stop after an hour. The Dockerfile pins its base image by digest, so every build starts from the same Debian and Python; a comment there says how to update it. `.github/workflows/quality.yml` runs the plan's longer quality checks in the image every Monday, or from its **Run workflow** button: two soak tests of 4½ hours each, and the real-world and HDR tests. It publishes nothing.
 
-**The setup's questions.** When a release adds something an Admin needs to answer (a feature that's off until they turn it on, or a new choice), it goes in the setup. Add a new question to `QUESTIONS` in `app/setup.py`, with its step on the page (`SETUP_PAGES` in `app/web/index.html`). For a question that gains a choice, raise its version by one. After the update, the setup opens once by itself with just that question.
+**The setup's questions.** When a release adds something an Admin needs to answer (a feature that's off until they turn it on, or a new choice), it goes in the setup. Add a new question to `QUESTIONS` in `app/setup.py`, with its step on the page (`SETUP_PAGES` in `app/web/js/setup.js`). For a question that gains a choice, raise its version by one. After the update, the setup opens once by itself with just that question.
 
 **The page at every screen size.** Before a release, run `python tools/page_sizes.py /tmp/page-sizes` (it needs Playwright and Pillow). It runs StationPlay with stand-in data and saves a screenshot of every tab and dialog at phone, tablet and computer sizes, light and dark, signed in as an Admin and as a User. It lists anything that scrolls sideways, is cut off, or is too small to tap.
 
@@ -1268,6 +1268,7 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/text.py`, `app/logbuffer.py` | Cleaning up names people type; recent log entries for the Logs tab |
 | `app/assets/` | Sounds and other files the app draws with |
 | `app/web/index.html`, `app/web/manifest.webmanifest` | StationPlay's page, and what installing it as an app takes (with its icons, made by `tools/app_icons.py`) |
+| `app/web/page.css`, `app/web/js/` | The page's styles, and its scripts, one file for each part of the page (loaded in the order `PAGE_FILES` in `app/access.py` lists them) |
 | `tests/` | Unit and end-to-end tests |
 | `Dockerfile`, `stationplay.yaml`, `docker-compose.yml` | The image, the TrueNAS app, and the Compose file |
 | `docs/` | StationPlay's logo; StationPlay's API (`api.md`, `openapi-v1.json`); the apps' own addresses (`internal-api.md`); the designs of the library (`library.md`), of Media in the apps (`on-demand.md`), and of who sees what (`users.md`); each release's notes (`releases/`) |
