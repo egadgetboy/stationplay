@@ -43,6 +43,7 @@ from .text import plain
 
 log = logging.getLogger("stationplay.problems")
 
+UNREACHABLE = "unreachable"
 # What the apps send, and how the Logs tab says it ({what}: the station or title).
 KINDS = {
     "station-failed": "{what} didn't start",
@@ -51,10 +52,9 @@ KINDS = {
     "library-stopped": "{what} stopped playing",
     "kept-up": "{what} couldn't keep up, so a smaller version played",
     "crashed": "The app closed unexpectedly",
-    "unreachable": "{what} couldn't reach StationPlay",
+    UNREACHABLE: "{what} couldn't reach StationPlay",  # ({what}: the device)
 }
 STATION_KINDS = ("station-failed", "station-stopped")
-UNREACHABLE = "unreachable"
 # What's said about why a smaller version played, and about something from
 # the library that didn't play (why an app asked for a converted copy).
 KEPT_UP = ("kept-up",)
