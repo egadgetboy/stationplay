@@ -400,6 +400,7 @@ def kept_alerts(data: Path) -> list[tuple]:
 def fail_backups(page: httpx.Client, data: Path) -> None:
     """Backups failing twice: the backups folder a file meanwhile."""
     folder, aside = data / "backups", data / "backups-aside"
+    folder.mkdir(exist_ok=True)  # (an update that changed nothing made no copy, nor the folder)
     folder.rename(aside)
     folder.write_text("not a folder")
     try:
