@@ -1617,8 +1617,8 @@ class Broadcaster:
             # Where each file starts in the program: by its length as the
             # library says it, or as it's found to be where it doesn't.
             starts = [0.0]
-            for n, part in enumerate(files[:-1]):
-                length = part.duration_ms / 1000 if part.duration_ms else None
+            for n, file in enumerate(files[:-1]):
+                length = file.duration_ms / 1000 if file.duration_ms else None
                 if length is None:
                     got = await open_file(n)
                     if not isinstance(got, Opened):

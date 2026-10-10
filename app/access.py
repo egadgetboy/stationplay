@@ -247,7 +247,7 @@ FOR_USERS = {
         "/api/v1/status", "/api/access/link/", "/api/internal/speed-test",
         "/api/internal/libraries", "/api/internal/libraries/", "/api/internal/home",
         "/api/internal/search", "/api/internal/items/", "/api/internal/art/", "/api/internal/me",
-        "/api/internal/report-choices",
+        "/api/internal/report-choices", "/api/internal/license",
     ),
     "POST": (
         "/api/access/me/password", "/api/channels", "/api/channels/", "/api/collections/stations",
@@ -273,6 +273,7 @@ FOR_WATCHERS = {
         "/api/internal/speed-test", "/api/internal/libraries", "/api/internal/libraries/",
         "/api/internal/home", "/api/internal/search", "/api/internal/items/",
         "/api/internal/art/", "/api/internal/me", "/api/internal/report-choices",
+        "/api/internal/license",
     ),
     "POST": (
         "/api/access/me/password", "/api/internal/sign-out", "/api/internal/speed-test",

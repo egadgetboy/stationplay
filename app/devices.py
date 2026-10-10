@@ -691,8 +691,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(400, str(e)) from None
         if said:
             ctx.access.record(logging.INFO, f"{who(request)} {' and '.join(said)}")
-        now = user_or_404(user_id)
-        return {"pin": now.has_pin, "showOn": d.show_on(now)}
+        found = user_or_404(user_id)
+        return {"pin": found.has_pin, "showOn": d.show_on(found)}
 
     @app.post("/api/access/users/{user_id}/invite")
     async def invite(user_id: int, request: Request):

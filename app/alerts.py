@@ -200,8 +200,9 @@ class Alerts:
         for row in rows:
             kept = json.loads(row["state"]) if row["state"] else {}
             alert = Alert(
-                *(row[k] for k in ("kind", "about", "sentence", "since_ms", "fixed_ms")),
-                untold=row["untold"], fixed_sentence=kept.get("fixed", ""),
+                kind=row["kind"], about=row["about"], sentence=row["sentence"],
+                since_ms=row["since_ms"], fixed_ms=row["fixed_ms"], untold=row["untold"],
+                fixed_sentence=kept.get("fixed", ""),
             )  # fmt: skip
             if alert.kind not in KINDS:
                 continue  # (a later version's, left for it)

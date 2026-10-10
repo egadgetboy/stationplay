@@ -1277,7 +1277,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 found = []
             if found and all(found):
                 starts = converting.pieces_of(
-                    [(at, converting.pieces_at(kf, length))
+                    [(at, converting.pieces_at(kf or (), length))
                      for at, kf, length in zip(starts_at, found, lengths, strict=True)]
                 )  # fmt: skip
         if only_sound and not starts:
@@ -1383,10 +1383,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             # (Subtitle files of their own, shown beside it: not of a copy that
             # joins several files, whose times are the first one's.)
             subtitles={
-                t.id: (url, t.codec)
+                t.id: (address, t.codec)
                 for t in media.subtitles
                 if t.external and t.id.isdigit() and not media.joined
-                and (url := ctx.library.stream_url(e.key, f"/library/streams/{t.id}"))
+                and (address := ctx.library.stream_url(e.key, f"/library/streams/{t.id}"))
             },
         )  # fmt: skip
         session.copy = converting.Copy(settings.ffmpeg_path, source, plan, folder, first=task,

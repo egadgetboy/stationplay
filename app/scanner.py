@@ -2033,10 +2033,13 @@ class Scanner:
                 )  # fmt: skip
                 if here.error or not here.source:
                     return False
-        probe = await ff.probe(self.ctx.settings, here.source)
+        source = here.source
+        if not source:
+            return False
+        probe = await ff.probe(self.ctx.settings, source)
         if not probe.ok:
             return False
-        verdict, start = await check_stretch(self.ctx, here.source, probe, at_s)
+        verdict, start = await check_stretch(self.ctx, source, probe, at_s)
         if verdict.result == "skipped":
             return False
         stretch = f"{fmt_offset(start)} to {fmt_offset(start + STRETCH_S)}"
@@ -2247,9 +2250,10 @@ class Scanner:
                 )  # fmt: skip
                 if here.error or not here.source:
                     return False
-                now = self.ctx.db.scan(key)
-                if now is None or (here.plex_file or here.source) != now.file:
+                found = self.ctx.db.scan(key)
+                if found is None or (here.plex_file or here.source) != found.file:
                     return self._check_first(record)
+                now = found
             if now.quick != "ok" or now.deep_ms:
                 continue
             credits = _credits_in(self.ctx, item, resolved, n - 1)
@@ -2280,9 +2284,11 @@ class Scanner:
         by default the program's)."""
         item = program.item
         label = _file_label(item, part)
-        probe = await ff.probe(self.ctx.settings, resolved.source)
-        if not probe.ok:
-            self._another_night(record, f"couldn't be opened ({probe.error})")
+        source = resolved.source
+        probe = await ff.probe(self.ctx.settings, source) if source else None
+        if source is None or probe is None or not probe.ok:
+            why = probe.error if probe is not None else "it couldn't be found"
+            self._another_night(record, f"couldn't be opened ({why})")
             return True
         duration = probe.duration_s or 0.0
         start = record.deep_at_s
@@ -2311,7 +2317,7 @@ class Scanner:
         task = asyncio.create_task(
             decode_through(
                 self.ctx,
-                resolved.source,
+                source,
                 seek,
                 probe.video_index,
                 probe.audio_index,
@@ -2553,7 +2559,7 @@ def _found_deep(records: list[tuple[int, ScanRecord]]) -> tuple[str, bool] | Non
 def _records_in(scans: dict[str, ScanRecord], key: str) -> list[tuple[int, ScanRecord]]:
     """The records of a file's checks among `scans` (see Scanner._records):
     its own, then those of a version's further files, while there are."""
-    out = []
+    out: list[tuple[int, ScanRecord]] = []
     while (record := scans.get(part_key(key, len(out) + 1))) is not None:
         out.append((len(out) + 1, record))
     return out
