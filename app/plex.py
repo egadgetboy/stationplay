@@ -1006,9 +1006,9 @@ class PlexClient:
                 },
             )
             for m in data.get("Metadata") or []:
-                first = _first_file(m)
-                if first is not None and first[0]:
-                    out.append(first[0])
+                first = _first_files(m)
+                if first is not None and (path := _path(first[1][0])):
+                    out.append(path)
             if len(out) >= most:
                 break
         return out
@@ -1238,7 +1238,7 @@ def to_entry(m: dict[str, Any], section: str = "", details: bool = False) -> Ent
     library = str(m.get("librarySectionID") or section or "")
     show_key = str(m.get("grandparentRatingKey") or "") if episode else ""
     media = tuple(to_media(m)) if details and kind != catalog.SHOW else ()
-    first = _first_file(m) if kind != catalog.SHOW else None
+    first = _first_files(m) if kind != catalog.SHOW else None
     intro = credits = None
     if details and episode:  # (movies have no Skip buttons)
         intro, credits = _skips(duration, m.get("Marker"), [x.duration_ms for x in media])
@@ -1267,7 +1267,7 @@ def to_entry(m: dict[str, Any], section: str = "", details: bool = False) -> Ent
         credits=credits,
         media=media,
         sort_title=str(m.get("titleSort") or ""),
-        file=(first[0] or "") if first is not None else "",
+        file=(_path(first[1][0]) or "") if first is not None else "",
         tagline=str(m.get("tagline") or "") if details else "",
         cast=_roles(m) if details else (),
         directors=_names(m, "Director") if details else (),
@@ -1414,24 +1414,23 @@ def _part_length(part: dict[str, Any]) -> int | None:
     return length if length and length > 0 else None
 
 
-def _first_file(m: dict[str, Any]) -> tuple[str | None, str | None, int | None] | None:
-    """Of a program's first version (the one a station plays): its first
-    file's path and Plex's address for it, and the version's length (all of
-    its files'); None if Plex lists no file of it. (For lists: quicker than
-    reading all it holds, as to_media does.)"""
+def _first_files(m: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    """A program's first version with a file (the one a station plays), as
+    Plex lists it: its Media, and its Parts (its files, in order); None if
+    Plex lists no file of it. (For lists: quicker than reading all it holds,
+    as to_media does.)"""
     for media in _each(m.get("Media")):
-        if not isinstance(media, dict):
-            continue
-        parts = [p for p in _each(media.get("Part")) if isinstance(p, dict)]
-        if not parts:
-            return None
-        file = parts[0].get("file")
-        return (
-            file if isinstance(file, str) else None,
-            _part_key(parts[0].get("key")),
-            _length(media, parts),
-        )
+        if isinstance(media, dict):
+            parts = [p for p in _each(media.get("Part")) if isinstance(p, dict)]
+            if parts:
+                return media, parts
     return None
+
+
+def _path(part: dict[str, Any]) -> str | None:
+    """Where Plex has a file (its Part)."""
+    file = part.get("file")
+    return file if isinstance(file, str) else None
 
 
 def _file(media: dict[str, Any], part: dict[str, Any], alone: bool) -> Media:
@@ -1453,7 +1452,7 @@ def _file(media: dict[str, Any], part: dict[str, Any], alone: bool) -> Media:
         hdr=hdr,
         dv_profile=dv,
         bitrate_kbps=_int(media.get("bitrate")),
-        file=part.get("file") if isinstance(part.get("file"), str) else None,
+        file=_path(part),
         part_key=_part_key(part.get("key")),
         size=_int(part.get("size")),
         duration_ms=_length(media, [part]) if alone else _part_length(part),
@@ -1465,31 +1464,24 @@ def _file(media: dict[str, Any], part: dict[str, Any], alone: bool) -> Media:
     )
 
 
+# What a path on Plex never has in it (see _part_key).
+_NOT_A_PATH = re.compile(r"[\s\\?#]")
+
+
 def _part_key(key: Any) -> str | None:
     """Plex's address for a file, as it's asked for it (see stream_url),
     only if it's one: a path on Plex ("/library/parts/..."), so the token
     sent with it never goes anywhere else."""
     if not isinstance(key, str) or not key.startswith("/") or key.startswith("//"):
         return None
-    return None if re.search(r"[\s\\?#]", key) else key
-
-
-def first_version(m: dict[str, Any]) -> Media | None:
-    """A program's first version (the one a station plays), if Plex lists
-    a file of it."""
-    for media in _each(m.get("Media")):
-        if isinstance(media, dict):
-            if not any(isinstance(p, dict) for p in _each(media.get("Part"))):
-                return None
-            return to_media({"Media": [media]})[0]
-    return None
+    return None if _NOT_A_PATH.search(key) else key
 
 
 def files_of(m: dict[str, Any]) -> tuple[Media, ...]:
-    """The files of a program's first version, in order; () if Plex lists
-    none."""
-    version = first_version(m)
-    return version.files if version is not None else ()
+    """The files of a program's first version with a file (the one a
+    station plays), in order; () if Plex lists none."""
+    first = _first_files(m)
+    return to_media({"Media": [first[0]]})[0].files if first is not None else ()
 
 
 def _track(s: dict[str, Any], codec: Callable[[str | None], str]) -> Track:
@@ -1648,9 +1640,9 @@ def to_item(m: dict[str, Any]) -> Item | None:
     kind = m.get("type")
     if kind not in ("episode", "movie"):
         return None
-    first = _first_file(m)
+    first = _first_files(m)
     # (A movie in several files: all of them, as Plex's own length is.)
-    duration = m.get("duration") or (first[2] if first else None)
+    duration = m.get("duration") or (_length(*first) if first else None)
     if not duration or duration < 1000:
         return None
     season = m.get("parentIndex")
@@ -1672,8 +1664,8 @@ def to_item(m: dict[str, Any]) -> Item | None:
         episode=m.get("index") if kind == "episode" else None,
         year=m.get("year"),
         summary=m.get("summary"),
-        file_path=first[0] if first else None,
-        part_key=first[1] if first else None,
+        file_path=_path(first[1][0]) if first else None,
+        part_key=_part_key(first[1][0].get("key")) if first else None,
         rating=str(m.get("contentRating") or "") or None,
         library=str(m.get("librarySectionID") or "") or None,
     )

@@ -297,12 +297,12 @@ first file played (on a station, black filled the rest of its time).
   the picture as it is, so a movie whose files are alike (nearly all)
   plays at its full quality, at almost no cost.
 - **What it costs.** A copy for every device, where a movie in one file
-  might play as it is: so sound passed as it is to a receiver (Dolby
-  Atmos, DTS) comes as 5.1 or stereo, as for any copy. Subtitles in the
-  files, or subtitle files of their own, are drawn into the picture (each
-  file's own track, at the same place among its tracks: none, for a file
-  without one), as a subtitle file beside the copy would match only one
-  of the files. A converted one counts against the copies converted at
+  might play as it is: so sound a copy can't carry as it is (DTS, Dolby
+  TrueHD) comes as Dolby Digital 5.1 or stereo, as for any copy. Subtitles
+  in the files, or subtitle files of their own, are drawn into the picture
+  (each file's own track, at the same place among its tracks: none, for a
+  file without one), as a subtitle file beside the copy would match only
+  one of the files. A converted one counts against the copies converted at
   once.
 - **An app that doesn't take copies** (no `device.hls`) can't play one as
   one: it's answered 422, with `why` ["it's in 2 files"] and the usual
