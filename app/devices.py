@@ -199,28 +199,67 @@ class Devices:
             raise ValueError("Choose Only devices they sign in on or Every device at home")
         self.db.set_meta(SHOW_ON_META, show_on)
 
-    def _default_for(self, user: User) -> str:
-        """Where someone new is shown: the server's default, but every device
-        at home for someone who can't sign in by name, rather than nowhere."""
-        show_on = self.default_show_on
-        return HOME if self._why_not(user, show_on) else show_on
+    def new_show_on(self, name: str, by_name: bool, show_on: str | None) -> str:
+        """Where someone new is shown: `show_on` as asked, or ("default") the
+        server's default. Someone who can't sign in by name (`by_name`
+        False: no password, no PIN) can't be shown only where they sign in,
+        so on such a server they start on Only devices you choose, with none
+        chosen yet: on no device's list until an Admin chooses one, never on
+        every device at home by themselves. ValueError."""
+        if show_on in (None, "default"):
+            show_on = self.default_show_on
+            if not by_name and show_on == SIGNED_IN:
+                return SELECTED
+        if show_on not in SHOW_ON:
+            raise ValueError("Choose where they're shown")
+        if not by_name and (why := _needs_one(name, show_on)):
+            raise ValueError(
+                f"{why} Give them one, or choose Every device at home or Only devices you choose."
+            )
+        return show_on
+
+    async def new_pin_hash(self, pin: str | None) -> str:
+        """A new person's PIN, hashed ("" for none), worked out before
+        they're added. ValueError."""
+        if not pin:
+            return ""
+        if not PIN.fullmatch(pin):
+            raise ValueError(PIN_DIGITS)
+        return await asyncio.to_thread(hash_password, pin)
 
     def show_everyone_on(self, show_on: str) -> tuple[int, list[User]]:
         """Use for everyone: everyone already added is shown this way (HOME
         or SIGNED_IN), and so is anyone added from now on. How many changed,
-        and who was kept as they were (who can't sign in by name, for
-        SIGNED_IN). ValueError."""
+        and who was kept as they were: anyone who can't sign in by name, either
+        way (they stay where an Admin put them). ValueError."""
         self.set_default_show_on(show_on)
         changing, kept = [], []
         for user in self.db.users():
             if self.show_on(user) == show_on:
                 continue
-            if self._why_not(user, show_on):
-                kept.append(user)
-            else:
+            if self.signs_in_by_name(user):
                 changing.append(user.id)
+            else:
+                kept.append(user)
         self.db.set_show_on(changing, show_on)
+        self.end_unlisted(changing)
         return len(changing), kept
+
+    def end_unlisted(self, user_ids: list[int]) -> None:
+        """Ends the sign-ins these people have on linked devices whose lists
+        they're no longer on (picking yourself somewhere is only good while
+        you're on its list)."""
+        if not user_ids:
+            return
+        here = self.db.device_people()
+        for user_id, device_id in self.db.picker_sessions():
+            if user_id not in user_ids:
+                continue
+            user = self.db.user(user_id)
+            if user is None or not self.on_picker(
+                user, here.get(device_id, {}).get(user_id), at_home=True
+            ):
+                self.db.end_device_sessions(user_id, device_id)
 
     def show_on(self, user: User) -> str:
         """Where someone is shown (on every device at home, for someone
@@ -228,13 +267,9 @@ class Devices:
         return user.show_on if user.show_on in SHOW_ON else HOME
 
     def signs_in_by_name(self, user: User) -> bool:
-        """Whether someone can sign in by name: with a password or a PIN."""
-        return user.has_pin or bool(self.db.password_hash(user.id))
-
-    def _why_not(self, user: User, show_on: str) -> str | None:
-        """Why someone can't be shown this way, if they can't (see
-        _needs_one)."""
-        return None if self.signs_in_by_name(user) else _needs_one(user.name, show_on)
+        """Whether someone can sign in by name: with a password or a PIN (as
+        `user` was read)."""
+        return user.has_pin or user.has_password
 
     def on_picker(self, user: User, how: str | None, at_home: bool) -> bool:
         """Whether someone is on a device's picker, as they are on it (`how`:
@@ -242,7 +277,12 @@ class Devices:
         came in on the home port)."""
         if how == REMOVED:
             return False
-        if how in (SIGNED_IN_HERE, CHOSEN):
+        if how == CHOSEN:
+            return True
+        if how == SIGNED_IN_HERE and self.signs_in_by_name(user):
+            # (Someone who can no longer sign in by name isn't listed where
+            # they once did: only at home, as their Show on says, or where
+            # an Admin chose.)
             return True
         show_on = self.show_on(user)
         return show_on == ALL or (show_on == HOME and at_home)
@@ -481,6 +521,8 @@ class Devices:
                 )
         self.db.set_pin(user.id, hashed)
         self._wrong.pop(user.id, None)
+        if not hashed:
+            self.end_unlisted([user.id])
 
     def set_show_on(self, user: User, show_on: str, devices: list[int] | None) -> None:
         """Where someone is shown ("default": as a new person is, now), and
@@ -489,15 +531,11 @@ class Devices:
         if show_on not in (*SHOW_ON, "default"):
             raise ValueError("Choose where they're shown")
         now = self.db.user(user.id) or user
-        if show_on == "default":
-            show_on = self._default_for(now)
-        if why := self._why_not(now, show_on):
-            raise ValueError(
-                f"{why} Give them one, or choose Every device at home or Only devices you choose."
-            )
+        show_on = self.new_show_on(now.name, self.signs_in_by_name(now), show_on)
         self.db.set_show_on([user.id], show_on)
         if devices is not None:
             self.db.set_chosen_devices(user.id, devices)
+        self.end_unlisted([user.id])
 
     def make_invite(self, user: User) -> tuple[str, int]:
         """A new invite code for someone (any earlier one ends): the code and

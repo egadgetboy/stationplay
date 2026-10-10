@@ -206,12 +206,13 @@ $('#addUserForm').addEventListener('submit', async e => {
   $('#addUserHint').textContent = '';
   const first = !me.required;
   await loadMe();
-  // Someone who can't sign in by name starts on every device at home; with
-  // only a passcode, their first sign-in on a device takes an invite code.
-  const atHome = linked?.default === 'signed-in' && added.showOn === 'home';
+  // Someone who can't sign in by name starts on no device (an Admin chooses
+  // theirs); with only a passcode, their first sign-in on a device takes an
+  // invite code.
+  const nowhere = added.showOn === 'selected' && !added.hasPassword && !added.pin;
   const invited = added.showOn === 'signed-in' && !added.hasPassword;
   toast(first ? `Sign-in is on, and you’re signed in as ${name}`
-    : atHome ? `${name} is added, on every device at home (no password or passcode)`
+    : nowhere ? `${name} is added. With no password or passcode, they show on no device until you choose one in Devices.`
     : invited ? `${name} is added. To sign in on a device, they need an invite code: see Devices.` : `${name} is added`);
   loadAccess();
   loadChannels();

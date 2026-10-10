@@ -529,11 +529,15 @@ class Access:
         role: str,
         by: User | None,
         max_stations: int | None = NEW_USER_STATIONS,
+        pin_hash: str = "",
+        show_on: str = "",
     ) -> User:
         """Adds a user, if `by` may (anyone while signing in is off; then an
         Admin). The first user is always an Admin. A User may have no password
-        (""): they use only the apps' pickers (see devices.py). ValueError if
-        the name, password or station limit won't do; NotAllowed."""
+        (""): they use only the apps' pickers (see devices.py), with their
+        PIN (hashed) and where they're shown, set as they're added.
+        ValueError if the name, password or station limit won't do;
+        NotAllowed."""
         name = plain(name)
         _check_name(name)
         if role not in ROLES:
@@ -549,7 +553,7 @@ class Access:
         if not self._users_exist:
             role = ADMIN
         try:
-            user = self.db.add_user(name, hashed, role, _now(), max_stations)
+            user = self.db.add_user(name, hashed, role, _now(), max_stations, pin_hash, show_on)
         except sqlite3.IntegrityError:
             raise ValueError(f"There's already a user called {name}") from None
         self._users_exist = True
@@ -1406,15 +1410,19 @@ def routes(app: FastAPI, access: Access) -> None:
     async def add_user(body: NewUser, request: Request, response: Response):
         by = signed_in(request)
         with _refusing():
-            user = await access.add_user(body.name, body.password, body.role, by, body.maxStations)
+            # (Their PIN and where they're shown are worked out first and
+            # set as they're added: no device lists them without their PIN.)
+            pin_hash, show_on = "", ""
             if access.picker is not None:
-                try:
-                    if body.pin:
-                        await access.picker.set_pin(user, body.pin)
-                    access.picker.set_show_on(user, body.showOn, body.devices)
-                except ValueError:
-                    access.remove_user(user)  # (all or nothing)
-                    raise
+                pin_hash = await access.picker.new_pin_hash(body.pin)
+                show_on = access.picker.new_show_on(
+                    plain(body.name), bool(body.password or body.pin), body.showOn
+                )
+            user = await access.add_user(
+                body.name, body.password, body.role, by, body.maxStations, pin_hash, show_on
+            )
+            if access.picker is not None and body.devices is not None:
+                access.db.set_chosen_devices(user.id, body.devices)
             user = access.db.user(user.id) or user
         if by is None:
             # The first user (signing in was off): whoever turned signing in

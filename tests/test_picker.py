@@ -67,6 +67,16 @@ def people(tv: TestClient, key: str) -> list[str]:
     return [p["name"] for p in got.json()["people"]]
 
 
+def choose_tv(admin: TestClient, user: dict) -> None:
+    """An Admin chooses the one linked device for someone (Only devices you
+    choose)."""
+    tv_id = admin.get("/api/access/devices").json()["devices"][0]["id"]
+    chose = admin.put(
+        f"/api/access/users/{user['id']}/picker", json={"showOn": "selected", "devices": [tv_id]}
+    )
+    assert chose.status_code == 200, chose.text
+
+
 def household(admin: TestClient) -> None:
     """Everyone on every device at home, as a household chooses (Use for
     everyone, with Every device at home)."""
@@ -76,6 +86,7 @@ def household(admin: TestClient) -> None:
 def test_a_household_tv(app):
     with TestClient(app) as admin:
         admin.post("/api/access/users", json=ADA)
+        household(admin)
         # Kids: no password, no PIN, on every device. Tia: a password and a
         # PIN, only where she signs in.
         kids = admin.post("/api/access/users", json={"name": "Kids", "role": "user"})
@@ -230,20 +241,19 @@ def test_who_can_be_shown_where(app):
             "/api/access/sign-in", json={"name": "Kids", "password": ""}
         ).status_code in (401, 422)
 
-        # New people show only on devices they sign in on (those already
-        # added stay where they are)...
+        # New people show only on devices they sign in on...
         tv = TestClient(app)
         key = tv.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]
-        assert people(tv, key) == ["Ada", "Kids"]
+        assert people(tv, key) == ["Ada"]
         bo = admin.post(
             "/api/access/users", json={"name": "Bo", "password": "bo password", "role": "user"}
         )
         assert bo.json()["showOn"] == "signed-in"
-        # ...but someone who can't sign in by name shows on every device at
-        # home rather than none, as Kids did.
+        # ...and someone who can't sign in by name, as Kids and Cy, on only
+        # the devices an Admin chooses: none yet.
         cy = admin.post("/api/access/users", json={"name": "Cy", "role": "user"})
-        assert cy.status_code == 201 and cy.json()["showOn"] == "home"
-        assert people(tv, key) == ["Ada", "Cy", "Kids"]
+        assert cy.status_code == 201 and cy.json()["showOn"] == "selected"
+        assert people(tv, key) == ["Ada"]
         # An Admin chooses devices for Kids.
         tv_id = admin.get("/api/access/devices").json()["devices"][0]["id"]
         chose = admin.put(
@@ -251,7 +261,7 @@ def test_who_can_be_shown_where(app):
             json={"showOn": "selected", "devices": [tv_id]},
         )
         assert chose.status_code == 200, chose.text
-        assert people(tv, key) == ["Ada", "Cy", "Kids"]
+        assert people(tv, key) == ["Ada", "Kids"]
         assert admin.get("/api/access/devices").json()["chosen"] == {str(kids["id"]): [tv_id]}
         assert (
             admin.put(f"/api/access/users/{kids['id']}/picker", json={"pin": "12"}).json()["detail"]
@@ -348,6 +358,7 @@ def test_a_sign_in_from_a_picker_lasts_a_day_unused(app):
         kids = admin.post("/api/access/users", json={"name": "Kids", "role": "user"}).json()
         tv = TestClient(app)
         key = tv.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]
+        choose_tv(admin, kids)
         token = tv.post(
             "/api/internal/picker/choose", json={"id": kids["id"]}, headers=device(key)
         ).json()["token"]
@@ -376,6 +387,8 @@ def test_devices_at_home_list_the_household_and_away_only_their_own(tmp_path):
     app = two_ports(tmp_path)
     with TestClient(app) as admin:
         admin.post("/api/access/users", json=ADA)
+        # Every device at home, for everyone and anyone new: a household.
+        household(admin)
         made = {
             name: admin.post("/api/access/users", json={"name": name, "role": "user", **more}).json()
             for name, more in (
@@ -383,8 +396,6 @@ def test_devices_at_home_list_the_household_and_away_only_their_own(tmp_path):
                 ("Bo", {"password": "bo password"}),
             )
         }  # fmt: skip
-        # Every device at home, for everyone and anyone new: a household.
-        household(admin)
         assert {u["showOn"] for u in admin.get("/api/access/users").json()} == {"home"}
         assert admin.get("/api/access/devices").json()["default"] == "home"
         home = TestClient(app)
@@ -499,8 +510,11 @@ def test_new_people_show_only_on_devices_they_sign_in_on(tmp_path):
             )
         }  # fmt: skip
         users = {u["name"]: u["showOn"] for u in admin.get("/api/access/users").json()}
-        # (Kids can't sign in by name: every device at home, rather than none.)
-        assert users == {"Ada": "signed-in", "Bo": "signed-in", "Kids": "home", "Lu": "signed-in"}
+        # (Kids can't sign in by name: on no device's list until an Admin
+        # chooses one; see the audit's test below.)
+        assert users == {
+            "Ada": "signed-in", "Bo": "signed-in", "Kids": "selected", "Lu": "signed-in"
+        }  # fmt: skip
 
         home, away = TestClient(app), away_from_home(app)
         tv = home.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]
@@ -509,8 +523,8 @@ def test_new_people_show_only_on_devices_they_sign_in_on(tmp_path):
             json={"name": "Bo", "password": "bo password", "app": "StationPlay for Android",
                   "deviceName": "Bo's Pixel", "picker": True},
         ).json()["deviceKey"]  # fmt: skip
-        assert (people(home, tv), people(away, tv)) == (["Ada", "Kids"], ["Ada"])
-        assert (people(home, phone), people(away, phone)) == (["Bo", "Kids"], ["Bo"])
+        assert (people(home, tv), people(away, tv)) == (["Ada"], ["Ada"])
+        assert (people(home, phone), people(away, phone)) == (["Bo"], ["Bo"])
         picked = home.post("/api/internal/picker/choose", json={"id": made["Bo"]["id"]},
                            headers=device(tv))  # fmt: skip
         assert picked.status_code == 404
@@ -521,15 +535,15 @@ def test_new_people_show_only_on_devices_they_sign_in_on(tmp_path):
             headers=device(tv),
         )
         assert signed.status_code == 200, signed.text
-        assert (people(home, tv), people(away, tv)) == (["Ada", "Bo", "Kids"], ["Ada", "Bo"])
-        assert people(home, phone) == ["Bo", "Kids"]
+        assert (people(home, tv), people(away, tv)) == (["Ada", "Bo"], ["Ada", "Bo"])
+        assert people(home, phone) == ["Bo"]
 
         # "default": as a new person is, for each of them.
         picker = f"/api/access/users/{made['Bo']['id']}/picker"
         assert admin.put(picker, json={"showOn": "all"}).json()["showOn"] == "all"
         assert admin.put(picker, json={"showOn": "default"}).json()["showOn"] == "signed-in"
         kids = f"/api/access/users/{made['Kids']['id']}/picker"
-        assert admin.put(kids, json={"showOn": "default"}).json()["showOn"] == "home"
+        assert admin.put(kids, json={"showOn": "default"}).json()["showOn"] == "selected"
         # (Choosing what they already have says nothing.)
         assert admin.put(picker, json={"showOn": "signed-in"}).status_code == 200
         log = admin.get("/api/logs?access_log=true").json()["text"]
@@ -541,6 +555,7 @@ def test_use_for_everyone(tmp_path):
     app = two_ports(tmp_path)
     with TestClient(app) as admin:
         admin.post("/api/access/users", json=ADA)
+        household(admin)
         made = {
             name: admin.post("/api/access/users", json={"name": name, "role": "user", **more}).json()
             for name, more in (
@@ -548,7 +563,6 @@ def test_use_for_everyone(tmp_path):
                 ("Rae", {}),
             )
         }  # fmt: skip
-        household(admin)
         home = TestClient(app)
         tv = home.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]
         tv_id = admin.get("/api/access/devices").json()["devices"][0]["id"]
@@ -594,14 +608,20 @@ def test_use_for_everyone(tmp_path):
         again = admin.post("/api/access/devices/everyone", json=everyone).json()
         assert (again["changed"], again["kept"]) == (0, ["Kids", "Rae"])
 
-        # Every device at home: everyone.
+        # Every device at home: everyone who can sign in by name; Rae, kept to
+        # the TV by an Admin, stays there (the audit of 1.30.1: Use for
+        # everyone leaves who can't sign in by name as they were, either way).
         got = admin.post("/api/access/devices/everyone", json={"showOn": "home"}).json()
-        assert got == {"default": "home", "changed": 5, "kept": []}
-        assert set(shown().values()) == {"home"}
+        assert got == {"default": "home", "changed": 4, "kept": ["Rae"]}
+        assert shown() == {"Ada": "home", "Bo": "home", "Cy": "home", "Kids": "home",
+                           "Lu": "home", "Rae": "selected"}  # fmt: skip
         chosen = admin.get("/api/access/devices").json()["chosen"]
-        assert chosen == {str(made["Rae"]["id"]): [tv_id]}  # (kept, for away from home)
+        assert chosen == {str(made["Rae"]["id"]): [tv_id]}
         log = admin.get("/api/logs?access_log=true").json()["text"]
-        assert "Ada set everyone to show on every device at home: 5 people changed" in log
+        assert (
+            "Ada set everyone to show on every device at home: 4 people changed, and Rae kept as "
+            "they were (no password or passcode)"
+        ) in log
 
 
 def test_an_admins_earlier_choice_stays_on_updating(tmp_path):
@@ -752,6 +772,7 @@ def test_an_admin_keeps_their_passcode_and_kids_get_one_from_an_admin(app):
         tv = TestClient(app)
         signed = tv.post("/api/internal/sign-in", json={**ADA, **TV}).json()
         key, ada = signed["deviceKey"], bearer(signed["token"])
+        choose_tv(admin, kids)
 
         # An Admin with a passcode can't remove it in an app; a new one is fine.
         assert tv.post("/api/internal/pin", json={"pin": "4321"}, headers=ada).status_code == 200
@@ -820,3 +841,129 @@ def test_a_new_passcode_doesnt_end_the_wait_after_wrong_ones(app):
             headers=device(key),
         )
         assert waits.status_code == 429
+
+
+# Found by the cold audit of 1.30.1 ------------------------------------------------
+
+
+def test_someone_with_no_password_or_pin_shows_nowhere_until_an_admin_chooses(app):
+    """On a server where new people show only on devices they sign in on,
+    someone who can't sign in (no password, no PIN) is on no device's list
+    until an Admin chooses one: never on every device at home by
+    themselves, for anyone there to pick."""
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        tv = TestClient(app)
+        key = tv.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]
+        den = admin.post("/api/access/users", json={"name": "Den", "role": "user"})
+        assert den.status_code == 201, den.text
+        assert den.json()["showOn"] == "selected"
+        assert people(tv, key) == ["Ada"]
+        picked = tv.post(
+            "/api/internal/picker/choose", json={"id": den.json()["id"]}, headers=device(key)
+        )
+        assert picked.status_code in (403, 404)
+        # Chosen for the TV by an Admin: there, and only there.
+        tv_id = admin.get("/api/access/devices").json()["devices"][0]["id"]
+        chose = admin.put(
+            f"/api/access/users/{den.json()['id']}/picker",
+            json={"showOn": "selected", "devices": [tv_id]},
+        )
+        assert chose.status_code == 200
+        assert people(tv, key) == ["Ada", "Den"]
+
+
+def test_someone_new_is_never_on_a_list_before_their_pin_is_set(app, monkeypatch):
+    """Adding someone with a PIN: there's no moment when they exist without
+    it (a device at home could pick them, PIN-less, then)."""
+    seen = []
+    real = devices.hash_password
+
+    def hashing(secret: str) -> str:
+        seen.append([u.name for u in app.state.ctx.db.users()])
+        return real(secret)
+
+    monkeypatch.setattr(devices, "hash_password", hashing)
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        household(admin)
+        made = admin.post(
+            "/api/access/users",
+            json={"name": "Den", "password": "den password", "role": "user", "pin": "4321"},
+        )
+        assert made.status_code == 201, made.text
+        assert made.json()["pin"] and made.json()["showOn"] == "home"
+    assert seen and all("Den" not in names for names in seen), seen
+
+
+def test_no_one_without_a_password_or_pin_is_listed_away_from_home_unchosen(tmp_path):
+    """Someone who can't sign in by name is never on a device's list away
+    from home unless an Admin chose that device, even where they once
+    signed in (before their PIN was removed)."""
+    app = two_ports(tmp_path)
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        lu = admin.post("/api/access/users", json={"name": "Lu", "role": "user", "pin": "1111"})
+        lu_id = lu.json()["id"]
+        home = TestClient(app)
+        key = home.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]
+        code = admin.post(f"/api/access/users/{lu_id}/invite").json()["code"]
+        signed = home.post(
+            "/api/internal/picker/sign-in", json={"name": "Lu", "code": code}, headers=device(key)
+        )
+        assert signed.status_code == 200, signed.text
+        on = f"/api/access/users/{lu_id}/picker"
+        assert admin.put(on, json={"showOn": "home"}).status_code == 200
+        assert admin.put(on, json={"pin": ""}).status_code == 200
+        away = away_from_home(app)
+        assert "Lu" not in people(away, key)
+        picked = away.post("/api/internal/picker/choose", json={"id": lu_id}, headers=device(key))
+        assert picked.status_code in (403, 404)
+        assert "Lu" in people(home, key)  # (every device at home, as chosen)
+
+
+def test_use_for_everyone_never_moves_someone_with_no_password_or_pin(tmp_path):
+    """Use for everyone, either way, leaves who can't sign in by name as they
+    were: a profile kept to one TV doesn't land on a child's tablet."""
+    app = two_ports(tmp_path)
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        room = admin.post("/api/access/users", json={"name": "Living Room", "role": "user"}).json()
+        home = TestClient(app)
+        tv = home.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]
+        tv_id = admin.get("/api/access/devices").json()["devices"][0]["id"]
+        on = f"/api/access/users/{room['id']}/picker"
+        assert admin.put(on, json={"showOn": "selected", "devices": [tv_id]}).status_code == 200
+        tablet = TestClient(app)
+        pad = tablet.post(
+            "/api/internal/sign-in", json={**ADA, **TV, "deviceName": "Kid's tablet"}
+        ).json()["deviceKey"]
+        assert "Living Room" not in people(tablet, pad)
+        got = admin.post("/api/access/devices/everyone", json={"showOn": "home"}).json()
+        assert got["kept"] == ["Living Room"]
+        assert "Living Room" not in people(tablet, pad)
+        assert "Living Room" in people(home, tv)
+
+
+def test_taken_off_a_device_ends_their_sign_in_there(app):
+    """When someone is no longer on a device's list (Use for everyone, or a
+    new Show on), a sign-in they got by picking themselves there ends."""
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        household(admin)
+        bo = admin.post(
+            "/api/access/users", json={"name": "Bo", "password": "bo password", "role": "user"}
+        ).json()
+        tv = TestClient(app)
+        key = tv.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]
+        picked = tv.post(
+            "/api/internal/picker/choose", json={"id": bo["id"]}, headers=device(key)
+        )
+        assert picked.status_code == 200, picked.text
+        as_bo = bearer(picked.json()["token"])
+        assert tv.get("/api/v1/stations", headers=as_bo).status_code == 200
+        # Bo never signed in on the TV with his password: off its list.
+        got = admin.post("/api/access/devices/everyone", json={"showOn": "signed-in"})
+        assert got.status_code == 200
+        assert "Bo" not in people(tv, key)
+        assert tv.get("/api/v1/stations", headers=as_bo).status_code == 401

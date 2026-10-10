@@ -259,7 +259,10 @@ def test_changing_your_password_in_an_app(pat, app):
 
 
 def test_no_password_to_change_and_the_limit_on_wrong_ones(pat, app):
-    kids = pat.post("/api/access/users", json={"name": "Kids", "role": "user"}).json()
+    # (Kids, on every device at home, as a household has them.)
+    kids = pat.post(
+        "/api/access/users", json={"name": "Kids", "role": "user", "showOn": "home"}
+    ).json()
     pat.post("/api/access/users", json={**SAM, "role": "user"})
     tv = browser(app)
     key = tv.post(

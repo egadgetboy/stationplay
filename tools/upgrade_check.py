@@ -384,6 +384,17 @@ def waited(found, seconds: float = ALERT_WAIT_S) -> bool:
     return True
 
 
+def tables_of(data: Path) -> list[tuple]:
+    """A data folder's database, as its tables and indexes are defined."""
+    conn = sqlite3.connect(f"{(data / 'stationplay.db').resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        return conn.execute(
+            "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall()
+    finally:
+        conn.close()
+
+
 def kept_alerts(data: Path) -> list[tuple]:
     """The alerts kept in a data folder's database (none before 1.30.3)."""
     conn = sqlite3.connect(f"{(data / 'stationplay.db').resolve().as_uri()}?mode=ro", uri=True)
@@ -486,6 +497,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         # that changes nothing in it makes no copy, as the README says.)
         checks.section(f"Updated to {__version__}")
         changes = changes_needed(data / "stationplay.db")
+        tables_before = tables_of(data)
         sp = start(ROOT, data, f"{__version__}-updated")
         if sp is None:
             return
@@ -496,7 +508,13 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         has_data(checks, sp.url, made, __version__, "updated")
         copies = sorted((data / "backups").glob(f"before-{__version__}-*.db"))
         logs = page.get("/api/logs").text
-        if changes:
+        # (Whether the database changed is read from the database itself, not
+        # taken from the code under test: a change changes_needed() misses
+        # would otherwise pass with no copy.)
+        changed = tables_of(data) != tables_before
+        checks.ok(bool(changes) == changed, "what StationPlay said it would change is what changed",
+                  (changes, changed))  # fmt: skip
+        if changes or changed:
             checks.ok(len(copies) == 1, "the database was backed up before it was changed",
                       (changes, copies))  # fmt: skip
             checks.ok(bool(copies) and f"Backed up the database to backups/{copies[0].name}"

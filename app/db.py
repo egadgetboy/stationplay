@@ -1646,16 +1646,28 @@ class Database:
         return (_user(row), row["password"]) if row else None
 
     def add_user(
-        self, name: str, password_hash: str, role: str, created_ms: int, max_stations: int | None
+        self,
+        name: str,
+        password_hash: str,
+        role: str,
+        created_ms: int,
+        max_stations: int | None,
+        pin_hash: str = "",
+        show_on: str = "",
     ) -> User:
-        """Adds a user; sqlite3.IntegrityError if there's one by that name."""
+        """Adds a user, with their PIN and where they're shown in the same
+        write (so they never exist without them); sqlite3.IntegrityError if
+        there's one by that name."""
         with self._lock, self._conn:
             cur = self._conn.execute(
-                "INSERT INTO users (name, password, role, created_ms, max_stations) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (name, password_hash, role, created_ms, max_stations),
+                "INSERT INTO users (name, password, role, created_ms, max_stations, pin, show_on) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (name, password_hash, role, created_ms, max_stations, pin_hash, show_on),
             )
-        return User(int(cur.lastrowid or 0), name, role, created_ms, 0, max_stations)
+        return User(
+            int(cur.lastrowid or 0), name, role, created_ms, 0, max_stations,
+            has_pin=bool(pin_hash), show_on=show_on, has_password=bool(password_hash),
+        )  # fmt: skip
 
     def user(self, user_id: int) -> User | None:
         with self._lock:
@@ -2088,6 +2100,20 @@ class Database:
                 "SELECT password FROM users WHERE id = ?", (user_id,)
             ).fetchone()
         return str(row["password"]) if row else ""
+
+    def picker_sessions(self) -> list[tuple[int, int]]:
+        """Who's signed in on which linked device: (user's id, device's id)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT user_id, device_id FROM sessions WHERE device_id IS NOT NULL"
+            ).fetchall()
+        return [(int(r["user_id"]), int(r["device_id"])) for r in rows]
+
+    def end_device_sessions(self, user_id: int, device_id: int) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "DELETE FROM sessions WHERE user_id = ? AND device_id = ?", (user_id, device_id)
+            )
 
     def set_show_on(self, user_ids: list[int], show_on: str) -> None:
         with self._lock, self._conn:

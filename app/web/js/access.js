@@ -320,7 +320,7 @@ $('#showOnEveryone').addEventListener('click', async () => {
   let users;
   try { users = await api('/api/access/users'); } catch (err) { said.textContent = err.message; return; }
   const moving = users.filter(u => u.showOn !== showOn);
-  const kept = showOn === 'signed-in' ? moving.filter(u => !signsInByName(u)).map(u => u.name) : [];
+  const kept = moving.filter(u => !signsInByName(u)).map(u => u.name);  // (either way: see devices.py)
   const changing = moving.length - kept.length;
   if (!changing) { said.textContent = kept.length ? `Nothing to change.${keptSaid(kept)}` : `Everyone already shows on ${label}.`; return; }
   // (Picking themselves from a device's list isn't signing in on it.)
