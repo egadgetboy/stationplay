@@ -1050,6 +1050,10 @@ def test_versions_of_different_lengths_finish_by_the_one_playing(app, plex):
         assert report(home, "300", 118 * MINUTE, session=played["session"], sequence=2) == {
             "positionMs": 0, "watched": True
         }  # fmt: skip
+        # Without its playing: anywhere in its longest version is taken.
+        assert report(home, "300", 125 * MINUTE)["watched"] is True
+        too_far = {"key": "300", "positionMs": 141 * MINUTE}
+        refused(home.post("/api/internal/progress", json=too_far), 400)
 
 
 def test_letters_and_totals_follow_what_someone_sees(app, plex):
@@ -1065,3 +1069,17 @@ def test_letters_and_totals_follow_what_someone_sees(app, plex):
         ]  # fmt: skip
         page = home.get("/api/internal/libraries/2?unwatched=1&start=2&size=2").json()
         assert [m["title"] for m in page["items"]] == ["Date", "Elder"]
+
+
+def test_the_home_screen_opened_again_asks_plex_nothing(app, plex):
+    with TestClient(app) as home:
+        shared(home)
+        report(home, "300", 20 * MINUTE)
+        report(home, "201", 50 * MINUTE)
+        home.get("/api/internal/home")
+        asked = len(plex.requests)
+        again = home.get("/api/internal/home").json()
+        assert len(plex.requests) == asked
+        assert [c["key"] for c in again["continue"]] == ["202", "300"]
+        # (Lists keep no summaries; details have them.)
+        assert home.get("/api/internal/items/202").json()["summary"] == "Episode 2 summary"

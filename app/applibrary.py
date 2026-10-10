@@ -1465,7 +1465,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 return {"positionMs": ondemand.resume_at(was), "watched": was[1]}
             session.sequence = body.sequence
         length = ondemand.length_of(e, session.media if session is not None else None)
-        if body.positionMs is not None and length and body.positionMs > length + PAST_END_MS:
+        # (Past the end of what plays; without its playing, of its longest version.)
+        longest = max([length or 0, *(m.duration_ms or 0 for m in e.media if session is None)])
+        if body.positionMs is not None and longest and body.positionMs > longest + PAST_END_MS:
             raise HTTPException(400, PAST_END)
         if session is not None and ctx.plays.find(session.id) is session:
             ctx.plays.get(session.id)  # (still watching)

@@ -748,9 +748,10 @@ isn't given) and `?size=` (1 to 200; 50 if it isn't given), sorted by
 `?sort=`:
 
 - `title` (the default): by the library's sort title (or the title without
-  a leading "The", "A" or "An"), case and accents aside ("Élan" with the
-  Es), numbers as numbers ("Saw 2" before "Saw 10"); those starting with a
-  digit, or anything but A to Z (another alphabet, say), first.
+  a leading "The", "A" or "An"), from its first letter or digit, case and
+  accents aside ("Élan" with the Es), numbers as numbers ("Saw 2" before
+  "Saw 10"); those starting with a digit, or anything but A to Z (another
+  alphabet, say), first.
 - `added`: newest first.
 - `released`: newest first; those without a date last.
 
@@ -1230,8 +1231,8 @@ menu: `{"key": "1234", "watched": true}` (or `false`).
 - **Bounds.** `positionMs` is a whole number of milliseconds, 0 to 7 days;
   anything else is refused (400, with the sentence to show). A little past
   the end is the end; more than 10 minutes past the end of what plays (the
-  version playing, with `session`) is refused: "That's past the end of this
-  program."
+  version playing, with `session`; without it, the longest version) is
+  refused: "That's past the end of this program."
 - **Watched**: into an episode's closing credits, or 90% of the way
   through what plays (for a movie in several files, its first: see
   `POST /api/internal/play`), whichever comes first. It then starts from

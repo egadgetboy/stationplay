@@ -20,7 +20,7 @@ import time
 import unicodedata
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from . import catalog
@@ -197,6 +197,12 @@ class NotShared(LookupError):
     the apps are told the same either way)."""
 
 
+def listed(e: Entry) -> Entry:
+    """A show, movie or episode as a list keeps it: without its summary
+    (lists never show it, and it's most of what they'd keep)."""
+    return replace(e, summary="") if e.summary else e
+
+
 class Whole:
     """A whole library's shows or movies (or one genre's of them), as
     fetched, and as sorted and searched (each made as it's first asked for,
@@ -237,7 +243,8 @@ class Catalog:
         self.library = library
         self.shared = shared
         self._where: OrderedDict[str, str] = OrderedDict()  # key -> its library
-        self._entries: OrderedDict[str, tuple[float, Entry]] = OrderedDict()
+        self._entries: OrderedDict[str, tuple[float, Entry]] = OrderedDict()  # (in detail)
+        self._cards: OrderedDict[str, tuple[float, Entry]] = OrderedDict()  # (as lists have them)
         self._episodes: OrderedDict[str, Whole] = OrderedDict()  # (shows' episodes)
         self._wholes: OrderedDict[tuple[str, str], Whole] = OrderedDict()
         self._genres: dict[str, tuple[float, list[dict[str, str]]]] = {}
@@ -370,7 +377,7 @@ class Catalog:
         async def fetch() -> list[Entry]:
             fingerprint = await self.fingerprint()
             async with self._turns:
-                found = await self.library.show_episodes(show)
+                found = [listed(e) for e in await self.library.show_episodes(show)]
             self.learn(found)
             self._episodes[show] = Whole(found, fingerprint)
             self._episodes.move_to_end(show)
@@ -461,7 +468,8 @@ class Catalog:
             rest = range(len(first), total, WHOLE_PAGE) if first else range(0)
             pages = await asyncio.gather(*(page(start) for start in rest))
             together = first + [e for _, p in pages for e in p]
-            entries = list({e.key: e for e in together}.values())  # (each once)
+            # (Each once, and without what lists never show: their summaries.)
+            entries = list({e.key: listed(e) for e in together}.values())
             self.learn(entries)
             whole = self._wholes[key] = Whole(entries, fingerprint)
             self._wholes.move_to_end(key)
@@ -524,13 +532,28 @@ class Catalog:
 
     async def entries(self, keys: list[str]) -> list[Entry]:
         """Several shows, movies or episodes, in the order asked, leaving out
-        those gone or not shared."""
-        if not keys:
-            return []
-        async with self._turns:
-            found = await self.library.entries(keys)
-        self.learn(found)
-        return [e for e in found if self.shared_library(e)]
+        those gone or not shared: those kept (in detail, or as a list has
+        them) from what's kept, and the rest asked of the library (and kept,
+        as lists have them, ENTRY_S)."""
+        now = time.monotonic()
+        kept: dict[str, Entry] = {}
+        for key in keys:
+            for place in (self._entries, self._cards):
+                found = place.get(key)
+                if found is not None and now - found[0] < ENTRY_S:
+                    kept[key] = found[1]
+                    break
+        if missing := [key for key in keys if key not in kept]:
+            async with self._turns:
+                fetched = await self.library.entries(missing)
+            self.learn(fetched)
+            for e in fetched:
+                kept[e.key] = listed(e)
+                self._cards[e.key] = (now, kept[e.key])
+                self._cards.move_to_end(e.key)
+            while len(self._cards) > ENTRIES_KEPT:
+                self._cards.popitem(last=False)
+        return [x for key in keys if (x := kept.get(key)) is not None and self.shared_library(x)]
 
 
 # Sorting, jumping to a letter, searching, and others like a title ------------------
@@ -978,7 +1001,7 @@ def where_they_are(position_ms: int, watched: bool) -> str:
     return FINISHED if watched else MARKED
 
 
-# What's next in a show (docs/on-demand.md, "Up next"): why it's the one.
+# What's next in a show (see next_up): why it's the one.
 GOING, AFTER, FIRST = "going", "after", "first"
 
 
@@ -986,7 +1009,7 @@ def next_up(
     episodes: list[Entry], rows: Iterable[tuple[str, str]], watched: set[str]
 ) -> tuple[Entry, str] | None:
     """The episode of a show to play next, and why (the one place it's
-    decided: see docs/on-demand.md, "Up next"). `episodes`: the show's, in
+    decided: see "Up next" in docs/on-demand.md). `episodes`: the show's, in
     order; `rows`: someone's progress in them, newest first, as (key,
     where_they_are); `watched`: the keys of those they've watched.
 

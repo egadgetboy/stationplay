@@ -123,13 +123,14 @@ the first, and kept (`Whole` in `ondemand.py`): as it is for 2 minutes,
 then for as long as the library's fingerprint (Plex's times for each
 library's changes) says nothing has changed, up to 30 minutes. A genre's
 list is fetched as one of its own. At most 8 lists are kept, and 40,000
-shows and movies among them; a show's episodes, for its 50 latest shows,
-and 40,000 episodes among them.
+shows and movies among them; and the episodes of the 50 shows asked about
+lately, 40,000 episodes among them, kept the same way.
 
 - **Sorting.** By title: the library's sort title (Plex's leaves out a
   leading "The", "A" or "An"; without one, StationPlay leaves those out),
-  case and accents aside, numbers as numbers, "#" (digits, and anything
-  but A to Z) first. Newest added, or newest released (those without a
+  from its first letter or digit ("¡Three Amigos!" with the Ts), case and
+  accents aside, numbers as numbers, "#" (digits, and anything but A to Z,
+  such as another alphabet) first. Newest added, or newest released (those without a
   date last), ties in the order of their titles. Titles alike are in the
   order of their keys, so pages never repeat or skip one, and every letter
   is together, for jumping to it.
@@ -149,8 +150,12 @@ and 40,000 episodes among them.
   for its pages (10 of them, asked at once, 6 at a time); after that, every
   page, sort, filter, letter and search comes from what's kept, in tens of
   milliseconds, without asking Plex (checked by the tests). A page of 200
-  is about 35 KB; a show's 500 episodes about 140 KB. Each library's
-  recently added is kept a minute, as the home screen is opened often.
+  is about 35 KB; a show's 500 episodes about 140 KB. Lists are kept
+  without each title's summary (cards don't show it; details do), which
+  halves what they take: 5,000 movies, about 4 MB.
+- **The home screen**, opened often, asks Plex for nothing when it's
+  opened again soon: each library's recently added is kept a minute, and
+  the Resume row's shows and movies 10 minutes.
 
 A **card** (in lists) is a show's or movie's key, kind, title and year,
 with its poster's address and, for a show, how many episodes it has and how
@@ -487,7 +492,8 @@ progress (user_id, rating_key, show_key, position_ms, duration_ms,
   that playing (still going, or one of the last 200 ended) is late, and
   changes nothing. Without numbers, they count as they arrive.
 - **Bounds.** A position from 0 to 7 days; more than 10 minutes past the
-  end of what plays is refused, a little past it is the end.
+  end of what plays (without `session`, its longest version) is refused, a
+  little past it is the end.
 - **Plex.** A report for something playing (`session`) never asks Plex
   anything (the playing has the program), so reporting every second is
   fine, and is kept even while Plex is away. Nothing is sent to Plex:
