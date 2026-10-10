@@ -1,10 +1,10 @@
 # The library: design (Phase 1)
 
-StationPlay is moving from "built on Plex" to "built on a library", where a
-library is either a Plex library (as today) or a folder of your own (later).
-This document is the design for Phase 1: one library layer that everything
-reads through, with Plex as its first source, and nothing about the stations
-changing. The full product plan is in the doc "StationPlay: the full plan".
+StationPlay is moving from "built on Plex" to "built on a library." A
+library is either a Plex library, as now, or a folder of your own (later).
+This is the design for Phase 1: one library layer that everything reads
+through, with Plex as its first source. Nothing about the stations changes.
+The full product plan is in the document "StationPlay: the full plan."
 
 ## Goals
 
@@ -14,28 +14,33 @@ changing. The full product plan is in the doc "StationPlay: the full plan".
    their stored data and every test behave exactly as before.
 3. A second source (your folders, Phase 3) can be added without touching
    stations, the scheduler, the broadcaster, the file checks or the apps.
-4. What is about Plex the server, not about a library, stays on the Plex
-   client: the tuner and its guide refresh, who's watching, blocking, Plex
-   accounts and Plex Pass.
+4. Anything about the Plex server itself, rather than a library, stays on
+   the Plex client: the tuner and its guide refresh, who's watching,
+   blocking, Plex accounts and Plex Pass.
 
 ## Program identity: keys
 
-Every program, show, movie, collection and library has a key: a short string.
+Every program, show, movie, collection and library has a key, which is a
+short string.
 
-- Plex's keys stay exactly as they are: digits (`"12345"`). Nothing stored
-  today changes, so there's no data migration.
-- Folder libraries' keys start with `f` (`"f812"`), so they can never collide
-  with Plex's. Libraries are `"f1"`, `"f2"`; Plex's library keys stay digits.
-- The layer decides which source a key belongs to by its shape. Code outside
-  the layer treats keys as opaque strings, as most of it already does.
-- Until folder libraries exist, a folder key is simply "not found" (404):
-  it's never sent to Plex, and never looks like Plex being away.
-- Validation that today means "a Plex key" (`isdigit()`, `_plex_key`, the
-  `_PLEX_PATH` rule) becomes "a library key" (digits, or `f` + digits) in
-  Phase 3, with the folder source. Accepting folder keys before anything
-  can answer for them would only let bad data in.
+- **Plex's keys don't change.** They're digits (`"12345"`). Nothing already
+  stored changes, so there's no data migration.
+- **Folder keys start with `f`.** A folder library's keys look like
+  `"f812"`, so they can never collide with Plex's. Libraries are `"f1"`,
+  `"f2"`; Plex's library keys stay digits.
+- **The layer routes by shape.** It decides which source a key belongs to
+  by its shape. Code outside the layer treats keys as opaque strings, as
+  most of it already does.
+- **Folder keys aren't found yet.** Until folder libraries exist, a folder
+  key is simply "not found" (404). It's never sent to Plex, and never looks
+  like Plex being unreachable.
+- **Validation changes in Phase 3.** Checks that now mean "a Plex key"
+  (`isdigit()`, `_plex_key`, the `_PLEX_PATH` rule) become "a library key"
+  (digits, or `f` + digits) in Phase 3, with the folder source. Accepting
+  folder keys before anything can answer for them would only let bad data
+  in.
 
-Where keys are stored today (all unchanged): `channels.sources` and the
+Keys are stored in these places, all unchanged: `channels.sources` and the
 feature and block sources (JSON), `era_items` (rating, show and part keys),
 `eras.first_pass`, `eras.tail`, `eras.special`, `markers`, `marathons`,
 `special_runs`, `program_sets`, `scans`, the `meta` rows `plex_libraries`,
@@ -43,15 +48,15 @@ feature and block sources (JSON), `era_items` (rating, show and part keys),
 
 ## The layer
 
-`Library` is the one object the rest of StationPlay holds (`ctx.library`).
-It routes each call to the source that owns the key, and for calls that span
-libraries (listing libraries, collections, change detection) it asks every
+`Library` is the only object the rest of StationPlay holds (`ctx.library`).
+It routes each call to the source that owns the key. For calls that span
+libraries (listing libraries, collections, change detection), it asks every
 source and combines the answers. Errors are `LibraryError` (Plex's
 `PlexError` is one), with the HTTP-style `status` the source answered.
 
 In Phase 1 there's one source, so `Library` calls the Plex client directly.
 The folder source (Phase 3) answers the same calls, and `Library` gains the
-routing between the two; this table is what each source provides:
+routing between the two. This table shows what each source provides:
 
 | Area | Methods | Plex source does it with |
 |---|---|---|
@@ -67,52 +72,56 @@ routing between the two; this table is what each source provides:
 | Commercials | `locations()` → each library's folders and kind | sections' locations |
 | Status | `configured`, `check()` | `configured`, `identity()` |
 
-`Item`, `Media` (a version of a program's file, with its `parts` when it's
-in several files: see `catalog.py`) and the source JSON shapes stay the
-shared language: a source turns its own data into those, as `plex.to_item`
-and `plex.to_media` do today.
+`Item`, `Media` and the source JSON shapes stay the shared language. `Media`
+is a version of a program's file, with its `parts` when it's in several
+files (see `catalog.py`). Each source turns its own data into these shapes,
+as `plex.to_item` and `plex.to_media` do now.
 
-What moves off `ctx.plex` (every call site listed in the Plex map): browsing,
-station building, filters, smart stations, collections, playing,
-re-added-item following, change detection, artwork, markers, the scanner's
-credits markers, commercials folders, Sonarr/Radarr's IDs and folder scans,
-and the "is Plex set up" gates in the scanner, the list re-checks and
-`/api/broken/check`, which become "is a library set up".
+These move off `ctx.plex` (the Plex map lists every call site): browsing,
+station building, filters, smart stations, collections, playing, following
+re-added items, change detection, artwork, markers, the scanner's credits
+markers, commercials folders, Sonarr/Radarr's IDs and folder scans, and the
+"is Plex set up" checks in the scanner, the list re-checks and
+`/api/broken/check`, which become "is a library set up."
 
-What stays on `ctx.plex`: `hdhr`, the guide refresh (`dvrs`, `reload_guide`),
-`sessions`, `accounts`, `plex_pass`, `stop_session` and `identity` for Plex's
-status line.
+These stay on `ctx.plex`: `hdhr`, the guide refresh (`dvrs`,
+`reload_guide`), `sessions`, `accounts`, `plex_pass`, `stop_session` and
+`identity` for Plex's status line.
 
 ## StationPlay's API, and the apps' own addresses
 
-Two small, documented sets of addresses, reusing what exists. StationPlay's
-API, under `/api/v1`, is for anyone's scripts and players as well as the
-apps: the server, its stations and their guide, and a few Admin actions,
-with API tokens and an OpenAPI spec (`docs/api.md`). What only
-StationPlay's apps use (signing in, connection tests, the library on
-demand) is under `/api/internal` (`docs/internal-api.md`), free to change
-along with the apps. What follows is the outline.
+There are two small, documented sets of addresses, built on what already
+exists:
 
-- `GET /api/v1/server` (open): name, version, API version, whether
-  signing in is required, and the features this server has.
-- `POST /api/internal/sign-in`: name and password in, a session token out,
-  for apps (the page keeps using its cookie). `POST /api/internal/sign-out`
-  ends it. Apps send the token as `Authorization: Bearer <token>`;
-  sessions, the 30-day lifetime, signing out and the access log all work
-  as today.
-- `GET /api/v1/stations`: every station the person may watch: number, name,
-  description, logo address, the Intro Bumper's colors for its logo, its
-  HLS address, and what's on now and next.
-- `GET /api/v1/guide?from=&to=` (at most 2 days): each station's programs:
-  start, end, kind, title, episode title, season, episode, year, summary,
-  its picture's address, and the special it's part of, if any.
-- Station logos and HLS as today (`/channel-icon/…`, `/hls/…`).
+- **StationPlay's API**, under `/api/v1`, is for anyone's scripts and
+  players as well as the apps. It covers the server, its stations and their
+  guide, and a few Admin actions, with API tokens and an OpenAPI spec
+  (`docs/api.md`).
+- **The apps' own addresses**, under `/api/internal`
+  (`docs/internal-api.md`), are what only StationPlay's apps use: signing
+  in, connection tests and Media. They can change along with the apps.
+
+In outline:
+
+- `GET /api/v1/server` (open): name, version, API version, whether signing
+  in is required, and the features this server has.
+- `POST /api/internal/sign-in`: takes a name and password and returns a
+  session token, for apps. StationPlay's page keeps using its cookie.
+  `POST /api/internal/sign-out` ends the session. Apps send the token as
+  `Authorization: Bearer <token>`. Sessions, the 30-day lifetime, signing
+  out and the access log all work as before.
+- `GET /api/v1/stations`: every station the person may watch, with its
+  number, name, description, logo address, the Intro Bumper's colors for
+  its logo, its HLS address, and what's on now and next.
+- `GET /api/v1/guide?from=&to=` (at most 2 days): each station's programs,
+  with start, end, kind, title, episode title, season, episode, year,
+  summary, its picture's address, and the special it's part of, if any.
+- Station logos and HLS work as before (`/channel-icon/…`, `/hls/…`).
 - Every answer carries `StationPlay-API: 1`. Additions never break version
-  1; a breaking change would be version 2, served beside it.
+  1. A breaking change would be version 2, served alongside it.
 
 Tests check each address against its document (`docs/api.md` or
-`docs/internal-api.md`), so the documents and the server can't drift
-apart.
+`docs/internal-api.md`), so the documents and the server can't drift apart.
 
 ## Order of work
 
