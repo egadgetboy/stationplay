@@ -206,10 +206,38 @@ alerts).
    addresses answer within 8 seconds with 503 and a sentence to show;
    offer to try again (what was being fetched carries on, so it's often
    ready a moment later).
+7. **Report a problem.** Offer it on a movie's or an episode's page, in
+   the player's menu, and in a station's player, when `user.canReport` is
+   true in `GET /api/internal/me` (and always while signing in is off).
+   Ask `GET /api/internal/report-choices` for the choices when it's chosen,
+   and show them under their groups, in order: never a list of your own.
+   Send the one picked with `POST /api/internal/report-problem`: with the
+   key, or for a station's player, its number; and from a player, where it
+   is (`positionMs`) and how it's playing (`method`, `version`, `audio`,
+   `subtitle`). Show the answer's `detail` as it is ("Thanks. An Admin will
+   take a look."), and a refusal's `detail` as it is too (the limits: "You've
+   reported this one today. Thanks."; reporting turned off). See Reporting
+   a problem.
+8. **What's broken doesn't play.** A version StationPlay found broken
+   never plays: when another one plays in its place, `why` says so (for
+   `direct` too: show it in the player's info); when every version is
+   broken, the answer is 422 with the `detail` "This one can't play right
+   now. An Admin has been told.": show it as it is. An item's
+   `versions[].problem` says what was found in each version (`broken` or
+   `damaged`): mark a broken one, so the viewer chooses another.
+9. **Problems say what and where.** With `library-failed` and
+   `library-stopped`, send the playing's `session` and `positionMs` (see
+   `POST /api/internal/problem`): StationPlay checks that file there first.
+10. **Alerts about files.** For an Admin, alerts may now be `files` (see
+    Admin alerts): notify once for each `id`, as for any other, and offer
+    a way to the Broken files tab on StationPlay's page if the app links
+    to it.
 
 A server before 1.30.0 ignores `sequence`, answers a show's episodes all at
 once without `total` and `start` (take them as the whole list), and sends
-pictures without an `ETag`.
+pictures without an `ETag`. It doesn't send `user.canReport`,
+`versions[].problem`, or `files` alerts, and answers 404 for the report
+addresses: without them, don't offer Report a problem.
 
 ## POST /api/internal/link
 

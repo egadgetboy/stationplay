@@ -15,9 +15,11 @@ from home; setting a passcode or changing a password from the apps (as an
 outsider, as someone else, an Admin's passcode, its format, the limits);
 Admin alerts and the web address they're sent to (only for Admins; only
 http and https, no redirects followed, never waited on); each person's
-languages (their own only, and only languages StationPlay knows); and
-Media's addresses (every one refusing what a Kid's level hides, the same
-way, and taking only what's bounded).
+languages (their own only, and only languages StationPlay knows); Media's
+addresses (every one refusing what a Kid's level hides, the same way, and
+taking only what's bounded); and people's reports (never from an outsider,
+always the sender's own, within their level and the limits, the choices
+only the server's, and only an Admin sees and acts on them).
 
 It's a tool, not part of CI (the test suite covers these as unit tests). Run
 it from the repo root:  python -m tools.attack_check   (add -v to see every
@@ -31,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import secrets
 import socket
 import sys
@@ -97,6 +100,10 @@ def build_plex(tmp: Path) -> LibraryPlex:
     for key in ("201", "211", "300", "301"):
         fp.describe(key)
         fp.files[key] = b"a program" * 100
+    # (Cartoons anyone may see, for the limits on people's reports.)
+    for n in range(12):
+        fp.add_movie(f"32{n:02d}", f"Cartoon {n + 1}", f"/m/c{n}.mkv", 7 * 60_000, section="2",
+                     contentRating=["G"])  # fmt: skip
     return fp
 
 
@@ -433,6 +440,10 @@ async def _attacks(checks: Checks, app, home: str, net: str) -> None:
     # 17) Media: every address refuses what a level hides, the same way, and
     # takes only what's bounded.
     await _library(checks, app, home, admin_h, kit_h)
+
+    # 18) People's reports: only from someone signed in, as themselves, within
+    # their level and the limits; and only an Admin sees and acts on them.
+    await _reports(checks, app, home, net, admin_h, sam_h, kit_h)
 
 
 async def _media_away(
@@ -1080,6 +1091,125 @@ async def _library(checks: Checks, app, home: str, admin_h: dict, kit_h: dict) -
             checks.ok(r.status_code == wanted and said and plain_refusal(r),
                       f"{method} {path[:60]} is answered {wanted}, plainly",
                       f"got {r.status_code}: {r.text[:80]}")  # fmt: skip
+
+
+async def _reports(
+    checks: Checks, app, home: str, net: str, admin_h: dict, sam_h: dict, kit_h: dict
+) -> None:
+    """People's reports (reports.py): an outsider can't send one, read the
+    choices or touch the Broken files tab; a report is always the sender's
+    own, whatever it says; only what someone may see; the limits hold, all
+    at once too; the choices are only the server's, and everything sent is
+    bounded; and only an Admin sees reports and acts on them."""
+    checks.section("People's reports")
+    ctx = app.state.ctx
+    https = {"X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.90"}
+    report = "/api/internal/report-problem"
+    async with httpx.AsyncClient(base_url=net) as out:
+        for token in ({}, {"Authorization": "Bearer made-up"}):
+            for method, path in (("GET", "/api/internal/report-choices"), ("POST", report),
+                                 ("GET", "/api/reports"), ("POST", "/api/reports/300/dismiss"),
+                                 ("POST", "/api/reports/300/replace")):  # fmt: skip
+                r = await out.request(method, path, headers={**https, **token},
+                                      json={"choice": "no-sound", "key": "300"})  # fmt: skip
+                made_up = " with a made-up token" if token else ""
+                checks.ok(r.status_code == 401, f"an outsider can't {method} {path}{made_up}",
+                          f"got {r.status_code}")  # fmt: skip
+        r = await out.post(report, headers=sam_h, json={"choice": "no-sound", "key": "300"})
+        checks.ok(r.status_code == 403, "a report isn't taken over plain HTTP from the internet",
+                  f"got {r.status_code}")  # fmt: skip
+        r = await out.post(report, headers={**https, **sam_h},
+                           json={"choice": "no-sound", "key": "300"})  # fmt: skip
+        checks.ok(r.status_code in (403, 404),
+                  "with away from home off, nothing in Media is reported through the public port",
+                  f"got {r.status_code}")  # fmt: skip
+    async with httpx.AsyncClient(base_url=home) as c:
+        # Only an Admin sees reports, and acts on them.
+        for who, headers in (("a User", sam_h), ("a Kid", kit_h)):
+            for method, path in (("GET", "/api/reports"), ("POST", "/api/reports/300/dismiss"),
+                                 ("POST", "/api/reports/300/replace"),
+                                 ("POST", "/api/reports/300/better"), ("GET", "/api/broken")):  # fmt: skip
+                r = await c.request(method, path, headers=headers)
+                checks.ok(r.status_code == 403, f"{who} can't {method} {path}",
+                          f"got {r.status_code}")  # fmt: skip
+        # A report is the sender's own, whatever else it says.
+        sent = await c.post(report, headers=sam_h, json={
+            "choice": "wrong-details", "key": "300", "who": ADMIN["name"], "user": ADMIN["name"],
+            "userId": 1, "device": "Ada's TV", "method": "<script>x</script>",
+            "audio": "<img src=x>"})  # fmt: skip
+        checks.ok(sent.status_code == 200, "Sam reports a problem", f"got {sent.status_code}")
+        rows = (await c.get("/api/reports", headers=admin_h)).json()["reports"]
+        mine = [x for row in rows if row["key"] == "300" for x in row["reports"]]
+        checks.ok(
+            len(mine) == 1 and mine[0]["who"] == USER["name"] and "Ada" not in mine[0]["device"],
+            "a report is always its sender's, whatever it says", f"got {mine}",
+        )  # fmt: skip
+        checks.ok("<script" not in json.dumps(rows) and "<img" not in json.dumps(rows),
+                  "what an app sends about how it played is never kept as it is")  # fmt: skip
+        checks.ok(ctx.broken.keys() == set() and not ctx.scanner.waiting("300"),
+                  "a report alone takes nothing off the air")  # fmt: skip
+        # Only what someone may see; answered as for what isn't there.
+        gone = (await c.post(report, headers=kit_h,
+                             json={"choice": "no-sound", "key": "999999"})).json()  # fmt: skip
+        for body, what in (({"choice": "no-sound", "key": "301"}, "a movie their level hides"),
+                           ({"choice": "no-sound", "key": "211"}, "an episode their level hides"),
+                           ({"choice": "no-sound", "key": "110"}, "a show their level hides")):  # fmt: skip
+            r = await c.post(report, headers=kit_h, json=body)
+            checks.ok(r.status_code == 404 and r.json() == gone,
+                      f"the Kid reporting {what} is answered as though it weren't there",
+                      f"got {r.status_code}")  # fmt: skip
+        nowhere = (await c.post(report, headers=kit_h,
+                                json={"choice": "no-sound", "station": 77})).json()  # fmt: skip
+        r = await c.post(report, headers=kit_h, json={"choice": "no-sound", "station": 5})
+        checks.ok(r.status_code == 404 and r.json() == nowhere,
+                  "the Kid reporting a station their level hides is answered as for none",
+                  f"got {r.status_code}")  # fmt: skip
+        # The choices are the server's; everything sent is bounded.
+        for body, wanted in (
+            ({"choice": "it's broken", "key": "300"}, 400), ({"choice": "x" * 41, "key": "300"}, 400),
+            ({"choice": "No sound", "key": "300"}, 400), ({"choice": "no-sound"}, 400),
+            ({"choice": "no-sound", "key": "300", "station": 3}, 400),
+            ({"choice": "no-sound", "key": "x" * 21}, 400),
+            ({"choice": "no-sound", "key": "..%2f..%2fetc"}, 404),
+            ({"choice": "no-sound", "station": 0}, 400), ({"choice": "no-sound", "station": -3}, 400),
+            ({"choice": "no-sound", "station": 10**7}, 400),
+            ({"choice": "no-sound", "key": "300", "positionMs": -1}, 400),
+            ({"choice": "no-sound", "key": "300", "positionMs": 2**63}, 400),
+            ({"choice": "no-sound", "key": "300", "version": "v" * 41}, 400),
+            ({"choice": "no-sound", "key": "300", "audio": "a" * 41}, 400),
+            ({"choice": "no-sound", "key": "300", "method": "m" * 21}, 400),
+        ):  # fmt: skip
+            r = await c.post(report, headers=kit_h, json=body)
+            said = isinstance(r.json().get("detail"), str) and "Traceback" not in r.text
+            checks.ok(r.status_code == wanted and said,
+                      f"a report of {str(body)[:60]} is answered {wanted}, plainly",
+                      f"got {r.status_code}: {r.text[:80]}")  # fmt: skip
+        choices = (await c.get("/api/internal/report-choices", headers=kit_h)).json()["choices"]
+        checks.ok(len(choices) == 12, "anyone signed in reads the choices")
+        # The limits: one a day per program, ten a day, however many at once.
+        many = await asyncio.gather(*(c.post(report, headers=kit_h, json={
+            "choice": "no-picture", "key": "3200", "positionMs": n * 1000}) for n in range(6)))  # fmt: skip
+        codes = [r.status_code for r in many]
+        checks.ok(codes.count(200) == 1 and codes.count(429) == 5,
+                  "many reports on one program at once: one is taken", f"got {codes}")  # fmt: skip
+        many = await asyncio.gather(*(c.post(report, headers=kit_h, json={
+            "choice": "wrong-details", "key": f"32{n:02d}"}) for n in range(1, 12)))  # fmt: skip
+        codes = [r.status_code for r in many]
+        checks.ok(codes.count(200) == 9 and codes.count(429) == 2,
+                  "many reports at once can't beat ten a day", f"got {codes}")  # fmt: skip
+        # Turned off for someone: refused, and they can't turn it on themselves.
+        users = {u["name"]: u for u in (await c.get("/api/access/users", headers=admin_h)).json()}
+        sam = users[USER["name"]]
+        await c.put(f"/api/access/users/{sam['id']}", headers=admin_h, json={"canReport": False})
+        r = await c.post(report, headers=sam_h, json={"choice": "no-sound", "key": "201"})
+        checks.ok(r.status_code == 403, "someone an Admin turned reporting off for can't report",
+                  f"got {r.status_code}")  # fmt: skip
+        r = await c.put(f"/api/access/users/{sam['id']}", headers=sam_h, json={"canReport": True})
+        checks.ok(r.status_code == 403, "a User can't turn reporting back on for themselves",
+                  f"got {r.status_code}")  # fmt: skip
+        # An Admin acts on them.
+        r = await c.post("/api/reports/300/dismiss", headers=admin_h)
+        checks.ok(r.status_code == 200, "an Admin dismisses a report", f"got {r.status_code}")
 
 
 async def _pin_limit(checks: Checks, app, home: str, device_key: str) -> None:

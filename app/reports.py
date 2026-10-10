@@ -605,12 +605,6 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if user is not None and not ctx.access.may_report(user):
             raise HTTPException(403, TURNED_OFF)
         entry, media, station, at_ms = await what_it_was(body, request)
-        address = access.address(request.scope)
-        sent, about_this = reports.sent_today(user.id if user else None, address, entry.key)
-        if about_this:
-            raise HTTPException(429, TODAY)
-        if sent >= A_DAY:
-            raise HTTPException(429, ENOUGH)
         version = version_of(entry, media) if media is not None else ""
         others: list[Entry] = []
         if body.choice == "wrong-program" and entry.kind == catalog.EPISODE and entry.show_key:
@@ -618,6 +612,14 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 others = await asyncio.wait_for(ctx.library.show_episodes(entry.show_key), 10)
             except (LibraryError, TimeoutError):
                 others = []
+        # (The limits, and keeping it, with nothing awaited between: however
+        # many come at once, the limits hold.)
+        address = access.address(request.scope)
+        sent, about_this = reports.sent_today(user.id if user else None, address, entry.key)
+        if about_this:
+            raise HTTPException(429, TODAY)
+        if sent >= A_DAY:
+            raise HTTPException(429, ENOUGH)
         how = describe_how(entry, media, body.method, body.audio, body.subtitle)
         if station is not None:
             how = {"station": station}

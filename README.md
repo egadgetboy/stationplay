@@ -25,7 +25,7 @@ If you find it useful, you can [buy me a coffee](https://buymeacoffee.com/egadge
 - [Making stations](#making-stations)
 - [How stations play](#how-stations-play)
 - [Station features](#station-features): logos, corner logo, Up Next Banner, Station ID card, commercials, Intro Bumper, subtitles, specials
-- [Keeping stations on the air](#keeping-stations-on-the-air): safeguards, the Broken files list, file checks, Sonarr and Radarr
+- [Keeping stations on the air](#keeping-stations-on-the-air): safeguards, the Broken files list, file checks, Sonarr and Radarr, people's reports
 - [Who can use StationPlay](#who-can-use-stationplay): [Viewing Levels](#viewing-levels) · [Linked devices and Who's tuning in?](#linked-devices-and-whos-tuning-in)
 - [Stats](#stats) · [StationPlay's API](#stationplays-api) · [Settings](#settings) · [Troubleshooting](#troubleshooting) · [Development](#development)
 - [Contributing](#contributing) · [Forks and credit](#forks-and-credit) · [License](#license)
@@ -733,16 +733,22 @@ A bad file should never take a station down. StationPlay is built around that.
 
 ### The Broken files list
 
-Programs that can't play properly go on the **Broken files** list, kept on the **Broken files** tab and in `data/broken-files.json`. Each entry says what's wrong, when it was found, how many times it failed, the file's path, and which stations have it (each opens that station's editor). Every entry is skipped on every station until it's cleared, and a stand-in plays in its place.
+Files that can't play properly go on the **Broken files** list, kept on the **Broken files** tab and in `data/broken-files.json`. It's one list for every file, whoever plays it: a station, or Media in StationPlay's apps (the libraries an Admin shares with them). A file found broken for a station is broken for Media too, and the other way around. Each entry says what's wrong, when it was found, how many times it failed, the file's path, and where it's used: which stations have it (each opens that station's editor), and whether it's in Media. Every entry is skipped on every station until it's cleared, and a stand-in plays in its place. In Media, a broken file doesn't play (another version of it does, if there is one StationPlay didn't find broken; the apps say so), and a damaged one still does. A program's other versions (a 4K and a 1080p file, say) are files of their own: an entry for one of them is about that version alone.
+
+The tab has three parts:
+
+- **Needs you:** people's reports (see [People's reports](#peoples-reports)), and the files StationPlay found that wait for you: broken or damaged files Sonarr or Radarr aren't replacing by themselves, and those they couldn't replace. The tab's count is how many things are here, and Admins are told through their alerts (see [Troubleshooting](#troubleshooting)).
+- **Being replaced:** what Sonarr or Radarr is fetching now.
+- **Found by StationPlay:** the rest: files you're handling yourself, and unsupported files.
 
 | Label | Meaning |
 |---|---|
-| **Missing** | The file is gone from disk, or the program is gone from Plex, while a station still has it. |
+| **Missing** | The file is gone from disk, or the program is gone from Plex, while a station or Media still has it. |
 | **Broken** | The file won't play. |
 | **Damaged** | It plays, but not properly (see [What counts as a problem](#what-counts-as-a-problem)). |
 | **Unsupported** | It plays, but can't be shown correctly (Dolby Vision profile 5). |
 
-When the list has both missing and other entries, buttons above it show just one kind. **Download list** saves it as a file.
+When the files that need you are both missing and otherwise, buttons above them show just one kind. **Download list** saves the whole list as a file.
 
 **Clearing an entry yourself:**
 
@@ -752,7 +758,7 @@ When the list has both missing and other entries, buttons above it show just one
 
 **Entries that clear themselves:**
 
-- **Every half hour,** StationPlay checks the list against Plex. An entry clears when Plex has the program again under a new ID, or when its file is missing (or Plex removed it) and no station has it anymore. A program with a new file gets a quick check, and clears if the new file passes; otherwise the entry says what's wrong with the new file.
+- **Every half hour,** StationPlay checks the list against Plex. An entry clears when Plex has the program again under a new ID, when its file is missing (or Plex removed it) and neither a station nor Media has it anymore, or, for one of a program's versions, when Plex no longer has that version. A program with a new file gets a quick check, and clears if the new file passes; otherwise the entry says what's wrong with the new file.
 - **Every night,** when the overnight checks begin (1 AM unless you change it), and whenever you choose **Check the list again**, StationPlay also re-checks programs taken off the air by a quick check or because their file couldn't be opened (a share may have been down). They clear if they pass.
 - Problems found by the deep scan or during playback stay until the file changes, because checking the same file again would find the same thing.
 
@@ -760,14 +766,19 @@ StationPlay recognizes a program Plex re-added under a new ID by its own show, s
 
 ### File checks
 
-StationPlay checks your files at the lowest priority, so problems are found before anyone tunes in. While anyone is watching, the checks step aside: the automatic checks wait until no one is watching, and **Check files** and the list's re-checks read one file at a time with a rest between. (ZFS and most NAS disks ignore low disk priority; reading less at once is what helps.)
+StationPlay checks your files at the lowest priority, so problems are found before anyone tunes in: the stations' programs, and what's shared for Media in StationPlay's apps. What a check finds is kept for each file, whoever plays it, so a file checked for a station isn't checked again for Media (or the other way around) unless it changes. While anyone is watching, a station or Media, the checks step aside: the automatic checks wait until no one is watching, and **Check files** and the list's re-checks read one file at a time with a rest between. (ZFS and most NAS disks ignore low disk priority; reading less at once is what helps.)
 
-- **Quick check, when a program arrives:** a program new to a station is quick-checked within minutes, before it airs if possible. The file must open, and picture and sound must decode at five points (start, quarter, half, three quarters and end).
-- **Weekly:** every program on a station is quick-checked again once a week, which also catches files that went missing or were replaced.
-- **Overnight deep scan:** between 1 AM and 6 AM (change or turn off with **Deep scan every night from** on the **Broken files** tab), programs are decoded in full, soonest to air first. The scan stops the moment anyone starts watching and continues later. Each file is deep-scanned once, and again only if it changes. A 45-minute episode usually takes a few minutes.
-- **Check files** on a station card quick-checks all of its programs right away. A new station gets this automatically.
+The checks wait in one line, in this order:
 
-The **Broken files** tab shows how far the checks have gotten and what the deep scan is doing.
+1. **A station's program airing soon** (in the next 3 hours, or in an update about to start) that's due a check.
+2. **A file someone just had trouble with:** a copy for an app that couldn't be made or stopped, an app saying something didn't play or stopped, or a person's report. StationPlay checks the stretch around where it happened (from 20 seconds before, for a minute, as the deep scan decodes), then gives the file the quick check (and, for a report that says where, the deep scan, if those find nothing). That's no verdict: only what StationPlay finds puts the file on the list, so trouble that was the network's or the app's changes nothing.
+3. **Quick check, when something arrives:** a program new to a station, then what's newly added to a library shared for Media, is quick-checked within minutes, before it airs if possible. The file must open, and picture and sound must decode at five points (start, quarter, half, three quarters and end).
+4. **Weekly:** every program on a station is quick-checked again once a week, which also catches files that went missing or were replaced. (Media's files are checked when they arrive, and when someone has trouble with one.)
+5. **Overnight deep scan:** between 1 AM and 6 AM (change or turn off with **Deep scan every night from** on the **Broken files** tab), files are decoded in full: the stations' programs first, soonest to air first; then Media's: what's in someone's Continue Watching, the next episode of a show someone is watching, then the rest, most recently added first (each with its quick check first, if it hasn't had one). The scan stops the moment anyone starts watching and continues later. Each file is deep-scanned once, and again only if it changes. A 45-minute episode usually takes a few minutes.
+
+**Check files** on a station card quick-checks all of its programs right away. A new station gets this automatically.
+
+The **Broken files** tab shows how far the checks have gotten, for the stations and for Media, and what the deep scan is doing.
 
 #### What counts as a problem
 
@@ -791,7 +802,7 @@ When an update changes how files are checked, files are checked again under the 
 
 ### Replacing files with Sonarr and Radarr
 
-StationPlay only needs Plex. But if you use **Sonarr** (TV) or **Radarr** (movies), StationPlay can ask them to replace files on the Broken files list that a station plays. It works with Sonarr and Radarr version 3 and later.
+StationPlay only needs Plex. But if you use **Sonarr** (TV) or **Radarr** (movies), StationPlay can ask them to replace files on the Broken files list that a station or Media plays, with the same choices and limits for both. It works with Sonarr and Radarr version 3 and later. (For one of a program's versions, only when the app's file is that one; and what people report is replaced only when you choose **Replace** on the report: see [People's reports](#peoples-reports).)
 
 **Turning it on.** On the **Broken files** tab, open **Replacing files with Sonarr and Radarr**. For each app, check **Use Sonarr for episodes** (or **Use Radarr for movies**), enter its address (such as `http://192.168.1.10:8989` for Sonarr or `:7878` for Radarr) and its API key (in the app, under **Settings → General**), choose **Test**, then **Save**. API keys are stored in StationPlay's database (and its backups) and never shown again.
 
@@ -816,6 +827,18 @@ Each episode or movie gets up to **3 searches, 8 hours apart** (sooner if the la
 
 Each entry shows what the app is doing: **Replacing**, **Downloading**, **Downloaded**, **Gave up** (3 searches found nothing that works; **Try again** starts over), **Can't replace**, **Needs your review** or **You're handling it**. The **Logs** tab records every step. Unsupported files aren't replaced this way, since the right version is best chosen yourself.
 
+### People's reports
+
+People can report a problem from StationPlay's apps: from a movie's or an episode's page, from the player's menu, and from a station's player (about what's on it now). They pick it from a list, never type it: **Picture** (No picture; The picture breaks up or freezes; Poor picture quality), **Sound** (No sound; The sound cuts out; The sound is out of sync; Wrong language), **Subtitles** (Subtitles are missing or wrong), **The program** (It won't play; It stops before the end; Wrong episode or movie) and **Details** (Wrong title, details or artwork). StationPlay knows who sent it and on what device from their sign-in, and the app says where in the program it was and how it was playing (as it is or as a copy, which version, which sound track and subtitles). Each report goes to the **Broken files** tab, under **Needs you**; several reports on one program are one row there, each under it.
+
+| A report of | What StationPlay does |
+|---|---|
+| No picture, the picture breaking up, no sound, the sound cutting out, stopping early, or not playing | Checks the file at once, ahead of everything else it checks: around where it happened, then the quick check, then (if the report says where, and those find nothing) the deep scan. If it finds the problem, the file goes on the list, and is replaced as you have that set. If not, the report says StationPlay found nothing wrong, for you to **Dismiss**. |
+| The sound out of sync, the wrong language, the wrong episode or movie, poor picture quality, or subtitles | Waits for you, with what StationPlay can tell beside it: the file's sound languages, its length against the show's other episodes', its picture's size, its subtitles. Choose **Replace with Sonarr** (or **Radarr**: the release is blocklisted and another fetched, as for a broken file, and the program is off the air until then), **Find a better copy** (the app searches for an upgrade, keeping the file until it finds one), or **Dismiss**. |
+| Wrong title, details or artwork | Waits for you to fix it in Plex (**Fix Match**, or **Edit**, on its page there), then **Dismiss** it. |
+
+A report never takes anything off the air, or out of Media, by itself: only what StationPlay's own checks find, or your choice, does. Each person can send one report a day about each program, and ten a day in all. An Admin can turn reporting off for someone with **Can report problems**, on the **Access** tab or under **Reports from StationPlay's apps** on the **Broken files** tab (an Admin always can). People's reports are kept while they wait, and for 90 days after they're dealt with.
+
 ## Who can use StationPlay
 
 When StationPlay is first installed, its page is open to anyone on your network. (On the internet port, `PUBLIC_PORT`, signing in is always required.) To require sign-in, choose **Only people who sign in** during setup, or add a user on the **Access** tab with a name and a password of at least 8 characters. **The first user is always an Admin**, and you're signed in right away. After that, everyone else sees a sign-in page.
@@ -827,7 +850,7 @@ When StationPlay is first installed, its page is open to anyone on your network.
 
 - There's always at least one Admin. Removing the last user turns sign-in off again.
 - Stations made before sign-in was turned on, or by a removed user, can be changed only by Admins.
-- An Admin can rename people (themselves and other Admins too), change roles and set new passwords on the **Access** tab. A new name follows the rules a new user's does (no one else's, whatever its case), people sign in with it from then on, and everything of theirs stays theirs: their sign-ins and linked devices, the stations they made, their Viewing Level, where they are in what they watch, and their stats. StationPlay's apps show the new name the next time they ask. Your name at the top of the page lets you change your own password or sign out, and so do StationPlay's apps, in their Options. **Can change their own password**, beside each person's **New password**, says whether they may (yes, to start with; an Admin always may). A new password signs that person out everywhere else.
+- An Admin can rename people (themselves and other Admins too), change roles and set new passwords on the **Access** tab. A new name follows the rules a new user's does (no one else's, whatever its case), people sign in with it from then on, and everything of theirs stays theirs: their sign-ins and linked devices, the stations they made, their Viewing Level, where they are in what they watch, and their stats. StationPlay's apps show the new name the next time they ask. Your name at the top of the page lets you change your own password or sign out, and so do StationPlay's apps, in their Options. **Can change their own password**, beside each person's **New password**, says whether they may (yes, to start with; an Admin always may). A new password signs that person out everywhere else. **Can report problems**, below it, says whether they may report a problem from StationPlay's apps (see [People's reports](#peoples-reports); yes, to start with; an Admin always may).
 - A sign-in lasts 30 days after it was last used. After 5 wrong passwords from one address within 15 minutes, that address has to wait. Passwords are stored only as salted hashes.
 - StationPlay's page signs you out after an hour without activity. StationPlay's apps stay signed in.
 - Plex and IPTV apps never need a password, just like a real HDHomeRun: the tuner, guide, streams, logos and playlist stay open on your network.

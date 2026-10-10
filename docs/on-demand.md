@@ -48,7 +48,10 @@ library layer it builds on is in `docs/library.md`.
   StationPlay, case and accents aside (see Lists); Up next decided in one
   place, and progress kept in order (see Progress, resume and watched);
   pictures fetched once (ETags); a device playing one program at a time;
-  a movie in several files playing its first.
+  a movie in several files playing its first. And one process for every
+  file, the stations' and Media's: the checks reach Media, trouble playing
+  a file has it checked, what's broken doesn't play, and people report
+  problems from a list (see Files that don't play).
 - **Later:** fragmented MP4 copies, so Apple's player can have an HEVC
   picture as it is; a movie in several files played as one.
 
@@ -247,7 +250,47 @@ restarts. Through the public port, only a session started there is offered
 A session counts as a device watching, for the Admin's limits (see
 `capacity.py`), from its start until 3 minutes after it was last heard from
 (a file request or a progress report). One more device than the limits
-allow is answered 503 with `limit` and `most`, as for stations.
+allow is answered 503 with `limit` and `most`, as for stations. It also
+counts as someone watching for StationPlay's file checks, which wait while
+anyone watches, a station or Media (see below).
+
+## Files that don't play
+
+From 1.30.0, Media's files go through the one process the stations' do
+(see `scanner.py`, `broken.py`, and the README's Broken files list): what
+StationPlay's checks find is kept for each file, whoever plays it, on the
+one Broken files list, so a file found broken for a station is broken for
+Media, and the other way around, and a file checked for one isn't checked
+again for the other unless it changes. A program's other versions are
+files of their own on the list (by its key and the version's ID).
+
+- **The checks reach Media:** what's newly added to a shared library is
+  quick-checked within minutes (after the stations' new programs), and the
+  overnight deep scan, after the stations' programs, decodes Media's files
+  in full: what's in someone's Resume row first, then the next episode of
+  a show someone is watching, then the rest, most recently added first.
+  Media's files aren't checked weekly: they're checked when they arrive,
+  and when someone has trouble with one.
+- **Trouble is no verdict:** a copy that can't be made or stops, or an app
+  saying something didn't play or stopped (`POST /api/internal/problem`,
+  with its playing and where, from 1.30.0), puts that file at the front of
+  the checks' queue: the stretch around where it happened, then the quick
+  check. Only what StationPlay finds puts it on the list; trouble that was
+  the network's or the app's changes nothing.
+- **What's on the list in Media:** a version found broken never plays.
+  Another version does, if there's one StationPlay didn't find broken, and
+  the play answer's `why` says so; with none, the answer is 422, "This one
+  can't play right now. An Admin has been told." A damaged version plays,
+  as before. An item's details say what was found in each version
+  (`versions[].problem`), so an app can offer another.
+- **People's reports** (see `reports.py`, and "Reporting a problem" in
+  `docs/internal-api.md`): picked from a list on a movie's or an episode's
+  page, in the player's menu, and in a station's player. What StationPlay
+  can check is checked at once; what it can't judge waits for an Admin on
+  the Broken files tab. A report never takes anything out of Media, or off
+  the air, by itself.
+- **Replacing:** Sonarr and Radarr replace Media's files as they do the
+  stations', with the same settings, limits and rules.
 
 ## Away from home
 

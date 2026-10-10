@@ -247,6 +247,26 @@ page, while the app they changed it in stays signed in. The access log says
 - Someone without a password (a passcode-only person, or "Kids") can't set
   one this way: an Admin gives them one, or an invite code.
 
+### Reporting problems from the apps
+
+From 1.30.0, people report a problem with what they watch from the apps,
+picked from a list (see "Reporting a problem" in `docs/internal-api.md`):
+each report goes to the Broken files tab, for an Admin, saying who sent it
+and from which device, as their sign-in says.
+
+- **Can report problems** is an Admin's choice for each person, on the
+  Access tab beside Can change their own password (and on the Broken files
+  tab, beside Sonarr's and Radarr's settings): on to start with, for
+  everyone already added too. When it's off, a report is refused with a
+  plain sentence ("An Admin has turned off reporting problems for you."),
+  and `GET /api/internal/me` says so (`canReport: false`), so the app
+  doesn't offer it. An Admin can always report.
+- Only what someone may see can be reported: an episode or a movie their
+  Viewing Level hides, or a station it hides (or an Admin blocked for
+  them), is answered as though it weren't there (404).
+- One report a day about each program, and ten a day in all, for each
+  person; while signing in is off, for each address.
+
 ## The addresses
 
 The apps' own (`docs/internal-api.md`): `"picker": true` on signing in or
@@ -254,8 +274,9 @@ asking for a code links the device and returns its `deviceKey`;
 `GET /api/internal/picker`, `POST /api/internal/picker/choose`,
 `POST /api/internal/picker/sign-in` and `POST /api/internal/picker/remove`
 are asked with the key, in the `StationPlay-Device` header. Signing in
-answers `askPin`, `POST /api/internal/pin` sets someone's own passcode, and
-`POST /api/internal/password` changes their own password (1.28.0). The
+answers `askPin`, `POST /api/internal/pin` sets someone's own passcode,
+`POST /api/internal/password` changes their own password (1.28.0), and
+`POST /api/internal/report-problem` sends a report (1.30.0). The
 Access tab's: `/api/access/viewing`, `/api/access/levels`,
 `/api/access/users/{id}/viewing` and `/stations`, `/api/access/devices`,
 `/api/access/users/{id}/picker` and `/invite`.
