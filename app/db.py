@@ -955,7 +955,9 @@ class Database:
                 )
 
     def _upgrade(self) -> None:
-        """Brings a database made by an earlier version up to date."""
+        """Brings a database made by an earlier version up to date. (What's
+        done here must be found by changes_needed too, so the database is
+        backed up before it's changed: see backups.before_update.)"""
         with self._conn:
             self._conn.execute("DROP INDEX IF EXISTS views_by_start")  # (an early 1.9.0's)
         for table, column, definition in _ADDED_COLUMNS:
