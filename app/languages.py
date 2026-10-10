@@ -1,9 +1,10 @@
-"""Each person's languages in StationPlay's apps: the sound and captions they
-want, kept by StationPlay so they follow them to every device (see
+"""Each person's languages in StationPlay's apps: the sound and subtitles
+they want, kept by StationPlay so they follow them to every device (see
 docs/internal-api.md, Languages).
 
 A person has their own: a sound language (none: each file's default track),
-captions on or off, and a captions language (none: the sound's language).
+subtitles on or off, and a subtitles language (none: the sound's language;
+the API calls these `captions` and `captionLanguage`).
 From the player, they can choose otherwise for a show (the whole show), or
 for an episode or a movie alone. When an app plays an episode or a movie
 without saying which tracks (see applibrary.py), StationPlay chooses, each
@@ -12,9 +13,9 @@ show's, else the person's, else the file's default.
 
 Sound: the first track in that language (the file's default among them
 first), never a commentary when there's another; with none in it, the
-file's default. Captions on: a subtitle track in the captions language, a
-full one before a forced one (one for the deaf and hard of hearing is a
-full one). Captions off: only a forced track in the language of the sound
+file's default. Subtitles on: a subtitle track in the subtitles language,
+a full one before a forced one (one for the deaf and hard of hearing is a
+full one). Subtitles off: only a forced track in the language of the sound
 that plays, as forced subtitles are the parts in another language, meant
 to be read.
 
@@ -155,7 +156,7 @@ def changes(given: dict[str, Any], own: bool) -> dict[str, Any]:
         out[key] = found
     if "captions" in given:
         if given["captions"] is None and own:
-            raise ValueError("Captions must be true or false")
+            raise ValueError("Subtitles must be on or off")
         out["captions"] = given["captions"]
     return out
 
@@ -240,20 +241,20 @@ def _pick_subtitle(media: Media, wanted: Wanted, sound: str | None) -> tuple[Tra
         if forced:
             best = next((t for t in forced if t.default), forced[0])
             return best, f"Forced {name(sound or '')} subtitles, for the parts in another language"
-        off = "Captions are off"
+        off = "Subtitles are off"
         return None, f"{off}, {_as(wanted.captions_from)}" if wanted.captions_from else off
     language = wanted.caption_language or sound
     if language is None:
-        return None, "No captions: the sound's language isn't known"
+        return None, "No subtitles: the sound's language isn't known"
     found = [t for t in media.subtitles if track_code(t) == language]
     full = [t for t in found if not t.forced]
-    said = f"{name(language)} captions, {_as(wanted.captions_from)}"
+    said = f"{name(language)} subtitles, {_as(wanted.captions_from)}"
     if full:
         return next((t for t in full if t.default), full[0]), said
     if found:
         best = next((t for t in found if t.default), found[0])
         return best, f"{said} (forced only: it has no others in {name(language)})"
-    return None, f"No captions: it has none in {name(language)}"
+    return None, f"No subtitles: it has none in {name(language)}"
 
 
 class Languages:

@@ -135,9 +135,9 @@ work here: these addresses are for the apps' own sign-ins.
 
 ## What 1.29.0 asks of the apps
 
-1. **Options: Audio language and Captions.** Ask `GET /api/internal/me`
+1. **Options: Audio language and Subtitles.** Ask `GET /api/internal/me`
    when Options opens. Offer **Audio language** (each file's own, or one of
-   `languages.choices`, listed by `name`) and **Captions**: on or off, and
+   `languages.choices`, listed by `name`) and **Subtitles**: on or off, and
    their language (the audio's, or one of `choices`). Save each change with
    `PUT /api/internal/languages`: it holds on every device the person uses
    (see Languages).
@@ -386,8 +386,8 @@ From 1.29.0, their languages too. Answers 401 when the sign-in has ended.
 | `languages.audio` | object or null | The sound's language; null: each file's default track |
 | `languages.audio.code` | string | Its code, such as `jpn` |
 | `languages.audio.name` | string | Its name, such as "Japanese" |
-| `languages.captions` | boolean | Whether captions are on |
-| `languages.captionLanguage` | object or null | The captions' language; null: the language of the sound that plays |
+| `languages.captions` | boolean | Whether subtitles are on |
+| `languages.captionLanguage` | object or null | The subtitles' language; null: the language of the sound that plays |
 | `languages.captionLanguage.code` | string | Its code |
 | `languages.captionLanguage.name` | string | Its name |
 | `languages.choices` | list | Every language StationPlay knows, A to Z by name, to choose from |
@@ -405,7 +405,7 @@ app's Options. Send what changes (what isn't sent stays as it is):
 ```
 
 `audio` and `captionLanguage` are a language's code, or null (each file's
-default track; the sound's language); `captions` is true or false. Only
+default track; the sound's language); `captions` (subtitles on or off) is true or false. Only
 ever the person signed in: anything else sent is ignored. Answers 400, with
 the sentence to show, for a language StationPlay doesn't know, and for
 `captions` that isn't true or false.
@@ -415,8 +415,8 @@ the sentence to show, for a language StationPlay doesn't know, and for
 | `audio` | object or null | The sound's language, as in `GET /api/internal/me` |
 | `audio.code` | string | Its code |
 | `audio.name` | string | Its name |
-| `captions` | boolean | Whether captions are on |
-| `captionLanguage` | object or null | The captions' language |
+| `captions` | boolean | Whether subtitles are on |
+| `captionLanguage` | object or null | The subtitles' language |
 | `captionLanguage.code` | string | Its code |
 | `captionLanguage.name` | string | Its name |
 
@@ -704,7 +704,7 @@ one set):
 
 - **Their own** (`languages` in `GET /api/internal/me`; set with
   `PUT /api/internal/languages`): the sound's language (null: each file's
-  default track), captions on or off, and the captions' language (null:
+  default track), subtitles on or off, and the subtitles' language (null:
   the language of the sound that plays).
 - **For a show, or for an episode or a movie alone** (`languages` in
   `GET /api/internal/items/{key}`; set from the player with
@@ -728,9 +728,9 @@ default.
 - **Sound:** the first track in that language (the file's default among
   them first), never a commentary when there's another; with none in it,
   the file's default.
-- **Captions on:** a subtitle track in the captions' language, a full one
+- **Subtitles on:** a subtitle track in the subtitles' language, a full one
   before a forced one (one for the deaf and hard of hearing is a full one).
-- **Captions off:** only a forced track in the language of the sound that
+- **Subtitles off:** only a forced track in the language of the sound that
   plays (forced subtitles are the parts in another language, meant to be
   read).
 
@@ -937,8 +937,8 @@ A show's, movie's or episode's details: its card's fields, and more.
 | `languages.item.audio` | object or null | The sound's language; null: not chosen here |
 | `languages.item.audio.code` | string | Its code, such as `jpn` |
 | `languages.item.audio.name` | string | Its name, such as "Japanese" |
-| `languages.item.captions` | boolean or null | Captions on or off; null: not chosen here |
-| `languages.item.captionLanguage` | object or null | The captions' language; null: not chosen here |
+| `languages.item.captions` | boolean or null | Subtitles on or off; null: not chosen here |
+| `languages.item.captionLanguage` | object or null | The subtitles' language; null: not chosen here |
 | `languages.item.captionLanguage.code` | string | Its code |
 | `languages.item.captionLanguage.name` | string | Its name |
 | `languages.show` | object or null | (An episode) for its whole show; null: nothing (or not an episode) |
@@ -1004,8 +1004,8 @@ say), and 404 for what isn't shared or can't be seen, as its details do.
 | `item.audio` | object or null | The sound's language; null: not chosen here |
 | `item.audio.code` | string | Its code |
 | `item.audio.name` | string | Its name |
-| `item.captions` | boolean or null | Captions on or off; null: not chosen here |
-| `item.captionLanguage` | object or null | The captions' language; null: not chosen here |
+| `item.captions` | boolean or null | Subtitles on or off; null: not chosen here |
+| `item.captionLanguage` | object or null | The subtitles' language; null: not chosen here |
 | `item.captionLanguage.code` | string | Its code |
 | `item.captionLanguage.name` | string | Its name |
 | `show` | object or null | (An episode) what's chosen for its whole show, as `languages.show` |
@@ -1214,7 +1214,7 @@ so plainly.
 | `chosen.audio` | string or null | The sound track that plays: select it in the player (a copy holds only it); null for a file without sound |
 | `chosen.audioWhy` | string | Why, in a few words to show: "Japanese, as chosen for this show", "The file's default: it has no Japanese sound" |
 | `chosen.subtitle` | string or null | The subtitle track to show: select it in the player (for a file of its own, add it from `subtitles[].url`), unless it's `drawnSubtitle`; null for none |
-| `chosen.subtitleWhy` | string | Why: "English captions, as you chose", "Forced English subtitles, for the parts in another language", "Captions are off" |
+| `chosen.subtitleWhy` | string | Why: "English subtitles, as you chose", "Forced English subtitles, for the parts in another language", "Subtitles are off" (from 1.29.1; "captions" before) |
 | `leave` | string | Where to `POST` when the player stops |
 | `resumeMs` | number | Where this person stopped last time (0: the start). Offer to resume there, or start over |
 | `durationMs` | number or null | How long it is |
