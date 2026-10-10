@@ -360,10 +360,15 @@ def new_people(checks: Checks, url: str, made: dict) -> dict:
     bo = page.post("/api/access/users", json=NEW)
     checks.ok(bo.status_code == 201 and bo.json()["showOn"] == "signed-in",
               "someone new shows only on devices they sign in on", bo.text[:200])  # fmt: skip
+    # (Who isn't shown that way yet: the Admin and the User, made before
+    # 1.30.1; fewer when the release before was 1.30.1 or later.)
+    moving = [u["name"] for u in page.get("/api/access/users").json()
+              if u["showOn"] != "signed-in" and u["name"] != KIDS["name"]]  # fmt: skip
     everyone = page.post("/api/access/devices/everyone", json={"showOn": "signed-in"})
     said = everyone.json() if everyone.status_code == 200 else everyone.text[:200]
-    checks.ok(said == {"default": "signed-in", "changed": 2, "kept": [KIDS["name"]]},
-              "Use for everyone: the Admin and the User change, Kids are kept", said)  # fmt: skip
+    checks.ok(said == {"default": "signed-in", "changed": len(moving), "kept": [KIDS["name"]]},
+              f"Use for everyone: {len(moving)} change ({', '.join(moving) or 'no one'}), "
+              "Kids are kept", said)  # fmt: skip
     signed = httpx.post(f"{url}/api/internal/picker/sign-in", timeout=30,
                         headers={"stationplay-device": made["device"]},
                         json={"name": USER["name"], "password": USER["password"]})  # fmt: skip
