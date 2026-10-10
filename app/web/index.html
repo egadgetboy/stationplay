@@ -4800,7 +4800,7 @@ function entryRow(r) {
   const by = [...new Set((r.reports || []).map(x => `${x.who} (${x.label})`))];
   return h('tr', {},
     h('td', {},
-      h('strong', {}, r.show ? `${r.show} ${sxe(r)}` : r.title),
+      h('strong', {}, programName(r)),
       r.show ? h('div', {}, r.title) : null,
       r.file ? h('div', { class: 'path' }, r.file) : null,
       r.version ? h('div', { class: 'small muted' }, 'One of its versions, in Media (stations play another)') : null),
@@ -4821,11 +4821,11 @@ function entryRow(r) {
 // A program people reported (see reports.py on the server): one row, each
 // report under it.
 const REPORT_STATES = {
-  checking: ['chip plain', 'StationPlay is checking it'],
+  checking: ['chip plain', 'Being checked'],
   waiting: ['chip accent', 'Waiting for you'],
-  nothing: ['chip plain', 'StationPlay found nothing wrong'],
-  kept: ['chip plain', 'You put it back on the air'],
-  "couldn't": ['chip plain', 'StationPlay couldn’t check it'],
+  nothing: ['chip plain', 'Nothing found'],
+  kept: ['chip plain', 'Back on the air'],
+  "couldn't": ['chip plain', 'Couldn’t be checked'],
 };
 function reportRow(row) {
   const p = row.program;
@@ -4935,7 +4935,7 @@ function arrButton(r) {
   if (!got?.apps?.[app]?.on || !['broken', 'damaged'].includes(r.problem)) return null;
   if (got.what !== 'both' && (got.what === 'missing') !== Boolean(r.missing)) return null;
   const name = ARR[app].name;
-  const what = r.show ? `${r.show} ${sxe(r)}` : r.title;
+  const what = programName(r);
   const s = r.replace || {};
   const ask = (label, title, done) => h('button', { class: 'btn', title, onclick: async () => {
     try { await api(`/api/broken/${encodeURIComponent(r.key)}/replace`, { method: 'POST' }); }
@@ -5712,7 +5712,7 @@ $('#scanSave').addEventListener('click', async () => {
 });
 
 async function retry(r) {
-  try { await api(`/api/broken/${encodeURIComponent(r.key)}`, { method: 'DELETE' }); toast(`${r.show || r.title} is back on the air`); loadBroken(); loadStatus(); loadChannels(); }
+  try { await api(`/api/broken/${encodeURIComponent(r.key)}`, { method: 'DELETE' }); toast(`${programName(r)} is back on the air`); loadBroken(); loadStatus(); loadChannels(); }
   catch (e) { toast(e.message, true); }
 }
 
