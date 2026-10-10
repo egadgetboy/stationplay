@@ -279,3 +279,52 @@ async def resolve_source(
             transient=True,
         )
     return ResolvedSource(None, plex_file, size, error=f"file not found: {plex_file}")
+
+
+# A version of a program that's gone from its library: nothing offers it
+# any more, so it isn't checked (or listed).
+VERSION_GONE = "that version is no longer in Plex"
+
+
+async def resolve_version(
+    settings: Settings,
+    library: Library,
+    item: Item,
+    version: str,
+    access: MediaAccess | None = None,
+) -> ResolvedSource:
+    """Works out where to read one version of a program's file (`version`:
+    its ID in the library), for one that isn't the program's first (which
+    is resolve_source's). The library is asked what the program has now. A
+    version that's gone is said to be (transient: it isn't the file's fault,
+    and nothing offers it any more)."""
+    access = access if access is not None else MediaAccess()
+    try:
+        entry = await asyncio.wait_for(library.entry(item.rating_key, details=True), PLEX_LOOKUP_S)
+    except (TimeoutError, LibraryError) as e:
+        why = str(e) or f"Plex didn't answer within {PLEX_LOOKUP_S}s"
+        return ResolvedSource(None, item.file_path, None, error=why, transient=True)
+    versions = entry.media if entry is not None else ()
+    media = next((m for m in versions[1:] if m.id == version), None)
+    if media is None:  # (gone; or it's the first now, and known by the program's key)
+        return ResolvedSource(None, item.file_path, None, error=VERSION_GONE, transient=True)
+    if media.file:
+        found, timed_out = await find_first(local_candidates(settings, access, media.file))
+        if found:
+            learn_mapping(access, found)
+            access.direct += 1
+            return ResolvedSource(found.path, media.file, media.size)
+        if timed_out:
+            return ResolvedSource(
+                None, media.file, media.size, error="the media share isn't responding",
+                transient=True,
+            )  # fmt: skip
+    stream = (
+        library.stream_url(item.rating_key, media.part_key)
+        if media.part_key and library.configured
+        else None
+    )
+    if stream is not None:
+        access.via_plex += 1
+        return ResolvedSource(stream, media.file, media.size)
+    return ResolvedSource(None, media.file, media.size, error=f"file not found: {media.file}")

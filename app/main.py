@@ -74,7 +74,7 @@ from .arr import NAMES as ARR_NAMES
 from .arr import Arr, ArrError, clean_url
 from .breaks import MAX_BREAKS, FillerLibrary, id_card_ms
 from .broadcaster import Broadcaster, between, corner_mark, fmt_offset, now_ms, station_banner
-from .broken import BrokenFiles
+from .broken import BrokenFiles, file_key
 from .bumpers import MAX_UPLOAD_BYTES as MAX_BUMPER_BYTES
 from .bumpers import Bumper, BumperError, BumperLibrary
 from .config import Settings
@@ -550,6 +550,16 @@ class AppContext:
 
     async def resolve_source(self, item: Item) -> ResolvedSource:
         return await resolve_source(self.settings, self.library, item, self.media_access)
+
+    def in_media(self, entry: dict[str, Any]) -> bool:
+        """Whether a file on the broken-files list is in Media: its library
+        (as its entry says, or as what's known of the stations' shows and
+        movies says: see titles.py) is one shared with the apps."""
+        library = str(entry.get("library") or "")
+        if not library:
+            known = self.titles.get(str(entry.get("showKey") or entry.get("ratingKey") or ""))
+            library = known.library if known is not None else ""
+        return bool(library) and library in self.shared.keys
 
     def broadcaster(self, channel_id: int) -> Broadcaster:
         b = self.broadcasters.get(channel_id)
@@ -2749,31 +2759,42 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         await ctx.fillers.refresh()
         return ctx.fillers.as_dict()
 
-    @app.get("/api/broken")
-    async def broken_list():
-        """The list, each entry saying whether its file is missing, and which
-        stations have it now ("on")."""
+    def broken_rows() -> list[dict[str, Any]]:
         entries = ctx.broken.entries()
-        keys = {str(e["ratingKey"]) for e in entries}
-        having = await asyncio.to_thread(jobs.stations_having, ctx, keys) if keys else {}
+        keys = {str(e["ratingKey"]) for e in entries if not e.get("version")}
+        having = jobs.stations_having(ctx, keys) if keys else {}
         return [
-            {**e, "missing": replacing.missing(e), "on": having.get(str(e["ratingKey"]), [])}
+            {
+                **e,
+                "key": file_key(e),
+                "missing": replacing.missing(e),
+                "on": [] if e.get("version") else having.get(str(e["ratingKey"]), []),
+                "media": ctx.in_media(e),
+            }
             for e in entries
         ]
 
-    @app.delete("/api/broken/{rating_key}", status_code=204)
-    async def broken_clear(rating_key: str):
-        entry = next((e for e in ctx.broken.entries() if e.get("ratingKey") == rating_key), {})
-        if not ctx.broken.remove(rating_key):
+    @app.get("/api/broken")
+    async def broken_list():
+        """The list, each entry with its file key ("key": see broken.py),
+        saying whether its file is missing, which stations have it now
+        ("on"; a program's first version only), and whether it's in Media."""
+        return await asyncio.to_thread(broken_rows)
+
+    @app.delete("/api/broken/{key}", status_code=204)
+    async def broken_clear(key: str):
+        """Retry: a file back on the air (by its file key)."""
+        entry = ctx.broken.entry(key) or {}
+        if not ctx.broken.remove(key):
             raise HTTPException(404)
-        ctx.stall_counts.pop(rating_key, None)
+        ctx.stall_counts.pop(key, None)
         # If a check took it off the air, checks leave this file be now; so
         # does playing it, if it was taken off for what its file is (Dolby
         # Vision with no ordinary picture: it may not have been checked yet).
         file = entry.get("file") if entry.get("problem") == "unsupported" else None
         size = entry.get("fileSize")
         ctx.db.keep_on_air(
-            rating_key,
+            key,
             file if isinstance(file, str) else None,
             size if isinstance(size, int) else 0,
         )
@@ -2786,9 +2807,10 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             raise HTTPException(400, "Plex isn't set up yet")
         return jobs.start_looking_again(ctx).as_dict()
 
-    def arr_entry(rating_key: str) -> dict:
-        """An entry on the list, for Sonarr or Radarr to do something about."""
-        entry = next((e for e in ctx.broken.entries() if e.get("ratingKey") == rating_key), None)
+    def arr_entry(key: str) -> dict:
+        """An entry on the list (by its file key), for Sonarr or Radarr to do
+        something about."""
+        entry = ctx.broken.entry(key)
         if entry is None:
             raise HTTPException(404)
         app_name = replacing.app_for(entry)
@@ -2796,18 +2818,18 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             raise HTTPException(400, f"{ARR_NAMES[app_name]} isn't turned on")
         return entry
 
-    @app.post("/api/broken/{rating_key}/replace", status_code=202)
-    async def broken_replace(rating_key: str):
+    @app.post("/api/broken/{key}/replace", status_code=202)
+    async def broken_replace(key: str):
         """Replace (or Try again, or Try another): Sonarr or Radarr tries
         replacing this one, afresh, now."""
-        arr_entry(rating_key)
-        jobs.start_try_again(ctx, rating_key)
+        arr_entry(key)
+        jobs.start_try_again(ctx, key)
         return Response(status_code=202)
 
-    @app.post("/api/broken/{rating_key}/leave", status_code=204)
-    async def broken_leave(rating_key: str):
+    @app.post("/api/broken/{key}/leave", status_code=204)
+    async def broken_leave(key: str):
         """Leave this one to me: Sonarr or Radarr isn't asked to replace it."""
-        entry = arr_entry(rating_key)
+        entry = arr_entry(key)
         async with ctx.list_lock:  # (not while the list's being gone through)
             replacing.leave(ctx, entry)
         log.info(

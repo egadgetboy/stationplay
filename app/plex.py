@@ -1074,6 +1074,29 @@ class PlexClient:
                 shows.append(show)
         return [e for e in await self.entries(shows[:count]) if e.kind == catalog.SHOW]
 
+    async def added_files(
+        self, section: str, kind: str, start: int, size: int
+    ) -> tuple[int, list[Entry]]:
+        """A page of a library's episodes (of a library of shows) or movies,
+        the most recently added first, each with its versions' files (for
+        checking them: see scanner.py): (how many in all, the page)."""
+        data = await self._get(
+            f"/library/sections/{section}/all",
+            {
+                "type": TYPE_EPISODE if kind == catalog.SHOW else TYPE_MOVIE,
+                "sort": "addedAt:desc",
+                "X-Plex-Container-Start": start,
+                "X-Plex-Container-Size": size,
+            },
+        )
+        page = [
+            dataclasses.replace(e, media=tuple(to_media(m)))
+            for m in _listed(data, "Metadata")
+            if (e := to_entry(m, section)) is not None and e.kind != catalog.SHOW
+        ]
+        total = data.get("totalSize")
+        return (total if isinstance(total, int) else start + len(page)), page
+
     async def entry(self, key: str, details: bool = False) -> Entry | None:
         """A show, movie or episode (None if Plex has no such thing). With
         `details`, its intro and credits and what its files hold too.

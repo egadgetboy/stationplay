@@ -3,15 +3,17 @@ it's set up on the Broken files tab. StationPlay itself only ever needs
 Plex; this asks the apps you already use to fetch a better file.
 
 Each time the broken-files list is gone through (see jobs.py), for each
-program on it that's broken or damaged (not unsupported), of the kind
-they're to replace (what(): broken or damaged files, missing ones, or
-both), that you've said to replace (when(): when you say so, with Replace
-on the list, unless you've chosen Automatically, when you can say Leave
-this one to me instead), found in Sonarr (an episode) or Radarr (a movie)
-as exactly one show and episode, or movie, there, and only while the app is
-monitoring it (Sonarr: the show and the episode, as its own searches go
-by; Radarr: the movie), so what you've unmonitored, or removed on purpose,
-is left alone:
+file on it that's broken or damaged (not unsupported), whether a station
+plays it, Media in StationPlay's apps does, or both, of the kind they're to
+replace (what(): broken or damaged files, missing ones, or both), that
+you've said to replace (when(): when you say so, with Replace on the list,
+unless you've chosen Automatically, when you can say Leave this one to me
+instead), found in Sonarr (an episode) or Radarr (a movie) as exactly one
+show and episode, or movie, there, and only while the app is monitoring it
+(Sonarr: the show and the episode, as its own searches go by; Radarr: the
+movie), so what you've unmonitored, or removed on purpose, is left alone.
+For a file that's one of a program's versions, only when the app's file is
+that one:
 
   * A broken or damaged file: the release it came from is blocklisted
     first (its grab marked as failed, as History's "Mark as Failed" does),
@@ -50,6 +52,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from .arr import APPS, GRABBED, IMPORTED, NAMES, RADARR, SONARR, Arr, ArrError, clean_url
+from .broken import file_key
 from .db import Item
 from .library import LibraryError
 from .sources import REMOVED
@@ -231,7 +234,7 @@ def entry_item(entry: dict[str, Any]) -> Item | None:
     episode needs its show's key, which replacing it remembers)."""
     show = entry.get("show")
     state = entry.get("replace") or {}
-    if show and not state.get("showKey"):
+    if show and not (state.get("showKey") or entry.get("showKey")):
         return None
 
     def number(value: Any) -> int | None:
@@ -245,7 +248,7 @@ def entry_item(entry: dict[str, Any]) -> Item | None:
         kind="episode" if show else "movie",
         title=str(entry.get("title") or ""),
         show_title=str(show) if show else None,
-        show_key=str(state["showKey"]) if show else None,
+        show_key=str(state.get("showKey") or entry.get("showKey")) if show else None,
         season=number(entry.get("season")),
         episode=number(entry.get("episode")),
         year=number(entry.get("year")),
@@ -325,9 +328,10 @@ class Round:
 
 
 async def replace_all(ctx: AppContext, by_key: dict[str, Item], only: str | None = None) -> None:
-    """Does what's next for each program on the list (see above). `by_key`:
+    """Does what's next for each file on the list (see above). `by_key`:
     the programs on a station (or in an update waiting to start), by key;
-    `only`, just that entry. Stops for an app it can't reach, till next time."""
+    `only`, just that entry (by its file key). Stops for an app it can't
+    reach, till next time."""
     conf = settings(ctx.db)
     rounds = {
         app: Round(Arr(app, c["url"], c["key"], transport=ctx.arr_transport))
@@ -342,7 +346,7 @@ async def replace_all(ctx: AppContext, by_key: dict[str, Item], only: str | None
     changed: dict[str, tuple[Any, dict[str, Any]]] = {}
     try:
         for entry in ctx.broken.entries():
-            key = str(entry["ratingKey"])
+            key = file_key(entry)
             app = app_for(entry)
             r = rounds.get(app)
             if r is None or (only is not None and key != only):
@@ -356,8 +360,11 @@ async def replace_all(ctx: AppContext, by_key: dict[str, Item], only: str | None
                     changed[key] = (entry.get("lastFailed"), {})
                 continue
             state = dict(entry.get("replace") or {})
-            if state.get("state") in DONE or (key not in by_key and not state):
-                continue  # (left to you; or no station has it, and it wasn't begun)
+            # (A station plays a program's first version: never another.)
+            on_a_station = not entry.get("version") and str(entry["ratingKey"]) in by_key
+            used = on_a_station or ctx.in_media(entry)
+            if state.get("state") in DONE or (not used and not state):
+                continue  # (left to you; or neither a station nor Media has it, and it wasn't begun)
             if asking and not state:
                 continue  # (until you say so)
             # (What's found of it is kept even if it can't be replaced.)
@@ -485,6 +492,12 @@ async def _one(
             f"{arr.name} blocklisted {grab.get('sourceTitle') or 'its release'}, removed the "
             f"file, and is searching for another (try {len(tried['tries'])} of {TRIES})",
         )
+    if have is not None and entry.get("version") and not n:
+        # (One version of several: the app's file is another of them.)
+        raise Cant(
+            f"{arr.name}'s file for it is another of its versions, not the one found broken, so "
+            "StationPlay leaves this one to you"
+        )
     if have is not None:
         # A file Plex hasn't been seen to have: Plex is asked to look.
         if n:
@@ -554,7 +567,7 @@ async def _find(
     item = by_key.get(key)
     state["app"] = arr.app
     if arr.app == SONARR:
-        show_key = (item.show_key if item else None) or state.get("showKey")
+        show_key = (item.show_key if item else None) or state.get("showKey") or entry.get("showKey")
         ids = await _plex_ids(ctx, show_key) if show_key else {}
         tvdb = ids.get("tvdb")
         shows = [s for s in await arr.series(tvdb) if tvdb and str(s.get("tvdbId")) == tvdb]
@@ -772,7 +785,7 @@ def try_again(ctx: AppContext, entry: dict[str, Any]) -> None:
     # (What it is in the app is kept; and so it stays on the list.)
     kept = {k: state[k] for k in _IDENTITY if state.get(k) is not None}
     kept["asked"] = now_ms()
-    ctx.broken.replacing({str(entry["ratingKey"]): (entry.get("lastFailed"), kept)})
+    ctx.broken.replacing({file_key(entry): (entry.get("lastFailed"), kept)})
 
 
 def leave(ctx: AppContext, entry: dict[str, Any]) -> None:
@@ -787,7 +800,7 @@ def leave(ctx: AppContext, entry: dict[str, Any]) -> None:
         note=f"StationPlay won't ask {NAMES[app]} to replace it",
         at=now_ms(),
     )
-    ctx.broken.replacing({str(entry["ratingKey"]): (entry.get("lastFailed"), left)})
+    ctx.broken.replacing({file_key(entry): (entry.get("lastFailed"), left)})
 
 
 # What's kept of an entry's state when you say what's to be done: which

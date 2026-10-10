@@ -13,15 +13,15 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from . import replacing
-from .broken import CHECK, DEEP_SCAN, PLAYING, found_by
+from .broken import CHECK, STAYS, file_key, found_by
 from .db import Item
 from .ffmpeg import redact
 from .library import LibraryError
 from .playing import cap
 from .playing import station as station_named
 from .plex import Lookups, MediaPart, telling_title
-from .scanner import quick_check_item, quick_verdict
-from .sources import FIND_AGAIN_S, REMOVED
+from .scanner import quick_check_item, quick_verdict, someone_watching
+from .sources import FIND_AGAIN_S, REMOVED, VERSION_GONE
 
 if TYPE_CHECKING:
     from .main import AppContext
@@ -31,10 +31,11 @@ log = logging.getLogger(__name__)
 # Files checked at once, across every station's check (so checking several
 # new stations at once doesn't swamp the NAS).
 CHECK_CONCURRENCY = 2
-# While anyone's watching a station, checks that read files (a station's
-# Check files, going through the broken-files list) go one at a time, with
-# this rest between: a lower disk priority isn't honoured by ZFS and most
-# NAS disks, and fewer reads at once is what keeps the streams' reads quick.
+# While anyone's watching (a station, or Media in the apps), checks that read
+# files (a station's Check files, going through the broken-files list) go
+# one at a time, with this rest between: a lower disk priority isn't
+# honoured by ZFS and most NAS disks, and fewer reads at once is what keeps
+# the streams' reads quick.
 WATCHING_REST_S = 5.0
 # A new station's files are checked as soon as it's made. (Tests that aren't
 # about checking files turn it off, so they don't wait for ffmpeg.)
@@ -80,7 +81,7 @@ async def check_turn(ctx: AppContext):
     """A turn to read a file for a check: one of CHECK_CONCURRENCY, or while
     anyone's watching, the only one, and a rest after it."""
     async with ctx.check_slots:
-        if not any(b.viewers for b in list(ctx.broadcasters.values())):
+        if not someone_watching(ctx):
             yield
             return
         async with ctx.watching_checks:
@@ -143,8 +144,11 @@ def start_check(ctx: AppContext, channel_id: int) -> CheckStatus:
 # Every half hour, for what's changed in Plex:
 #   * a program whose file is missing (gone from disk, or from Plex) comes
 #     off the list once no station has it (taken off its stations on
-#     purpose, say), unless Sonarr or Radarr is replacing it; a broken or
-#     damaged one stays, so it's never put on a station again unnoticed;
+#     purpose, say) and it isn't in Media, unless Sonarr or Radarr is
+#     replacing it; a broken or damaged one stays, so it's never put on a
+#     station again unnoticed;
+#   * a version of a program (not the one a station plays) comes off the
+#     list once Plex no longer has it;
 #   * a program Plex no longer has under its key comes off the list if it's
 #     in Plex again under a new key (added again: a file renamed, say), or
 #     if no station has it any more; one removed from Plex that a station
@@ -337,8 +341,22 @@ def _label(entry: dict[str, Any]) -> str:
     return str(entry.get("title") or entry.get("ratingKey"))
 
 
+async def _version_part(ctx: AppContext, key: str, version: str) -> MediaPart | None:
+    """The file a version of a program has now (LibraryError 404 if the
+    program's gone; LookupError if the version is, or it's the program's
+    first now, and known by its key alone)."""
+    entry = await ctx.library.entry(key, details=True)
+    if entry is None:
+        raise LibraryError("no longer in Plex", 404)
+    media = next((m for m in entry.media[1:] if m.id == version), None)
+    if media is None:
+        raise LookupError(version)
+    return MediaPart(media.file, media.part_key, media.size, media.duration_ms)
+
+
 def _item_for(entry: dict[str, Any], part: MediaPart) -> Item:
-    """A program on the list that's on no station now, to check its file."""
+    """A program on the list that's on no station now (or a version of one
+    that isn't the one a station plays), to check its file."""
 
     def number(value: Any) -> int | None:
         return value if isinstance(value, int) and not isinstance(value, bool) else None
@@ -351,11 +369,13 @@ def _item_for(entry: dict[str, Any], part: MediaPart) -> Item:
         kind="episode" if entry.get("show") else "movie",
         title=str(entry.get("title") or ""),
         show_title=str(entry["show"]) if entry.get("show") else None,
+        show_key=str(entry["showKey"]) if entry.get("showKey") else None,
         season=number(entry.get("season")),
         episode=number(entry.get("episode")),
         year=number(entry.get("year")),
         file_path=part.file or entry.get("file"),
         part_key=part.key,
+        library=str(entry["library"]) if entry.get("library") else None,
     )
 
 
@@ -375,25 +395,35 @@ async def look_at(
     """Looks at one entry on the broken-files list again (see above).
     `shows`: what Plex said about shows and movies, kept for the next entry."""
     key = str(entry["ratingKey"])
+    version = str(entry.get("version") or "")
+    # (A station plays a program's first version: never another.)
+    on_a_station = not version and (key in on.by_key or on.again(entry) is not None)
     if (
         replacing.missing(entry)
-        and key not in on.by_key
-        and on.again(entry) is None
+        and not on_a_station
+        and not ctx.in_media(entry)
         and not replacing.held(ctx.db, entry)
     ):
         log.info(
-            "Removed %s from the Broken files list: its file is missing and no station has it now",
+            "Removed %s from the Broken files list: its file is missing, and neither a station "
+            "nor Media has it now",
             _label(entry),
         )
         return CLEARED, {}
     try:
-        part = await asyncio.wait_for(ctx.library.current_part(key), PLEX_WAIT_S)
+        if version:
+            part = await asyncio.wait_for(_version_part(ctx, key, version), PLEX_WAIT_S)
+        else:
+            part = await asyncio.wait_for(ctx.library.current_part(key), PLEX_WAIT_S)
     except LibraryError as e:
         if e.status != 404:
             raise PlexAway(str(e)) from e
         return await _gone(ctx, entry, on, everything, shows)
     except TimeoutError as e:
         raise PlexAway("Plex didn't answer") from e
+    except LookupError:
+        log.info("Removed %s from the Broken files list: %s", _label(entry), VERSION_GONE)
+        return CLEARED, {}
     if part is None or not part.file:
         return (STILL, {}) if everything else None  # Plex has it, with no file
     old_file, old_size = entry.get("file"), entry.get("fileSize")
@@ -401,16 +431,16 @@ async def look_at(
         (old_file and part.file != old_file) or (old_size and part.size and part.size != old_size)
     )
     if not changed and (
-        not everything
-        or entry.get("problem") == "unsupported"
-        or found_by(entry) in (DEEP_SCAN, PLAYING)
+        not everything or entry.get("problem") == "unsupported" or found_by(entry) in STAYS
     ):
         return None
     # The quick check, of the file Plex has now: a new one, or the same one
     # again.
-    item = on.by_key.get(key) or _item_for(entry, part)
+    item = (on.by_key.get(key) if not version else None) or _item_for(entry, part)
     async with check_turn(ctx):
-        verdict, record, resolved = await quick_verdict(ctx, item, ctx.db.scan(key))
+        verdict, record, resolved = await quick_verdict(
+            ctx, item, ctx.db.scan(file_key(entry)), version
+        )
     if verdict.result == "skipped":
         return None  # couldn't tell (a slow share, say): another time
     if record is not None:
@@ -443,6 +473,9 @@ async def _gone(
     """An entry Plex no longer has under its key. Added again under a new
     key, it isn't broken; removed, it is while a station still has it."""
     key = str(entry["ratingKey"])
+    if entry.get("version"):
+        log.info("Removed %s from the Broken files list: it's no longer in Plex", _label(entry))
+        return CLEARED, {}
     if on.again(entry) is not None:
         log.info(
             "Removed %s from the Broken files list: Plex has it again under a new key, and a "
@@ -506,7 +539,7 @@ async def go_through(ctx: AppContext, status: ListCheck, everything: bool, on: O
 
     try:
         for entry in entries:
-            key = str(entry["ratingKey"])
+            key = file_key(entry)
             try:
                 got = await look_at(ctx, entry, on, everything, shows)
             except PlexAway:
@@ -577,7 +610,7 @@ async def try_again(ctx: AppContext, key: str) -> None:
     """Try again (on the Broken files tab): Sonarr or Radarr tries that
     entry afresh, now."""
     async with ctx.list_lock:
-        entry = next((e for e in ctx.broken.entries() if str(e.get("ratingKey")) == key), None)
+        entry = ctx.broken.entry(key)
         if entry is None:
             return
         replacing.try_again(ctx, entry)

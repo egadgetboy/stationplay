@@ -469,11 +469,11 @@ def test_a_file_that_cant_be_checked_yet_waits_and_doesnt_hold_up_the_rest(
         real = sc.quick_check_item
         asked: list[str] = []
 
-        async def slow_first(ctx_, item, station, record=None):
+        async def slow_first(ctx_, item, station, record=None, *more):
             asked.append(item.rating_key)
             if item.rating_key == "201":
                 return sc.Verdict("skipped", "timed out after 60s"), None
-            return await real(ctx_, item, station, record)
+            return await real(ctx_, item, station, record, *more)
 
         monkeypatch.setattr(sc, "quick_check_item", slow_first)
         client.portal.call(ctx.scanner.round)
@@ -511,9 +511,9 @@ def test_new_checks_look_again_at_what_the_old_ones_found(tmp_path, files, monke
         checked: list[str] = []
         real = sc.quick_check_item
 
-        async def noting(ctx_, item, station, record=None):
+        async def noting(ctx_, item, station, record=None, *more):
             checked.append(item.rating_key)
-            return await real(ctx_, item, station, record)
+            return await real(ctx_, item, station, record, *more)
 
         monkeypatch.setattr(sc, "quick_check_item", noting)
         client.portal.call(ctx.scanner.round)
@@ -558,7 +558,7 @@ def test_a_new_file_that_cant_be_checked_yet_doesnt_set_the_scanner_spinning(
         # Sonarr upgrades it, before its deep scan; the new file's still copying.
         fp.episodes["201"]["Media"][0]["Part"][0]["file"] = str(files["one_glitch"])
 
-        async def copying(ctx_, item, station, record=None):
+        async def copying(ctx_, item, station, record=None, *more):
             return sc.Verdict("skipped", "timed out after 60s"), None
 
         monkeypatch.setattr(sc, "quick_check_item", copying)
@@ -906,6 +906,7 @@ async def test_checks_go_one_at_a_time_while_someone_watches(monkeypatch):
         check_slots=asyncio.Semaphore(jobs.CHECK_CONCURRENCY),
         watching_checks=asyncio.Lock(),
         broadcasters={},
+        plays=SimpleNamespace(now=list),
     )
     running, most = 0, 0
 
@@ -925,6 +926,12 @@ async def test_checks_go_one_at_a_time_while_someone_watches(monkeypatch):
     await asyncio.gather(*(check() for _ in range(3)))
     assert most == 1
     assert time.monotonic() - started >= 3 * (0.05 + 0.05) - 0.02  # (with a rest after each)
+    # Someone watching Media in the apps counts the same.
+    ctx.broadcasters = {}
+    ctx.plays = SimpleNamespace(now=lambda: [object()])
+    most = 0
+    await asyncio.gather(*(check() for _ in range(3)))
+    assert most == 1
 
 
 # Judging glitches by what they do (1.16.3) ------------------------------------------------

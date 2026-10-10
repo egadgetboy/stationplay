@@ -1,21 +1,41 @@
-"""Checking programs' files for problems before they air.
+"""Checking files for problems before anyone plays them: the stations'
+programs, and what's shared for Media in StationPlay's apps (the libraries
+an Admin shared with them). One record per file, whoever plays it (see
+broken.version_key): a file checked for a station isn't checked again for
+Media, or the other way around, unless it changes.
 
-Three layers, all at the lowest priority, and none of them while anyone's
-watching a station (a lower disk priority isn't honoured by ZFS and most
-NAS disks: fewer reads is what keeps the streams' own reads quick):
+One queue, at the lowest priority, and none of it while anyone's watching,
+a station or Media (a lower disk priority isn't honoured by ZFS and most
+NAS disks: fewer reads is what keeps the streams' own reads quick). In
+this order:
 
-  * Arrival check: a program new to a station (or whose file changed) gets
-    a quick check within minutes, before it airs if it's part of an update
-    that hasn't started yet. The file must open, and picture and sound must
-    decode at five points: the start, a quarter, halfway, three quarters and
-    the end.
-  * Weekly sweep: every program on a station gets the quick check again
-    once a week, in case a file went missing or a share changed.
-  * Overnight deep scan: in a window you choose (1-6 AM unless you change
-    it), programs are decoded in full, picture and sound, timed the way
-    StationPlay plays them, whatever airs soonest first. It stops the
-    moment anyone starts watching and carries on where it left off later.
-    A file is deep-scanned once, and again only if it changes.
+  1. A station's program airing soon (in an update that hasn't started
+     yet, or on within SOON_S) that's due a check.
+  2. A file someone just had trouble with (see Target): a copy of it that
+     failed to be made or stopped, a problem an app sent as it happened, or
+     a person's report. The stretch of it where that happened is decoded as
+     the deep scan decodes, then it gets the quick check (and for a report
+     that says where, the deep scan, if those find nothing). Only what
+     StationPlay finds puts it on the list: trouble that was the network's
+     or the app's changes nothing about the file.
+  3. Arrival check: a program new to a station (or whose file changed),
+     then what's newly added to a library shared for Media, gets a quick
+     check within minutes. The file must open, and picture and sound must
+     decode at five points: the start, a quarter, halfway, three quarters
+     and the end.
+  4. Weekly sweep: every program on a station gets the quick check again
+     once a week, in case a file went missing or a share changed. (Media's
+     files are checked when they arrive, and when someone has trouble with
+     one.)
+  5. Overnight deep scan: in a window you choose (1-6 AM unless you change
+     it), files are decoded in full, picture and sound, timed the way
+     StationPlay plays them: the stations' programs first, whatever airs
+     soonest first; then Media's: what's in someone's Continue Watching,
+     the next episode of a show someone is watching, then the rest by most
+     recently added (each with its quick check first, if it hasn't had
+     one). It stops the moment anyone starts watching and carries on where
+     it left off later. A file is deep-scanned once, and again only if it
+     changes.
 
 What counts is what stops a program airing whole and as it should. What
 StationPlay plays through without anyone minding (a pause, a file a few
@@ -45,7 +65,9 @@ heard) doesn't.
 
 Both go on the broken-files list, so they're off the air until the file is
 replaced or you choose Retry (which also means "put it back on the air": a
-file is never deep-scanned twice).
+file is never deep-scanned twice). In Media, a damaged file still plays; a
+broken one doesn't (another version of it plays, if there's one that isn't
+on the list).
 """
 
 from __future__ import annotations
@@ -61,16 +83,18 @@ import time
 import zlib
 from collections import deque
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from typing import TYPE_CHECKING
 
+from . import catalog, ondemand
 from . import ffmpeg as ff
 from .broadcaster import fmt_offset, played_whole
-from .broken import CHECK, DEEP_SCAN
+from .broken import CHECK, DEEP_SCAN, TARGETED, file_key, version_key
+from .catalog import Entry, Media
 from .db import Item, ScanRecord
 from .library import LibraryError
 from .markers import CREDITS, parse_markers
-from .sources import ResolvedSource
+from .sources import ResolvedSource, resolve_version
 
 if TYPE_CHECKING:
     from .main import AppContext
@@ -118,6 +142,9 @@ CREDITS_PENDING_S = 2 * 86_400
 PICTURE_RATE = 10
 # Programs are quick-checked again after this long.
 RECHECK_S = 7 * 24 * 3600
+# A station's program airs soon when it's on within this long (or it's in
+# an update that hasn't started yet): it's checked before anything else.
+SOON_S = 3 * 3600
 # Quick checks between looks at what's new (so arrivals never wait long).
 QUICK_BATCH = 20
 # A quick check that couldn't tell (a slow share, Plex not answering) is
@@ -222,6 +249,36 @@ META_FIRST = "scan_first"  # JSON: rating keys to quick-check before others
 DEEP_RULES = "2"  # (2: glitches judged by what they do, in 1.16.3)
 META_DEEP_RULES = "deep_rules"
 META_AGAIN = "deep_again"  # JSON: rating keys of programs off the air to judge again
+# Media (the libraries shared with the apps). What's newly added is looked
+# for when the libraries change, and at least every MEDIA_LOOK_S, newest
+# first, MEDIA_PAGE at a time (MEDIA_NEW_MOST at most): what was added since
+# the checks reached Media (META_MEDIA_FROM, seconds since 1970) is an
+# arrival; what was there before is the overnight deep scan's.
+MEDIA_LOOK_S = 1800.0
+MEDIA_PAGE = 100
+MEDIA_NEW_MOST = 500
+META_MEDIA_FROM = "media_checks_from"
+# For the deep scan: Media's whole list, newest first, is fetched at most
+# this often (MEDIA_ALL_PAGE at a time); what people are watching, this often.
+MEDIA_ALL_S = 3600.0
+MEDIA_ALL_PAGE = 500
+MEDIA_WATCHED_S = 600.0
+# A file someone had trouble with (see Target): the stretch decoded is from
+# STRETCH_BEFORE_S before where it went wrong, for STRETCH_S. A check that
+# can't tell (a slow share, Plex away) is tried again, TARGET_TRIES times
+# in all; at most TARGETS_MOST wait at once (the oldest go first).
+STRETCH_BEFORE_S = 20.0
+STRETCH_S = 60.0
+TARGET_TRIES = 4
+TARGETS_MOST = 200
+META_TARGETS = "scan_targets"  # JSON: the targets waiting (see Target)
+# What's next for a target: its stretch, its quick check, its deep scan.
+STRETCH, QUICK, FULL = "stretch", "quick", "full"
+# What a target's check came to (for the reports that asked for it: see
+# reports.py): a problem found (and the file on the list); one found in a
+# file an Admin put back on the air; nothing; the program gone; or it
+# couldn't be checked.
+FOUND, KEPT, NOTHING, GONE, COULDNT = "found", "kept", "nothing", "gone", "couldn't"
 # What took programs off the air that's judged anew: the deep scan's
 # counting of decoders' errors (before 1.16.3).
 _JUDGED_ANEW = "Deep scan: the picture or sound breaks up"
@@ -537,15 +594,17 @@ async def decode_through(
     on_progress: Callable[[Scanned], None],
     count_from: float,
     rate: int = 0,
+    seconds: float | None = None,
 ) -> Scanned:
-    """Decodes a file from `start_s` to the end as it plays, noting where
-    the picture broke up or the sound dropped out (not before `count_from`,
-    just after the start or a seek; `rate`: the sound's sample rate),
-    silences and black stretches, and how far the picture went. Cancelling
-    stops it, after what it was in the middle of noting is noted."""
+    """Decodes a file from `start_s` to the end as it plays (or `seconds`
+    of it), noting where the picture broke up or the sound dropped out (not
+    before `count_from`, just after the start or a seek; `rate`: the sound's
+    sample rate), silences and black stretches, and how far the picture
+    went. Cancelling stops it, after what it was in the middle of noting is
+    noted."""
     # Progress on the same pipe as the log, so each line lands in order.
     args = _decode_args(
-        ctx, source, start_s, None, video_index, audio_index, 0, "pipe:2",
+        ctx, source, start_s, seconds, video_index, audio_index, 0, "pipe:2",
         _analysis(audio_index is not None),
     )  # fmt: skip
     got = Scanned(at=start_s, picture_to=start_s)
@@ -816,12 +875,18 @@ async def _after_the_sound(
 
 
 async def quick_check_item(
-    ctx: AppContext, item: Item, station: int | None, record: ScanRecord | None = None
+    ctx: AppContext,
+    item: Item,
+    station: int | None,
+    record: ScanRecord | None = None,
+    version: str = "",
+    library: str | None = None,
 ) -> tuple[Verdict, ScanRecord | None]:
-    """Quick-checks a program's file, and takes it off the air if it's
-    broken or damaged. Returns the verdict and the updated scan record
-    (None if the file couldn't be looked at: Plex or the share down)."""
-    verdict, record, resolved = await quick_verdict(ctx, item, record)
+    """Quick-checks a program's file (`version`: one that isn't its first,
+    by its ID), and takes it off the air if it's broken or damaged.
+    Returns the verdict and the updated scan record (None if the file
+    couldn't be looked at: Plex or the share down)."""
+    verdict, record, resolved = await quick_verdict(ctx, item, record, version)
     if verdict.result in ("ok", "skipped"):
         return verdict, record
     if record is not None and record.kept:
@@ -840,18 +905,29 @@ async def quick_check_item(
         resolved.size if record is not None else None,
         problem=verdict.result,
         found=CHECK,
+        version=version,
+        library=library,
     )
     return verdict, record
 
 
+async def resolve(ctx: AppContext, item: Item, version: str = "") -> ResolvedSource:
+    """Where a program's file is read from: the one a station plays, or
+    another version of it (`version`: its ID)."""
+    if not version:
+        return await ctx.resolve_source(item)
+    return await resolve_version(ctx.settings, ctx.library, item, version, ctx.media_access)
+
+
 async def quick_verdict(
-    ctx: AppContext, item: Item, record: ScanRecord | None = None
+    ctx: AppContext, item: Item, record: ScanRecord | None = None, version: str = ""
 ) -> tuple[Verdict, ScanRecord | None, ResolvedSource]:
-    """The quick check of a program's file, taking nothing off the air: the
-    verdict ("ok", "broken", "damaged" or "skipped": couldn't tell), the
-    updated scan record (None if the file couldn't be looked at), and where
-    the file was found."""
-    resolved = await ctx.resolve_source(item)
+    """The quick check of a program's file (`version`: one that isn't its
+    first, by its ID), taking nothing off the air: the verdict ("ok",
+    "broken", "damaged" or "skipped": couldn't tell), the updated scan
+    record (None if the file couldn't be looked at), and where the file was
+    found."""
+    resolved = await resolve(ctx, item, version)
     if resolved.error or not resolved.source:
         if resolved.transient:
             return Verdict("skipped", resolved.error or ""), None, resolved
@@ -859,7 +935,8 @@ async def quick_verdict(
     file = resolved.plex_file or resolved.source
     size = resolved.size or 0
     if record is None or record.file != file or (size and record.size and record.size != size):
-        record = ScanRecord(item.rating_key, file, size)  # a new file: start afresh
+        # A new file: start afresh.
+        record = ScanRecord(version_key(item.rating_key, version), file, size)
     record.size = size or record.size
     probe = await ff.probe(ctx.settings, resolved.source)
     streamed = resolved.source.startswith(("http://", "https://"))
@@ -880,6 +957,34 @@ async def quick_verdict(
     record.quick_ms = int(time.time() * 1000)
     record.quick = verdict.result
     return verdict, record, resolved
+
+
+async def check_stretch(
+    ctx: AppContext, source: str, probe: ff.ProbeResult, at_s: float
+) -> tuple[Verdict, float]:
+    """The stretch of a file around `at_s`, where someone had trouble with
+    it, decoded as the deep scan decodes it (see decode_through): from
+    STRETCH_BEFORE_S before it, for STRETCH_S. "damaged" where the picture
+    breaks up, the sound drops out or it skips there, as the deep scan
+    judges it; "skipped" if nothing of it could be read; "ok" otherwise.
+    (What only decoding a whole file tells, such as how long a silence
+    lasts, is the deep scan's to judge.) Also where the stretch starts."""
+    duration = probe.duration_s or 0.0
+    start = max(0.0, at_s - STRETCH_BEFORE_S)
+    if duration:
+        start = min(start, max(0.0, duration - STRETCH_S))
+    got = await decode_through(
+        ctx, source, start, probe.video_index, probe.audio_index, lambda _got: None,
+        count_from=start + (SEEK_GRACE_S if start else START_GRACE_S),
+        rate=probe.audio_rate, seconds=STRETCH_S,
+    )  # fmt: skip
+    if got.stalled or got.unreadable or max(got.at, got.picture_to) <= start + 1.0:
+        return Verdict("skipped", "that part of the file couldn't be read"), start
+    end = (duration or got.picture_to) - END_GRACE_S
+    glitches = [g for g in got.glitches if g[1] < end]
+    if glitches:
+        return Verdict("damaged", glitch_reason(glitches, probe.audio_codec)), start
+    return Verdict("ok"), start
 
 
 async def credits_of(ctx: AppContext, item: Item) -> list[tuple[float, float]]:
@@ -1074,8 +1179,87 @@ def judge(
 
 @dataclass
 class Program:
+    """A file to check: a program's, as a station plays it (its library's
+    first version), or another version of it, in Media."""
+
     item: Item
-    station: int  # the number of a station it's on
+    station: int | None  # the number of a station it's on (None: only in Media)
+    version: str = ""  # the version's ID, for one that isn't the program's first
+    library: str | None = None  # the library it's in, if that's known
+
+    @property
+    def key(self) -> str:
+        """Its file key (see broken.version_key)."""
+        return version_key(self.item.rating_key, self.version)
+
+
+def item_of(entry: Entry, media: Media) -> Item:
+    """A version of a show's episode or a movie, as the checks take it."""
+    return Item(
+        position=0,
+        start_ms=0,
+        duration_ms=media.duration_ms or entry.duration_ms or 0,
+        rating_key=entry.key,
+        kind="episode" if entry.kind == catalog.EPISODE else "movie",
+        title=entry.title,
+        show_title=entry.show_title or None,
+        show_key=entry.show_key,
+        season=entry.season,
+        episode=entry.episode,
+        year=entry.year,
+        file_path=media.file,
+        part_key=media.part_key,
+        library=entry.library or None,
+    )
+
+
+def versions_of(entry: Entry) -> list[Program]:
+    """An episode's or a movie's files: its first version (the one a
+    station plays), and any others with an ID (in Media)."""
+    return [
+        Program(item_of(entry, media), None, "" if n == 0 else media.id, entry.library or None)
+        for n, media in enumerate(entry.media)
+        if n == 0 or media.id
+    ]
+
+
+def version_of(entry: Entry, media: Media) -> str:
+    """A version's ID, as its file key has it: "" for the first."""
+    return "" if entry.media and media == entry.media[0] else media.id
+
+
+def trouble(ctx: AppContext, entry: Entry, media: Media, at_s: float | None, why: str) -> None:
+    """Someone had trouble playing a version of an episode or a movie in
+    Media (`at_s`: where, if it's known): its file is checked first, there
+    (see Target). Nothing about the file changes unless that finds what's
+    wrong."""
+    if entry.kind not in (catalog.EPISODE, catalog.MOVIE):
+        return
+    ctx.scanner.target(
+        entry.key, version_of(entry, media), at_s, why, label=item_of(entry, media).label
+    )
+
+
+@dataclass
+class Target:
+    """A file someone just had trouble with (see the module's notes), to
+    check before anything but what airs soon. Kept (META_TARGETS), in case
+    of a restart."""
+
+    key: str  # its file key (see broken.version_key)
+    rating_key: str
+    version: str = ""
+    at_s: float | None = None  # where it went wrong, if that's known
+    # A report that says where: the deep scan too, if the rest find nothing.
+    full: bool = False
+    why: str = ""  # what happened, as the log says it ("Tia reported No sound")
+    station: int | None = None  # the station it was on, if it was
+    reports: list[int] = field(default_factory=list)  # the reports waiting on it
+    stage: str = STRETCH  # what's next
+    tries: int = 0  # times it couldn't tell
+    wait_until: float = 0.0  # (time.time(): not before, after one that couldn't)
+    ran: list[str] = field(default_factory=list)  # what was checked, for the reports
+    label: str = ""  # the program, as the log names it
 
 
 class Scanner:
@@ -1090,8 +1274,8 @@ class Scanner:
         self._night = ""
         self.tonight = {"scanned": 0, "problems": 0}
         self._paused_logged = False
-        # Programs whose quick check couldn't tell lately: when to try
-        # again, and how many times it couldn't (by rating key).
+        # Files whose quick check couldn't tell lately: when to try again,
+        # and how many times it couldn't (by file key).
         self._retry_at: dict[str, float] = {}
         self._skips: dict[str, int] = {}
         # Programs to quick-check before anything else (kept, in case of a
@@ -1103,6 +1287,28 @@ class Scanner:
         # if they're fine (kept, like _first).
         self._again: set[str] = set()
         self._again_read = False
+        # The stations' programs that air soon (see SOON_S), as programs()
+        # last found them.
+        self.soon: set[str] = set()
+        # Files someone had trouble with (see Target), oldest first.
+        self._targets: list[Target] = []
+        self._targets_read = False
+        # Media: what's newly added (as last looked for: the libraries'
+        # fingerprint then, and when), and the whole of it for the deep scan
+        # (newest first: when it was fetched, and the file keys in it); and
+        # what people are watching (when it was looked at).
+        self._media_new: list[Program] = []
+        self._media_print = ""
+        self._media_looked = 0.0
+        self._media_all: list[Program] = []
+        self._media_all_at: float | None = None
+        self._media_all_print = ""
+        self.media_keys: set[str] = set()
+        self._media_watched: list[Program] = []
+        self._media_watched_at: float | None = None
+        # Told what a target's check came to, for the reports waiting on it
+        # (see reports.py): (their IDs, the outcome, a sentence about it).
+        self.on_checked: Callable[[list[int], str, str], None] | None = None
 
     # Settings ---------------------------------------------------------------
 
@@ -1140,7 +1346,8 @@ class Scanner:
         self._wake.set()
 
     def watching(self) -> bool:
-        return any(b.viewers for b in self.ctx.broadcasters.values())
+        """Whether anyone's watching: a station, or Media in the apps."""
+        return someone_watching(self.ctx)
 
     def _make_way(self) -> bool:
         """Whether checks wait now: while anyone's watching (said once)."""
@@ -1160,7 +1367,8 @@ class Scanner:
     def programs(self) -> list[Program]:
         """Every program on a station, once each: those in updates that
         haven't started yet first (they're about to arrive), then whatever
-        airs soonest, then the rest."""
+        airs soonest, then the rest. (And which of them air soon: see
+        SOON_S.)"""
         db = self.ctx.db
         now = int(time.time() * 1000)
         arriving: dict[str, Program] = {}
@@ -1183,6 +1391,7 @@ class Scanner:
             for item in db.all_programs(channel.id):
                 rest.setdefault(item.rating_key, Program(item, channel.number))
         ordered = sorted(rest, key=lambda k: (airs.get(k, 1 << 62), k))
+        self.soon = set(arriving) | {k for k, at in airs.items() if at < now + SOON_S * 1000}
         return [*arriving.values(), *(rest[k] for k in ordered if k not in arriving)]
 
     def _due(self, programs: list[Program], scans: dict[str, ScanRecord]) -> list[Program]:
@@ -1192,7 +1401,7 @@ class Scanner:
         now = time.time() * 1000
         due = []
         for p in programs:
-            key = p.item.rating_key
+            key = p.key
             if key in broken or self._retry_at.get(key, 0) > now / 1000:
                 continue
             record = scans.get(key)
@@ -1225,8 +1434,9 @@ class Scanner:
         self._wake.clear()
 
     async def round(self) -> bool:
-        """Quick-checks a batch of what's due, then deep-scans one file if
-        it may. True if there's more to do straight away."""
+        """Checks a batch of what's due, in the queue's order (see the
+        module's notes); then, with nothing else to do, deep-scans one file
+        if it may. True if there's more to do straight away."""
         if not self.ctx.library.configured or self._make_way():
             return False
         try:
@@ -1236,45 +1446,404 @@ class Scanner:
             return False
         self._check_again_if_the_checks_changed()
         self._rules_changed()
+        self._read_targets()
         programs = await asyncio.to_thread(self.programs)
         scans = self.ctx.db.scans()
         due = self._due(programs, scans)
-        due.sort(key=lambda p: p.item.rating_key not in self._first)  # (a stable sort)
-        more = len(due) > QUICK_BATCH
-        if due:
+        due.sort(key=lambda p: p.key not in self._first)  # (a stable sort)
+        first = [p for p in due if p.key in self._first or p.key in self.soon]
+        rest = [p for p in due if p not in first]
+        new = [p for p in rest if (r := scans.get(p.key)) is None or not r.quick_ms]
+        weekly = [p for p in rest if p not in new]
+        media = await self._media_arrivals({p.key for p in programs}, scans)
+        now = time.time()
+        targets = [t for t in self._targets if t.wait_until <= now]
+        queue: list[Program | Target] = [*first, *targets, *new, *media, *weekly]
+        more = len(queue) > QUICK_BATCH
+        skipped = 0  # in a row
+        for job in queue[:QUICK_BATCH]:
+            if self._make_way():
+                return False  # (someone's started watching)
             self.state = "checking"
-            skipped = 0  # in a row
-            for program in due[:QUICK_BATCH]:
-                if self._make_way():
-                    return False  # (someone's started watching)
-                key = program.item.rating_key
-                verdict = await self._quick(program, scans.get(key))
-                if key in self._first:
-                    self._first.discard(key)
-                    self.ctx.db.set_meta(META_FIRST, json.dumps(sorted(self._first)))
-                if verdict.result != "skipped":
-                    self._retry_at.pop(key, None)
-                    self._skips.pop(key, None)
-                    skipped = 0
-                    continue
-                # Couldn't tell (the file was slow to read, or Plex or the
-                # share didn't answer): this one waits a while, so it can't
-                # hold up the rest. Two in a row: they're likely down.
-                self._skips[key] = self._skips.get(key, 0) + 1
-                wait = SKIPPED_RETRY_S * 2 ** (self._skips[key] - 1)
-                self._retry_at[key] = time.time() + min(SKIPPED_RETRY_MOST_S, wait)
-                skipped += 1
-                if skipped == 2:
-                    more = False
-                    break
+            if isinstance(job, Target):
+                try:
+                    await self._targeted(job)
+                except Exception:
+                    log.exception("Checking %s failed", _target_label(job))
+                    self._later(job, "the check failed")
+                continue
+            key = job.key
+            verdict = await self._quick(job, scans.get(key))
+            if key in self._first:
+                self._first.discard(key)
+                self.ctx.db.set_meta(META_FIRST, json.dumps(sorted(self._first)))
+            if not self._skipped(key, verdict):
+                skipped = 0
+                continue
+            # Two in a row that couldn't tell: Plex or the share is likely down.
+            skipped += 1
+            if skipped == 2:
+                more = False
+                break
         self.state = "idle"
-        if self.in_window():
-            more = await self._deep_one(programs) or more
-        else:
+        if self.in_window() and not more:
+            more = await self._deep_one(programs)
+        elif not self.in_window():
             self._paused_logged = False
         if not more:
             self._forget_old(scans, programs)
         return more
+
+    def _skipped(self, key: str, verdict: Verdict) -> bool:
+        """Whether a quick check couldn't tell (the file was slow to read, or
+        Plex or the share didn't answer): then it waits a while, so it can't
+        hold up the rest, longer each time."""
+        if verdict.result != "skipped":
+            self._retry_at.pop(key, None)
+            self._skips.pop(key, None)
+            return False
+        self._skips[key] = self._skips.get(key, 0) + 1
+        wait = SKIPPED_RETRY_S * 2 ** (self._skips[key] - 1)
+        self._retry_at[key] = time.time() + min(SKIPPED_RETRY_MOST_S, wait)
+        return True
+
+    # Media ------------------------------------------------------------------------
+
+    def _media_from(self) -> float:
+        """When the checks reached Media (seconds since 1970): what was
+        added since is an arrival."""
+        db = self.ctx.db
+        try:
+            return float(db.get_meta(META_MEDIA_FROM, ""))
+        except ValueError:
+            now = time.time()
+            db.set_meta(META_MEDIA_FROM, str(int(now)))
+            return now
+
+    async def _media_arrivals(
+        self, on_stations: set[str], scans: dict[str, ScanRecord]
+    ) -> list[Program]:
+        """What's newly added to the libraries shared for Media that's due
+        its quick check, the newest first (not what a station has: that's
+        the stations'). Looked for when the libraries change, and every
+        MEDIA_LOOK_S."""
+        ctx = self.ctx
+        if not ctx.shared.on:
+            return []
+        since_ms = self._media_from() * 1000
+        try:
+            fingerprint = await asyncio.wait_for(ctx.library.fingerprint(), 10)
+            if fingerprint != self._media_print or (
+                time.monotonic() - self._media_looked >= MEDIA_LOOK_S
+            ):
+                found: list[Entry] = []
+                for lib in await asyncio.wait_for(ctx.catalog.libraries(), 10):
+                    start = 0
+                    while start < MEDIA_NEW_MOST:
+                        total, page = await asyncio.wait_for(
+                            ctx.library.added_files(lib["key"], lib["kind"], start, MEDIA_PAGE), 30
+                        )
+                        newer = [e for e in page if (e.added_ms or 0) >= since_ms]
+                        found += newer
+                        start += len(page)
+                        if len(newer) < len(page) or not page or start >= total:
+                            break
+                found.sort(key=lambda e: -(e.added_ms or 0))
+                self._media_new = [p for e in found for p in versions_of(e)]
+                self._media_print, self._media_looked = fingerprint, time.monotonic()
+        except (LibraryError, TimeoutError) as e:
+            log.info("Couldn't look for what's new in Media now (%s)", e or "Plex didn't answer")
+        return [p for p in self._media_new if self._media_due(p, scans, on_stations)]
+
+    def _media_due(self, p: Program, scans: dict[str, ScanRecord], on_stations: set[str]) -> bool:
+        """Whether a file of Media's needs its quick check: never checked, or
+        its file has changed since (not one a station has, or on the list,
+        or one whose check is waiting to try again)."""
+        key = p.key
+        if key in on_stations or self.ctx.broken.is_broken(key):
+            return False
+        if self._retry_at.get(key, 0) > time.time():
+            return False
+        return _unchecked(scans.get(key), p.item)
+
+    async def _media_watching(self) -> list[Program]:
+        """Media's files people are watching, for the deep scan: what's in
+        someone's Continue Watching, then the next episode of a show someone
+        is watching (kept MEDIA_WATCHED_S)."""
+        now = time.monotonic()
+        if self._media_watched_at is not None and now - self._media_watched_at < MEDIA_WATCHED_S:
+            return self._media_watched
+        ctx = self.ctx
+        cat = ctx.catalog
+        going: list[Entry] = []
+        for user_id in [0, *(u.id for u in ctx.db.users())]:
+            with contextlib.suppress(LibraryError, ondemand.NotShared, TimeoutError):
+                going += [e for e, _ in await ondemand.continue_watching(cat, ctx.db, user_id)]
+        keys = list(dict.fromkeys(e.key for e in going))
+        after: list[str] = []
+        for e in going:
+            if e.kind != catalog.EPISODE or not e.show_key:
+                continue
+            with contextlib.suppress(LibraryError, ondemand.NotShared, TimeoutError):
+                episodes = [x for x in await cat.episodes(e.show_key) if x.season != 0]
+                at = next((n for n, x in enumerate(episodes) if x.key == e.key), None)
+                if at is not None and at + 1 < len(episodes):
+                    after.append(episodes[at + 1].key)
+        found: list[Program] = []
+        for key in dict.fromkeys([*keys, *after]):
+            with contextlib.suppress(LibraryError, ondemand.NotShared, TimeoutError):
+                found += versions_of(await cat.entry(key))
+        self._media_watched, self._media_watched_at = found, now
+        return found
+
+    async def _media_everything(self) -> list[Program]:
+        """Media's files the deep scan may have to do, the most recently
+        added first. Fetched again when the libraries have changed, looked
+        at most every MEDIA_ALL_S; only those not yet done are kept (each is
+        looked at again as its turn comes), and the file keys of all of
+        them (media_keys)."""
+        now = time.monotonic()
+        if self._media_all_at is not None and now - self._media_all_at < MEDIA_ALL_S:
+            return self._media_all
+        ctx = self.ctx
+        fingerprint = await asyncio.wait_for(ctx.library.fingerprint(), 10)
+        if self._media_all_at is not None and fingerprint == self._media_all_print:
+            self._media_all_at = now
+            return self._media_all
+        entries: list[Entry] = []
+        for lib in await asyncio.wait_for(ctx.catalog.libraries(), 10):
+            start, total = 0, 1
+            while start < total:
+                total, page = await asyncio.wait_for(
+                    ctx.library.added_files(lib["key"], lib["kind"], start, MEDIA_ALL_PAGE), 60
+                )
+                entries += page
+                start += len(page)
+                if not page:
+                    break
+        entries.sort(key=lambda e: -(e.added_ms or 0))
+        every = [p for e in entries for p in versions_of(e)]
+        scans = ctx.db.scans()
+        self.media_keys = {p.key for p in every}
+        self._media_all = [p for p in every if _deep_due(scans.get(p.key), p.item)]
+        self._media_all_at, self._media_all_print = now, fingerprint
+        return self._media_all
+
+    async def _media_deep_order(self, on_stations: set[str]) -> list[Program]:
+        """Media's files in the deep scan's order (see the module's notes),
+        each once, but for what a station has (that's the stations')."""
+        try:
+            watching = await self._media_watching()
+            rest = await self._media_everything()
+        except (LibraryError, TimeoutError) as e:
+            log.info("Couldn't list Media's files for the deep scan now (%s)", e or "Plex away")
+            return []
+        out: dict[str, Program] = {}
+        for p in [*watching, *rest]:
+            if p.key not in on_stations:
+                out.setdefault(p.key, p)
+        return list(out.values())
+
+    # Files someone had trouble with ------------------------------------------------
+
+    def _read_targets(self) -> None:
+        if self._targets_read:
+            return
+        self._targets_read = True
+        names = {f.name for f in fields(Target)}
+        for got in _json_list(self.ctx.db.get_meta(META_TARGETS, "[]")):
+            if isinstance(got, dict) and got.get("key") and got.get("rating_key"):
+                with contextlib.suppress(TypeError, ValueError):
+                    self._targets.append(Target(**{k: v for k, v in got.items() if k in names}))
+
+    def _save_targets(self) -> None:
+        self.ctx.db.set_meta(META_TARGETS, json.dumps([asdict(t) for t in self._targets]))
+
+    def target(
+        self,
+        rating_key: str,
+        version: str = "",
+        at_s: float | None = None,
+        why: str = "",
+        station: int | None = None,
+        report: int | None = None,
+        full: bool = False,
+        label: str = "",
+    ) -> Target:
+        """A file someone just had trouble with, to check at the front of
+        the queue (see Target): one already waiting takes in what's new."""
+        self._read_targets()
+        key = version_key(rating_key, version)
+        found = next((t for t in self._targets if t.key == key), None)
+        if found is None:
+            found = Target(key, rating_key, version, at_s, full, why, station, label=label)
+            self._targets.append(found)
+            for dropped in self._targets[:-TARGETS_MOST]:  # (too many waiting: the oldest go)
+                self._done_with(dropped, COULDNT, "StationPlay had too many files to check")
+        else:
+            if at_s is not None and (found.at_s is None or abs(found.at_s - at_s) > STRETCH_S / 2):
+                # (Somewhere else in it: that stretch is checked, then the rest again.)
+                found.at_s, found.stage = at_s, STRETCH
+            found.full = found.full or full
+            found.why = why or found.why
+            found.station = found.station or station
+            found.label = found.label or label
+            found.wait_until = 0.0
+        if report is not None and report not in found.reports:
+            found.reports.append(report)
+        self._save_targets()
+        log.info("Checking %s first: %s", _target_label(found), why)
+        self._wake.set()
+        return found
+
+    def waiting(self, key: str) -> bool:
+        """Whether a file's check is waiting (see Target)."""
+        self._read_targets()
+        return any(t.key == key for t in self._targets)
+
+    def _done_with(self, target: Target, outcome: str, note: str = "") -> None:
+        """A target's check came to `outcome` (FOUND, KEPT, NOTHING, GONE or
+        COULDNT): it's done with, and the reports waiting on it are told."""
+        if target in self._targets:
+            self._targets.remove(target)
+            self._save_targets()
+        if target.reports and self.on_checked is not None:
+            self.on_checked(target.reports, outcome, note)
+        if outcome == NOTHING:
+            log.info(
+                "%s: StationPlay found nothing wrong with its file (%s), so it stays as it is",
+                _target_label(target),
+                target.why,
+            )
+
+    def _later(self, target: Target, why: str) -> None:
+        """A target's check couldn't tell now: tried again in a while, up to
+        TARGET_TRIES times in all."""
+        target.tries += 1
+        if target.tries >= TARGET_TRIES:
+            self._done_with(target, COULDNT, f"StationPlay couldn't check its file ({why})")
+            return
+        target.wait_until = time.time() + min(
+            SKIPPED_RETRY_MOST_S, SKIPPED_RETRY_S * 2 ** (target.tries - 1)
+        )
+        self._save_targets()
+
+    async def _targeted(self, target: Target) -> None:
+        """Checks a file someone had trouble with, a stage at a time (see
+        Target), until what StationPlay finds says what's to be done."""
+        ctx = self.ctx
+        try:
+            entry = await asyncio.wait_for(ctx.library.entry(target.rating_key, details=True), 30)
+        except (LibraryError, TimeoutError) as e:
+            self._later(target, str(e) or "Plex didn't answer")
+            return
+        versions = list(entry.media) if entry is not None else []
+        media = next(
+            (m for n, m in enumerate(versions) if (m.id if n else "") == target.version), None
+        )
+        if entry is None or media is None or entry.kind not in (catalog.EPISODE, catalog.MOVIE):
+            self._done_with(target, GONE, "It's no longer in Plex")
+            return
+        program = Program(item_of(entry, media), target.station, target.version, entry.library)
+        target.label = program.item.label
+        listed = ctx.broken.entry(target.key)
+        if listed is not None:
+            self._done_with(target, FOUND, str(listed.get("reason") or ""))
+            return
+        if target.stage == STRETCH:
+            if target.at_s is not None and await self._stretch(program, target):
+                return
+            target.stage = QUICK
+            self._save_targets()
+        record = ctx.db.scan(target.key)
+        if target.stage == FULL and (record is None or record.quick != "ok"):
+            target.stage = QUICK  # (a new file since: its quick check comes first)
+        if target.stage == QUICK:
+            verdict, record, resolved = await quick_verdict(
+                ctx, program.item, record, target.version
+            )
+            if verdict.result == "skipped":
+                self._later(target, verdict.reason or "the file couldn't be read")
+                return
+            target.ran.append("the quick check")
+            if record is not None:
+                ctx.db.save_quick(record)
+            if verdict.result != "ok":
+                self._found(target, program, record, f"Check: {verdict.reason}", verdict.result,
+                            CHECK, resolved)  # fmt: skip
+                return
+            if not target.full or record is None or record.deep_ms:
+                self._done_with(target, NOTHING, _nothing_found(target))
+                return
+            target.stage = FULL
+            self._save_targets()
+        if record is None or record.deep_ms:
+            self._done_with(target, NOTHING, _nothing_found(target))
+            return
+        if not await self.deep_scan(program, record, anytime=True):
+            if not self.watching():  # (stopped for a viewer: it carries on later)
+                self._later(target, "the file couldn't be read now")
+            return
+        record = ctx.db.scan(target.key)
+        if record is None or not record.deep_ms:
+            self._later(target, (record.note if record is not None else "") or "it can't be read")
+            return
+        target.ran.append("the deep scan")
+        if record.deep not in ("broken", "damaged"):
+            self._done_with(target, NOTHING, _nothing_found(target))
+        elif record.kept:
+            self._done_with(target, KEPT, f"Deep scan: {record.note}")
+        else:
+            self._done_with(target, FOUND, f"Deep scan: {record.note}")
+
+    async def _stretch(self, program: Program, target: Target) -> bool:
+        """The stretch of a file where someone had trouble with it (see
+        check_stretch). True if it found what's wrong (and the target's
+        done with)."""
+        assert target.at_s is not None
+        record = self.ctx.db.scan(target.key)
+        resolved = await resolve(self.ctx, program.item, program.version)
+        if resolved.error or not resolved.source:
+            return False  # (the quick check says what's what)
+        probe = await ff.probe(self.ctx.settings, resolved.source)
+        if not probe.ok:
+            return False
+        verdict, start = await check_stretch(self.ctx, resolved.source, probe, target.at_s)
+        if verdict.result == "skipped":
+            return False
+        stretch = f"{fmt_offset(start)} to {fmt_offset(start + STRETCH_S)}"
+        target.ran.append(f"the stretch from {stretch}")
+        if verdict.result == "ok":
+            return False
+        reason = f"Check from {fmt_offset(start)}: {verdict.reason}"
+        self._found(target, program, record, reason, verdict.result, TARGETED, resolved)
+        return True
+
+    def _found(
+        self,
+        target: Target,
+        program: Program,
+        record: ScanRecord | None,
+        reason: str,
+        problem: str,
+        how: str,
+        resolved: ResolvedSource,
+    ) -> None:
+        """A target's check found what's wrong: the file goes on the list
+        (unless an Admin put it back on the air before)."""
+        if record is not None and record.kept and record.file == resolved.plex_file:
+            log.info(
+                "Checking %s found a problem (%s), but you put it back on the air, so it stays on",
+                _target_label(target),
+                reason,
+            )
+            self._done_with(target, KEPT, reason)
+            return
+        self.ctx.broken.record(
+            program.item, reason, program.station, resolved.plex_file, resolved.size,
+            problem=problem, found=how, version=program.version, library=program.library,
+        )  # fmt: skip
+        self._done_with(target, FOUND, reason)
 
     def _check_again_if_the_checks_changed(self) -> None:
         """When the checks change, every program's file is checked again by
@@ -1291,7 +1860,7 @@ class Scanner:
         # Due now, as if checked a week and a day ago (not never: records of
         # programs on no station are forgotten a month after their check).
         db.check_all_again(int((time.time() - RECHECK_S - 86_400 - 1) * 1000))
-        again = [e["ratingKey"] for e in self.ctx.broken.entries() if _judged_again(e)]
+        again = [file_key(e) for e in self.ctx.broken.entries() if _judged_again(e)]
         self._first.update(again)
         db.set_meta(META_FIRST, json.dumps(sorted(self._first)))
         for key in again:
@@ -1317,7 +1886,7 @@ class Scanner:
             self._again_read = True
         if db.get_meta(META_DEEP_RULES, "") == DEEP_RULES:
             return
-        broken = {str(e["ratingKey"]): e for e in self.ctx.broken.entries()}
+        broken = {file_key(e): e for e in self.ctx.broken.entries()}
         again = {k for k, e in broken.items() if str(e.get("reason", "")).startswith(_JUDGED_ANEW)}
         scans = db.scans()
         anew = sorted(
@@ -1346,7 +1915,7 @@ class Scanner:
         now, or what's wrong with it now. True if the entry was there."""
         self._again.discard(key)
         self.ctx.db.set_meta(META_AGAIN, json.dumps(sorted(self._again)))
-        entry = next((e for e in self.ctx.broken.entries() if str(e["ratingKey"]) == key), None)
+        entry = self.ctx.broken.entry(key)
         if entry is None or not str(entry.get("reason", "")).startswith(_JUDGED_ANEW):
             return False
         seen = {key: entry.get("lastFailed")}
@@ -1357,14 +1926,18 @@ class Scanner:
         return True
 
     async def _quick(self, program: Program, record: ScanRecord | None) -> Verdict:
-        verdict, record = await quick_check_item(self.ctx, program.item, program.station, record)
+        verdict, record = await quick_check_item(
+            self.ctx, program.item, program.station, record, program.version, program.library
+        )
         if record is not None:
             self.ctx.db.save_quick(record)
         return verdict
 
     async def _deep_one(self, programs: list[Program]) -> bool:
-        """Deep-scans the next file that needs it. True if there may be
-        more to scan now."""
+        """Deep-scans the next file that needs it: the stations' programs
+        first, then Media's (see the module's notes; one of Media's that
+        hasn't had its quick check has that first). True if there may be
+        more to do now."""
         night = time.strftime("%Y-%m-%d", time.localtime(time.time() - 12 * 3600))
         if self._night != night:
             self._night, self.tonight = night, {"scanned": 0, "problems": 0}
@@ -1373,8 +1946,8 @@ class Scanner:
         if self._again - broken:  # (cleared meanwhile)
             self._again &= broken
             self.ctx.db.set_meta(META_AGAIN, json.dumps(sorted(self._again)))
-        for program in sorted(programs, key=lambda p: p.item.rating_key not in self._again):
-            key = program.item.rating_key
+        for program in sorted(programs, key=lambda p: p.key not in self._again):
+            key = program.key
             record = scans.get(key)
             if (
                 record is None
@@ -1388,14 +1961,40 @@ class Scanner:
             if self._make_way():
                 return False
             return await self.deep_scan(program, record)
+        if not self.ctx.shared.on:
+            return False
+        for program in await self._media_deep_order({p.key for p in programs}):
+            key = program.key
+            record = scans.get(key)
+            if (
+                key in broken
+                or self._retry_at.get(key, 0) > time.time()
+                or self.waiting(key)  # (someone had trouble with it: that's checked first)
+                or (record is not None and not _unchecked(record, program.item) and (
+                    record.quick != "ok"
+                    or record.deep_ms
+                    or record.note.endswith(_night_note(night))
+                ))
+            ):  # fmt: skip
+                continue
+            if self._make_way():
+                return False
+            if record is None or _unchecked(record, program.item):
+                self.state = "checking"
+                self._skipped(key, await self._quick(program, record))
+                self.state = "idle"
+                return True
+            return await self.deep_scan(program, record)
         return False
 
-    async def deep_scan(self, program: Program, record: ScanRecord) -> bool:
+    async def deep_scan(self, program: Program, record: ScanRecord, anytime: bool = False) -> bool:
         """Decodes a program's whole file, from where an earlier scan got
         to. True if it finished with the file; False if it stopped (the
-        window ended, or someone started watching) and will carry on later."""
+        window ended, or someone started watching) and will carry on later.
+        `anytime`: in or out of the window (for someone's report: see
+        Target)."""
         item = program.item
-        resolved = await self.ctx.resolve_source(item)
+        resolved = await resolve(self.ctx, item, program.version)
         if resolved.error or not resolved.source:
             return False  # Plex or the share is down; the quick check handles gone files
         if (resolved.plex_file or resolved.source) != record.file:
@@ -1450,7 +2049,7 @@ class Scanner:
         try:
             while not task.done():
                 await asyncio.wait({task}, timeout=WATCH_POLL_S)
-                if not task.done() and (self.watching() or not self.in_window()):
+                if not task.done() and (self.watching() or not (anytime or self.in_window())):
                     self.state = "paused" if self.watching() else "idle"
                     task.cancel()  # kills ffmpeg
                     with contextlib.suppress(asyncio.CancelledError):
@@ -1485,7 +2084,7 @@ class Scanner:
                 # is rough): from the start, then, next time.
                 self.ctx.db.save_scan(
                     ScanRecord(
-                        item.rating_key,
+                        program.key,
                         record.file,
                         record.size,
                         record.quick_ms,
@@ -1550,7 +2149,7 @@ class Scanner:
         record.deep_ms = int(time.time() * 1000)
         self.ctx.db.save_scan(record)
         self.tonight["scanned"] += 1
-        key = program.item.rating_key
+        key = program.key
         again = key in self._again
         anew = again and self._judged_anew(key, result, reason)
         if result == "ok":
@@ -1585,13 +2184,23 @@ class Scanner:
             resolved.size,
             problem=result,
             found=DEEP_SCAN,
+            version=program.version,
+            library=program.library,
         )
 
     def _forget_old(self, scans: dict[str, ScanRecord], programs: list[Program]) -> None:
-        """Records of programs on no station that haven't been checked for a month."""
-        current = {p.item.rating_key for p in programs}
+        """Records of files on no station, and not in Media, that haven't
+        been checked for a month. (Not while Media's files aren't all known:
+        they're checked once, and their records are kept.)"""
+        if self.ctx.shared.on and self._media_all_at is None:
+            return
+        current = {p.key for p in programs} | self.media_keys
         cutoff = time.time() * 1000 - 30 * 24 * 3600 * 1000
-        old = [k for k, r in scans.items() if k not in current and r.quick_ms < cutoff]
+        old = [
+            k
+            for k, r in scans.items()
+            if k not in current and r.quick_ms < cutoff and not self.waiting(k)
+        ]
         if old:
             self.ctx.db.forget_scans(old)
 
@@ -1612,6 +2221,19 @@ class Scanner:
             "deepScanned": sum(
                 1 for k in programs if (r := scans.get(k)) is not None and r.deep_ms
             ),
+            # Media's files (once they're all known: see _media_everything).
+            "media": {
+                "files": len(self.media_keys),
+                "quickChecked": sum(
+                    1 for k in self.media_keys if (r := scans.get(k)) is not None and r.quick_ms
+                ),
+                "deepScanned": sum(
+                    1 for k in self.media_keys if (r := scans.get(k)) is not None and r.deep_ms
+                ),
+            }
+            if self.ctx.shared.on and self._media_all_at is not None
+            else None,
+            "checking": len(self._targets),  # (files someone had trouble with)
             "window": {"on": on, "start": start, "end": end},
             "inWindow": self.in_window(),
             "state": self.state,
@@ -1619,6 +2241,40 @@ class Scanner:
             "currentPct": round(self.current_pct),
             "tonight": self.tonight,
         }
+
+
+def someone_watching(ctx: AppContext) -> bool:
+    """Whether anyone's watching now: a station, or Media in the apps."""
+    return any(b.viewers for b in list(ctx.broadcasters.values())) or bool(ctx.plays.now())
+
+
+def _unchecked(record: ScanRecord | None, item: Item) -> bool:
+    """Whether a file hasn't had its quick check: never, or not since it
+    changed (as the library says it is now)."""
+    if record is None or not record.quick_ms:
+        return True
+    return bool(item.file_path) and record.file != item.file_path
+
+
+def _deep_due(record: ScanRecord | None, item: Item) -> bool:
+    """Whether a file may still need the deep scan: its quick check first,
+    or it passed that and hasn't been deep-scanned."""
+    if record is None or _unchecked(record, item):
+        return True
+    return record.quick == "ok" and not record.deep_ms
+
+
+def _target_label(target: Target) -> str:
+    return target.label or f"Plex item {target.rating_key}"
+
+
+def _nothing_found(target: Target) -> str:
+    """What a target's check did, finding nothing: "StationPlay checked the
+    stretch from 12:11 to 13:11 and the quick check, and found nothing
+    wrong"."""
+    ran = target.ran or ["its file"]
+    done = ran[0] if len(ran) == 1 else f"{', '.join(ran[:-1])} and {ran[-1]}"
+    return f"StationPlay checked {done}, and found nothing wrong"
 
 
 def _judged_again(entry: dict) -> bool:

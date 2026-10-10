@@ -1,9 +1,15 @@
-"""The permanent list of programs that failed to play.
+"""The permanent list of files that failed to play, or failed a check.
 
 Stored as a readable JSON file in the data folder so it doubles as a to-do
 list. A program on the list is never attempted again; its slots are filled
 by a replacement instead. Deleting an entry (in the web page, or by editing
 the file) puts the program back into rotation.
+
+One entry per file, whoever plays it: a station, or Media in StationPlay's
+apps. A file is known by its program's key, for the file a station plays
+(its library's first version of it), and by its key and the version's ID
+for any other version of it (see version_key): the same file is the same
+entry for the stations and for Media.
 """
 
 from __future__ import annotations
@@ -23,21 +29,40 @@ from .ffmpeg import redact
 log = logging.getLogger(__name__)
 
 ABOUT = (
-    "Programs StationPlay skips because they failed to play or failed a file check. "
-    "To put one back on the air, fix or replace its file, then delete its entry "
-    "here (or choose Retry on the Broken files tab). StationPlay also rechecks "
-    "this list on its own. An entry clears when Plex has the program again under "
-    "a new key, when its file is missing (or it was removed from Plex) and no "
-    "station has it anymore, when a new file for it passes the quick check, or "
-    "when it now passes the quick check that took it off the air."
+    "Files StationPlay skips, on the stations and in Media, because they failed to play or "
+    "failed a file check. To put one back on the air, fix or replace its file, then delete "
+    "its entry here (or choose Retry on the Broken files tab). StationPlay also rechecks "
+    "this list on its own. An entry clears when Plex has the program again under a new key, "
+    "when its file is missing (or it was removed from Plex) and neither a station nor Media "
+    "has it anymore, when a new file for it passes the quick check, or when it now passes "
+    "the quick check that took it off the air. An entry with a version is about that "
+    "version of the program's file alone."
 )
 
 # How a problem was found: the quick check, the deep scan, opening the file
-# to play it (it couldn't be found or opened), or playing it. What opening
+# to play it (it couldn't be found or opened), playing it, checking the
+# stretch of it where someone had trouble (see scanner.Target), or a
+# person's report that an Admin chose to have it replaced for. What opening
 # or the quick check found can be looked at again (a share may have been
-# down); what the deep scan or playing found stays until the file changes.
+# down); the rest stays until the file changes.
 CHECK, DEEP_SCAN, OPENING, PLAYING = "check", "deep scan", "opening", "playing"
-FOUND_BY = (CHECK, DEEP_SCAN, OPENING, PLAYING)
+TARGETED, REPORTED = "targeted check", "report"
+FOUND_BY = (CHECK, DEEP_SCAN, OPENING, PLAYING, TARGETED, REPORTED)
+# Found so that checking the same file again finds the same thing: it stays
+# until the file changes.
+STAYS = (DEEP_SCAN, PLAYING, TARGETED, REPORTED)
+
+
+def version_key(rating_key: str, version: str = "") -> str:
+    """A file's key on the list, and in the checks' records: its program's
+    key for the file a station plays (the library's first version of it),
+    and its key and the version's ID ("1234:5678") for any other."""
+    return f"{rating_key}:{version}" if version else rating_key
+
+
+def file_key(entry: dict[str, Any]) -> str:
+    """An entry's file key (see version_key)."""
+    return version_key(str(entry["ratingKey"]), str(entry.get("version") or ""))
 
 
 def found_by(entry: dict[str, Any]) -> str:
@@ -74,11 +99,13 @@ class BrokenFiles:
     # Reading -------------------------------------------------------------
 
     def is_broken(self, rating_key: str) -> bool:
+        """Whether a program's file (as a station plays it) is on the list."""
         self._load()
         with self._lock:
             return rating_key in self._entries
 
     def keys(self) -> set[str]:
+        """The file keys on the list (see version_key)."""
         self._load()
         with self._lock:
             return set(self._entries)
@@ -87,6 +114,13 @@ class BrokenFiles:
         self._load()
         with self._lock:
             return _sorted(self._entries.values())
+
+    def entry(self, key: str) -> dict[str, Any] | None:
+        """A file's entry (by its file key), if it's on the list."""
+        self._load()
+        with self._lock:
+            found = self._entries.get(key)
+            return dict(found) if found is not None else None
 
     # Writing -------------------------------------------------------------
 
@@ -99,19 +133,25 @@ class BrokenFiles:
         file_size: int | None = None,
         problem: str = "broken",
         found: str = PLAYING,
+        version: str = "",
+        library: str | None = None,
     ) -> None:
-        """Takes a program off the air. `problem` is "broken" (it won't play),
-        "damaged" (it plays, but the picture or sound breaks up) or
+        """Takes a program's file off the air. `problem` is "broken" (it won't
+        play), "damaged" (it plays, but the picture or sound breaks up) or
         "unsupported" (it plays, but can't be shown right: see
-        ff.DOLBY_VISION_ONLY); `found`, how (see FOUND_BY)."""
+        ff.DOLBY_VISION_ONLY); `found`, how (see FOUND_BY); `version`, the
+        version's ID, for one that isn't the program's first (see
+        version_key); `library`, the library it's in, if that's known (what's
+        in a library shared with the apps is in Media)."""
+        key = version_key(item.rating_key, version)
         self._load(force=True)
         with self._lock:
-            existing = self._entries.get(item.rating_key, {})
+            existing = self._entries.get(key, {})
             stations = set(existing.get("stations", []))
             if channel_number is not None:
                 stations.add(channel_number)
             now = _now_iso()
-            self._entries[item.rating_key] = {
+            entry: dict[str, Any] = {
                 "ratingKey": item.rating_key,
                 "title": item.title,
                 "show": item.show_title,
@@ -128,9 +168,19 @@ class BrokenFiles:
                 "foundBy": found,
                 "stations": sorted(stations),
             }
+            if version:
+                entry["version"] = version
+            # (What replacing it with Sonarr needs, for a program no station has.)
+            show_key = item.show_key or existing.get("showKey")
+            if show_key:
+                entry["showKey"] = show_key
+            library = library or item.library or existing.get("library")
+            if library:
+                entry["library"] = str(library)
             # (Replacing it with Sonarr or Radarr carries on: see replacing.py.)
             if existing.get("replace"):
-                self._entries[item.rating_key]["replace"] = existing["replace"]
+                entry["replace"] = existing["replace"]
+            self._entries[key] = entry
             self._write()
         log.warning(
             "%s is %s — %s. It stays off the air until it's cleared from the Broken files list",
@@ -139,10 +189,11 @@ class BrokenFiles:
             redact(reason),
         )
 
-    def remove(self, rating_key: str) -> bool:
+    def remove(self, key: str) -> bool:
+        """Takes a file off the list (by its file key)."""
         self._load(force=True)
         with self._lock:
-            if self._entries.pop(rating_key, None) is None:
+            if self._entries.pop(key, None) is None:
                 return False
             self._write()
             return True
@@ -153,7 +204,7 @@ class BrokenFiles:
         """What going through the list again found, in one write: entries
         `cleared` come off it; those in `still` stay, with what's in it (a
         new reason, say) and when they were looked at. Only entries as they
-        were when looked at (`seen`: their lastFailed, by key) are touched:
+        were when looked at (`seen`: their lastFailed, by file key) are touched:
         one that failed again meanwhile stays as it now is. Returns the keys
         taken off."""
         self._load(force=True)
@@ -175,7 +226,7 @@ class BrokenFiles:
 
     def replacing(self, states: dict[str, tuple[Any, dict[str, Any]]]) -> None:
         """What replacing entries with Sonarr or Radarr is doing (replacing.py),
-        by key: (the entry's lastFailed when looked at, its state; {} for
+        by file key: (the entry's lastFailed when looked at, its state; {} for
         none). An entry that failed again meanwhile is left as it is."""
         self._load(force=True)
         with self._lock:
@@ -223,7 +274,7 @@ class BrokenFiles:
                 doc = json.loads(self.path.read_text(encoding="utf-8"))
                 files = doc.get("files", []) if isinstance(doc, dict) else []
                 self._entries = {
-                    str(f["ratingKey"]): _upgrade_entry(f)
+                    file_key(f): _upgrade_entry(f)
                     for f in files
                     if isinstance(f, dict) and f.get("ratingKey") is not None
                 }

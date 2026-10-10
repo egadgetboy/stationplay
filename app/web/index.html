@@ -4786,7 +4786,7 @@ function arrButton(r) {
   const what = r.show ? `${r.show} ${sxe(r)}` : r.title;
   const s = r.replace || {};
   const ask = (label, title, done) => h('button', { class: 'btn', title, onclick: async () => {
-    try { await api(`/api/broken/${r.ratingKey}/replace`, { method: 'POST' }); }
+    try { await api(`/api/broken/${encodeURIComponent(r.key)}/replace`, { method: 'POST' }); }
     catch (e) { toast(e.message, true); return; }
     toast(done);
     setTimeout(loadBroken, 3000);
@@ -4798,7 +4798,7 @@ function arrButton(r) {
   if (ARR_DONE.includes(s.state))
     return ask('Try again', `Have ${name} try replacing this file again`, `${name} is trying to replace ${what} again`);
   return h('button', { class: 'btn', title: `${name} stops working on this file, and you take care of it yourself`, onclick: async () => {
-    try { await api(`/api/broken/${r.ratingKey}/leave`, { method: 'POST' }); }
+    try { await api(`/api/broken/${encodeURIComponent(r.key)}/leave`, { method: 'POST' }); }
     catch (e) { toast(e.message, true); return; }
     toast(`You’re handling ${what}`);
     loadBroken();
@@ -5518,7 +5518,7 @@ $('#scanSave').addEventListener('click', async () => {
 });
 
 async function retry(r) {
-  try { await api(`/api/broken/${r.ratingKey}`, { method: 'DELETE' }); toast(`${r.show || r.title} is back on the air`); loadBroken(); loadStatus(); loadChannels(); }
+  try { await api(`/api/broken/${encodeURIComponent(r.key)}`, { method: 'DELETE' }); toast(`${r.show || r.title} is back on the air`); loadBroken(); loadStatus(); loadChannels(); }
   catch (e) { toast(e.message, true); }
 }
 

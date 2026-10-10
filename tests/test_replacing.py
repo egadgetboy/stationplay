@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from app import jobs, replacing
 from app.broken import CHECK, DEEP_SCAN
 from app.config import Settings
+from app.db import Item
 from app.main import create_app
 from app.plex import PlexClient
 from tests.fakearr import FakeArr, both
@@ -313,6 +314,50 @@ def test_radarr_replaces_a_broken_movie(world):
     assert [c["name"] for c in r.commands] == ["MoviesSearch"]
     assert r.commands[0]["body"]["movieIds"] == [9]
     assert world.entry("301")["replace"]["app"] == "radarr"
+
+
+def test_a_file_only_media_has_is_replaced_the_same_way(world):
+    """One process for every file (1.30.0): what's in a library shared with
+    the apps is replaced as a station's program is, with the same rules."""
+    ctx, r = world.ctx, world.radarr
+    path = "/movies/Alien (1979)/Alien (1979).mkv"
+    world.plex.add_movie("302", "Alien", path, 117 * 60_000, year=1979, section="2")
+    world.plex.episodes["302"]["Guid"] = [{"id": "tmdb://348"}]
+    r.add_movie(10, "Alien", 1979, 348)
+    r.give_file(10, "Alien (1979).mkv", 1000, downloaded="Alien.1979.720p.BluRay-OLD")
+    alien = Item(0, 0, 117 * 60_000, "302", "movie", "Alien", year=1979, file_path=path)
+    ctx.broken.record(alien, "Deep scan: the picture breaks up around 10:00", None, path, 1000,
+                      problem="damaged", found=DEEP_SCAN, library="2")  # fmt: skip
+    # Not shared with the apps, and on no station: no one plays it, so it's
+    # left be.
+    world.go()
+    assert not r.commands and "replace" not in world.entry("302")
+    ctx.shared.save(["2"])
+    world.go()
+    assert r.blocklist == ["Alien.1979.720p.BluRay-OLD"]
+    assert [c["body"]["movieIds"] for c in r.commands] == [[10]]
+    assert world.entry("302")["replace"]["state"] == "searching"
+
+
+def test_a_version_is_replaced_only_when_the_apps_file_is_that_one(world):
+    ctx, r = world.ctx, world.radarr
+    ctx.shared.save(["2"])
+    r.give_file(9, "Dune (1984).mkv", 1000, downloaded="Dune.1984.720p.BluRay-OLD")
+    dune = world.item("301")
+    # (Plex has it in 4K too: a second version.)
+    other = "/movies/Dune (1984)/Dune (1984) - 2160p.mkv"
+    media = world.plex.episodes["301"]["Media"]
+    part = {**media[0]["Part"][0], "id": 3012, "file": other, "size": 5000}
+    media.append({"id": 3012, "duration": media[0]["duration"], "Part": [part]})
+    ctx.broken.record(dune, "Deep scan: the picture breaks up around 1:00:00", None, other, 5000,
+                      problem="damaged", found=DEEP_SCAN, version="3012", library="2")  # fmt: skip
+    world.go()
+    entry = ctx.broken.entry("301:3012")
+    assert (
+        entry["replace"]["state"] == "can't"
+        and "another of its versions" in entry["replace"]["note"]
+    )
+    assert not r.blocklist and not r.commands and not r.recycled
 
 
 def test_an_app_that_cant_be_reached_changes_nothing(world):

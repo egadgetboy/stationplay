@@ -200,6 +200,13 @@ class Library:
     async def recently_added(self, library: str, kind: str, count: int) -> list[Entry]:
         return await self._plex_for(library).recently_added(library, kind, count)
 
+    async def added_files(
+        self, library: str, kind: str, start: int, size: int
+    ) -> tuple[int, list[Entry]]:
+        """A page of a library's episodes or movies, the newest first, with
+        their versions' files: (how many in all, the page)."""
+        return await self._plex_for(library).added_files(library, kind, start, size)
+
     async def entry(self, key: str, details: bool = False) -> Entry | None:
         """A show, movie or episode; None if there's no such thing."""
         if is_folder_key(key):
