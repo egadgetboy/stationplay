@@ -24,9 +24,11 @@ one on its data folder, then back again, and a fresh install.
    copy put back as stationplay.db, its -wal and -shm removed); the release
    before is started again, and must work with its data, signed in as
    before, and with the broken-files list as this one left it: a program's
-   entry as before, an entry for another of its versions (which a release
-   before 1.30.0 doesn't know) left alone, and (from 1.30.2) one about the
-   second of a movie's two files listed as it is.
+   entry as before, an entry for another of its versions (listed from
+   1.30.0 on; left alone by a release before, which doesn't know it), and
+   (from 1.30.2) one about the second of a movie's two files listed as it
+   is. A release that makes no copy has none put back: the release before
+   reads the database as this one left it.
 5. A fresh install of this checkout: it starts, takes its first Admin, and
    makes no copy.
 
@@ -392,6 +394,8 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         # (Signed in again: choosing someone on the device signed the app out.)
         app = httpx.post(f"{sp.url}/api/internal/sign-in", json={**ADMIN, **APP}, timeout=30)
         bearer = {"Authorization": f"Bearer {app.json().get('token')}"}
+        if not copies:
+            made["bearer"] = bearer  # (no copy to put back: rolled back, it's signed in so)
         reported = httpx.post(f"{sp.url}/api/internal/report-problem", headers=bearer, timeout=30,
                               json={"choice": "wrong-language", "station": STATION["number"]})  # fmt: skip
         checks.ok(reported.status_code == 200, "what's new works (a person's report, from a "
@@ -438,19 +442,23 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
             )  # fmt: skip
         else:
             checks.ok(
-                sorted(said) == [["after the update"], ["before the update"]],
+                sorted(d for details in said for d in details)
+                == ["after the update", "before the update"],
                 "the database is as it was, with what was done since (no copy to put back)",
                 said,
             )
         entries = page.get("/api/broken").json()
+        listed = sorted((e["ratingKey"], e.get("version", ""), e["reason"]) for e in entries)
+        program = [
+            ("201", "", "Deep scan: the picture breaks up around 3:00"),
+            ("300", "", "Check: no sound anywhere in it, in part 2 of 2"),
+        ]
+        version = [("201", "2011", "Check: no sound anywhere in it")]
         checks.ok(
-            [(e["ratingKey"], e.get("version"), e["reason"]) for e in entries]
-            == [
-                ("201", None, "Deep scan: the picture breaks up around 3:00"),
-                ("300", None, "Check: no sound anywhere in it, in part 2 of 2"),
-            ],
-            "the broken-files list: the program's entry as before, another version's left "
-            "alone, and a movie's in two files listed as it is",
+            # (Another version's is listed from 1.30.0 on, and left alone before.)
+            listed in (program, sorted(program + version)),
+            "the broken-files list: the program's entry as before, another version's as that "
+            "release has it, and a movie's in two files listed as it is",
             entries,
         )
         stopped(checks, sp, before)
