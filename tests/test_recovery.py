@@ -163,3 +163,37 @@ def test_a_stall_isnt_held_against_the_gpu(monkeypatch, tmp_path, how, events):
     assert runs.encoders == ["vaapi", "cpu"]
     # A stall may be the disk's: no strike against the GPU.
     assert gpu.events == events
+
+
+def sends(path) -> list[str]:
+    """A stand-in for ffmpeg that sends a file's bytes and ends."""
+    return [
+        sys.executable,
+        "-c",
+        f"import sys; sys.stdout.buffer.write(open({str(path)!r}, 'rb').read())",
+    ]
+
+
+async def test_a_program_that_shows_no_picture_doesnt_put_a_station_back_on_the_air(tmp_path):
+    """A program whose ffmpeg sends sound but no picture sends viewers
+    nothing (see TsStitcher.begin_segment), so a station that's off the air
+    stays off: only a program that shows something puts it back on."""
+    from .test_units import adts_frame, pes_packet
+
+    base = round(bc.TS_BASE_S * 90_000)
+    sound = tmp_path / "sound.ts"
+    sound.write_bytes(
+        b"".join(pes_packet(0x101, 0xC0, base + n * 1920, adts_frame()) for n in range(20))
+    )
+    picture = tmp_path / "picture.ts"
+    picture.write_bytes(pes_packet(0x100, 0xE0, base, b"video") + sound.read_bytes())
+
+    b = engine()
+    b._unfilled_slots, b.off_air = 2, True
+    stitcher = TsStitcher()
+    result = await b._run_ffmpeg(sends(sound), stitcher, bc.TS_BASE_S, 5, on_air=True, what="X")
+    assert result.produced_s == 0 and result.next_ts is None
+    assert b.off_air and b._unfilled_slots == 2 and not b._recent
+
+    result = await b._run_ffmpeg(sends(picture), stitcher, bc.TS_BASE_S, 5, on_air=True, what="X")
+    assert result.produced_s > 0 and not b.off_air and b._unfilled_slots == 0 and b._recent

@@ -1846,18 +1846,21 @@ class _Told:
 
 async def _no_license(checks: Checks, home: str, admin_h: dict, sam_h: dict) -> None:
     """The server has no license (the apps are unlocked in their stores):
-    no address answers for one, for anyone."""
+    no address answers for one, for anyone. (An Admin, who may open any
+    address there is, gets 404.)"""
     checks.section("No license on the server")
+    paths = (("GET", "/api/internal/license"), ("POST", "/api/internal/license"),
+             ("GET", "/api/access/license"), ("PUT", "/api/access/license"))  # fmt: skip
     async with httpx.AsyncClient(base_url=home, timeout=30) as c:
-        for who, h in (("An Admin", admin_h), ("A User", sam_h), ("An outsider", {})):
-            codes = set()
-            for method, path in (("GET", "/api/internal/license"), ("POST", "/api/internal/license"),
-                                 ("GET", "/api/access/license"), ("PUT", "/api/access/license")):  # fmt: skip
-                r = await c.request(method, path, headers=h)
-                codes.add(r.status_code)
-            checks.ok(
-                codes <= {401, 403, 404, 405}, f"{who} finds no license address", f"got {codes}"
-            )
+        for who, h, allowed in (
+            ("An Admin", admin_h, {404, 405}),
+            ("A User", sam_h, {403, 404, 405}),
+            ("An outsider", {}, {401, 404, 405}),
+        ):
+            codes = {
+                (await c.request(method, path, headers=h)).status_code for method, path in paths
+            }
+            checks.ok(codes <= allowed, f"{who} finds no license address", f"got {codes}")
 
 
 async def _kept_alerts(checks: Checks, app, home: str, admin_h: dict) -> None:

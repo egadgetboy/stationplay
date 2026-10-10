@@ -2029,13 +2029,16 @@ class Broadcaster:
                 data = await proc.stdout.read(65536)
                 if not data:
                     break
-                if on_air and self._unfilled_slots:
+                sent = stitcher.feed(data)
+                # (Back on the air once viewers get something: a program's
+                # output is held until its picture starts.)
+                if sent and on_air and self._unfilled_slots:
                     if self.off_air:
                         log.info("%s is back on the air", self._named(mid=True))
                     self._unfilled_slots = 0
                     self._last_unfilled = None
                     self.off_air = False
-                self._emit(stitcher.feed(data))
+                self._emit(sent)
 
         async def watchdog() -> None:
             nonlocal last_frames, last_change, stalled, stall_limit, gave_up

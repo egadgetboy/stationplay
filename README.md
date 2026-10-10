@@ -425,7 +425,7 @@ Subtitles the device can't show are drawn into a copy. If an episode's chosen su
 
 StationPlay and its page are free and unlimited. StationPlay's apps will be free to download, with a demo, and unlocked with one purchase in each platform's store:
 
-- **The demo.** Each server's first Station, for up to 2 hours a day on each device, and the first 10 minutes of each title in Media.
+- **The demo.** Each server's first station, for up to 2 hours a day on each device, and the first 10 minutes of each title in Media.
 - **The unlock.** A one-time purchase in the App Store, Google Play or Roku's store unlocks everything, on every server, for every user, forever, on that store account's devices. Each platform is bought separately.
 - **Nothing on the server.** StationPlay itself needs no purchase and never locks anything. Plex, Jellyfin and other apps are never limited.
 
