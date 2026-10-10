@@ -19,7 +19,12 @@ languages (their own only, and only languages StationPlay knows); Media's
 addresses (every one refusing what a Kid's level hides, the same way, and
 taking only what's bounded); people's reports (never from an outsider,
 always the sender's own, within their level and the limits, the choices
-only the server's, and only an Admin sees and acts on them); converted
+only the server's, and only an Admin sees and acts on them); the Broken
+files list as Media has it (trouble checked only from one's own playing,
+and only for a problem just now; a broken file a level hides answered as
+any hidden one; people's reports never crowded out of the checks' queue;
+Retry and the tab's choices taking only what they should; Plex or Radarr
+away said plainly, changing nothing); converted
 copies on request (never of what a level hides, within the limit however
 many ask at once); no file names in anything the apps receive; problems
 sent later with their journals (only an Admin reads one, kept as text and
@@ -53,8 +58,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import httpx
 import uvicorn
 
-from app import access, applibrary, problems
+from app import access, applibrary, problems, scanner
 from app.config import Settings
+from app.db import Item
 from app.main import create_app
 from app.plex import PlexClient
 from tests.fakeplex_library import LibraryPlex
@@ -107,10 +113,15 @@ def build_plex(tmp: Path) -> LibraryPlex:
     for key in ("201", "211", "300", "301"):
         fp.describe(key)
         fp.files[key] = b"a program" * 100
-    # (Cartoons anyone may see, for the limits on people's reports.)
+    # (Cartoons anyone may see, for the limits on people's reports, and for
+    # playing; and one that nothing asks about, for when Plex is away.)
     for n in range(12):
         fp.add_movie(f"32{n:02d}", f"Cartoon {n + 1}", f"/m/c{n}.mkv", 7 * 60_000, section="2",
                      contentRating=["G"])  # fmt: skip
+        fp.describe(f"32{n:02d}")
+        fp.files[f"32{n:02d}"] = b"a cartoon" * 100
+    fp.add_movie("390", "Static", "/m/static.mkv", 7 * 60_000, section="2", contentRating=["G"])
+    fp.describe("390")
     return fp
 
 
@@ -119,6 +130,7 @@ async def run(checks: Checks) -> None:
 
     tmp = Path(tempfile.mkdtemp(prefix="attack-check-"))
     fp = build_plex(tmp)
+    scanner.STARTUP_DELAY_S = 10**6  # (no file checks: the stand-in files aren't on disk)
     lan_sock, public_sock = (socket.create_server(("127.0.0.1", 0)) for _ in range(2))
     lan_port, public_port = lan_sock.getsockname()[1], public_sock.getsockname()[1]
     settings = Settings(
@@ -137,7 +149,7 @@ async def run(checks: Checks) -> None:
             await asyncio.sleep(0.02)
         home = f"http://127.0.0.1:{lan_port}"
         net = f"http://127.0.0.1:{public_port}"
-        await _attacks(checks, app, home, net)
+        await _attacks(checks, app, home, net, fp)
     finally:
         server.should_exit = True
         await task
@@ -149,7 +161,7 @@ def _cf(address: str) -> dict[str, str]:
     return {"CF-Connecting-IP": address, "CF-Visitor": '{"scheme":"https"}'}
 
 
-async def _attacks(checks: Checks, app, home: str, net: str) -> None:
+async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) -> None:
     # Set everything up from the home network, where StationPlay starts open.
     # Admin, User and Kid are signed in as apps (bearer tokens), so the
     # brute-force tests later don't spend the home address's password budget
@@ -451,7 +463,12 @@ async def _attacks(checks: Checks, app, home: str, net: str) -> None:
 
     # 18) People's reports: only from someone signed in, as themselves, within
     # their level and the limits; and only an Admin sees and acts on them.
+    # The Broken files list, as Media has it: trouble only from one's own
+    # playing, what's broken refused as what a level hides is, people's
+    # reports never crowded out, and a confused Admin or a failing network
+    # answered plainly.
     await _reports(checks, app, home, net, admin_h, sam_h, kit_h)
+    await _broken_files(checks, app, fp, home, admin_h, sam_h, kit_h)
 
     # 19) From 1.29.1: converted copies on request, no file names in the apps,
     # problems sent later with their journals, and the copies made before an
@@ -1226,6 +1243,124 @@ async def _reports(
         # An Admin acts on them.
         r = await c.post("/api/reports/300/dismiss", headers=admin_h)
         checks.ok(r.status_code == 200, "an Admin dismisses a report", f"got {r.status_code}")
+
+
+async def _broken_files(
+    checks: Checks, app, fp: LibraryPlex, home: str, admin_h: dict, sam_h: dict, kit_h: dict
+) -> None:
+    """1.30.0's one process for every file, as a bad actor, a confused Admin
+    or a failing network would try it: trouble is checked only from one's
+    own playing, and only for a problem just now; a broken file a level
+    hides is answered as any hidden one; the apps' trouble can't crowd out
+    people's reports; Retry and the tab's choices take only what they should;
+    and Plex or Radarr away is said plainly, changing nothing."""
+    checks.section("The Broken files list, as Media has it")
+    ctx = app.state.ctx
+    problem = "/api/internal/problem"
+    trouble = {"kind": "library-failed", "title": "Cartoon 6", "deviceName": "Attack"}
+    async with httpx.AsyncClient(base_url=home) as c:
+        played = (await c.post("/api/internal/play", headers=sam_h,
+                               json={"key": "3205", "device": TV})).json()  # fmt: skip
+        session = played.get("session")
+        for who, h in (("The Kid", kit_h), ("An Admin", admin_h)):
+            r = await c.post(problem, headers=h, json={**trouble, "session": session})
+            checks.ok(r.status_code == 200 and not ctx.scanner.waiting("3205"),
+                      f"{who} saying Sam's playing had trouble has nothing checked",
+                      f"got {r.status_code}")  # fmt: skip
+        late = int(time.time() * 1000) - 30 * 60_000
+        r = await c.post(problem, headers=sam_h, json={**trouble, "at": late})
+        checks.ok(r.status_code == 200 and not ctx.scanner.waiting("3205"),
+                  "a problem sent half an hour later isn't taken for what was played since",
+                  f"got {r.status_code}")  # fmt: skip
+        r = await c.post(problem, headers=sam_h, json={**trouble, "session": session})
+        checks.ok(
+            ctx.scanner.waiting("3205") and ctx.broken.keys() == set(),
+            "Sam's own trouble has the file checked first, and takes nothing off the air",
+        )
+        # The apps' trouble can't crowd out people's reports.
+        r = await c.post("/api/internal/report-problem", headers=admin_h,
+                         json={"choice": "no-sound", "key": "3207", "positionMs": 60_000})  # fmt: skip
+        reported = [t.key for t in ctx.scanner._targets if t.reports]
+        most = scanner.TARGETS_MOST
+        scanner.TARGETS_MOST = len(ctx.scanner._targets)
+        try:
+            for key in ("3208", "3209", "3210"):
+                played = (await c.post("/api/internal/play", headers=sam_h,
+                                       json={"key": key, "device": TV})).json()  # fmt: skip
+                await c.post(problem, headers=sam_h,
+                             json={**trouble, "session": played.get("session")})  # fmt: skip
+        finally:
+            scanner.TARGETS_MOST = most
+        checks.ok("3207" in reported and all(ctx.scanner.waiting(k) for k in reported),
+                  "a flood of the apps' trouble can't push people's reports out of the queue",
+                  reported)  # fmt: skip
+        # What's broken, where a level hides it: as though it weren't there.
+        heist = await c.get("/api/internal/items/301", headers=admin_h)
+        item = Item(0, 0, 100 * 60_000, "301", "movie", "Heist", file_path="/m/heist.mkv",
+                    library="2")  # fmt: skip
+        ctx.broken.record(item, "Check: the file can't be opened", None)
+        gone = (await c.get("/api/internal/items/999999", headers=kit_h)).json()
+        for what, r in (
+            ("its details", await c.get("/api/internal/items/301", headers=kit_h)),
+            ("playing it", await c.post("/api/internal/play", headers=kit_h,
+                                        json={"key": "301", "device": TV})),
+        ):  # fmt: skip
+            checks.ok(r.status_code == 404 and r.json() == gone,
+                      f"the Kid asking for {what}, broken and hidden, is answered as for nothing",
+                      f"got {r.status_code}")  # fmt: skip
+        r = await c.post("/api/internal/play", headers=admin_h, json={"key": "301", "device": TV})
+        checks.ok(heist.status_code == 200 and r.status_code == 422
+                  and r.json().get("detail") == applibrary.ON_THE_LIST,
+                  "an Admin asking to play it is told, plainly", f"got {r.status_code}")  # fmt: skip
+        versions = (await c.get("/api/internal/items/301", headers=admin_h)).json()["versions"]
+        checks.ok([v["problem"] for v in versions] == ["broken"],
+                  "its details say what was found", versions)  # fmt: skip
+        # Retry takes only the file it names.
+        ctx.broken.record(item, "Check: no sound anywhere in it", None, version="30101")
+        for path in ("/api/broken/..%2f..%2fetc", "/api/broken/301%3A99", "/api/broken/%00"):
+            r = await c.delete(path, headers=admin_h)
+            checks.ok(r.status_code == 404, f"DELETE {path} takes nothing off the list",
+                      f"got {r.status_code}")  # fmt: skip
+        r = await c.delete("/api/broken/301%3A30101", headers=admin_h)
+        checks.ok(r.status_code == 204 and ctx.broken.keys() == {"301"},
+                  "Retry for one version takes it alone off the list", f"got {r.status_code}")  # fmt: skip
+        ctx.broken.remove("301")
+        # A confused Admin: answered plainly, nothing changed.
+        await c.post("/api/internal/report-problem", headers=admin_h,
+                     json={"choice": "wrong-details", "key": "3206"})  # fmt: skip
+        for path, wanted in (("/api/reports/3206/replace", 400), ("/api/reports/3206/better", 400),
+                             ("/api/reports/3206/dismiss", 200), ("/api/reports/3206/dismiss", 404),
+                             ("/api/reports/..%2f3206/dismiss", 404)):  # fmt: skip
+            r = await c.post(path, headers=admin_h)
+            checks.ok(r.status_code == wanted and isinstance(r.json().get("detail", ""), str),
+                      f"POST {path} is answered {wanted}, plainly", f"got {r.status_code}")  # fmt: skip
+        # A failing network: Plex away, or Radarr. Said plainly; nothing kept
+        # or changed.
+        fp.down = True
+        try:
+            r = await c.post("/api/internal/report-problem", headers=admin_h,
+                             json={"choice": "no-sound", "key": "390"})  # fmt: skip
+        finally:
+            fp.down = False
+        rows = (await c.get("/api/reports", headers=admin_h)).json()["reports"]
+        checks.ok(r.status_code == 503 and isinstance(r.json().get("detail"), str)
+                  and not any(row["key"] == "390" for row in rows),
+                  "with Plex away, a report is refused plainly and nothing's kept",
+                  f"got {r.status_code}")  # fmt: skip
+        await c.post("/api/internal/report-problem", headers=admin_h,
+                     json={"choice": "wrong-language", "key": "3204"})  # fmt: skip
+        dead = {"app": "radarr", "url": "http://127.0.0.1:9", "key": "abc123", "on": True}
+        await c.put("/api/arr", headers=admin_h, json=dead)
+        try:
+            r = await c.post("/api/reports/3204/better", headers=admin_h)
+        finally:
+            await c.put("/api/arr", headers=admin_h, json={**dead, "on": False})
+        rows = {row["key"]: row for row in (await c.get("/api/reports", headers=admin_h)).json()[
+            "reports"]}  # fmt: skip
+        checks.ok(r.status_code == 503 and isinstance(r.json().get("detail"), str)
+                  and rows.get("3204", {}).get("state") == "waiting",
+                  "with Radarr away, Find a better copy is refused plainly, and the report waits",
+                  f"got {r.status_code}")  # fmt: skip
 
 
 async def _converted_on_request(checks: Checks, app, home: str, admin_h: dict, kit_h: dict) -> None:
