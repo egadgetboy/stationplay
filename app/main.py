@@ -700,6 +700,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             log.warning("StationPlay started from the backup you restored")
     except Exception:
         log.exception("Couldn't restore the backup, so StationPlay is keeping its current settings")
+    try:
+        backups.before_update(settings.data_dir)
+    except backups.CantBackUp as e:
+        log.error("%s", e)
+        raise SystemExit(1) from None
     db = Database(settings.data_dir / backups.DB_NAME)
     ctx = AppContext(
         settings=settings,

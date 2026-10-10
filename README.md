@@ -243,11 +243,30 @@ Unzip the new version the same way you did when you installed, into the same fol
 
 On TrueNAS, the order matters. A new version number is what makes TrueNAS rebuild, and it builds from whatever is in `src` at that moment. If you save before unzipping, it builds the old code under the new number (see [Troubleshooting](#troubleshooting)).
 
-**Going back to an older version?** Older versions don't know newer settings and may play some programs wrongly. Before downgrading below 1.8, delete stations made from Plex collections, set **In the corner** to something other than **Clock**, and set each **Station ID card** to **Off** or **10 sec**. Below 1.6, also set **Commercials & trailers** to **None** and the **Station ID card** to **Off**. Below 1.4, also set **Intros & credits** to **Play them**. Wait for each change to take effect (at the next program break) before downgrading.
+**A copy of the database before an update changes it.** From 1.29.1, when a new version needs to change StationPlay's database (to keep something new), it first copies the database as it is, sign-ins included, to `data/backups` as `before-<version>-<date>.db` (such as `before-1.29.1-20261009-153000.db`), says so on the **Logs** tab, and only then changes it. The newest 3 copies are kept. If it can't make the copy (its disk is full, say), it changes nothing and stops, and its log (`docker logs stationplay`, or the app's logs on TrueNAS) says why: make room, then start it again.
+
+#### Rolling back
+
+To go back to the version you had before an update:
+
+1. **Stop StationPlay.** TrueNAS: **Apps**, then **Stop** on stationplay. Docker Compose: `docker compose stop` in its folder. docker run: `docker stop stationplay`.
+2. **Put back the database from before the update.** In the data folder, replace `stationplay.db` with the copy made before the update (the newest `before-<new version>-<date>.db` in `backups`), and delete `stationplay.db-wal` and `stationplay.db-shm` if they're there:
+   ```
+   cd /mnt/tank/apps/stationplay/data
+   sudo cp backups/before-1.29.1-20261009-153000.db stationplay.db
+   sudo rm -f stationplay.db-wal stationplay.db-shm
+   ```
+   (Use your own folder and the copy's name. `cp` over the old file keeps its owner, so StationPlay can still write it.)
+3. **Put the previous version's `src` back,** by unzipping its zip over `src` as when updating.
+4. **Set `image:` back to that version** (`stationplay:1.29.0`, say) and start it, as when updating: on TrueNAS, edit the app and save it (and start it, if it doesn't start by itself); with Docker Compose, `docker compose up -d --build`; with docker run, build that version's image and run it as when updating.
+
+Everyone stays signed in, and the stations, settings and people are as they were just before the update; anything changed since then is lost. An update that didn't change the database made no copy: then skip step 2.
+
+**Going back further?** Older versions don't know newer settings and may play some programs wrongly. Before downgrading below 1.8, delete stations made from Plex collections, set **In the corner** to something other than **Clock**, and set each **Station ID card** to **Off** or **10 sec**. Below 1.6, also set **Commercials & trailers** to **None** and the **Station ID card** to **Off**. Below 1.4, also set **Intros & credits** to **Play them**. Wait for each change to take effect (at the next program break) before downgrading.
 
 ### Backups
 
-StationPlay backs itself up automatically: about 15 minutes after it first starts, and then every night at about 3 AM (in your `TZ` time zone). It keeps the newest 7 backups in `data/backups`.
+StationPlay backs itself up automatically: about 15 minutes after it first starts, and then every night at about 3 AM (in your `TZ` time zone). It keeps the newest 7 backups in `data/backups`. (The copies of the database made before an update changes it are kept there too, apart from these: see [Rolling back](#rolling-back).)
 
 A backup includes your stations and their schedules, all settings, the Broken files list, the tuner's identity (so Plex still recognizes it), your logos (uploaded or from Plex), users and their passwords (stored as hashes only), and viewing stats. Intro Bumper videos aren't included, to keep backups small; they stay in `data/bumpers`, and a restore leaves them alone.
 
@@ -1073,7 +1092,7 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/intro.py` | Drawing the Intro Bumper and Station ID card, and their sound |
 | `app/upnext.py` | The Up Next Banner |
 | `app/bumpers.py` | Intro Bumper videos you upload |
-| `app/backups.py` | Backups and restores |
+| `app/backups.py` | Backups and restores, and the copy of the database before an update changes it |
 | `app/access.py` | Sign-in, Admins and Users, and the access log |
 | `app/viewing.py`, `app/ratings.py`, `app/titles.py` | Viewing Levels: what each person can see, ratings read as ages, and the ratings of what's on each station |
 | `app/devices.py` | Linked devices, Who's tuning in?, passcodes and invite codes |

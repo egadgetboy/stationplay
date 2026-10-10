@@ -832,16 +832,16 @@ class CachedMarkers:
     first_ms: int  # since when it has said the same
 
 
-def copy_database(source: Path, dest: Path) -> None:
+def copy_database(source: Path, dest: Path, sign_ins: bool = False) -> None:
     """A consistent copy of a database for a backup, read through a connection
     of its own so nothing else waits for it. Sign-ins (and the browsers they
-    were on) aren't copied: a backup restored later signs everyone out, and
-    one passed around can't be used to sign in."""
+    were on) aren't copied unless asked (`sign_ins`): a backup restored later
+    signs everyone out, and one passed around can't be used to sign in."""
     src = sqlite3.connect(source)
     out = sqlite3.connect(dest)
     try:
         src.backup(out)
-        for table in ("sessions", "devices"):
+        for table in () if sign_ins else ("sessions", "devices"):
             if out.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (table,)).fetchone():
                 out.execute(f"DELETE FROM {table}")
         out.commit()
@@ -849,6 +849,52 @@ def copy_database(source: Path, dest: Path) -> None:
     finally:
         out.close()
         src.close()
+
+
+def changes_needed(path: Path) -> list[str]:
+    """What opening the database at `path` would change in it, as Database
+    brings one made by an earlier version up to date: the tables, indexes
+    and columns it lacks, and the older ways of keeping things it moves on
+    from (see Database._upgrade). Nothing for one that's up to date, or has
+    nothing in it yet. Only reads it."""
+    want = sqlite3.connect(":memory:")
+    have = sqlite3.connect(f"{path.resolve().as_uri()}?mode=rw", uri=True)  # (never made here)
+    try:
+        want.executescript(SCHEMA)
+        found = {
+            (kind, name)
+            for kind, name in have.execute("SELECT type, name FROM sqlite_master").fetchall()
+        }
+        if not found:
+            return []  # (a new one)
+        out = [
+            f"a new {kind}, {name}"
+            for kind, name in want.execute("SELECT type, name FROM sqlite_master").fetchall()
+            if (kind, name) not in found and not name.startswith("sqlite_")
+        ]
+        columns = [
+            (table, row[1])
+            for (table,) in want.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            for row in want.execute(f"PRAGMA table_info({table})").fetchall()
+        ]
+        for table, column in [*columns, *((t, c) for t, c, _ in _ADDED_COLUMNS)]:
+            if ("table", table) in found:
+                there = {row[1] for row in have.execute(f"PRAGMA table_info({table})")}
+                if column not in there and f"a new column, {table}.{column}" not in out:
+                    out.append(f"a new column, {table}.{column}")
+        if ("table", "channel_items") in found:
+            out.append("stations' programs kept as eras")
+        if ("index", "views_by_start") in found:
+            out.append("an old index dropped")
+        dated = ("table", "channels") in found and any(
+            row[1] == "created_ms" for row in have.execute("PRAGMA table_info(channels)")
+        )
+        if dated and have.execute("SELECT 1 FROM channels WHERE created_ms = 0").fetchone():
+            out.append("when stations were made")
+        return out
+    finally:
+        have.close()
+        want.close()
 
 
 @dataclass
