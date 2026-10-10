@@ -32,6 +32,8 @@ WORKDIR /opt/stationplay
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
+# The AGPL's text goes wherever StationPlay does, the image included.
+COPY LICENSE ./
 # COPY keeps whatever permissions the files had on the NAS, which may not
 # let the user in the YAML read them. Make the app readable (and
 # precompiled) for any user, whatever the source folder's permissions.
