@@ -120,6 +120,14 @@ def test_whats_new_in_media_is_checked_after_the_stations_programs(tmp_path, cle
         # Checked once: not again for Media (nor for a station).
         client.portal.call(w.ctx.scanner.round)
         assert len(w.order) == 5
+        # A week on, the weekly sweep is the stations' alone: Media's files
+        # are checked as they arrive, and when someone has trouble with one.
+        for key in ("201", "300", "211"):
+            record = w.ctx.db.scan(key)
+            record.quick_ms -= (sc.RECHECK_S + 2 * 86_400) * 1000
+            w.ctx.db.save_scan(record)
+        client.portal.call(w.ctx.scanner.round)
+        assert w.order[5:] == ["201"]
 
 
 def test_a_file_checked_for_one_isnt_checked_again_for_the_other(tmp_path, clean):

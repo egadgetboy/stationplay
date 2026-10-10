@@ -360,6 +360,31 @@ def test_a_version_is_replaced_only_when_the_apps_file_is_that_one(world):
     assert not r.blocklist and not r.commands and not r.recycled
 
 
+def test_where_each_entry_is_on_the_tab(world):
+    """Needs you, being replaced, or found (see replacing.tab_section)."""
+    db = world.ctx.db
+    damaged = {"problem": "damaged", "reason": "Deep scan: x", "show": "Bonanza"}
+    section = replacing.tab_section
+    # By themselves (as world has it): being replaced, if a station or Media
+    # plays it; not, left to you.
+    assert section(db, damaged, True) == replacing.BEING_REPLACED
+    assert section(db, damaged, False) == replacing.NEEDS_YOU
+    assert section(db, {**damaged, "replace": {"state": "downloading"}}, True) == (
+        replacing.BEING_REPLACED
+    )
+    for state in ("gave up", "can't", "same"):
+        assert section(db, {**damaged, "replace": {"state": state}}, True) == replacing.NEEDS_YOU
+    assert section(db, {**damaged, "replace": {"state": "left"}}, True) == replacing.FOUND_ONLY
+    assert section(db, {**damaged, "problem": "unsupported"}, True) == replacing.FOUND_ONLY
+    # When you say so: it waits for you, until you do.
+    replacing.save_when(db, replacing.ASK)
+    assert section(db, damaged, True) == replacing.NEEDS_YOU
+    assert section(db, {**damaged, "replace": {"asked": 1}}, True) == replacing.BEING_REPLACED
+    # Without the app: it waits for you.
+    replacing.save(db, "sonarr", "", None, False)
+    assert section(db, {**damaged, "replace": {"asked": 1}}, True) == replacing.NEEDS_YOU
+
+
 def test_an_app_that_cant_be_reached_changes_nothing(world):
     s = world.sonarr
     s.give_file(71, world.file("201").rsplit("/", 1)[1], 1001, downloaded="R1")
