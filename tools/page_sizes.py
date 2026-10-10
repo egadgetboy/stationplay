@@ -2,15 +2,16 @@
 
 Starts StationPlay with stand-in data (the tests' stand-in Plex, from
 tests/fakeplex_library.py, with shows, movies and collections; and
-stations, people, a linked device, stats, logs, problems from the apps and
-broken files), then, in Playwright's Chromium, looks at every tab and every
-dialog and panel that opens, signed in as an Admin and as a User, at each
-size, light and dark. It saves a screenshot of each into a folder (one
-folder for each size), and says what's wrong with each: a page that
-scrolls sideways, something cut off or sticking out of its panel, things on
-top of each other, text smaller than the page's smallest (11px), a tap
-target smaller than about 40px on a phone or tablet, or a dialog that
-doesn't fit the screen. It's a tool, not a test: the tests don't run it.
+stations, people, a linked device, stats, logs, problems from the apps,
+broken files and a person's report), then, in Playwright's Chromium,
+looks at every tab and every dialog and panel that opens, signed in as an
+Admin and as a User, at each size, light and dark. It saves a screenshot
+of each into a folder (one folder for each size), and says what's wrong
+with each: a page that scrolls sideways, something cut off or sticking out
+of its panel, things on top of each other, text smaller than the page's
+smallest (11px), a tap target smaller than about 40px on a phone or
+tablet, or a dialog that doesn't fit the screen. It's a tool, not a test:
+the tests don't run it.
 
     pip install playwright pillow       (and: python -m playwright install chromium)
     python tools/page_sizes.py /tmp/page-sizes
@@ -221,7 +222,8 @@ def fill(sp: Running, data: Path) -> None:
     """Everything the tabs show: stations (from shows and movies, smart ones
     and from collections), people, a linked device, signed-in apps, an API
     token, StationPlay's apps away from home, stats, logs, problems from the
-    apps, broken files, a logo and an Intro Bumper of your own, a backup."""
+    apps, broken files, a person's report, a logo and an Intro Bumper of your
+    own, a backup."""
     ctx = sp.ctx
     with httpx.Client(base_url=sp.home, timeout=60) as home:
 
@@ -284,6 +286,9 @@ def fill(sp: Running, data: Path) -> None:
         ok(home.post("/api/internal/problem", headers=app_token, json={
             "kind": "library-failed", "title": "Cosmic Drift", "detail": "HTTP 500", **roku}))  # fmt: skip
         ok(home.post("/api/internal/problem", headers=app_token, json={"kind": "crashed", **phone}))
+        # A person's report, waiting for an Admin on the Broken files tab.
+        ok(home.post("/api/internal/report-problem", headers=app_token, json={
+            "choice": "wrong-language", "key": "303", "positionMs": 92_000}))  # fmt: skip
         ok(home.post("/api/api-tokens", json={"name": "Home Assistant", "scope": "viewer"}))
         ok(home.post("/api/internal/play", headers=app_token, json={"key": "303", "device": {
             "containers": ["mkv", "mp4"], "hdr": [], "audio": ["aac", "ac3"], "hls": ["ts"],
@@ -663,7 +668,9 @@ def admin_views(page: Page, look: Look, only: set[str] | None) -> None:
         look("logs", full=True)
     if wanted("broken"):
         tab(page, "broken")
-        page.evaluate("() => document.querySelector('#arrPanel').open = true")
+        page.evaluate(
+            "() => ['#arrPanel', '#reportsPanel'].forEach(p => document.querySelector(p).open = true)"
+        )
         page.wait_for_timeout(600)
         look("broken", full=True)
 

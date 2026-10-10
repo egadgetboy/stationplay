@@ -234,6 +234,12 @@ def test_the_limits_and_who_may_report(app):
         assert off.json()["detail"] == "An Admin has turned off reporting problems for you."
         users = {u["name"]: u for u in admin.get("/api/access/users").json()}
         assert users["Kit"]["canReport"] is False and users["Tia"]["canReport"] is True
+        # An Admin always can.
+        ada = next(u for u in users.values() if u["name"] == "Ada")
+        admin.put(f"/api/access/users/{ada['id']}", json={"canReport": False})
+        assert (
+            report(phone, sign_in_app(app, ADA), choice="no-sound", key="3111").status_code == 200
+        )
         # A User can't turn it on or off.
         assert phone.put(f"/api/access/users/{kit['id']}", headers=tia,
                          json={"canReport": True}).status_code == 403  # fmt: skip

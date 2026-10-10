@@ -268,6 +268,23 @@
   .linkish:hover { text-decoration-thickness: 2px; }
   .on-stations { margin-top: 4px; }
   .broken-show { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  /* The Broken files tab's parts: what needs you, what's being replaced,
+     and the rest of what was found. */
+  .files { margin-top: 16px; }
+  .files-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 2px; flex-wrap: wrap; }
+  .files-head h3 { margin: 0; font-size: 16px; }
+  .files-intro { margin: 2px 16px 10px; }
+  .files .none { padding: 4px 16px 16px; margin: 0; }
+  .files table { border-top: 1px solid var(--line); }
+  .files tr:last-child td { border-bottom: 0; }
+  .facts { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+  .facts li::before { content: "· "; color: var(--ink-3); }
+  .said { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+  .said li { padding: 6px 10px; border-radius: var(--radius); background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); }
+  .said .who { font-weight: 600; }
+  .said .how { color: var(--ink-2); }
+  .report-who { column-gap: 16px; }
+  .report-who label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
   .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
   .empty { padding: 36px 20px; text-align: center; }
   @media (max-width: 560px) {
@@ -806,6 +823,7 @@
     <div class="panel scan">
       <div class="scan-line" id="scanQuick"></div>
       <div class="scan-line" id="scanDeep"></div>
+      <div class="scan-line" id="scanMedia" hidden></div>
       <div class="scan-line" id="scanClips" hidden></div>
       <div class="scan-line" id="scanList"></div>
       <div class="scan-set">
@@ -820,13 +838,32 @@
       <summary><strong>Replacing files with Sonarr and Radarr</strong><span class="muted" id="arrSum"></span></summary>
       <div class="arr-body" id="arrBody"></div>
     </details>
+    <details class="panel arr" id="reportsPanel">
+      <summary><strong>Reports from StationPlay’s apps</strong><span class="muted" id="reportsSum"></span></summary>
+      <div class="arr-body" id="reportsBody"></div>
+    </details>
+    <div id="filesEmpty" hidden></div>
+    <div class="panel files" id="needsPanel">
+      <div class="files-head"><h3>Needs you</h3><span class="chip bad" id="needsCount" hidden></span></div>
+      <p class="muted small files-intro">People’s reports, and files StationPlay found, waiting for you to choose what to do.</p>
+      <div id="needsList"></div>
+    </div>
+    <div class="panel files" id="replacingPanel" hidden>
+      <div class="files-head"><h3>Being replaced</h3><span class="chip accent" id="replacingCount"></span></div>
+      <p class="muted small files-intro">What Sonarr or Radarr is fetching now. A new file is checked like any other, and goes back on the air once it passes.</p>
+      <div id="replacingList"></div>
+    </div>
+    <div class="panel files" id="foundPanel" hidden>
+      <div class="files-head"><h3>Found by StationPlay</h3><span class="chip plain" id="foundCount"></span></div>
+      <p class="muted small files-intro">The rest of what StationPlay found: files you’re handling yourself, and files that can’t be shown correctly on the stations.</p>
+      <div id="brokenPanel"></div>
+    </div>
     <p class="muted small">
-      These programs are off the air on every station, and other programs play in their place.
-      <strong>Missing</strong> files are gone from disk or from Plex while a station still has them. <strong>Broken</strong> files won’t play. <strong>Damaged</strong> files play, but the picture or sound breaks up. <strong>Unsupported</strong> files play but can’t be shown correctly (Dolby Vision profile 5). Replace them with another version.
-      Fix or replace the file, then choose <strong>Retry</strong>. Or let the list clear itself: a program comes off the list when Plex has it again under a new ID (after a file is renamed, for example), or when it’s missing and no station has it anymore. (Removed it on purpose? Take it off the stations its entry lists.) A program with a new file, or one the quick check took off the air, comes off once it passes the quick check.
+      What’s on this list is off the air on every station, and other programs play in their place. In Media, in StationPlay’s apps, a broken file doesn’t play (another version of it does, if there is one) and a damaged one still does.
+      <strong>Missing</strong> files are gone from disk or from Plex while a station or Media still has them. <strong>Broken</strong> files won’t play. <strong>Damaged</strong> files play, but the picture or sound breaks up. <strong>Unsupported</strong> files play but can’t be shown correctly (Dolby Vision profile 5). Replace them with another version.
+      Fix or replace the file, then choose <strong>Retry</strong>. Or let the list clear itself: a program comes off the list when Plex has it again under a new ID (after a file is renamed, for example), or when it’s missing and neither a station nor Media has it anymore. (Removed it on purpose? Take it off the stations its entry lists.) A program with a new file, or one the quick check took off the air, comes off once it passes the quick check.
       Problems found by the deep scan or during playback stay until the file changes. Retry also tells the checks to leave that file on the air.
     </p>
-    <div class="panel" id="brokenPanel"></div>
   </section>
 
   <section id="tab-logs" hidden>
@@ -1726,7 +1763,7 @@ function showTab(name) {
   currentTab = name;
   document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
   for (const id of TABS) $('#tab-' + id).hidden = id !== name;
-  if (name === 'broken') { loadArr().then(loadBroken); loadScan(); }
+  if (name === 'broken') { loadArr().then(loadBroken); loadScan(); loadReportSettings(); }
   if (name === 'logs') { loadLogs(true); loadProblems(); loadNotify(); }
   if (name === 'setup') { loadBackups(); renderPlaybackPanel(); }
   if (name === 'stats') { loadStats(); loadNow(); }
@@ -1789,9 +1826,10 @@ async function loadStatus() {
     renderMediaAccess(status.mediaAccess);
     renderEncoding(status.encoding);
     renderGuideState(status.guide);
+    // (What needs an Admin on the Broken files tab: see reports.py.)
     const bc = $('#brokenCount');
-    bc.hidden = !status.brokenCount;
-    bc.textContent = status.brokenCount;
+    bc.hidden = !status.filesCount;
+    bc.textContent = status.filesCount;
     if (!setupChecked) {
       setupChecked = true;
       maybeSetup();
@@ -4696,66 +4734,157 @@ $('#editorForm').addEventListener('submit', async e => {
 $('#newChannel').addEventListener('click', () => openEditor());
 
 // Broken files -------------------------------------------------------------------
+// Everything about files: people's reports and what StationPlay found, in
+// three parts (see replacing.tab_section and reports.py on the server):
+// what needs you, what Sonarr or Radarr is replacing, and the rest.
 // What's wrong with a file on the Broken files tab, in a word.
 const PROBLEMS = { broken: 'Broken', damaged: 'Damaged', unsupported: 'Unsupported' };
-// Which entries are shown: all, broken or damaged ones, or missing ones.
+// Which of the files that need you are shown: all, broken or damaged ones, or missing ones.
 let brokenShow = 'all';
 let brokenRows = [];
+let reportRows = [];
 async function loadBroken() {
-  let rows;
-  try { rows = await api('/api/broken'); }
+  let rows, got;
+  try { [rows, got] = await Promise.all([api('/api/broken'), api('/api/reports')]); }
   catch (e) { toast(e.message, true); return; }
   brokenRows = rows;
+  reportRows = got.reports;
   renderBroken();
 }
-// The stations that have a program now, each opening its editor.
-function stationButtons(r) {
-  if (!r.on?.length) return h('div', { class: 'small muted' }, r.missing ? 'Not on any station now. It will come off this list at its next check.' : 'Not on any station now.');
-  return h('div', { class: 'small on-stations' }, 'On ',
+// Where a file is used: the stations that have it now, each opening its
+// editor, and Media in StationPlay's apps.
+function usedLine(r) {
+  const on = r.on?.length ? h('span', {}, 'On ',
     ...r.on.flatMap((st, n) => [n ? ', ' : '', h('button', { type: 'button', class: 'linkish', title: `Open ${st.name}’s settings`, onclick: () => {
       const ch = channels.find(c => c.id === st.id);
       if (ch) openEditor(ch); else toast('That station no longer exists', true);
-    } }, `${st.number} ${st.name}`)]),
-    r.missing ? h('span', { class: 'muted' }, ' · Don’t want it anymore? Remove it from these stations, and it comes off this list.') : '');
+    } }, `${st.number} ${st.name}`)])) : null;
+  if (!on && !r.media) return h('div', { class: 'small muted' }, r.missing ? 'Not on any station, or in Media, now. It will come off this list at its next check.' : 'Not on any station, or in Media, now.');
+  return h('div', { class: 'small on-stations' }, on, on && r.media ? ' · ' : '', r.media ? 'In Media' : '',
+    r.missing && on && !r.media ? h('span', { class: 'muted' }, ' · Don’t want it anymore? Remove it from these stations, and it comes off this list.') : '');
+}
+const programName = p => p.show ? `${p.show} ${sxe(p)}` : p.year ? `${p.title} (${p.year})` : p.title;
+// A place in a program: "12:34", "1:02:03".
+const placeIn = ms => { const t = Math.max(0, Math.floor(ms / 1000)); const hh = Math.floor(t / 3600), mm = Math.floor(t / 60) % 60, ss = t % 60;
+  return hh ? `${hh}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}` : `${mm}:${String(ss).padStart(2, '0')}`; };
+function filesTable(rows) {
+  return h('table', { class: 'broken' },
+    h('thead', {}, h('tr', {}, h('th', {}, 'Program'), h('th', {}, 'What’s wrong'), h('th', {}, 'When'), h('th', {}))),
+    h('tbody', {}, ...rows));
+}
+// An entry on the list (what StationPlay found).
+function entryRow(r) {
+  const by = [...new Set((r.reports || []).map(x => `${x.who} (${x.label})`))];
+  return h('tr', {},
+    h('td', {},
+      h('strong', {}, r.show ? `${r.show} ${sxe(r)}` : r.title),
+      r.show ? h('div', {}, r.title) : null,
+      r.file ? h('div', { class: 'path' }, r.file) : null,
+      r.version ? h('div', { class: 'small muted' }, 'One of its versions, in Media (stations play another)') : null),
+    h('td', { class: 'reason' },
+      h('span', { class: r.missing ? 'chip plain' : r.problem === 'broken' || !PROBLEMS[r.problem] ? 'chip bad' : 'chip accent', style: 'margin-right:6px' },
+        r.missing ? 'Missing' : PROBLEMS[r.problem] || 'Broken'),
+      r.reason,
+      h('div', { class: 'small muted' }, plural(r.failures, 'failure')
+        + (r.lastChecked ? ` · rechecked ${new Date(r.lastChecked).toLocaleString()}` : '')),
+      by.length ? h('div', { class: 'small' }, `Reported by ${by.join(', ')}`) : null,
+      usedLine(r),
+      r.replace && r.replace.state ? arrLine(r.replace) : null),
+    h('td', { class: 'small', 'data-label': 'Last failed' }, new Date(r.lastFailed).toLocaleString()),
+    h('td', {}, h('div', { class: 'row-btns' },
+      h('button', { class: 'btn', title: 'The file is fine. Put this program back on the air.', onclick: () => retry(r) }, 'Retry'),
+      arrButton(r))));
+}
+// A program people reported (see reports.py on the server): one row, each
+// report under it.
+const REPORT_STATES = {
+  checking: ['chip plain', 'StationPlay is checking it'],
+  waiting: ['chip accent', 'Waiting for you'],
+  nothing: ['chip plain', 'StationPlay found nothing wrong'],
+  kept: ['chip plain', 'You put it back on the air'],
+  "couldn't": ['chip plain', 'StationPlay couldn’t check it'],
+};
+function reportRow(row) {
+  const p = row.program;
+  const [chip, said] = REPORT_STATES[row.state] || ['chip plain', row.state];
+  const replaceable = row.actions.includes('replace');
+  return h('tr', {},
+    h('td', {},
+      h('strong', {}, programName(p)),
+      p.show && p.title ? h('div', {}, p.title) : null),
+    h('td', { class: 'reason' },
+      h('span', { class: 'chip plain', style: 'margin-right:6px' }, row.reports.length > 1 ? `${row.reports.length} reports` : 'Reported'),
+      h('span', { class: chip }, said),
+      row.facts.length ? h('ul', { class: 'facts small' }, ...row.facts.map(f => h('li', {}, f))) : null,
+      ...row.notes.map(n => h('div', { class: 'small', style: 'margin-top:6px' }, n)),
+      replaceable && !row.arr ? h('div', { class: 'small muted', style: 'margin-top:6px' }, 'To replace it from here, turn on Sonarr or Radarr (for broken or damaged files) under Replacing files with Sonarr and Radarr.') : null,
+      h('ul', { class: 'said small' }, ...row.reports.map(reportLine)),
+      usedLine(row)),
+    h('td', { class: 'small', 'data-label': 'Reported' }, new Date(row.at).toLocaleString()),
+    h('td', {}, h('div', { class: 'row-btns' }, ...reportButtons(row))));
+}
+// One person's report: what, who and where from, when, where in the
+// program, and how it was playing.
+function reportLine(x) {
+  const how = x.how || {};
+  const ways = how.station ? [`On station ${how.station}`]
+    : [how.method && `${how.method[0].toUpperCase()}${how.method.slice(1)}`, how.version, how.audio, how.subtitle && `subtitles: ${how.subtitle}`].filter(Boolean);
+  return h('li', {},
+    h('div', { class: 'who' }, x.label),
+    h('div', {}, [`${x.who}, ${x.device}`, fmtClock(x.at), x.positionMs != null ? `at ${placeIn(x.positionMs)}` : ''].filter(Boolean).join(' · ')),
+    ways.length ? h('div', { class: 'how' }, ways.join(' · ')) : null);
+}
+function reportButtons(row) {
+  const act = async (what, done) => {
+    let got;
+    try { got = await api(`/api/reports/${encodeURIComponent(row.key)}/${what}`, { method: 'POST' }); }
+    catch (e) { toast(e.message, true); return; }
+    toast(got.note || done);
+    loadBroken(); loadStatus();
+  };
+  const out = [];
+  if (row.actions.includes('replace') && row.arr) {
+    out.push(h('button', { class: 'btn', title: `${row.arr} adds its release to its blocklist, removes the file, and fetches another. It’s off the air until then.`, onclick: () => act('replace') }, `Replace with ${row.arr}`));
+    out.push(h('button', { class: 'btn', title: `${row.arr} searches for a better copy, and keeps this file until it finds one`, onclick: () => act('better') }, 'Find a better copy'));
+  }
+  out.push(h('button', { class: 'btn', title: 'Nothing more is done about it', onclick: () => act('dismiss', `Dismissed the ${row.reports.length > 1 ? 'reports' : 'report'} on ${programName(row.program)}`) }, 'Dismiss'));
+  return out;
 }
 function renderBroken() {
-  const rows = brokenRows;
-  const panel = $('#brokenPanel');
-  if (!rows.length) {
-    panel.replaceChildren(h('div', { class: 'empty' },
-      h('h3', {}, 'Nothing broken'),
-      h('p', { class: 'muted' }, 'Every file has played cleanly so far. Use “Check files” on a station to test everything ahead of time.')));
-    return;
-  }
-  const missing = rows.filter(r => r.missing).length;
-  if (brokenShow !== 'all' && !rows.some(r => (brokenShow === 'missing') === Boolean(r.missing))) brokenShow = 'all';
-  const shown = rows.filter(r => brokenShow === 'all' || (brokenShow === 'missing') === Boolean(r.missing));
+  const rows = brokenRows, reports = reportRows;
+  const empty = !rows.length && !reports.length;
+  $('#filesEmpty').hidden = !empty;
+  $('#filesEmpty').replaceChildren(...(empty ? [h('div', { class: 'panel files' }, h('div', { class: 'empty' },
+    h('h3', {}, 'Nothing broken'),
+    h('p', { class: 'muted' }, 'Every file has played cleanly so far, and no one has reported a problem. Use “Check files” on a station to test everything ahead of time.')))] : []));
+  $('#needsPanel').hidden = empty;
+  const needs = rows.filter(r => r.section === 'needs you');
+  const going = rows.filter(r => r.section === 'being replaced');
+  const found = rows.filter(r => !['needs you', 'being replaced'].includes(r.section));
+  const count = needs.length + reports.filter(x => x.needs).length;
+  $('#needsCount').hidden = !count;
+  $('#needsCount').textContent = count;
+  // (Files that need you, all of them or the missing ones or the rest.)
+  const missing = needs.filter(r => r.missing).length;
+  if (brokenShow !== 'all' && !needs.some(r => (brokenShow === 'missing') === Boolean(r.missing))) brokenShow = 'all';
+  const shown = needs.filter(r => brokenShow === 'all' || (brokenShow === 'missing') === Boolean(r.missing));
   const pick = (value, label) => h('button', { type: 'button', 'aria-pressed': String(brokenShow === value), onclick: () => { brokenShow = value; renderBroken(); } }, label);
-  panel.replaceChildren(
-    missing && missing < rows.length ? h('div', { class: 'broken-show' },
-      h('div', { class: 'seg', role: 'group', 'aria-label': 'Show entries' },
-        pick('all', `All (${rows.length})`),
-        pick('broken', `Broken or damaged (${rows.length - missing})`),
-        pick('missing', `Missing (${missing})`))) : '',
-    h('table', { class: 'broken' },
-    h('thead', {}, h('tr', {}, h('th', {}, 'Program'), h('th', {}, 'What went wrong'), h('th', {}, 'Last failed'), h('th', {}))),
-    h('tbody', {}, ...shown.map(r => h('tr', {},
-      h('td', {},
-        h('strong', {}, r.show ? `${r.show} ${sxe(r)}` : r.title),
-        r.show ? h('div', {}, r.title) : null,
-        r.file ? h('div', { class: 'path' }, r.file) : null),
-      h('td', { class: 'reason' },
-        h('span', { class: r.missing ? 'chip plain' : r.problem === 'broken' || !PROBLEMS[r.problem] ? 'chip bad' : 'chip accent', style: 'margin-right:6px' },
-          r.missing ? 'Missing' : PROBLEMS[r.problem] || 'Broken'),
-        r.reason,
-        h('div', { class: 'small muted' }, plural(r.failures, 'failure')
-          + (r.lastChecked ? ` · rechecked ${new Date(r.lastChecked).toLocaleString()}` : '')),
-        stationButtons(r),
-        r.replace && r.replace.state ? arrLine(r.replace) : null),
-      h('td', { class: 'small', 'data-label': 'Last failed' }, new Date(r.lastFailed).toLocaleString()),
-      h('td', {}, h('div', { class: 'row-btns' },
-        h('button', { class: 'btn', title: 'The file is fine. Put this program back on the air.', onclick: () => retry(r) }, 'Retry'),
-        arrButton(r))))))));
+  $('#needsList').replaceChildren(...(!needs.length && !reports.length
+    ? [h('p', { class: 'muted small none' }, 'Nothing needs you now.')]
+    : [
+        missing && missing < needs.length ? h('div', { class: 'broken-show' },
+          h('div', { class: 'seg', role: 'group', 'aria-label': 'Show files' },
+            pick('all', `All files (${needs.length})`),
+            pick('broken', `Broken or damaged (${needs.length - missing})`),
+            pick('missing', `Missing (${missing})`))) : '',
+        filesTable([...reports.map(reportRow), ...shown.map(entryRow)]),
+      ]));
+  $('#replacingPanel').hidden = !going.length;
+  $('#replacingCount').textContent = going.length;
+  $('#replacingList').replaceChildren(...(going.length ? [filesTable(going.map(entryRow))] : []));
+  $('#foundPanel').hidden = !found.length;
+  $('#foundCount').textContent = found.length;
+  $('#brokenPanel').replaceChildren(...(found.length ? [filesTable(found.map(entryRow))] : []));
 }
 // (A station changed from this tab: its programs are shown afresh.)
 $('#editor').addEventListener('close', () => { if (currentTab === 'broken') loadBroken(); });
@@ -4791,7 +4920,9 @@ function arrButton(r) {
     toast(done);
     setTimeout(loadBroken, 3000);
   } }, label);
-  if (s.state === 'left' || (!s.state && !s.asked && got.when === 'ask'))
+  // (Waiting for you: when they replace only when you ask, or it's on no
+  // station and not in Media, which they'd leave be.)
+  if (s.state === 'left' || (!s.state && !s.asked && (got.when === 'ask' || r.section === 'needs you')))
     return ask(`Replace with ${name}`, `Have ${name} replace this file`, `${name} is replacing ${what}`);
   if (s.state === 'same')
     return ask('Try another file', `${name} adds this file to its blocklist too and looks for another one`, `${name} is looking for another file for ${what}`);
@@ -4825,10 +4956,10 @@ async function loadArr() {
     loadArr().then(loadBroken);
   } }, { ask: 'Only when I ask', auto: 'Automatically' }[value]);
   body.replaceChildren(
-    h('p', { style: 'margin:0' }, 'Optional. StationPlay can ask Sonarr (for episodes) and Radarr (for movies) to replace files on this list that a station plays:'),
+    h('p', { style: 'margin:0' }, 'Optional. StationPlay can ask Sonarr (for episodes) and Radarr (for movies) to replace files on this list that a station plays, or Media in StationPlay’s apps:'),
     h('ul', {},
       h('li', {}, h('strong', {}, 'A broken or damaged file: '), 'First, its release is added to the app’s blocklist so the same file isn’t downloaded again. Then the file is deleted (into Sonarr’s or Radarr’s recycle bin, if you’ve set one up), and the app searches for another. This happens only if the app’s file is the exact file found broken and the app downloaded it. A file you added by hand can’t be blocklisted, so it’s left for you to handle.'),
-      h('li', {}, h('strong', {}, 'A missing file '), '(gone from disk or from Plex while a station still has it): the app first checks what’s on disk, then searches for it.')),
+      h('li', {}, h('strong', {}, 'A missing file '), '(gone from disk or from Plex while a station or Media still has it): the app first checks what’s on disk, then searches for it.')),
     h('div', { class: 'scan-set' }, h('strong', {}, 'Files to replace'),
       h('div', { class: 'seg', role: 'group', 'aria-label': 'Files to replace' }, pick('broken'), pick('missing'), pick('both'))),
     h('div', { class: 'scan-set' }, h('strong', {}, 'When to replace'),
@@ -4836,7 +4967,7 @@ async function loadArr() {
     h('p', { style: 'margin:0' }, got.when === 'auto'
       ? 'Automatically: each entry is replaced without asking you. Want to deal with one yourself? Choose I’ll handle it on its entry.'
       : 'Only when I ask: nothing is replaced until you choose Replace with Sonarr (or Radarr) on its entry. After that, the app keeps working on it by itself.'),
-    h('p', { style: 'margin:0' }, 'Only what Sonarr and Radarr are monitoring gets replaced (in Sonarr, both the show and the episode). Unmonitor something there, and StationPlay leaves it alone too. Removed a show or movie on purpose? Unmonitor or delete it there (or choose Broken or damaged here), and remove it from its stations. Each entry on this list shows which stations have it.'),
+    h('p', { style: 'margin:0' }, 'Only what Sonarr and Radarr are monitoring gets replaced (in Sonarr, both the show and the episode). Unmonitor something there, and StationPlay leaves it alone too. Removed a show or movie on purpose? Unmonitor or delete it there (or choose Broken or damaged here), and remove it from its stations. Each entry on this list shows which stations have it, and whether it’s in Media. They also replace what people report, when you choose Replace on a report.'),
     h('p', { style: 'margin:0' }, 'Each entry gets up to 3 searches over about a day. If none finds a file that plays, the entry stays on this list and says so. A new file is checked like any other, and the program goes back on the air once it passes. If the new file has the same problem in the same places as the old one, the problem may be part of the program itself (such as an old movie’s effects), not a bad file. The entry then says Needs your review: choose Retry to put it back on the air, or Try another file. StationPlay itself only needs Plex; this just uses apps you already have. You’ll find each app’s API key under Settings → General.'),
     ...['sonarr', 'radarr'].map(app => arrRow(app, got.apps[app], got.status[app])));
 }
@@ -4867,6 +4998,35 @@ function arrRow(app, a, st) {
     h('label', {}, on, ` Use ${meta.name} for ${meta.what}`),
     h('div', { class: 'scan-set' }, url, key),
     h('div', { class: 'scan-set' }, test, save, result));
+}
+// People's reports from StationPlay's apps (see reports.py) ---------------------------
+// What they do, and who may send them: the same setting, for each person,
+// as Can report problems on the Access tab.
+async function loadReportSettings() {
+  let users = [];
+  if (me.required) { try { users = await api('/api/access/users'); } catch { users = []; } }
+  const people = users.filter(u => u.role !== 'admin');
+  const off = people.filter(u => !u.canReport);
+  $('#reportsSum').textContent = !me.required ? 'Anyone at home can report problems'
+    : off.length ? `${off.map(u => u.name).join(', ')} can’t report problems` : 'Everyone can report problems';
+  const choice = u => h('label', { class: 'own-password' },
+    h('input', { type: 'checkbox', checked: u.canReport, onchange: async e => {
+      const on = e.target.checked;
+      try { await api(`/api/access/users/${u.id}`, { method: 'PUT', body: { canReport: on } }); toast(on ? `${u.name} can report problems` : `${u.name} can’t report problems now`); }
+      catch (err) { toast(err.message, true); }
+      loadReportSettings();
+    } }), u.name);
+  $('#reportsBody').replaceChildren(
+    h('p', { style: 'margin:0' }, 'People can report a problem from StationPlay’s apps: from a movie’s or an episode’s page, from the player’s menu, and from a station’s player. They pick what’s wrong from a list. Each report comes here, under Needs you, saying who sent it, from which device, where in the program, and how it was playing.'),
+    h('ul', {},
+      h('li', {}, h('strong', {}, 'What StationPlay can check '), '(no picture, the picture breaking up, no sound, the sound cutting out, stopping early, not playing): its file is checked at once, where it happened first. If StationPlay finds the problem, the file goes on this list, and is replaced as you have that set. If not, the report says so, for you to dismiss.'),
+      h('li', {}, h('strong', {}, 'What only a person can judge '), '(the sound out of sync, the wrong language, the wrong episode or movie, poor picture quality, subtitles): it waits for you, with what StationPlay can tell beside it. Choose Replace (Sonarr or Radarr adds its release to the blocklist and fetches another), Find a better copy (they search for an upgrade, keeping the file until they find one), or Dismiss.'),
+      h('li', {}, h('strong', {}, 'Wrong title, details or artwork: '), 'fix it in Plex, then dismiss it.')),
+    h('p', { style: 'margin:0' }, 'A report never takes anything off the air, or out of Media, by itself. Each person can send one report a day about each program, and ten a day in all. Admins are told through their alerts, at most once an hour.'),
+    !me.required
+      ? h('p', { class: 'muted', style: 'margin:0' }, 'While signing in is off, anyone at home can report problems. Turn signing in on to choose who can.')
+      : h('div', { class: 'scan-set report-who' }, h('strong', {}, 'Can report problems'),
+          ...(people.length ? people.map(choice) : [h('span', { class: 'muted' }, 'Admins always can. Add people on the Access tab.')])));
 }
 // Stations kept from some Plex users (Access tab; see limits.py) ---------------------
 let limitsShown = null;
@@ -5026,7 +5186,9 @@ function paintAlerts() {
   $('#alertsBody').replaceChildren(...(alertsNow.length
     ? alertsNow.map(a => h('div', { class: 'alert-item' },
         h('span', { class: 'icon', 'aria-hidden': 'true' }, warnIcon()),
-        h('div', {}, h('p', {}, a.sentence), h('p', { class: 'when' }, `Since ${fmtClock(a.since)}, ${ago(a.since)}`))))
+        h('div', {}, h('p', {}, a.sentence), h('p', { class: 'when' }, `Since ${fmtClock(a.since)}, ${ago(a.since)}`),
+          // (What needs you on the Broken files tab: a way there.)
+          a.kind === 'files' ? h('button', { class: 'linkish', type: 'button', onclick: () => { $('#alertsDlg').close(); showTab('broken'); } }, 'Open the Broken files tab') : null)))
     : [h('p', { class: 'muted', style: 'margin:0' }, 'Nothing needs a look now. Each alert that’s fixed is in the Logs tab.')]));
 }
 $('#alertsPill').addEventListener('click', () => { paintAlerts(); $('#alertsDlg').showModal(); });
@@ -5449,9 +5611,18 @@ async function loadScan() {
   try { st = await api('/api/scan'); } catch { return; }
   const n = st.programs;
   $('#scanQuick').replaceChildren(h('strong', {}, 'Quick checks: '),
-    `${st.quickChecked} of ${plural(n, 'program')} checked in the past week. New programs are checked within minutes of arriving, and everything is checked again each week.`,
+    `${st.quickChecked} of ${plural(n, 'program')} on the stations checked in the past week. New programs are checked within minutes of arriving, and everything is checked again each week.`,
+    st.checking ? ` Checking ${plural(st.checking, 'file')} someone had trouble with first.` : '',
     st.state === 'checking' ? h('span', { class: 'chip accent', style: 'margin-left:6px' }, 'checking now')
-      : st.state === 'paused' ? h('span', { class: 'chip plain', style: 'margin-left:6px', title: 'File checks pause while anyone is watching a station, so the streams keep playing smoothly' }, 'paused while someone is watching') : '');
+      : st.state === 'paused' ? h('span', { class: 'chip plain', style: 'margin-left:6px', title: 'File checks pause while anyone is watching, a station or Media, so what they watch keeps playing smoothly' }, 'paused while someone is watching') : '');
+  // Media: what's shared with StationPlay's apps (once its files are known).
+  const m = st.media;
+  $('#scanMedia').hidden = !m;
+  if (m) $('#scanMedia').replaceChildren(h('strong', {}, 'Media: '),
+    m.files != null ? `${m.quickChecked.toLocaleString()} of ${plural(m.files, 'file')} in the libraries shared with StationPlay’s apps checked, ${m.deepScanned.toLocaleString()} scanned in full. ` : '',
+    'What’s newly added is checked within minutes. The rest is scanned overnight, after the stations’ programs: what people are watching first, then the most recently added.');
+  // (The reports waiting on a check are shown afresh as it ends.)
+  if (scanShown && scanShown.checking !== st.checking) loadBroken();
   const w = st.window;
   let now = '';
   if (st.state === 'scanning' && st.current) now = `Now scanning ${st.current} (${st.currentPct}%).`;
@@ -5774,13 +5945,21 @@ async function loadAccess() {
           catch (err) { toast(err.message, true); }
           loadAccess();
         } }), 'Can change their own password');
+      // (Problems with what they watch, from StationPlay's apps: see reports.py.)
+      const canReport = h('label', { class: 'own-password', title: admin ? 'An Admin can always report problems' : 'From StationPlay’s apps, about what they watch. Reports go to the Broken files tab.' },
+        h('input', { type: 'checkbox', checked: admin || u.canReport, disabled: admin, onchange: async e => {
+          const on = e.target.checked;
+          try { await api(`/api/access/users/${u.id}`, { method: 'PUT', body: { canReport: on } }); toast(on ? `${u.name} can report problems` : `${u.name} can’t report problems now`); }
+          catch (err) { toast(err.message, true); }
+          loadAccess();
+        } }), 'Can report problems');
       const named = h('td', {}, h('strong', {}, u.name), u.id === me.user?.id ? h('span', { class: 'hint' }, ' (you)') : null);
       const actions = h('td', {},
         h('button', { class: 'btn', type: 'button', onclick: () => renameUser(u, named) }, 'Rename'), ' ',
         h('button', { class: 'btn', type: 'button', onclick: () => openUserDevices(u) }, 'Devices'), ' ',
         h('button', { class: 'btn', type: 'button', onclick: () => newPassword(u, actions) }, u.hasPassword ? 'New password' : 'Add a password'), ' ',
         h('button', { class: 'btn danger', type: 'button', onclick: () => removeUser(u, users.length) }, 'Remove'),
-        ownPassword);
+        ownPassword, canReport);
       return h('tr', {},
         named,
         h('td', { 'data-label': 'Role' }, role),

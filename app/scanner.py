@@ -2221,17 +2221,22 @@ class Scanner:
             "deepScanned": sum(
                 1 for k in programs if (r := scans.get(k)) is not None and r.deep_ms
             ),
-            # Media's files (once they're all known: see _media_everything).
-            "media": {
-                "files": len(self.media_keys),
-                "quickChecked": sum(
-                    1 for k in self.media_keys if (r := scans.get(k)) is not None and r.quick_ms
-                ),
-                "deepScanned": sum(
-                    1 for k in self.media_keys if (r := scans.get(k)) is not None and r.deep_ms
-                ),
-            }
-            if self.ctx.shared.on and self._media_all_at is not None
+            # Media's files, while a library is shared with the apps (how
+            # many, once they're all known: see _media_everything).
+            "media": (
+                {
+                    "files": len(self.media_keys),
+                    "quickChecked": sum(
+                        1 for k in self.media_keys if (r := scans.get(k)) is not None and r.quick_ms
+                    ),
+                    "deepScanned": sum(
+                        1 for k in self.media_keys if (r := scans.get(k)) is not None and r.deep_ms
+                    ),
+                }
+                if self._media_all_at is not None
+                else {"files": None, "quickChecked": None, "deepScanned": None}
+            )
+            if self.ctx.shared.on
             else None,
             "checking": len(self._targets),  # (files someone had trouble with)
             "window": {"on": on, "start": start, "end": end},

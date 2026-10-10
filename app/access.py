@@ -663,9 +663,10 @@ class Access:
 
     def may_report(self, user: User) -> bool:
         """Whether someone may report problems from the apps (see
-        reports.py): unless an Admin turned that off for them."""
+        reports.py): unless an Admin turned that off for them (never for an
+        Admin)."""
         now = self.db.user(user.id) or user
-        return now.can_report
+        return now.role == ADMIN or now.can_report
 
     def set_can_report(self, user: User, by: User | None, on: bool) -> None:
         """Whether someone may report problems from the apps, if `by` is an
