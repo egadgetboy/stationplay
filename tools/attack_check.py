@@ -10,8 +10,11 @@ tries what an attacker would and prints PASS or FAIL for each: routes
 without and with the wrong role; forged headers; CSRF from another site;
 path traversal; oversized bodies; script in names; guessing or reusing keys,
 play addresses and reach nonces; reaching Media and stations a level hides;
-the sign-in, passcode and link-code limits; who a linked device lists away
-from home; setting a passcode or changing a password from the apps (as an
+the sign-in, passcode and link-code limits; who a linked device lists (new
+people only on devices they sign in on, and Use for everyone: only for an
+Admin, from StationPlay's own page, only its two choices, never moving who
+can't sign in by name) and lists away from home; setting a passcode or
+changing a password from the apps (as an
 outsider, as someone else, an Admin's passcode, its format, the limits);
 Admin alerts and the web address they're sent to (only for Admins; only
 http and https, no redirects followed, never waited on); each person's
@@ -445,7 +448,10 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
     # within their level, at addresses only the app that started them has.
     await _media_away(checks, app, home, net, admin_h, sam_h, kit_h)
 
-    # 13) Who's tuning in? away from home lists only a device's own people.
+    # 13) Who's tuning in?: new people only on devices they sign in on, and
+    # Use for everyone (which then makes everyone a household's, for the rest);
+    # away from home, a device lists only its own people.
+    await _new_people_and_everyone(checks, app, home, net, admin_h, sam_h, kit_h, device_key)
     await _picker_away(checks, app, home, net, device_key)
 
     # 14) Passcodes and passwords from the apps: only one's own, as the rules say.
@@ -590,6 +596,98 @@ async def _media_away(
             r = await out.get(allowed.json()["url"], headers=https)
             checks.ok(r.status_code == 404, "turning away from home off ends Media there",
                       f"got {r.status_code}")  # fmt: skip
+
+
+async def _new_people_and_everyone(
+    checks: Checks, app, home: str, net: str, admin_h: dict, sam_h: dict, kit_h: dict,
+    device_key: str,
+) -> None:  # fmt: skip
+    """New people show only on devices they sign in on: a device lists no one
+    else, and no one else can be picked there by their id. Use for everyone
+    (POST /api/access/devices/everyone): only an Admin, only from
+    StationPlay's own page, only its two choices; many at once leave everyone
+    as one of them said; someone who can't sign in by name is never moved to
+    Only devices they sign in on. It ends with everyone on every device at
+    home, a household, for what's checked after."""
+    checks.section("Who's tuning in?: new people, and Use for everyone")
+    db = app.state.ctx.db
+    key = {"StationPlay-Device": device_key}
+    everyone = "/api/access/devices/everyone"
+    async with httpx.AsyncClient(base_url=home) as c:
+        default = (await c.get("/api/access/devices", headers=admin_h)).json().get("default")
+        picker = (await c.get("/api/internal/picker", headers=key)).json()
+        listed = [p["name"] for p in picker["people"]]
+        checks.ok(default == "signed-in" and listed == [USER["name"]],
+                  "new people show only on devices they sign in on: the device lists only Sam",
+                  f"default {default}, listed {listed}")  # fmt: skip
+        for person in db.users():
+            if person.name == USER["name"]:
+                continue
+            r = await c.post("/api/internal/picker/choose", headers=key,
+                             json={"id": person.id, "password": ADMIN["password"]})  # fmt: skip
+            checks.ok(r.status_code == 404,
+                      f"{person.name}, who never signed in on it, can't be picked there",
+                      f"got {r.status_code}")  # fmt: skip
+        made = await c.post("/api/access/users", headers=admin_h,
+                            json={"name": "Little Ones", "role": "user"})  # fmt: skip
+
+        def shown() -> dict[str, str]:
+            return {u.name: u.show_on for u in db.users()}
+
+        before, chosen = shown(), db.get_meta("show_on_default")
+        for said, headers in (("a User", sam_h), ("a Kid", kit_h), ("no one signed in", {})):
+            r = await c.post(everyone, json={"showOn": "home"}, headers=headers)
+            checks.ok(r.status_code in (401, 403), f"{said} can't use Use for everyone",
+                      f"got {r.status_code}")  # fmt: skip
+        async with httpx.AsyncClient(base_url=net) as out:
+            r = await out.post(everyone, json={"showOn": "home"},
+                               headers={"X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.80"})  # fmt: skip
+            checks.ok(r.status_code == 401, "nor can an outsider from the internet",
+                      f"got {r.status_code}")  # fmt: skip
+        async with httpx.AsyncClient(base_url=home) as page:
+            await page.post("/api/access/sign-in", json=ADMIN)
+            r = await page.post(everyone, json={"showOn": "home"},
+                                headers={"Sec-Fetch-Site": "cross-site"})  # fmt: skip
+            checks.ok(r.status_code == 403, "Use for everyone from another site is refused",
+                      f"got {r.status_code}")  # fmt: skip
+        for bad in ("all", "selected", "default", "Home", "home ", "", "x" * 5000, None, 1,
+                    ["home"], {"showOn": "home"}):  # fmt: skip
+            r = await c.post(everyone, json={"showOn": bad}, headers=admin_h)
+            checks.ok(r.status_code in (400, 413, 422),
+                      f"Use for everyone with {str(bad)[:20]!r} is refused", f"got {r.status_code}")  # fmt: skip
+        checks.ok(shown() == before and db.get_meta("show_on_default") == chosen,
+                  "and nothing changed", shown())  # fmt: skip
+
+        # Many at once, each way: everyone ends up as one of them said, and
+        # who can't sign in by name is never on Only devices they sign in on.
+        codes = [
+            r.status_code
+            for r in await asyncio.gather(*(
+                c.post(everyone, json={"showOn": ("home", "signed-in")[n % 2]}, headers=admin_h)
+                for n in range(20)
+            ))
+        ]  # fmt: skip
+        last = db.get_meta("show_on_default")
+        everyone_now = {u.name: u.show_on for u in db.users() if u.name != "Little Ones"}
+        checks.ok(set(codes) == {200} and set(everyone_now.values()) == {last},
+                  "Use for everyone, many at once: everyone shows as the last one said",
+                  f"codes {sorted(set(codes))}, default {last}, {everyone_now}")  # fmt: skip
+        got = await c.post(everyone, json={"showOn": "signed-in"}, headers=admin_h)
+        little = db.user(made.json()["id"])
+        checks.ok(got.status_code == 200 and got.json().get("kept") == ["Little Ones"]
+                  and little is not None and little.show_on == "home",
+                  "someone with no password or passcode is kept as they were, and named",
+                  got.text[:200])  # fmt: skip
+        r = await c.post("/api/internal/picker/choose", headers=key,
+                         json={"id": made.json()["id"]})  # fmt: skip
+        checks.ok(r.status_code == 200, "and still picked at home, as before",
+                  f"got {r.status_code}")  # fmt: skip
+
+        # (A household from here on.)
+        r = await c.post(everyone, json={"showOn": "home"}, headers=admin_h)
+        await c.delete(f"/api/access/users/{made.json()['id']}", headers=admin_h)
+        checks.ok(r.status_code == 200 and {u.show_on for u in db.users()} == {"home"},
+                  "Use for everyone: Every device at home, for everyone", r.text[:200])  # fmt: skip
 
 
 async def _picker_away(checks: Checks, app, home: str, net: str, device_key: str) -> None:
