@@ -238,6 +238,7 @@ FOR_USERS = {
         "/api/v1/status", "/api/access/link/", "/api/internal/speed-test",
         "/api/internal/libraries", "/api/internal/libraries/", "/api/internal/home",
         "/api/internal/search", "/api/internal/items/", "/api/internal/art/", "/api/internal/me",
+        "/api/internal/report-choices",
     ),
     "POST": (
         "/api/access/me/password", "/api/channels", "/api/channels/", "/api/collections/stations",
@@ -246,7 +247,7 @@ FOR_USERS = {
         "/api/internal/sign-out", "/api/internal/speed-test", "/api/access/link",
         "/api/internal/play", "/api/internal/progress", "/api/internal/report",
         "/api/internal/problem", "/api/internal/picker/remove", "/api/access/active",
-        "/api/internal/pin", "/api/internal/password",
+        "/api/internal/pin", "/api/internal/password", "/api/internal/report-problem",
     ),
     # (Their own languages in the apps, and for a show, an episode or a movie.)
     "PUT": ("/api/channels/", "/api/internal/languages", "/api/internal/items/"),
@@ -262,13 +263,14 @@ FOR_WATCHERS = {
         "/api/v1/stations", "/api/v1/guide", "/api/v1/status", "/api/access/link/",
         "/api/internal/speed-test", "/api/internal/libraries", "/api/internal/libraries/",
         "/api/internal/home", "/api/internal/search", "/api/internal/items/",
-        "/api/internal/art/", "/api/internal/me",
+        "/api/internal/art/", "/api/internal/me", "/api/internal/report-choices",
     ),
     "POST": (
         "/api/access/me/password", "/api/internal/sign-out", "/api/internal/speed-test",
         "/api/access/link", "/api/internal/play", "/api/internal/progress",
         "/api/internal/report", "/api/internal/problem", "/api/internal/picker/remove",
         "/api/access/active", "/api/internal/pin", "/api/internal/password",
+        "/api/internal/report-problem",
     ),
     "PUT": ("/api/internal/languages", "/api/internal/items/"),
     "DELETE": ("/api/internal/items/",),
@@ -658,6 +660,19 @@ class Access:
         if not self.is_admin(by):
             raise NotAllowed
         self.db.set_own_password(user.id, on)
+
+    def may_report(self, user: User) -> bool:
+        """Whether someone may report problems from the apps (see
+        reports.py): unless an Admin turned that off for them."""
+        now = self.db.user(user.id) or user
+        return now.can_report
+
+    def set_can_report(self, user: User, by: User | None, on: bool) -> None:
+        """Whether someone may report problems from the apps, if `by` is an
+        Admin. NotAllowed."""
+        if not self.is_admin(by):
+            raise NotAllowed
+        self.db.set_can_report(user.id, on)
 
     def _last_admin(self, user: User) -> bool:
         return not any(u.role == ADMIN and u.id != user.id for u in self.db.users())
@@ -1215,6 +1230,7 @@ class UserChange(BaseModel):
     maxStations: int | None = None
     name: str | None = Field(default=None, max_length=100)
     canChangePassword: bool | None = None  # (their own: an Admin always may)
+    canReport: bool | None = None  # (problems, from the apps: see reports.py)
 
 
 class PasswordChange(BaseModel):
@@ -1228,7 +1244,7 @@ def _user_json(user: User, made: dict[int, int]) -> dict:
         "id": user.id, "name": user.name, "role": user.role, "signedInMs": user.signed_in_ms,
         "maxStations": user.max_stations, "stationsMade": made.get(user.id, 0),
         "hasPassword": user.has_password, "pin": user.has_pin, "showOn": user.show_on or "home",
-        "canChangePassword": user.own_password,
+        "canChangePassword": user.own_password, "canReport": user.can_report,
     }  # fmt: skip
 
 
@@ -1415,6 +1431,8 @@ def routes(app: FastAPI, access: Access) -> None:
                 access.set_max_stations(user, by, body.maxStations)
             if body.canChangePassword is not None:
                 access.set_own_password(user, by, body.canChangePassword)
+            if body.canReport is not None:
+                access.set_can_report(user, by, body.canReport)
         if by is not None and by.id == user.id and body.password is not None:
             # A new password signs them out everywhere: but not here.
             _set_cookie(response, request, access.start_session(user))
@@ -1433,6 +1451,12 @@ def routes(app: FastAPI, access: Access) -> None:
                 f"let {named} change their own password"
                 if body.canChangePassword
                 else f"stopped {named} from changing their own password"
+            )
+        if body.canReport is not None and body.canReport != user.can_report:
+            what.append(
+                f"let {named} report problems from the apps"
+                if body.canReport
+                else f"stopped {named} from reporting problems from the apps"
             )
         if what:
             access.record(logging.INFO, f"{by.name if by else 'Someone'} {' and '.join(what)}")

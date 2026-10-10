@@ -61,6 +61,7 @@ from . import (
     problems,
     reach,
     replacing,
+    reports,
     setup,
     smart,
     specials,
@@ -483,6 +484,8 @@ class AppContext:
     markers: MarkerFinder = field(init=False)
     fillers: FillerLibrary = field(init=False)
     scanner: Scanner = field(init=False)
+    # People's reports of problems, from the apps (see reports.py).
+    reports: reports.Reports = field(init=False)
 
     def restart(self) -> None:
         """Stops StationPlay; Docker starts it again."""
@@ -514,6 +517,8 @@ class AppContext:
         self.markers = MarkerFinder(self.db, self.library)
         self.fillers = FillerLibrary(self)
         self.scanner = Scanner(self)
+        self.reports = reports.Reports(self)
+        self.scanner.on_checked = self.reports.checked
         self.who_watches = stats.WhoWatches(self)
         self.limits = limits.Limits(self.db)
 
@@ -738,6 +743,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     devices.routes(app, ctx)  # (linked devices, and their pickers)
     appapi.routes(app, ctx)  # (for StationPlay's apps)
     applibrary.routes(app, ctx)  # (your library in them)
+    reports.routes(app, ctx)  # (people's reports, from them)
     stats.routes(app, ctx)
 
     @app.exception_handler(LibraryError)
@@ -1542,6 +1548,8 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             "encoding": ctx.gpu.as_dict(),
             "brokenCount": len(ctx.broken.keys()),
             "brokenFile": str(ctx.broken.path),
+            # What needs an Admin on the Broken files tab (the tab's count).
+            "filesCount": ctx.reports.needing_count(),
             "guide": ctx.updater.as_dict(),
             "fillers": ctx.fillers.as_dict(),
             # For the header's alerts (see alerts.py): those now.
@@ -2763,22 +2771,36 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         entries = ctx.broken.entries()
         keys = {str(e["ratingKey"]) for e in entries if not e.get("version")}
         having = jobs.stations_having(ctx, keys) if keys else {}
-        return [
-            {
-                **e,
-                "key": file_key(e),
-                "missing": replacing.missing(e),
-                "on": [] if e.get("version") else having.get(str(e["ratingKey"]), []),
-                "media": ctx.in_media(e),
-            }
-            for e in entries
-        ]
+        out = []
+        for e in entries:
+            key = file_key(e)
+            on = [] if e.get("version") else having.get(str(e["ratingKey"]), [])
+            media = ctx.in_media(e)
+            reported = [
+                r.as_dict()
+                for r in ctx.reports.found(str(e["ratingKey"]))
+                if r.version == str(e.get("version") or "")
+            ]
+            out.append(
+                {
+                    **e,
+                    "key": key,
+                    "missing": replacing.missing(e),
+                    "on": on,
+                    "media": media,
+                    "section": replacing.tab_section(ctx.db, e, bool(on) or media),
+                    "reports": reported,
+                }
+            )
+        return out
 
     @app.get("/api/broken")
     async def broken_list():
         """The list, each entry with its file key ("key": see broken.py),
         saying whether its file is missing, which stations have it now
-        ("on"; a program's first version only), and whether it's in Media."""
+        ("on"; a program's first version only), whether it's in Media, where
+        it is on the tab (see replacing.tab_section), and the reports whose
+        check found it."""
         return await asyncio.to_thread(broken_rows)
 
     @app.delete("/api/broken/{key}", status_code=204)

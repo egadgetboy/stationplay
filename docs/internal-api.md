@@ -382,6 +382,7 @@ From 1.29.0, their languages too. Answers 401 when the sign-in has ended.
 | `user.role` | string | `admin` or `user` |
 | `user.pin` | boolean | Whether they have a passcode (from 1.28.0) |
 | `user.canChangePassword` | boolean | Whether they may change their password in the app (from 1.28.0): false for someone without a password, and for someone an Admin turned that off for. Offer Change password only when it's true |
+| `user.canReport` | boolean | Whether they may report a problem (from 1.30.0: see Reporting a problem): false for someone an Admin turned that off for. Offer Report a problem only when it's true (and while signing in is off, always) |
 | `languages` | object | Their own languages, for Options (from 1.29.0: see Languages); while signing in is off, everyone's |
 | `languages.audio` | object or null | The sound's language; null: each file's default track |
 | `languages.audio.code` | string | Its code, such as `jpn` |
@@ -594,6 +595,77 @@ minutes counts on its first, and is said in StationPlay's log once. At most
 | Field | Type | What it is |
 |---|---|---|
 | `ok` | boolean | Always true |
+
+## Reporting a problem
+
+From 1.30.0, a person can report a problem with what they're watching:
+from a movie's or an episode's page, from the player's menu, and from a
+station's player (about what's on it now). They pick it from a list, never
+type it: the list comes from `GET /api/internal/report-choices`, so it can
+change without an app update. Show the choices under their `group`
+headings, in order, and send the one picked with `POST
+/api/internal/report-problem`. Show the answer's `detail` as it is, and the
+`detail` of a refusal as it is too (the limits, or reporting turned off).
+
+StationPlay knows who sent it, and on what device, from the app's sign-in.
+What it does with one depends on what it says: what StationPlay can check
+(no picture, the picture breaking up, no sound, the sound cutting out,
+stopping early, not playing) has its file checked at once, around where it
+happened first; what a machine can't judge waits for an Admin, on the
+Broken files tab. Nothing comes off the air, or out of Media, because of a
+report alone. Offer Report a problem only when `user.canReport` is true in
+`GET /api/internal/me` (an Admin can turn it off for someone, on the Access
+tab).
+
+## GET /api/internal/report-choices
+
+What a person can report (from 1.30.0), in order. Anyone signed in (or,
+while signing in is off, anyone at home) may ask.
+
+| Field | Type | What it is |
+|---|---|---|
+| `choices` | list | The choices, in the order to show them |
+| `choices[].id` | string | What to send as `choice` |
+| `choices[].group` | string | The heading it's under: "Picture", "Sound", "Subtitles", "The program" or "Details" |
+| `choices[].label` | string | What to show, such as "No sound" |
+
+## POST /api/internal/report-problem
+
+A person's report (from 1.30.0). For an episode or a movie (from its page,
+or the player's menu), send its key:
+
+```json
+{"choice": "no-sound", "key": "1234", "positionMs": 754000,
+ "method": "direct", "version": "5678", "audio": "1235", "subtitle": null}
+```
+
+For what's on a station now (from the station's player), send its number
+instead: StationPlay knows the program, and where in it the station is.
+
+```json
+{"choice": "picture-breaks", "station": 5}
+```
+
+`choice` is a choice's `id`. Send what the app knows besides: `positionMs`
+(where in the program, if it's playing or was), and how it was playing:
+`method` (as the play answer had it: `direct`, `repackage` or `convert`),
+`version` (the version playing), `audio` and `subtitle` (the tracks'
+IDs; null for none). Leave out what you don't know: without a `version`,
+StationPlay takes what that device played of it lately, or else its best
+version.
+
+The answer is `{"detail": "Thanks. An Admin will take a look."}`: show it.
+The refusals each have a `detail` to show as it is: 400 (a `choice` that
+isn't one, both a key and a station or neither, or a show rather than an
+episode or a movie), 403 ("An Admin has turned off reporting problems for
+you."), 404 (it isn't shared, this person can't see it, or there's no such
+station, or nothing on it), 429 (one report a day per person for each
+program: "You've reported this one today. Thanks."; and ten a day per
+person: "That's all the reports for today. Thanks for your help.").
+
+| Field | Type | What it is |
+|---|---|---|
+| `detail` | string | What to show: "Thanks. An Admin will take a look." |
 
 ## Admin alerts
 

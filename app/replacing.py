@@ -49,6 +49,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from .arr import APPS, GRABBED, IMPORTED, NAMES, RADARR, SONARR, Arr, ArrError, clean_url
@@ -103,6 +104,9 @@ SEARCHING, DOWNLOADING, DOWNLOADED, GAVE_UP, CANT, SAME, LEFT = (
     "left",
 )
 DONE = (GAVE_UP, CANT, SAME, LEFT)  # nothing more is tried until you say so
+GOING = (SEARCHING, DOWNLOADING, DOWNLOADED)
+# Where an entry on the list is on the Broken files tab (see tab_section).
+NEEDS_YOU, BEING_REPLACED, FOUND_ONLY = "needs you", "being replaced", "found"
 # What a missing file was found to be (the quick check's "Check: " aside).
 _MISSING = (REMOVED, "file not found", "no longer in Plex")
 
@@ -227,6 +231,77 @@ def held(db, entry: dict[str, Any]) -> bool:
         and enabled(db, app_for(entry))
         and wanted(db, entry)
     )
+
+
+def tab_section(db, entry: dict[str, Any], used: bool) -> str:
+    """Where an entry on the list is on the Broken files tab: waiting for you
+    (a broken or damaged file Sonarr or Radarr isn't replacing by itself, for
+    you to choose Replace or see to it yourself, or one they couldn't
+    replace); being replaced (what they're fetching now, or are about to:
+    asked for, or by themselves, at the next look, for a file a station or
+    Media plays: `used`); or only found (the rest: unsupported files, and
+    those you've said to leave to you)."""
+    if entry.get("problem") not in ("broken", "damaged"):
+        return FOUND_ONLY
+    state = entry.get("replace") or {}
+    now = state.get("state")
+    if now == LEFT:
+        return FOUND_ONLY
+    if now in GOING:
+        return BEING_REPLACED
+    if now in DONE:
+        return NEEDS_YOU
+    if (
+        enabled(db, app_for(entry))
+        and wanted(db, entry)
+        and (state.get("asked") or (when(db) == AUTO and used))
+    ):
+        return BEING_REPLACED
+    return NEEDS_YOU
+
+
+def needs_you_said(entry: dict[str, Any], name: str) -> tuple[int, str, str]:
+    """An entry waiting for you (see tab_section), as an Admin's alert says
+    it (see alerts.py): (when, which, what), such as "StationPlay found
+    Northbound S2 E5 broken" (`name`: the program, as the alert names it)."""
+    state = entry.get("replace") or {}
+    app = NAMES.get(str(state.get("app") or app_for(entry)), "Sonarr")
+    said = {
+        GAVE_UP: f"{app} couldn't find a file of {name} that plays",
+        CANT: f"{app} can't replace {name}",
+        SAME: f"the new file of {name} has the same problem as the old one",
+    }.get(str(state.get("state")))
+    if said is None:
+        said = (
+            f"{name}'s file is missing"
+            if missing(entry)
+            else f"StationPlay found {name} {entry.get('problem') or 'broken'}"
+        )
+    at = state.get("at") if state.get("state") in DONE else None
+    if not isinstance(at, int):
+        try:
+            at = int(datetime.fromisoformat(str(entry.get("lastFailed"))).timestamp() * 1000)
+        except ValueError:
+            at = 0
+    return at, f"file:{file_key(entry)}", said
+
+
+async def better_copy(ctx: AppContext, entry: dict[str, Any]) -> str:
+    """Find a better copy (for a person's report: see reports.py): Sonarr or
+    Radarr searches for an upgrade of an episode or movie, keeping its file
+    (it takes one only if its own quality settings say it's better). Only
+    while the app monitors it, as for replacing. What it's doing, for the
+    tab. Cant, ArrError or LibraryError if it can't."""
+    app = app_for(entry)
+    conf = settings(ctx.db)[app]
+    if not conf["on"]:
+        raise Cant(f"{NAMES[app]} isn't turned on")
+    arr = Arr(app, conf["url"], conf["key"], transport=ctx.arr_transport)
+    found = await _find(ctx, Round(arr), entry, {}, {})
+    await _monitored(arr, found)
+    await arr.search(found.item)
+    log.info("%s: searching for a better copy of %s", arr.name, found.label)
+    return f"{arr.name} is searching for a better copy"
 
 
 def entry_item(entry: dict[str, Any]) -> Item | None:

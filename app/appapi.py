@@ -401,9 +401,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     async def me(request: Request):
         """Who this app is signed in as now (for its Options): their name, as
         an Admin may have changed it since they signed in, their role,
-        whether they have a PIN, and whether they may change their password
-        here (`user`: null while signing in is off); and their languages
-        (see languages.py)."""
+        whether they have a PIN, whether they may change their password
+        here, and whether they may report problems (`user`: null while
+        signing in is off); and their languages (see languages.py)."""
         user = access.signed_in(request)
         mine = own_languages(user.id if user else 0)
         if user is None:
@@ -414,6 +414,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 "role": user.role,
                 "pin": user.has_pin,
                 "canChangePassword": ctx.access.own_password_refusal(user) is None,
+                "canReport": ctx.access.may_report(user),
             },
             "languages": mine,
         }

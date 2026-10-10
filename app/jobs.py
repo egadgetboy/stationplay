@@ -332,6 +332,17 @@ def stations_having(ctx: AppContext, keys: set[str]) -> dict[str, list[dict[str,
     return out
 
 
+def used_by(ctx: AppContext, entries: list[dict[str, Any]]) -> dict[str, bool]:
+    """Whether a station or Media plays each entry's file, by its file key
+    (a station plays a program's first version, never another)."""
+    keys = {str(e["ratingKey"]) for e in entries if not e.get("version")}
+    on = stations_having(ctx, keys) if keys else {}
+    return {
+        file_key(e): (not e.get("version") and str(e["ratingKey"]) in on) or ctx.in_media(e)
+        for e in entries
+    }
+
+
 def _label(entry: dict[str, Any]) -> str:
     if entry.get("show"):
         season, episode = entry.get("season"), entry.get("episode")

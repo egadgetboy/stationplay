@@ -341,6 +341,30 @@ CREATE TABLE IF NOT EXISTS problems (
     away         INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS problems_by_last ON problems (last_ms);
+-- People's reports of problems in what they watch, picked from a list in
+-- the apps (see reports.py).
+CREATE TABLE IF NOT EXISTS reports (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    at_ms        INTEGER NOT NULL,
+    day          TEXT    NOT NULL,              -- the day it was sent (for the limits)
+    user_id      INTEGER,                       -- who sent it (NULL while signing in is off)
+    who          TEXT    NOT NULL DEFAULT '',   -- their name, as it was
+    device       TEXT    NOT NULL DEFAULT '',   -- which app on which device
+    address      TEXT    NOT NULL DEFAULT '',   -- where from (the limits, while signing in is off)
+    choice       TEXT    NOT NULL,
+    rating_key   TEXT    NOT NULL,              -- the episode or movie
+    version      TEXT    NOT NULL DEFAULT '',   -- its version's ID ('': its first)
+    station      INTEGER,                       -- the station's number, if it was on one
+    position_ms  INTEGER,                       -- where in it
+    how          TEXT    NOT NULL DEFAULT '{}', -- JSON: how it was playing
+    program      TEXT    NOT NULL DEFAULT '{}', -- JSON: what it is (show, title...)
+    facts        TEXT    NOT NULL DEFAULT '[]', -- JSON: what StationPlay could tell
+    state        TEXT    NOT NULL,
+    note         TEXT    NOT NULL DEFAULT '',
+    done_ms      INTEGER                        -- when it was dealt with
+);
+CREATE INDEX IF NOT EXISTS reports_by_key ON reports (rating_key);
+CREATE INDEX IF NOT EXISTS reports_by_day ON reports (day);
 """
 
 Segments = tuple[tuple[int, int], ...]
@@ -499,6 +523,7 @@ class User:
     has_password: bool = True  # (a User may have none: they use only the apps' pickers)
     no_pin: bool = False  # they chose to have no PIN, so they're not asked for one again
     own_password: bool = True  # they may change their own password (an Admin always may)
+    can_report: bool = True  # they may report problems from the apps (see reports.py)
 
 
 @dataclass(frozen=True)
@@ -720,6 +745,9 @@ _ADDED_COLUMNS = (
     # ...and whether they may change their own password (see access.py): an
     # Admin's choice for each person, yes to start with.
     ("users", "own_password", "INTEGER NOT NULL DEFAULT 1"),
+    # Added in 1.30: whether they may report problems from the apps (see
+    # reports.py): an Admin's choice for each person, yes to start with.
+    ("users", "can_report", "INTEGER NOT NULL DEFAULT 1"),
     # Added in 1.28.1: whether a sign-in was made by picking someone with no
     # PIN on a device's list (see devices.py), which proves nothing about
     # who's there, so it can't change their passcode.
@@ -1604,6 +1632,11 @@ class Database:
         with self._lock, self._conn:
             self._conn.execute("UPDATE users SET own_password = ? WHERE id = ?", (on, user_id))
 
+    def set_can_report(self, user_id: int, on: bool) -> None:
+        """Whether someone may report problems from the apps."""
+        with self._lock, self._conn:
+            self._conn.execute("UPDATE users SET can_report = ? WHERE id = ?", (on, user_id))
+
     def delete_user(self, user_id: int) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
@@ -2140,6 +2173,78 @@ class Database:
             else:
                 self._conn.execute("DELETE FROM problems WHERE last_ms < ?", (before_ms,))
 
+    # People's reports (see reports.py) ------------------------------------------------
+
+    def add_report(self, fields: dict[str, Any], keep: int) -> int:
+        """Keeps a report (keeping the newest `keep`); its id."""
+        names = list(fields)
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                f"INSERT INTO reports ({', '.join(names)}) VALUES ({', '.join('?' for _ in names)})",
+                [fields[n] for n in names],
+            )
+            made = int(cur.lastrowid or 0)
+            self._conn.execute("DELETE FROM reports WHERE id <= ?", (made - keep,))
+            return made
+
+    def reports_open(self, states: tuple[str, ...]) -> list[sqlite3.Row]:
+        """The reports in these states, the oldest first."""
+        with self._lock:
+            return self._conn.execute(
+                f"SELECT * FROM reports WHERE state IN ({', '.join('?' for _ in states)}) "
+                "ORDER BY id",
+                states,
+            ).fetchall()
+
+    def reports_of(self, rating_key: str, states: tuple[str, ...]) -> list[sqlite3.Row]:
+        """A program's reports in these states, the oldest first."""
+        with self._lock:
+            return self._conn.execute(
+                f"SELECT * FROM reports WHERE rating_key = ? AND state IN "
+                f"({', '.join('?' for _ in states)}) ORDER BY id",
+                (rating_key, *states),
+            ).fetchall()
+
+    def reports_sent(self, day: str, user_id: int | None, address: str) -> list[sqlite3.Row]:
+        """The reports someone sent on a day (by address, without a user)."""
+        with self._lock:
+            if user_id is not None:
+                return self._conn.execute(
+                    "SELECT * FROM reports WHERE day = ? AND user_id = ?", (day, user_id)
+                ).fetchall()
+            return self._conn.execute(
+                "SELECT * FROM reports WHERE day = ? AND user_id IS NULL AND address = ?",
+                (day, address),
+            ).fetchall()
+
+    def set_reports(
+        self,
+        ids: list[int],
+        state: str,
+        note: str,
+        done_ms: int | None,
+        only: tuple[str, ...] | None = None,
+    ) -> None:
+        """Where these reports are now (`only`: those in these states)."""
+        if not ids:
+            return
+        where = f"id IN ({', '.join('?' for _ in ids)})"
+        values: list[Any] = [state, note, done_ms, *ids]
+        if only:
+            where += f" AND state IN ({', '.join('?' for _ in only)})"
+            values += only
+        with self._lock, self._conn:
+            self._conn.execute(
+                f"UPDATE reports SET state = ?, note = ?, done_ms = ? WHERE {where}", values
+            )
+
+    def forget_reports(self, done_before_ms: int) -> None:
+        """Forgets the reports dealt with before `done_before_ms`."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "DELETE FROM reports WHERE done_ms IS NOT NULL AND done_ms < ?", (done_before_ms,)
+            )
+
     # Viewing (see stats.py) ---------------------------------------------------
 
     def add_view(
@@ -2368,6 +2473,7 @@ def _user(row: sqlite3.Row) -> User:
         row["id"], row["name"], row["role"], row["created_ms"], row["signed_in_ms"],
         row["max_stations"], row["level_id"], bool(row["pin"]), row["show_on"],
         bool(row["password"]), bool(row["no_pin"]), bool(row["own_password"]),
+        bool(row["can_report"]),
     )  # fmt: skip
 
 

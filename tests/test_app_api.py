@@ -222,6 +222,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
             "role": "user",
             "pin": False,
             "canChangePassword": True,
+            "canReport": True,
         }
         assert (me["languages"]["audio"], me["languages"]["captions"]) == (None, False)
         assert {"code": "jpn", "name": "Japanese"} in me["languages"]["choices"]
@@ -497,6 +498,32 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         )  # fmt: skip
         assert copied["url"].endswith("/index.m3u8") and copied["bitrateKbps"] <= 2000
         assert phone.post(copied["leave"]).status_code == 204
+        # Reporting a problem (see test_reports.py): picked from the server's list.
+        offered = check.answer(
+            phone.get("/api/internal/report-choices", headers=sam),
+            "GET /api/internal/report-choices",
+        )
+        assert offered["choices"][0] == {"id": "no-picture", "group": "Picture",
+                                          "label": "No picture"}  # fmt: skip
+        reported = check.answer(
+            phone.post("/api/internal/report-problem", headers=sam,
+                       json={"choice": "wrong-language", "key": "300", "positionMs": 60_000,
+                             "method": "direct", "version": movie["versions"][0]["id"]}),
+            "POST /api/internal/report-problem",
+        )  # fmt: skip
+        assert reported == {"detail": "Thanks. An Admin will take a look."}
+        check.answer(
+            phone.post("/api/internal/report-problem", headers=sam,
+                       json={"choice": "no-sound", "key": "300"}),
+            "POST /api/internal/report-problem",
+            429,
+        )  # fmt: skip
+        check.answer(
+            phone.post("/api/internal/report-problem", headers=sam,
+                       json={"choice": "it's broken", "station": 5}),
+            "POST /api/internal/report-problem",
+            400,
+        )  # fmt: skip
 
         # A device that has signed in before keeps its device token.
         again = phone.post("/api/internal/sign-in", json={**SAM, "device": signed["device"]})
