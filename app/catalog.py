@@ -166,3 +166,11 @@ class Entry:
     cast: tuple[tuple[str, str], ...] = ()  # (name, role) as billed
     directors: tuple[str, ...] = ()
     writers: tuple[str, ...] = ()
+
+    def version(self, version_id: str) -> Media | None:
+        """One version of its file, as a file key names it (see
+        broken.version_key): "" for its first (the one a station plays),
+        or another's ID; None if it has no such version now."""
+        if not version_id:
+            return self.media[0] if self.media else None
+        return next((m for m in self.media[1:] if m.id == version_id), None)

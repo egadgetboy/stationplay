@@ -543,7 +543,7 @@ class Reports:
             raise HTTPException(503, f"{UNREACHABLE_PLEX} ({why})") from None
         if entry is None:
             raise HTTPException(404, "That file is no longer in Plex")
-        media = next((m for m in entry.media if version_of(entry, m) == report.version), None)
+        media = entry.version(report.version)
         if media is None:
             raise HTTPException(404, "That file is no longer in Plex")
         return entry, media

@@ -304,8 +304,7 @@ async def resolve_version(
     except (TimeoutError, LibraryError) as e:
         why = str(e) or f"Plex didn't answer within {PLEX_LOOKUP_S}s"
         return ResolvedSource(None, item.file_path, None, error=why, transient=True)
-    versions = entry.media if entry is not None else ()
-    media = next((m for m in versions[1:] if m.id == version), None)
+    media = entry.version(version) if entry is not None else None
     if media is None:  # (gone; or it's the first now, and known by the program's key)
         return ResolvedSource(None, item.file_path, None, error=VERSION_GONE, transient=True)
     if media.file:

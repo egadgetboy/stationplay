@@ -1745,10 +1745,7 @@ class Scanner:
         except (LibraryError, TimeoutError) as e:
             self._later(target, str(e) or "Plex didn't answer")
             return
-        versions = list(entry.media) if entry is not None else []
-        media = next(
-            (m for n, m in enumerate(versions) if (m.id if n else "") == target.version), None
-        )
+        media = entry.version(target.version) if entry is not None else None
         if entry is None or media is None or entry.kind not in (catalog.EPISODE, catalog.MOVIE):
             self._done_with(target, GONE, "It's no longer in Plex")
             return

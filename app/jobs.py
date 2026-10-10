@@ -359,7 +359,7 @@ async def _version_part(ctx: AppContext, key: str, version: str) -> MediaPart | 
     entry = await ctx.library.entry(key, details=True)
     if entry is None:
         raise LibraryError("no longer in Plex", 404)
-    media = next((m for m in entry.media[1:] if m.id == version), None)
+    media = entry.version(version)
     if media is None:
         raise LookupError(version)
     return MediaPart(media.file, media.part_key, media.size, media.duration_ms)
