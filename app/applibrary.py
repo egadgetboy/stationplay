@@ -21,6 +21,7 @@ import asyncio
 import contextlib
 import hashlib
 import logging
+import shutil
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -1193,13 +1194,6 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     ok=True, hdr="arib-std-b67" if media.hdr == catalog.HLG else "smpte2084"))  # fmt: skip
             if "h264" not in dev.video and not body.convert:
                 return refuse(["this device doesn't play H.264"])
-            on_gpu = ctx.gpu is not None and ctx.gpu.encoder_for_copies().is_gpu
-            # (Not counting this device's own, which this one takes over from.)
-            mine = ctx.plays.on_device(sign_in_of(request, name), client)
-            if ctx.plays.copies(besides=mine) >= (
-                CONVERTING_MOST_GPU if on_gpu else CONVERTING_MOST
-            ):
-                raise HTTPException(503, BUSY_CONVERTING)
             # (Away from home, never more than the cap, whatever it's converted for.)
             height, kbps = converting.convert_size(
                 media, dev.video.get("h264", (0, 0, 0))[1], body.maxKbps if smaller else None,
@@ -1248,6 +1242,16 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         except OSError as ex:  # (the disk full, say)
             log.warning("A copy for a StationPlay app couldn't be made (%s)", ex)
             raise HTTPException(503, COPY_FAILED) from None
+        # Converted at once, at most: counted after the last wait before this
+        # one is, so devices asking at the same moment can't all get past it
+        # (and not counting this device's own, which this one takes over from).
+        on_gpu = ctx.gpu is not None and ctx.gpu.encoder_for_copies().is_gpu
+        mine = ctx.plays.on_device(sign_in_of(request, name), client)
+        if method == converting.CONVERT and ctx.plays.copies(besides=mine) >= (
+            CONVERTING_MOST_GPU if on_gpu else CONVERTING_MOST
+        ):
+            await asyncio.to_thread(shutil.rmtree, folder, True)
+            raise HTTPException(503, BUSY_CONVERTING)
         if fetch_from is not None and shown is not None:
             target = (
                 folder

@@ -15,6 +15,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -972,3 +973,23 @@ def test_asked_for_copies_count_against_those_converted_at_once(app):
 
         most = applibrary.CONVERTING_MOST
         assert [play() for _ in range(most + 1)] == [200] * most + [503]
+
+
+@needs_ffmpeg
+def test_devices_asking_at_the_same_moment_cant_all_get_past_the_limit(app):
+    """Copies converted at once are counted after the last wait before one
+    starts: five devices asking at the same moment get three."""
+
+    async def ask(n: int) -> int:
+        transport = httpx.ASGITransport(app=app, client=(f"10.0.2.{n}", 50000))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as device:
+            asked = {"key": "400", "device": PHONE, "convert": True}
+            return (await device.post("/api/internal/play", json=asked)).status_code
+
+    async def at_once() -> list[int]:
+        return list(await asyncio.gather(*(ask(n) for n in range(5))))
+
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["2"]})
+        codes = home.portal.call(at_once)  # (on StationPlay's own loop)
+    assert sorted(codes) == [200] * applibrary.CONVERTING_MOST + [503] * 2
