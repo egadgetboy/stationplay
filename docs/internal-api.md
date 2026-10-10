@@ -405,10 +405,10 @@ app's Options. Send what changes (what isn't sent stays as it is):
 ```
 
 `audio` and `captionLanguage` are a language's code, or null (each file's
-default track; the sound's language); `captions` (subtitles on or off) is true or false. Only
-ever the person signed in: anything else sent is ignored. Answers 400, with
-the sentence to show, for a language StationPlay doesn't know, and for
-`captions` that isn't true or false.
+default track; the sound's language); `captions` (subtitles on or off) is
+true or false. Only ever the person signed in: anything else sent is
+ignored. Answers 400, with the sentence to show, for a language StationPlay
+doesn't know, and for `captions` that isn't true or false.
 
 | Field | Type | What it is |
 |---|---|---|
