@@ -74,9 +74,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fcntl
 import itertools
 import json
 import logging
+import math
+import os
 import re
 import signal
 import time
@@ -214,6 +217,24 @@ _SKIPS = re.compile(
     r"element|^Invalid length 0x|considered as invalid data|inside parent with finite size|"
     r": partial file"
 )
+# Where each glitch is. ffmpeg's word on a lost frame doesn't say, and how
+# far its output has got (its progress report) trails what it's reading and
+# decoding: by all it decodes between two reports (a small file, minutes'
+# worth on a fast processor) and the frames on their way through (more on a
+# busy machine), so glitches were put seconds early. Asked to (-debug_ts),
+# ffmpeg says the time of each packet it reads and each picture it decodes,
+# in order with what it says of them, as it goes: a picture lost is where
+# the picture's decoding is; sound, where the sound's reading is (its
+# decoder is a few packets behind); a garbled stretch, where reading is.
+_DECODED = re.compile(r"^\[vist#[^\]]*\] (?:\[[^\]]+\] )*decoder -> pts:\S+ pts_time:(\S+) ")
+_READ = re.compile(
+    r"^(?:\[[^\]]+\] )+demuxer\+ffmpeg -> ist_index:\S+ type:(video|audio) pkt_pts:\S+ "
+    r"pkt_pts_time:(\S+) pkt_dts:\S+ pkt_dts_time:(\S+) "
+)
+_WHERE_FROM = {"picture": "decoded", "patched": "decoded", "sound": "sound_read", "skip": "read"}
+# A time read or decoded this far past the output is a garbled timestamp
+# (it's never more than seconds ahead), not where the file is.
+AHEAD_MOST_S = 60.0
 # Glitches this near each other are told as one (scanning on from a little
 # before where it stopped can find one twice, a second or so apart).
 NEAR_S = 5.0
@@ -231,6 +252,9 @@ QUICK_TIMEOUT_S = 60.0
 QUICK_THREADS = 2
 # A deep scan making no progress for this long has hit a hung share.
 STALL_S = 120.0
+# What ffmpeg says as it decodes is read this often, this much at once at most.
+READ_EVERY_S = 0.02
+READ_MOST = 1024 * 1024
 # How often an unfinished deep scan's progress is saved.
 SAVE_EVERY_S = 30.0
 # How often the scanner looks for work, and for a viewer while deep-scanning.
@@ -508,10 +532,15 @@ def black_part(frames: list[tuple[float, int]], end: float) -> float | None:
 
 @dataclass
 class Scanned:
-    at: float  # how far into the file decoding got
+    at: float  # how far into the file the output got (ffmpeg's progress)
     # Where the picture broke up, the sound dropped out or the file skipped:
     # [kind, at] (see what_it_costs).
     glitches: list[list] = field(default_factory=list)
+    # Where in the file reading and decoding are (see _DECODED): the last
+    # picture decoded, sound read, and packet of either read.
+    decoded: float | None = None
+    sound_read: float | None = None
+    read: float | None = None
     # Sound lost in the last SPOT_S: (where, how much).
     sound_lost: deque[tuple[float, float]] = field(default_factory=deque)
     # Pictures being patched up: (where, what kind of picture; see _PATCHING).
@@ -525,14 +554,36 @@ class Scanned:
     silent_since: float | None = None  # silent from here, and still
     blacks: list[tuple[float, float]] = field(default_factory=list)
 
-    def patches(self, picture: str) -> None:
-        """A picture a decoder is patching up, of this kind (I, P, B...)."""
-        self.patching.append((self.at, picture))
+    def follow(self, line: str, start_s: float) -> None:
+        """Takes in where reading or decoding is, from a line -debug_ts adds
+        (`start_s`: where in the file decoding began)."""
+        if read := _READ.match(line):
+            # (When it's read, or, if that's not said, when it's shown.)
+            at = _time(read.group(3))
+            if at is None:
+                at = _time(read.group(2))
+            if at is not None:
+                self.read = start_s + at
+                if read.group(1) == "audio":
+                    self.sound_read = self.read
+        elif (decoded := _DECODED.match(line)) and (at := _time(decoded.group(1))) is not None:
+            self.decoded = start_s + at
 
-    def lost(self, kind: str, seconds: float) -> None:
-        """Takes in a frame of picture or sound lost (see what_it_costs)
-        where decoding is: a glitch, if it's seen or heard."""
-        at = self.at
+    def where(self, kind: str) -> float:
+        """Where in the file a frame lost of this kind (see what_it_costs)
+        is: never before the output (made of what's read and decoded), nor
+        AHEAD_MOST_S past it."""
+        known = getattr(self, _WHERE_FROM[kind])
+        return self.at if known is None else min(max(known, self.at), self.at + AHEAD_MOST_S)
+
+    def patches(self, picture: str, at: float) -> None:
+        """A picture a decoder is patching up at `at`, of this kind (I, P,
+        B...)."""
+        self.patching.append((at, picture))
+
+    def lost(self, kind: str, seconds: float, at: float) -> None:
+        """Takes in a frame of picture or sound lost at `at` (see
+        what_it_costs): a glitch, if it's seen or heard."""
         if kind == "patched":
             while self.patching and self.patching[0][0] < at - PATCH_S:
                 self.patching.popleft()
@@ -550,6 +601,15 @@ class Scanned:
             return  # (the same glitch)
         if len(self.glitches) < MOST_GLITCHES:
             self.glitches.append([kind, round(at, 1)])
+
+
+def _time(said: str) -> float | None:
+    """A time ffmpeg logged, in seconds; None for none ("NOPTS")."""
+    try:
+        at = float(said)
+    except ValueError:
+        return None
+    return at if math.isfinite(at) else None
 
 
 def _analysis(sound: bool) -> list[str]:
@@ -602,56 +662,77 @@ async def decode_through(
     sample rate), silences and black stretches, and how far the picture
     went. Cancelling stops it, after what it was in the middle of noting is
     noted."""
-    # Progress on the same pipe as the log, so each line lands in order.
+    # Progress on the same pipe as the log, so each line lands in order; and
+    # where reading and decoding are (-debug_ts), to know where glitches are.
     args = _decode_args(
         ctx, source, start_s, seconds, video_index, audio_index, 0, "pipe:2",
         _analysis(audio_index is not None),
     )  # fmt: skip
     got = Scanned(at=start_s, picture_to=start_s)
+    # What it says comes in a pipe read every READ_EVERY_S: it writes each
+    # line in pieces, thousands a second, and taking each as it comes would
+    # cost far more than decoding does.
+    reading, writing = os.pipe()
+    with contextlib.suppress(AttributeError, OSError):  # (room for what's said between reads)
+        fcntl.fcntl(reading, fcntl.F_SETPIPE_SZ, READ_MOST)
+    os.set_blocking(reading, False)
     try:
         proc = await asyncio.create_subprocess_exec(
-            *args, "-stats_period", "0.05",
+            *args, "-stats_period", "0.05", "-debug_ts",
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-            limit=1024 * 1024,
+            stderr=writing,
         )  # fmt: skip
     except OSError:
+        os.close(reading)
         got.stalled = True  # ffmpeg couldn't start: says nothing about the file
         return got
+    finally:
+        os.close(writing)
     moved = time.monotonic()
 
-    async def read() -> None:
+    def take(line: str) -> None:
         nonlocal moved
-        assert proc.stderr is not None
+        key, sep, value = line.partition("=")
+        if sep and (key in ff.PROGRESS_KEYS or key.startswith("stream_")):
+            with contextlib.suppress(ValueError):
+                if key == "out_time_us":
+                    at = start_s + int(value) / 1_000_000
+                    if at > got.at:
+                        got.at, moved = at, time.monotonic()
+                elif key == "frame":
+                    got.picture_to = start_s + int(value) / PICTURE_RATE
+                elif key == "progress":
+                    on_progress(got)
+        elif "[info] " in line and ("-> " in line or "<- " in line):
+            got.follow(line, start_s)  # (-debug_ts's: none says anything wrong)
+        elif _read_error(line) and _problem(line):
+            got.unreadable = True
+        elif (cost := what_it_costs(line, rate)) is not None:
+            if (at := got.where(cost[0])) >= count_from:
+                got.lost(*cost, at)
+        elif patched := _PATCHING.search(line):
+            got.patches(patched.group(1), got.where("picture"))
+        elif "silence_" in line or "black_start" in line:
+            _note(line, got, start_s)
+
+    async def read() -> None:
+        rest = b""
         while True:
             try:
-                raw = await proc.stderr.readline()
-            except ValueError:
-                continue  # a line too long to hold (say, a file's whole tags): skipped
-            if not raw:
-                break
-            line = raw.decode(errors="replace").strip()
-            key, sep, value = line.partition("=")
-            if sep and (key in ff.PROGRESS_KEYS or key.startswith("stream_")):
-                with contextlib.suppress(ValueError):
-                    if key == "out_time_us":
-                        at = start_s + int(value) / 1_000_000
-                        if at > got.at:
-                            got.at, moved = at, time.monotonic()
-                    elif key == "frame":
-                        got.picture_to = start_s + int(value) / PICTURE_RATE
-                    elif key == "progress":
-                        on_progress(got)
-            elif _read_error(line) and _problem(line):
-                got.unreadable = True
-            elif (cost := what_it_costs(line, rate)) is not None:
-                if got.at >= count_from:
-                    got.lost(*cost)
-            elif patched := _PATCHING.search(line):
-                got.patches(patched.group(1))
-            elif "silence_" in line or "black_start" in line:
-                _note(line, got, start_s)
+                said = os.read(reading, READ_MOST)
+            except BlockingIOError:
+                said = None
+            if said == b"":
+                break  # (it's finished)
+            if said:
+                lines, _, rest = (rest + said).rpartition(b"\n")
+                for line in lines.decode(errors="replace").split("\n"):
+                    take(line.strip())
+                if len(rest) > READ_MOST:
+                    rest = b""  # a line too long to hold (say, a file's whole tags): skipped
+            await asyncio.sleep(0 if said and len(said) == READ_MOST else READ_EVERY_S)
+        take(rest.decode(errors="replace").strip())
 
     reader = asyncio.create_task(read())
     try:
@@ -670,14 +751,17 @@ async def decode_through(
                 with contextlib.suppress(Exception):
                     await asyncio.wait_for(asyncio.shield(reader), 5)
         finally:
-            if proc.returncode is None:
-                with contextlib.suppress(ProcessLookupError):
-                    proc.kill()
-            await proc.wait()
-            if not reader.done():
-                reader.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await reader
+            try:
+                if proc.returncode is None:
+                    with contextlib.suppress(ProcessLookupError):
+                        proc.kill()
+                await proc.wait()
+            finally:
+                if not reader.done():
+                    reader.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await reader
+                os.close(reading)  # (only once nothing reads it)
             on_progress(got)  # (what it said after its last progress report)
     if not reader.cancelled() and (error := reader.exception()) is not None:
         raise error  # (what it found says nothing about the file)
@@ -1007,10 +1091,9 @@ def glitch_reason(glitches: list[list], sound: str = "") -> str:
     """Where the picture breaks up, the sound drops out (`sound`: its
     format, as ffprobe names it) and the file skips, for the list: "the
     picture breaks up around 12:31 and 48:02; the sound (Dolby Digital)
-    drops out around 1:02:10". (Around: ffmpeg's word on a frame comes as
-    what it's made of the file so far gets a few seconds past it. And where
-    it skips, that's what's said: the picture and sound break up there
-    because of it.)"""
+    drops out around 1:02:10". (Around: glitches NEAR_S apart or less are
+    told as one, at the first. And where it skips, that's what's said: the
+    picture and sound break up there because of it.)"""
     skips = _spots(glitches, "skip")
     glitches = [
         [kind, at]

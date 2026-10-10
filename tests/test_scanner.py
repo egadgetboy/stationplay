@@ -11,6 +11,7 @@ import re
 import shutil
 import struct
 import subprocess
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -295,7 +296,7 @@ def test_the_deep_scan_finds_damage_throughout_a_file(tmp_path, files, monkeypat
             # Each place the file was scrambled is found, and nothing else (it
             # skips there, or the picture or sound breaks up, or both).
             spots = sorted(at for _, at in glitches)
-            near = 8  # (s: how far ahead of what's decoded ffmpeg's output is)
+            near = 2  # (s: where the picture it's in is, or the stretch read just before)
             for t in BURST_AT[name]:
                 assert any(abs(at - t) < near for at in spots), (t, glitches)
             for at in spots:
@@ -1001,11 +1002,10 @@ def lost(*frames: tuple[float, str, float | str]) -> list[list]:
     a kind of picture) for a decoder patching one up."""
     got = sc.Scanned(at=0.0)
     for at, kind, seconds in frames:
-        got.at = at
         if kind == "patching":
-            got.patches(str(seconds))
+            got.patches(str(seconds), at)
         else:
-            got.lost(kind, float(seconds))
+            got.lost(kind, float(seconds), at)
     return got.glitches
 
 
@@ -1051,6 +1051,104 @@ def test_a_patched_picture_counts_if_it_stays_on_screen():
     assert lost((10, "patching", "B"), (20, "patched", 0)) == [["picture", 20]]
     # A picture that couldn't be decoded at all counts.
     assert lost((10, "patching", "B"), (10.2, "picture", 0)) == [["picture", 10.2]]
+
+
+# What ffmpeg says, with -debug_ts, as it reads and decodes a damaged file:
+# its progress report (the output) far behind, as on a busy or fast
+# machine. ffmpeg 7's lines, then 6.1's.
+SAID_7 = """\
+[vist#0:0/h264 @ 0x1] [info] demuxer+ffmpeg -> ist_index:0:0 type:video pkt_pts:32959 \
+pkt_pts_time:32.959 pkt_dts:32918 pkt_dts_time:32.918 duration:41 duration_time:0.041 off:0 off_time:0
+frame=200
+out_time_us=20000000
+progress=continue
+[vist#0:0/h264 @ 0x1] [dec:h264 @ 0x2] [info] decoder -> pts:32876 pts_time:32.876 pkt_dts:32876 \
+pkt_dts_time:32.876 duration:41 duration_time:0.041 keyframe:0 frame_type:2 time_base:1/1000
+[aist#0:1/aac @ 0x3] [info] demuxer+ffmpeg -> ist_index:0:1 type:audio pkt_pts:33013 \
+pkt_pts_time:33.013 pkt_dts:33013 pkt_dts_time:33.013 duration:21 duration_time:0.021 off:0 off_time:0
+[matroska,webm @ 0x4] [error] Element at 0xe1c18b ending at 0x3415487b7 exceeds containing master \
+element ending at 0xea7b57
+[vist#0:0/h264 @ 0x1] [dec:h264 @ 0x2] [warning] corrupt decoded frame
+[vist#0:0/h264 @ 0x1] [dec:h264 @ 0x2] [info] decoder -> pts:32918 pts_time:32.918 pkt_dts:32918 \
+pkt_dts_time:32.918 duration:41 duration_time:0.041 keyframe:0 frame_type:2 time_base:1/1000
+[aist#0:1/aac @ 0x3] [dec:aac @ 0x5] [error] Error submitting packet to decoder: Invalid data \
+found when processing input
+[vist#0:0/h264 @ 0x1] [dec:h264 @ 0x2] [info] filter_raw -> pts:32918 pts_time:32.918 time_base:1/1000
+[vost#0:0/wrapped_avframe @ 0x6] [info] encoder <- type:video frame_pts:200 frame_pts_time:20 \
+time_base:1/10
+frame=400
+out_time_us=40000000
+progress=end"""
+SAID_6 = (
+    SAID_7.replace("[vist#0:0/h264 @ 0x1] [info] demuxer+ffmpeg", "[info] demuxer+ffmpeg")
+    .replace("[aist#0:1/aac @ 0x3] [info] demuxer+ffmpeg", "[info] demuxer+ffmpeg")
+    .replace(" [dec:h264 @ 0x2]", "")
+    .replace(" [dec:aac @ 0x5]", "")
+)
+
+
+def test_a_glitch_is_where_the_file_is_not_where_the_output_has_got():
+    for said in (SAID_7, SAID_6):
+        for start in (0.0, 600.0):  # (from the start, or carrying on from 10:00)
+            got = sc.Scanned(at=start)
+            for line in said.splitlines():
+                if "=" in line:
+                    if line.startswith("out_time_us="):
+                        got.at = start + int(line.split("=")[1]) / 1e6
+                elif (cost := sc.what_it_costs(line, A)) is not None:
+                    got.lost(*cost, got.where(cost[0]))
+                elif "-> " in line or "<- " in line:
+                    got.follow(line, start)
+            # Where it skips: what was read last (the sound at 33.013); the
+            # picture: the frame decoded (32.918, said just after); the
+            # sound: what's read of it.
+            assert got.glitches == [
+                ["skip", start + 33.0],
+                ["picture", start + 32.9],
+                ["sound", start + 33.0],
+            ], (said[:20], start, got.glitches)
+    # Time in the order read; or shown, when that's not said.
+    got = sc.Scanned(at=0.0)
+    got.follow(SAID_7.splitlines()[0], 0.0)
+    assert got.read == 32.918 and got.sound_read is None and got.decoded is None
+    got.follow(SAID_7.splitlines()[0].replace("pkt_dts_time:32.918", "pkt_dts_time:NOPTS"), 0.0)
+    assert got.read == 32.959
+    # What's unknown is where the output is; a time read or decoded never
+    # puts a glitch before the output (it was read and decoded first), nor
+    # far after it (a garbled timestamp).
+    got = sc.Scanned(at=20.0)
+    assert got.where("picture") == got.where("sound") == got.where("skip") == 20.0
+    got.decoded, got.sound_read, got.read = 5.0, 21.5, 20.0 + sc.AHEAD_MOST_S + 900
+    assert got.where("picture") == got.where("patched") == 20.0
+    assert got.where("sound") == 21.5
+    assert got.where("skip") == 20.0 + sc.AHEAD_MOST_S
+    for nonsense in ("NOPTS", "nan", "inf", "-inf"):
+        got.follow(f"[vist#0:0/h264 @ 0x1] [info] decoder -> pts:1 pts_time:{nonsense} x", 0.0)
+        assert got.decoded == 5.0
+
+
+async def test_the_deep_scan_reads_what_ffmpeg_says_in_pieces(tmp_path):
+    """ffmpeg writes each line in pieces, and the scan reads them a batch at
+    a time: every line is taken in whole, the last one too."""
+    fake = tmp_path / "ffmpeg"
+    fake.write_text(
+        f"#!{sys.executable}\n"
+        "import sys, time\n"
+        f"said = {SAID_7 + chr(10) + '[silencedetect @ 0x7] [info] silence_start: 41'!r}\n"
+        "for n in range(0, len(said), 7):\n"
+        "    sys.stderr.write(said[n : n + 7]); sys.stderr.flush()\n"
+        "    if n % 700 == 0: time.sleep(0.03)\n"
+    )
+    fake.chmod(0o755)
+    ctx = SimpleNamespace(settings=Settings(ffmpeg_path=str(fake)))
+    reports: list[float] = []
+    got = await sc.decode_through(
+        ctx, "file.mkv", 0.0, 0, 1, lambda g: reports.append(g.at), count_from=2.0, rate=A
+    )
+    assert got.glitches == [["skip", 33.0], ["picture", 32.9], ["sound", 33.0]]
+    assert (got.at, got.picture_to) == (40.0, 40.0)
+    assert got.silent_since == 41.0  # (its last line, with no line break after it)
+    assert reports[:2] == [20.0, 40.0] and not got.stalled
 
 
 def test_how_glitches_are_told():
