@@ -15,15 +15,18 @@ one on its data folder, then back again, and a fresh install.
    which must find everything there: everyone still signed in (the page and
    the app), the User's passcode and level, the linked device, the settings
    and the station; and the database backed up first, as before-<this
-   version>-<date>.db, as the Logs tab says. What's new works with them: a
-   problem with its journal, and (from 1.30.0) a person's report on the
-   Broken files tab, with everyone able to report to start with.
+   version>-<date>.db, as the Logs tab says (if this version changes it: one
+   that doesn't makes no copy, and none is put back when rolling back).
+   What's new works with them: a problem with its journal, and (from
+   1.30.0) a person's report on the Broken files tab, with everyone able to
+   report to start with.
 4. It's stopped, and rolled back as the README's Rolling back says (the
    copy put back as stationplay.db, its -wal and -shm removed); the release
    before is started again, and must work with its data, signed in as
    before, and with the broken-files list as this one left it: a program's
-   entry as before, and an entry for another of its versions (which a
-   release before 1.30.0 doesn't know) left alone.
+   entry as before, an entry for another of its versions (which a release
+   before 1.30.0 doesn't know) left alone, and (from 1.30.2) one about the
+   second of a movie's two files listed as it is.
 5. A fresh install of this checkout: it starts, takes its first Admin, and
    makes no copy.
 
@@ -68,8 +71,8 @@ import httpx  # noqa: E402
 import uvicorn  # noqa: E402
 
 from app import __version__  # noqa: E402
-from app.broken import DEEP_SCAN, BrokenFiles  # noqa: E402
-from app.db import Item  # noqa: E402
+from app.broken import CHECK, DEEP_SCAN, BrokenFiles  # noqa: E402
+from app.db import Item, changes_needed  # noqa: E402
 from tests.fakeplex import FakePlex  # noqa: E402
 
 ADMIN = {"name": "Ada", "password": "correct horse battery"}
@@ -359,6 +362,9 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
             return
         made = give_data(checks, sp.url)
         stopped(checks, sp, before)
+        # (What this version changes in that database, if anything: a release
+        # that changes nothing in it makes no copy, as the README says.)
+        changes = changes_needed(data / "stationplay.db")
 
         checks.section(f"Updated to {__version__}")
         sp = start(ROOT, data, f"{__version__}-updated")
@@ -366,11 +372,17 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
             return
         has_data(checks, sp.url, made, __version__, "updated")
         copies = sorted((data / "backups").glob(f"before-{__version__}-*.db"))
-        checks.ok(len(copies) == 1, "the database was backed up before it was changed", copies)
         page = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
         logs = page.get("/api/logs").text
-        checks.ok(bool(copies) and f"Backed up the database to backups/{copies[0].name}" in logs,
-                  "the Logs tab says so")  # fmt: skip
+        if changes:
+            checks.ok(len(copies) == 1, "the database was backed up before it was changed",
+                      (changes, copies))  # fmt: skip
+            checks.ok(bool(copies) and f"Backed up the database to backups/{copies[0].name}"
+                      in logs, "the Logs tab says so")  # fmt: skip
+        else:
+            checks.ok(copies == [] and "Backed up the database" not in logs,
+                      "nothing in the database needed changing, so no copy was made",
+                      copies)  # fmt: skip
         sent = page.post("/api/internal/problem", json={
             "kind": "crashed", "detail": "after the update", "journal": "a\nb", **APP})  # fmt: skip
         checks.ok(sent.status_code == 200, "what's new works (a problem with its journal)",
@@ -401,6 +413,11 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                       problem="damaged", found=DEEP_SCAN)  # fmt: skip
         listed.record(replace(first, file_path="/tv/u1-4k.mkv"), "Check: no sound anywhere in it",
                       None, problem="damaged", version="2011", library="1")  # fmt: skip
+        # (From 1.30.2: one about the second of a movie's two files.)
+        movie = Item(0, 0, 120 * 60_000, "300", "movie", "Two Discs", year=1999,
+                     file_path="/films/two-cd1.mkv")  # fmt: skip
+        listed.record(movie, "Check: no sound anywhere in it", None, "/films/two-cd2.mkv",
+                      problem="damaged", found=CHECK, part=(2, 2))  # fmt: skip
         logging.disable(logging.NOTSET)
 
         checks.section(f"Rolled back to {before}, as the README says")
@@ -414,14 +431,26 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         has_data(checks, sp.url, made, before, "rolled back")
         page = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
         said = [p["details"] for p in page.get("/api/problems").json()["problems"]]
-        checks.ok(
-            said == [["before the update"]], "the database is as it was before the update", said
-        )
+        if copies:
+            checks.ok(
+                said == [["before the update"]], "the database is as it was before the update",
+                said,
+            )  # fmt: skip
+        else:
+            checks.ok(
+                sorted(said) == [["after the update"], ["before the update"]],
+                "the database is as it was, with what was done since (no copy to put back)",
+                said,
+            )
         entries = page.get("/api/broken").json()
         checks.ok(
             [(e["ratingKey"], e.get("version"), e["reason"]) for e in entries]
-            == [("201", None, "Deep scan: the picture breaks up around 3:00")],
-            "the broken-files list: the program's entry as before, another version's left alone",
+            == [
+                ("201", None, "Deep scan: the picture breaks up around 3:00"),
+                ("300", None, "Check: no sound anywhere in it, in part 2 of 2"),
+            ],
+            "the broken-files list: the program's entry as before, another version's left "
+            "alone, and a movie's in two files listed as it is",
             entries,
         )
         stopped(checks, sp, before)

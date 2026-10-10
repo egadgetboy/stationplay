@@ -17,9 +17,11 @@ Admin alerts and the web address they're sent to (only for Admins; only
 http and https, no redirects followed, never waited on); each person's
 languages (their own only, and only languages StationPlay knows); Media's
 addresses (every one refusing what a Kid's level hides, the same way, and
-taking only what's bounded); people's reports (never from an outsider,
-always the sender's own, within their level and the limits, the choices
-only the server's, and only an Admin sees and acts on them); the Broken
+taking only what's bounded); a movie in several files played as one
+(never what a level hides, its files never named, within its whole
+length); people's reports (never from an outsider, always the sender's
+own, within their level and the limits, the choices only the server's,
+and only an Admin sees and acts on them); the Broken
 files list as Media has it (trouble checked only from one's own playing,
 and only for a problem just now; a broken file a level hides answered as
 any hidden one; people's reports never crowded out of the checks' queue;
@@ -122,6 +124,19 @@ def build_plex(tmp: Path) -> LibraryPlex:
         fp.files[f"32{n:02d}"] = b"a cartoon" * 100
     fp.add_movie("390", "Static", "/m/static.mkv", 7 * 60_000, section="2", contentRating=["G"])
     fp.describe("390")
+    # Movies in several files (from 1.30.2): one anyone may see, one only a
+    # grown-up may, and one whose second file's address isn't a path on Plex.
+    for key, title, rating in (("340", "Feast", "PG"), ("341", "Vault", "R"), ("342", "Odd", "G")):
+        fp.add_movie(key, title, f"/m/{title.lower()}-cd1.mkv", 120 * 60_000, section="2",
+                     contentRating=[rating])  # fmt: skip
+        fp.more[key] = {"Media": [{"id": int(key) * 100, "container": "mkv", "videoCodec": "h264",
+                                   "duration": 120 * 60_000, "Part": [
+            {"key": f"/library/parts/{key}1/1/file.mkv", "file": f"/m/{title.lower()}-cd1.mkv",
+             "duration": 70 * 60_000, "size": 1000},
+            {"key": f"/library/parts/{key}2/1/file.mkv" if key != "342" else "@evil.test/x",
+             "file": f"/m/{title.lower()}-cd2.mkv", "duration": 50 * 60_000, "size": 1000},
+        ]}]}  # fmt: skip
+        fp.files[f"{key}1"] = fp.files[f"{key}2"] = b"a part" * 100
     return fp
 
 
@@ -475,6 +490,8 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
     # update.
     await _converted_on_request(checks, app, home, admin_h, kit_h)
     await _no_file_names(checks, home, admin_h)
+    # 20) From 1.30.2: a movie in several files, played as one.
+    await _several_files(checks, app, home, admin_h, sam_h, kit_h, fp)
     await _problems_sent_later(checks, app, home, net, admin_h, sam_h, kit_h)
     await _copies_before_updates(checks, app, home, admin_h)
 
@@ -1444,6 +1461,92 @@ async def _no_file_names(checks: Checks, home: str, admin_h: dict) -> None:
                 f"{r.request.method} {r.request.url.path} names no file",
                 text[:200],
             )
+
+
+async def _several_files(
+    checks: Checks,
+    app,
+    home: str,
+    admin_h: dict,
+    sam_h: dict,
+    kit_h: dict,
+    fp: LibraryPlex,
+) -> None:
+    """A movie in several files, played as one: never what a level hides;
+    its files never named; one copy within its whole length, however it's
+    asked for; an app that can't take one told plainly; an address from
+    the library that isn't a path on Plex never asked for with its token;
+    and its entry on the Broken files list, Retry, only an Admin's."""
+    checks.section("A movie in several files")
+    phone = {**TV, "hls": ["ts"]}
+    async with httpx.AsyncClient(base_url=home) as c:
+        gone = (await c.get("/api/internal/items/999999", headers=kit_h)).json()
+        hidden = await c.post("/api/internal/play", headers=kit_h,
+                              json={"key": "341", "device": phone})  # fmt: skip
+        checks.ok(hidden.status_code == 404 and hidden.json() == gone,
+                  "the Kid playing a movie in several files their level hides gets nothing",
+                  f"got {hidden.status_code}")  # fmt: skip
+        played = await c.post(
+            "/api/internal/play", headers=sam_h,
+            json={"key": "340", "device": phone, "startMs": 80 * 60_000},
+        )  # fmt: skip
+        answer = played.json() if played.status_code == 200 else {}
+        checks.ok(
+            played.status_code == 200 and answer.get("durationMs") == 120 * 60_000
+            and answer.get("why", [""])[0] == "its 2 files, played as one",
+            "played as one program, its length the whole", f"got {played.status_code}",
+        )  # fmt: skip
+        checks.ok("feast-cd" not in played.text and "/m/" not in played.text,
+                  "the play answer names neither of its files", played.text[:200])  # fmt: skip
+        if answer:
+            listed = await c.get(f"{home}{answer['url']}")
+            pieces = [ln for ln in listed.text.splitlines() if ln.startswith("piece-")]
+            for n in (len(pieces), len(pieces) + 5, -1, 10**9):
+                r = await c.get(f"{home}{answer['url'].rsplit('/', 1)[0]}/piece-{n}.ts")
+                checks.ok(r.status_code in (404, 422), f"piece {n}, past either file: none",
+                          f"got {r.status_code}")  # fmt: skip
+            far = await c.post("/api/internal/progress", headers=sam_h, json={
+                "key": "340", "positionMs": 120 * 60_000 + 11 * 60_000,
+                "session": answer["session"], "sequence": 1})  # fmt: skip
+            checks.ok(far.status_code == 400, "a place past the end of the whole is refused",
+                      f"got {far.status_code}")  # fmt: skip
+            within = await c.post("/api/internal/progress", headers=sam_h, json={
+                "key": "340", "positionMs": 100 * 60_000, "session": answer["session"],
+                "sequence": 2})  # fmt: skip
+            checks.ok(within.status_code == 200 and within.json()["watched"] is False,
+                      "a place in its second file is a place in the movie, not its end",
+                      within.text[:120])  # fmt: skip
+            await c.post(f"{home}{answer['leave']}")
+        old = await c.post("/api/internal/play", headers=sam_h, json={"key": "340", "device": TV})
+        checks.ok(
+            old.status_code == 422 and old.json().get("why") == ["it's in 2 files"]
+            and isinstance(old.json().get("detail"), str),
+            "an app that can't take a copy is told why, plainly", f"got {old.status_code}",
+        )  # fmt: skip
+        before = list(fp.requests)
+        odd = await c.post("/api/internal/play", headers=sam_h,
+                           json={"key": "342", "device": phone})  # fmt: skip
+        asked = [r for r in fp.requests[len(before) :] if "evil" in r]
+        checks.ok(odd.status_code == 503 and isinstance(odd.json().get("detail"), str)
+                  and not asked,
+                  "a file whose address isn't a path on Plex: never asked for, said plainly",
+                  f"got {odd.status_code}, asked {asked}")  # fmt: skip
+        item = Item(0, 0, 120 * 60_000, "340", "movie", "Feast", year=2000,
+                    file_path="/m/feast-cd1.mkv")  # fmt: skip
+        app.state.ctx.broken.record(item, "Check: it has no sound track", None, "/m/feast-cd2.mkv",
+                                    1000, problem="damaged", part=(2, 2))  # fmt: skip
+        alerts = (await c.get("/api/internal/alerts", headers=admin_h)).text
+        checks.ok("feast-cd2" not in alerts and "/m/" not in alerts,
+                  "an Admin's alert about it names no file", alerts[:200])  # fmt: skip
+        retried = await c.delete("/api/broken/340", headers=sam_h)
+        checks.ok(retried.status_code in (401, 403) and app.state.ctx.broken.entry("340"),
+                  "Retry on it is an Admin's alone", f"got {retried.status_code}")  # fmt: skip
+        retried = await c.delete("/api/broken/340", headers=admin_h)
+        record = app.state.ctx.db.scan("340/part2")
+        checks.ok(retried.status_code == 204 and app.state.ctx.broken.entry("340") is None
+                  and (record is None or record.kept),
+                  "an Admin's Retry puts back the file it's about",
+                  f"got {retried.status_code}")  # fmt: skip
 
 
 async def _problems_sent_later(
