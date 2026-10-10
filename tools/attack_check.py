@@ -75,7 +75,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import httpx
 import uvicorn
 
-from app import access, alerts, applibrary, backups, problems, scanner
+from app import __version__, access, alerts, applibrary, backups, problems, scanner
 from app import ffmpeg as ff
 from app.config import Settings
 from app.db import Database, Item
@@ -183,6 +183,12 @@ async def run(checks: Checks) -> None:
         server.should_exit = True
         await task
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def _page_code(c: httpx.AsyncClient) -> str:
+    """The page as it's served, and each of its own styles and scripts."""
+    files = [(await c.get(f"/web/{name}?v={__version__}")).text for name in access.PAGE_FILES]
+    return "\n".join([(await c.get("/")).text, *files])
 
 
 def _cf(address: str) -> dict[str, str]:
@@ -423,7 +429,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
             checks.ok("\x00" not in name and "\n" not in name,
                       "control characters are stripped from the name")  # fmt: skip
             # The page builds the DOM with text nodes, never innerHTML with data.
-            page = (await c.get("/")).text
+            page = await _page_code(c)
             checks.ok("<img src=x onerror" not in page, "the name is not written into the page")
 
     # 9) Guessing or reusing keys, play addresses and reach nonces.
@@ -1707,7 +1713,7 @@ async def _problems_sent_later(
             r = await c.get(path, headers=admin_h)
             checks.ok(r.status_code in (400, 404, 422), f"GET {path} is refused plainly",
                       f"got {r.status_code}")  # fmt: skip
-        page = (await c.get("/")).text
+        page = await _page_code(c)
         shown = page[page.index("function journalOf") :][:800]
         checks.ok("textContent" in shown and "innerHTML" not in shown,
                   "the page shows a journal as text, never as HTML")  # fmt: skip
