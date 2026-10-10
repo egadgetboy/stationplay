@@ -181,6 +181,12 @@ class Problem(BaseModel):
     version: str = Field(default="", max_length=APP_MAX)
     device: str = Field(default="", max_length=problems.NAME_MOST * 4)
     deviceName: str = Field(default="", max_length=APP_MAX)
+    # From 1.29.1: when it happened (ms), the app's journal before it (cut
+    # to its newest lines: see problems.cleaned_journal), and how long
+    # trouble reaching StationPlay lasted (ms).
+    at: int | None = None
+    journal: str = ""
+    lastedMs: int | None = None
 
 
 def report_text(text: str) -> str:
@@ -861,7 +867,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         user = access.signed_in(request)
         sent = problems.Sent(
             body.kind, body.detail, body.station, body.title, body.app, body.version,
-            body.device, body.deviceName,
+            body.device, body.deviceName, body.at, body.journal, body.lastedMs,
         )  # fmt: skip
         try:
             ctx.problems.note(

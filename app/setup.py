@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from . import backups, playback
+from .playing import ago
 from .plex import PlexError
 from .sources import find_first, learn_mapping, local_candidates
 
@@ -358,7 +359,7 @@ def backups_check(made: list[dict[str, Any]], up_s: float, now_ms: int) -> Check
             "and look on the Logs tab for why.",
         ])  # fmt: skip
     age_s = (now_ms - made[0]["made"]) / 1000
-    when = _ago(age_s)
+    when = ago(age_s)
     if age_s > BACKUP_OLD_S:
         return Check("backups", title, WARN, [
             f"The newest backup is from {when}. StationPlay backs up every night, so look on the "
@@ -368,18 +369,6 @@ def backups_check(made: list[dict[str, Any]], up_s: float, now_ms: int) -> Check
         f"StationPlay last backed up your stations and settings {when}. It keeps the last "
         f"{backups.KEEP}, in the backups folder inside its data folder.",
     ])  # fmt: skip
-
-
-def _ago(seconds: float) -> str:
-    if seconds < 90:
-        return "a moment ago"
-    if seconds < 90 * 60:
-        return f"{round(seconds / 60)} minutes ago"
-    if seconds < 36 * 3600:
-        hours = round(seconds / 3600)
-        return f"{hours} hour{'s' if hours != 1 else ''} ago"
-    days = round(seconds / 86400)
-    return f"{days} days ago"
 
 
 def dvr_check(plex_ok: bool, guide: dict[str, Any], now_ms: int) -> Check:
@@ -393,7 +382,7 @@ def dvr_check(plex_ok: bool, guide: dict[str, Any], now_ms: int) -> Check:
         lines = ["Plex has StationPlay as a DVR, so your stations are in its Live TV guide."]
         if downloaded:
             lines.append(
-                f"Plex last downloaded StationPlay’s guide {_ago((now_ms - downloaded) / 1000)}."
+                f"Plex last downloaded StationPlay’s guide {ago((now_ms - downloaded) / 1000)}."
             )
         return Check("dvr", title, GOOD, lines)
     return Check("dvr", title, INFO, [

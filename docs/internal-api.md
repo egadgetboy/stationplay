@@ -558,7 +558,8 @@ device's, or everyone's. Send what's known:
 ```json
 {"kind": "station-stopped", "station": 5, "detail": "The picture stopped...",
  "app": "StationPlay for Roku", "version": "0.5.0",
- "device": "Roku Ultra 4850X, Roku OS 14.0", "deviceName": "Den"}
+ "device": "Roku Ultra 4850X, Roku OS 14.0", "deviceName": "Den",
+ "at": 1791580000000, "journal": "Tuned to station 5\nThe picture stopped at 0:42"}
 ```
 
 `kind` says when the app sends it:
@@ -575,14 +576,47 @@ device's, or everyone's. Send what's known:
   (`title`, or `station`).
 - `crashed`: the app closed unexpectedly last time (sent when it opens
   again; `detail` is the crash's first line).
+- `unreachable` (from 1.29.1): the app couldn't reach StationPlay for a
+  minute or more, sent once it's back. `detail` says what kind of trouble,
+  starting with one of "No network on this device", "StationPlay's address
+  couldn't be found", "StationPlay didn't answer", "A secure connection
+  couldn't be made" or "StationPlay answered with an error (503)", then
+  the device's kind of network (Wi-Fi, mobile data, Ethernet; never its
+  name or address) and how long it lasted; `lastedMs` says how long, in
+  milliseconds (without it, StationPlay reads "for 3 min 20 s" or "for 1
+  hr 5 min" from `detail`); `at` is when it began. The Logs tab says it as
+  "Den couldn't reach StationPlay for 12 minutes · No network on this
+  device".
 
-`detail` is what the app saw, in a sentence (at most 300 characters kept);
-`device` is the kind of device, its model and its system, as a problem
-report's `Device:` line has it. Never a token, a password or a stream's
-private address. The same problem from the same app and device within 10
-minutes counts on its first, and is said in StationPlay's log once. At most
-30 in 10 minutes from one app on one device: more are answered 429. A
-`kind` StationPlay doesn't know is answered 400.
+`detail` is what the app saw, in a sentence (at most 300 characters kept):
+for a player's error, its code first, as the player names it
+(`ERROR_CODE_DECODING_FAILED` from Media3; `AVFoundationErrorDomain -11821`
+or `NSURLErrorDomain -1009` from Apple's players, as "<domain> <code>"; `Roku
+error -5` from Roku's), then what else it said. The Logs tab says what the
+codes it knows mean, in plain words. `device` is the kind of device, its
+model and its system, as a problem report's `Device:` line has it. Never a
+token, a password or a stream's private address.
+
+From 1.29.1, also send:
+
+- `at`: when it happened (milliseconds since 1970). An app keeps the
+  problems it couldn't send (StationPlay out of reach, say) and sends them
+  once it's back, oldest first. One from up to 7 days ago, or up to 5
+  minutes ahead (a device's clock a little off), is kept as happening
+  then; otherwise, as when it came. The Logs tab goes by when each
+  happened.
+- `journal`: the app's last lines before it, as a problem report has them,
+  joined with `\n` (never a token, a password or a stream's private
+  address). StationPlay keeps its newest lines, within 8 KB (8,192 bytes
+  in UTF-8), for the Logs tab's **What led up to it**; a longer one is cut,
+  its oldest lines left out.
+
+The same problem from the same app and device within 10 minutes of when the
+first happened counts on its first, and is said in StationPlay's log once.
+At most 30 in 10 minutes from one app on one device: more are answered 429
+(keep them, and send them later). The 5,000 that happened last are kept,
+so a backlog of old ones never pushes out newer ones. A `kind` StationPlay
+doesn't know is answered 400.
 
 | Field | Type | What it is |
 |---|---|---|

@@ -284,6 +284,26 @@ def fill(sp: Running, data: Path) -> None:
         ok(home.post("/api/internal/problem", headers=app_token, json={
             "kind": "library-failed", "title": "Cosmic Drift", "detail": "HTTP 500", **roku}))  # fmt: skip
         ok(home.post("/api/internal/problem", headers=app_token, json={"kind": "crashed", **phone}))
+        # One sent later, with what led up to it (a long line too), and trouble
+        # reaching StationPlay.
+        journal = "\n".join([
+            "10:41:02 Asked to play Cosmic Drift · S1 E2 (303), up to 42000 kbps",
+            "10:41:03 Playing as it is: video/hevc 3840×2160, audio/eac3 6 channels",
+            "10:52:40 Library player: ERROR_CODE_DECODING_FAILED (MediaCodecVideoDecoderException: "
+            "Decoder failed: c2.exynos.hevc.decoder); format video/hevc, hvc1.2.4.L153.B0, "
+            "3840×2160; decoder c2.exynos.hevc.decoder, at 11:37",
+            "10:52:40 This device couldn't decode Cosmic Drift · S1 E2: asking for a converted copy",
+        ])  # fmt: skip
+        galaxy = {**phone, "device": "Galaxy S23, Android 14", "deviceName": "Kitchen tablet"}
+        ok(home.post("/api/internal/problem", headers=app_token, json={
+            "kind": "library-stopped", "title": "Cosmic Drift · S1 E2", "journal": journal,
+            "detail": "ERROR_CODE_DECODING_FAILED (MediaCodecVideoDecoderException: Decoder "
+            "failed: c2.exynos.hevc.decoder); format video/hevc, 3840×2160",
+            "at": int(time.time() * 1000) - 2 * 3_600_000, **galaxy}))  # fmt: skip
+        ok(home.post("/api/internal/problem", headers=app_token, json={
+            "kind": "unreachable", "detail": "No network on this device for 12 min 4 s.",
+            "lastedMs": 724_000, "journal": "10:12:30 Can't reach StationPlay: No network on "
+            "this device\n10:24:34 StationPlay answered again", **galaxy}))  # fmt: skip
         ok(home.post("/api/api-tokens", json={"name": "Home Assistant", "scope": "viewer"}))
         ok(home.post("/api/internal/play", headers=app_token, json={"key": "303", "device": {
             "containers": ["mkv", "mp4"], "hdr": [], "audio": ["aac", "ac3"], "hls": ["ts"],
@@ -661,6 +681,10 @@ def admin_views(page: Page, look: Look, only: set[str] | None) -> None:
         tab(page, "logs")
         page.wait_for_selector("#logList .logline")
         look("logs", full=True)
+        page.click("#problemList details > summary")
+        page.wait_for_selector("#problemList details[open] pre:not(:empty)")
+        page.wait_for_timeout(300)
+        look("logs-journal", full=True)
     if wanted("broken"):
         tab(page, "broken")
         page.evaluate("() => document.querySelector('#arrPanel').open = true")

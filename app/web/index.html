@@ -722,6 +722,15 @@
   .problem p { margin: 3px 0; }
   .problem-on { font-size: 14px; color: var(--ink-2); }
   .problem-on .pill { font-size: 12px; padding: 2px 8px; margin-right: 4px; }
+  .problem-means { margin: 6px 0; padding-left: 10px; border-left: 3px solid var(--accent); font-size: 14px; }
+  .problem-means .label { display: block; color: var(--ink-3); font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+  .problem-means p { margin: 2px 0; color: var(--ink-2); }
+  .problem .more { margin-top: 4px; }
+  .journal {
+    font-family: var(--mono); font-size: 12px; line-height: 1.5; margin: 6px 0 0; padding: 8px 10px;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius-small);
+    max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-2);
+  }
   .checks { display: flex; gap: 14px; align-items: center; }
   .checks label { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; cursor: pointer; }
   .checks input { accent-color: var(--accent); width: 16px; height: 16px; }
@@ -855,7 +864,7 @@
         </div>
         <button class="btn" id="clearProblems">Clear</button>
       </div>
-      <p class="muted small">StationPlay’s apps say here when something goes wrong as they play: a station that doesn’t start or stops, something from your library that doesn’t play, playing that can’t keep up, or the app closing unexpectedly. Each says which app, and on what kind of device, so you can tell whether a problem is one device’s or everyone’s.</p>
+      <p class="muted small">StationPlay’s apps say here when something goes wrong as they play: a station that doesn’t start or stops, something from your library that doesn’t play, playing that can’t keep up, the app closing unexpectedly, or the app not reaching StationPlay for a minute or more (told once it’s back). Each says which app, and on what kind of device, so you can tell whether a problem is one device’s or everyone’s, what the app said, and what it did just before.</p>
       <div id="problemList"></div>
     </div>
     <p class="muted small">The latest 200 entries, newest at the bottom. Select Warnings, Errors, or both to see only those. Select Access to see who signed in and from where. The access history is kept when StationPlay restarts.</p>
@@ -2516,8 +2525,22 @@ async function loadProblems() {
       h('p', { class: 'problem-what' }, h('strong', {}, p.label), h('span', { class: 'muted small' },
         ` ${times} ${devices}${who}${p.away ? ' · some away from home' : ''} · last ${at(p.lastMs)}`)),
       where,
-      p.details.length ? h('p', { class: 'muted small' }, `What the app said: ${p.details.join('; ')}`) : null);
+      p.means.length ? h('div', { class: 'problem-means' }, h('span', { class: 'label' }, 'What it means'),
+        ...p.means.map(m => h('p', {}, m))) : null,
+      p.details.length ? h('p', { class: 'muted small' }, `What the app said: ${p.details.join('; ')}`) : null,
+      p.journal != null ? journalOf(p.journal) : null);
   }) : [h('p', { class: 'muted' }, `No problems from the apps ${period}.`)]));
+}
+// What an app did before a problem: its journal's lines, fetched when opened.
+function journalOf(id) {
+  const lines = h('pre', { class: 'journal' }, 'Loading…');
+  let asked = false;
+  return h('details', { class: 'more', ontoggle: async e => {
+    if (!e.target.open || asked) return;
+    asked = true;
+    try { lines.textContent = (await api(`/api/problems/${id}/journal`)).lines.join('\n'); }
+    catch (err) { lines.textContent = err.message; asked = false; }
+  } }, h('summary', {}, 'What led up to it'), lines);
 }
 $('#problemDays').addEventListener('click', e => {
   const b = e.target.closest('button[data-days]');

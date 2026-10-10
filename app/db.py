@@ -324,6 +324,7 @@ CREATE TABLE IF NOT EXISTS titles (
 );
 -- Problems StationPlay's apps ran into, sent by the apps themselves (see
 -- problems.py): the same one again soon after counts on the same row.
+-- first_ms and last_ms are when it happened, as the app says.
 CREATE TABLE IF NOT EXISTS problems (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     first_ms     INTEGER NOT NULL,
@@ -338,7 +339,9 @@ CREATE TABLE IF NOT EXISTS problems (
     device       TEXT    NOT NULL DEFAULT '',  -- the kind of device: model, and its system
     device_name  TEXT    NOT NULL DEFAULT '',
     user_id      INTEGER,
-    away         INTEGER NOT NULL DEFAULT 0
+    away         INTEGER NOT NULL DEFAULT 0,
+    journal      TEXT    NOT NULL DEFAULT '',  -- the app's last lines before it (the newest's)
+    lasted_ms    INTEGER NOT NULL DEFAULT 0    -- how long trouble reaching StationPlay lasted
 );
 CREATE INDEX IF NOT EXISTS problems_by_last ON problems (last_ms);
 """
@@ -724,6 +727,10 @@ _ADDED_COLUMNS = (
     # PIN on a device's list (see devices.py), which proves nothing about
     # who's there, so it can't change their passcode.
     ("sessions", "unlocked", "INTEGER NOT NULL DEFAULT 0"),
+    # Added in 1.29.1: an app's journal before a problem, and how long
+    # trouble reaching StationPlay lasted (see problems.py).
+    ("problems", "journal", "TEXT NOT NULL DEFAULT ''"),
+    ("problems", "lasted_ms", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -2091,46 +2098,74 @@ class Database:
     # Problems the apps ran into (see problems.py) ------------------------------
 
     def add_problem(
-        self, at_ms: int, fields: dict[str, Any], same_since_ms: int, keep: int
+        self, at_ms: int, fields: dict[str, Any], same_ms: int, keep: int, journals: int
     ) -> bool:
-        """Notes a problem: on the row for the same one (the same kind, station,
-        title, detail, app and device) last seen since `same_since_ms`, counted
-        again; otherwise a new row (keeping the newest `keep`). True if it's
-        new."""
+        """Notes a problem that happened at `at_ms`: on the row for the same
+        one (the same kind, station, title, detail, app and device) within
+        `same_ms` of it, counted again (its journal the newest's, its
+        lasting added); otherwise a new row. The `keep` that happened last
+        are kept, and the newest `journals` journals. True if it's new."""
         keys = ("kind", "station", "title", "detail", "app", "version", "device", "device_name")
         with self._lock, self._conn:
             row = self._conn.execute(
-                "SELECT id FROM problems WHERE last_ms >= ? AND "
+                "SELECT id FROM problems WHERE last_ms >= ? AND first_ms <= ? AND "
                 + " AND ".join(f"{k} IS ?" for k in keys)
-                + " ORDER BY id DESC LIMIT 1",
-                (same_since_ms, *(fields[k] for k in keys)),
+                + " ORDER BY last_ms DESC, id DESC LIMIT 1",
+                (at_ms - same_ms, at_ms + same_ms, *(fields[k] for k in keys)),
             ).fetchone()
             if row is not None:
                 self._conn.execute(
-                    "UPDATE problems SET last_ms = ?, times = times + 1 WHERE id = ?",
-                    (at_ms, row["id"]),
-                )
+                    "UPDATE problems SET times = times + 1, lasted_ms = lasted_ms + ?, "
+                    "journal = CASE WHEN ? >= last_ms AND ? != '' THEN ? ELSE journal END, "
+                    "first_ms = MIN(first_ms, ?), last_ms = MAX(last_ms, ?) WHERE id = ?",
+                    (fields["lasted_ms"], at_ms, fields["journal"], fields["journal"], at_ms,
+                     at_ms, row["id"]),
+                )  # fmt: skip
                 return False
-            cur = self._conn.execute(
-                "INSERT INTO problems (first_ms, last_ms, user_id, away, "
+            self._conn.execute(
+                "INSERT INTO problems (first_ms, last_ms, user_id, away, journal, lasted_ms, "
                 + ", ".join(keys)
-                + ") VALUES (?, ?, ?, ?, "
+                + ") VALUES (?, ?, ?, ?, ?, ?, "
                 + ", ".join("?" for _ in keys)
                 + ")",
-                (at_ms, at_ms, fields["user_id"], int(fields["away"]), *(fields[k] for k in keys)),
+                (at_ms, at_ms, fields["user_id"], int(fields["away"]), fields["journal"],
+                 fields["lasted_ms"], *(fields[k] for k in keys)),
+            )  # fmt: skip
+            # (By when each happened: what a device sends late goes first.)
+            self._conn.execute(
+                "DELETE FROM problems WHERE id IN (SELECT id FROM problems "
+                "ORDER BY last_ms DESC, id DESC LIMIT -1 OFFSET ?)",
+                (keep,),
             )
             self._conn.execute(
-                "DELETE FROM problems WHERE id <= ?", (int(cur.lastrowid or 0) - keep,)
+                "UPDATE problems SET journal = '' WHERE journal != '' AND id NOT IN "
+                "(SELECT id FROM problems WHERE journal != '' ORDER BY last_ms DESC, id DESC "
+                "LIMIT ?)",
+                (journals,),
             )
             return True
 
     def problems_since(self, since_ms: int) -> list[dict[str, Any]]:
-        """The problems last seen since `since_ms`, newest first."""
+        """The problems last seen since `since_ms`, the newest first (their
+        journals left out: see problem_journal)."""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM problems WHERE last_ms >= ? ORDER BY last_ms DESC", (since_ms,)
+                "SELECT id, first_ms, last_ms, times, kind, station, title, detail, app, "
+                "version, device, device_name, user_id, away, lasted_ms, "
+                "journal != '' AS has_journal FROM problems WHERE last_ms >= ? "
+                "ORDER BY last_ms DESC, id DESC",
+                (since_ms,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def problem_journal(self, problem_id: int) -> tuple[int, str] | None:
+        """A problem's journal, and when it happened; None if it has none."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT last_ms, journal FROM problems WHERE id = ? AND journal != ''",
+                (problem_id,),
+            ).fetchone()
+        return (row["last_ms"], row["journal"]) if row else None
 
     def forget_problems(self, before_ms: int | None = None) -> None:
         """Forgets the problems last seen before `before_ms` (None: all of them)."""
