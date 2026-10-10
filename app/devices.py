@@ -94,9 +94,7 @@ NO_SECRET = (
     "You don't have a password or a PIN, so only an Admin can give you a PIN, on "
     "StationPlay's Access tab."
 )
-PICKED_UNLOCKED = (
-    "To set a PIN, sign in on this device with your password or an invite code first."
-)
+PICKED_UNLOCKED = "To set a PIN, sign in on this device with your password or an invite code first."
 
 
 class Refused(Exception):
@@ -664,8 +662,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         )
         if kept:
             said += (
-                f", and {and_list([u.name for u in kept])} kept as they were "
-                "(no password or PIN)"
+                f", and {and_list([u.name for u in kept])} kept as they were (no password or PIN)"
             )
         ctx.access.record(logging.INFO, said)
         return {"default": d.default_show_on, "changed": changed, "kept": [u.name for u in kept]}

@@ -155,9 +155,7 @@ def test_a_household_tv(app):
                 json={"id": tia_id, "pin": "0000"},
                 headers=device(key),
             )
-            assert wrong.status_code == 403 and wrong.json()["detail"] == (
-                "That PIN isn't right"
-            )
+            assert wrong.status_code == 403 and wrong.json()["detail"] == ("That PIN isn't right")
         waits = tv.post(
             "/api/internal/picker/choose", json={"id": tia_id, "pin": "4321"}, headers=device(key)
         )
@@ -956,9 +954,7 @@ def test_taken_off_a_device_ends_their_sign_in_there(app):
         ).json()
         tv = TestClient(app)
         key = tv.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]
-        picked = tv.post(
-            "/api/internal/picker/choose", json={"id": bo["id"]}, headers=device(key)
-        )
+        picked = tv.post("/api/internal/picker/choose", json={"id": bo["id"]}, headers=device(key))
         assert picked.status_code == 200, picked.text
         as_bo = bearer(picked.json()["token"])
         assert tv.get("/api/v1/stations", headers=as_bo).status_code == 200

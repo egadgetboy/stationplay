@@ -296,9 +296,7 @@ def give_data(checks: Checks, url: str) -> dict:
     )
     checks.ok(picker.status_code == 200, "the User is given a PIN", picker.text[:200])
     kids = page.post("/api/access/users", json=KIDS)
-    checks.ok(
-        kids.status_code == 201, "Kids are added, with no password or PIN", kids.text[:200]
-    )
+    checks.ok(kids.status_code == 201, "Kids are added, with no password or PIN", kids.text[:200])
     signed = app.post("/api/internal/sign-in", json={**ADMIN, **APP, "picker": True}).json()
     checks.ok(
         bool(signed.get("token") and signed.get("deviceKey")), "an app signs in on a linked device"
@@ -363,9 +361,7 @@ def has_data(checks: Checks, url: str, made: dict, version: str, where: str) -> 
     chose = httpx.post(f"{url}/api/internal/picker/choose", timeout=30,
                        headers={"stationplay-device": made["device"]},
                        json={"id": made["sam"], "pin": PASSCODE})  # fmt: skip
-    checks.ok(
-        chose.status_code == 200, f"{where}: the User's PIN still works", chose.text[:200]
-    )
+    checks.ok(chose.status_code == 200, f"{where}: the User's PIN still works", chose.text[:200])
 
 
 def alerts_of(url: str, bearer: dict) -> dict[str, dict]:
