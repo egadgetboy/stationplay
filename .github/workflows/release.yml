@@ -3,8 +3,13 @@
 # its notes. For each one not yet published, this makes the tag at that
 # commit and the release, with the release's files built from that commit:
 # stationplay-<version>.zip (unzipping to src), stationplay.yaml and
-# docker-compose.yml. A release already published is left as it is. The
-# newest version is marked the latest release.
+# docker-compose.yml, and its image (ghcr.io/<you>/stationplay:<version>,
+# and :latest for the newest). A release already published is left as it
+# is. The newest version is marked the latest release.
+#
+# Versions before FIRST_PUBLIC are never published: StationPlay's public
+# releases start with 1.31.0, the first under the AGPL with the server
+# license. Their notes stay in docs/releases as history.
 #
 # A version is published only once the image workflow's tests have passed
 # on its commit, or on a later main commit with nothing but release notes
@@ -25,6 +30,7 @@ on:
 permissions:
   contents: write
   actions: read # (the image workflow's runs)
+  packages: write # (the release's image)
 
 concurrency:
   group: release
@@ -33,15 +39,21 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
         with:
           ref: main
           fetch-depth: 0 # (every version's commit)
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Publish what's new
         env:
           GH_TOKEN: ${{ github.token }}
+          FIRST_PUBLIC: "1.31.0"
         run: |
           set -euo pipefail
           published=$(gh release list --limit 1000 --json tagName --jq '.[].tagName')
@@ -54,6 +66,10 @@ jobs:
           for version in $versions; do
             tag="v$version"
             file="docs/releases/$tag.md"
+            if [ "$(printf '%s\n' "$version" "$FIRST_PUBLIC" | sort -V | head -1)" != "$FIRST_PUBLIC" ]; then
+              echo "$tag: before $FIRST_PUBLIC, never published"
+              continue
+            fi
             if grep -qxF "$tag" <<< "$published"; then
               echo "$tag: already published"
               continue
@@ -121,6 +137,14 @@ jobs:
             gh release create "$tag" --target "$commit" --title "StationPlay $version" \
               --notes-file "$out/notes.md" --latest="$latest" \
               "$out/stationplay-$version.zip" "$out/stationplay.yaml" "$out/docker-compose.yml"
+            # Its image, built from that commit as the image workflow tested it.
+            image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stationplay"
+            git archive --format=tar "$commit" | docker build --quiet --tag "$image:$version" -
+            docker push --quiet "$image:$version"
+            if [ "$latest" = true ]; then
+              docker tag "$image:$version" "$image:latest"
+              docker push --quiet "$image:latest"
+            fi
             echo "::notice::Published $tag"
           done
           exit "$refused"

@@ -1,9 +1,8 @@
-# Builds the container image, tests it as built, and publishes it to GitHub
-# Container Registry (ghcr.io/<you>/stationplay) whenever main changes, so
-# TrueNAS can pull it instead of building locally. The tests run in the
-# image itself (the Dockerfile's test stage: the image that ships, with the
-# tests added), on the FFmpeg, Python and libraries that ship, and latest is
-# published only once they pass.
+# Builds the container image and tests it as built, whenever main changes.
+# The tests run in the image itself (the Dockerfile's test stage: the image
+# that ships, with the tests added), on the FFmpeg, Python and libraries that
+# ship. Nothing is published here: release.yml publishes a release's image,
+# and only once this workflow's tests have passed on its commit.
 name: image
 
 on:
@@ -18,7 +17,6 @@ jobs:
     timeout-minutes: 75
     permissions:
       contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v5
       - name: Build
@@ -47,15 +45,3 @@ jobs:
             grep -E "^(FAILED|ERROR) " "$RUNNER_TEMP/tests.txt" | head -20 | cut -c1-1600 | sed 's/^/::error::/'
             exit 1
           }
-      - uses: docker/login-action@v3
-        if: github.ref == 'refs/heads/main'
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish
-        if: github.ref == 'refs/heads/main'
-        run: |
-          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stationplay:latest"
-          docker tag stationplay:latest "$image"
-          docker push "$image"
