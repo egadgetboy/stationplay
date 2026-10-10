@@ -2121,6 +2121,10 @@ class Broadcaster:
             # (the encoder buffers a little), which matters when a process
             # is killed mid-run. The stream's own timestamps don't lag.
             produced = max(produced, (stitcher.segment_end - stitcher.segment_start) / PTS_HZ)
+        elif stitcher.segment_end is None:
+            # Nothing reached the stream (no picture: see begin_segment), so
+            # none of the program was shown, whatever ffmpeg counted.
+            produced = 0.0
         next_ts = self._next_ts(stitcher, ts, produced)
         if self._stopping:
             return PlayResult(produced, completed=False, stopped=True, next_ts=next_ts)

@@ -247,6 +247,35 @@ async def test_text_subtitles_are_drawn_when_they_should_be(tmp_path):
     assert spans(shown(out, TEXT_AREA)) == []
 
 
+def test_the_stream_says_its_own_frame_rate():
+    """Every program's stream is 29.97 frames a second, set on the output
+    itself: FFmpeg 7 forgets the rate the filters set once a filter after
+    them moves the frames' times (the subtitles' setpts), and then encodes
+    at the file's own rate."""
+    args = ff.output_args(SMALL, 0.0, "Test")
+    at = args.index("-r")
+    assert args[at + 1] == f"{ff.FPS_NUM}/{ff.FPS_DEN}"
+    assert args[args.index("-fps_mode") + 1] == "cfr"
+
+
+async def test_subtitles_keep_the_stream_at_29_97(tmp_path):
+    """A 25-frame film with its subtitles drawn still plays at the
+    stream's 29.97 frames a second (with FFmpeg 7.1, it came out at 25)."""
+    film = with_text_tracks(tmp_path, ([EARLY], "eng", False))
+    subs = await ready(await picked(tmp_path, film, "always"))
+    assert subs is not None
+    for name, drawn in (("with.ts", subs), ("without.ts", None)):
+        out = await played(film, tmp_path / name, 0.0, 6.0, drawn)
+        probe = await asyncio.to_thread(
+            subprocess.run,
+            ["ffprobe", "-v", "error", "-select_streams", "v", "-count_frames",
+             "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", str(out)],
+            capture_output=True, text=True, check=True,
+        )  # fmt: skip
+        rate = probe.stdout.split()[0]  # (the stream, then its program's copy)
+        assert abs(int(rate) - 6 * FPS) <= 2, (name, rate)
+
+
 async def test_forced_only_draws_just_the_forced_lines(tmp_path):
     film = with_text_tracks(tmp_path, ([EARLY], "eng", False), ([LATE], "eng", True))
     choice = await picked(tmp_path, film, "forced")

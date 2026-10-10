@@ -627,7 +627,10 @@ def output_args(
 ) -> list[str]:
     return [
         *_video_encoder_args(settings, encoder),
-        "-fps_mode", "cfr",
+        # The stream's rate, said here and not only by the filters: FFmpeg 7
+        # forgets theirs after a filter that moves frames' times (setpts, for
+        # subtitles), then encodes at the file's own rate.
+        "-fps_mode", "cfr", "-r", f"{FPS_NUM}/{FPS_DEN}",
         "-c:a", "aac", "-b:a", f"{settings.audio_bitrate_kbps}k", "-ac", "2", "-ar", "48000",
         "-shortest",
         # Continue the stream's timeline from where the previous program
@@ -1161,7 +1164,10 @@ def program_command(
     args += [
         *video, "-map", audio_map, "-dn", "-sn",
         "-t", f"{duration_s:.3f}",
-        "-af", _audio_filter(normalize_audio),
+        # (Only the file's own sound is evened out: added silence has no
+        # loudness, and with FFmpeg 7, evening out a second input's sound
+        # holds back the whole stream until the program ends.)
+        "-af", _audio_filter(normalize_audio and audio_index is not None),
     ]  # fmt: skip
     return args + output_args(settings, ts_offset_s, channel_name, encoder)
 

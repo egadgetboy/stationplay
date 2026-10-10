@@ -295,3 +295,50 @@ def test_stations_made_before_the_date_was_kept_get_the_earliest_known(tmp_path)
     conn.commit()
     conn.close()
     assert Database(path).get_channel(first.id).created_ms == 1000
+
+
+# A program with no sound of its own --------------------------------------
+
+
+def test_silence_added_for_a_file_with_no_sound_isnt_evened_out():
+    """Silence added for a file with no sound has no loudness to even out.
+    With FFmpeg 7, evening out sound from a second input (the silence)
+    under -shortest holds back the whole stream until the program ends, so
+    an episode or break with no sound stalled and was taken off the air."""
+
+    def audio_filter(audio_index: int | None) -> str:
+        args = ff.program_command(
+            Settings(), "/x/film.mkv", 0.0, 12.0, 0.0, 1.0, audio_index, "Test",
+            normalize_audio=True,
+        )  # fmt: skip
+        return args[args.index("-af") + 1]
+
+    assert "loudnorm" in audio_filter(0)
+    assert "loudnorm" not in audio_filter(None)
+
+
+@needs_ffmpeg
+async def test_an_episode_with_no_sound_streams_as_it_plays(tmp_path):
+    """An episode with no sound (its sound evened out, as every episode's
+    is) sends its stream as it plays, not all at the end."""
+    film = tmp_path / "silent.mp4"
+    make(
+        "-f", "lavfi", "-i", "smptebars=s=640x360:r=25", "-t", "12",
+        "-c:v", "libx264", "-preset", "ultrafast", str(film),
+    )  # fmt: skip
+    settings = Settings(plex_url="", plex_token="", video_width=640, video_height=360)
+    probe = await ff.probe(settings, str(film))
+    assert probe.ok and probe.audio_index is None
+    args = ff.program_command(
+        settings, str(film), 0.0, 12.0, 0.0, 0.3, None, "Test", normalize_audio=True,
+    )  # fmt: skip
+    proc = await asyncio.create_subprocess_exec(
+        *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+    )
+    try:
+        # (Played at real time: 12 seconds in all.)
+        first = await asyncio.wait_for(proc.stdout.read(188), 6)
+        assert first, "nothing was sent"
+    finally:
+        proc.kill()
+        await proc.wait()

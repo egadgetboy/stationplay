@@ -399,22 +399,24 @@ def test_counts_bundled_aac_frames():
     assert count_adts_frames(b"") == 1
 
 
-def test_stitcher_measures_end_of_bundled_silent_audio():
-    def pes_packet(pid: int, stream_id: int, pts: int, payload: bytes) -> bytes:
-        pts_bytes = bytes(
-            [
-                0x21 | ((pts >> 29) & 0x0E),
-                (pts >> 22) & 0xFF,
-                0x01 | ((pts >> 14) & 0xFE),
-                (pts >> 7) & 0xFF,
-                0x01 | ((pts << 1) & 0xFE),
-            ]
-        )
-        pes = b"\x00\x00\x01" + bytes([stream_id]) + b"\x00\x00\x80\x80\x05" + pts_bytes + payload
-        stuffing = 184 - len(pes)
-        af = bytes([stuffing - 1, 0x00]) + b"\xff" * (stuffing - 2)
-        return bytes([0x47, 0x40 | (pid >> 8), pid & 0xFF, 0x30]) + af + pes
+def pes_packet(pid: int, stream_id: int, pts: int, payload: bytes) -> bytes:
+    """One TS packet starting a PES packet with a PTS."""
+    pts_bytes = bytes(
+        [
+            0x21 | ((pts >> 29) & 0x0E),
+            (pts >> 22) & 0xFF,
+            0x01 | ((pts >> 14) & 0xFE),
+            (pts >> 7) & 0xFF,
+            0x01 | ((pts << 1) & 0xFE),
+        ]
+    )
+    pes = b"\x00\x00\x01" + bytes([stream_id]) + b"\x00\x00\x80\x80\x05" + pts_bytes + payload
+    stuffing = 184 - len(pes)
+    af = bytes([stuffing - 1, 0x00]) + b"\xff" * (stuffing - 2)
+    return bytes([0x47, 0x40 | (pid >> 8), pid & 0xFF, 0x30]) + af + pes
 
+
+def test_stitcher_measures_end_of_bundled_silent_audio():
     st = TsStitcher()
     st.begin_segment(100.0)
     base = 100 * 90_000 + 124_080
@@ -423,6 +425,37 @@ def test_stitcher_measures_end_of_bundled_silent_audio():
     st.end_segment()
     assert st.segment_start == base
     assert st.segment_end == base + 10 * 1920
+
+
+def test_a_program_with_no_picture_sends_nothing():
+    """A program's output is held until its picture starts. One that ends
+    with sound and no picture (FFmpeg 7 pads the sound of a file that ends
+    just as it starts) sends nothing: its sound would leave a hole in the
+    picture, with the next program starting after it."""
+    st = TsStitcher()
+    st.begin_segment(100.0)
+    base = 100 * 90_000
+    sound = [pes_packet(0x101, 0xC0, base + n * 1920, adts_frame()) for n in range(30)]
+    assert b"".join(st.feed(p) for p in [ts_packet(0x0, 0), *sound]) == b""
+    st.flush_partial()
+    st.end_segment()
+    assert st.segment_start is None and st.segment_end is None
+
+    # A program that does have a picture sends everything, in order, from
+    # its first packet, and its counters carry on from what was sent.
+    st.begin_segment(100.0)
+    picture = pes_packet(0x100, 0xE0, base + 3003, b"video")
+    early = b"".join(st.feed(p) for p in [ts_packet(0x0, 0), *sound[:3]])
+    assert early == b""
+    out = st.feed(picture) + st.feed(sound[3])
+    st.end_segment()
+    sent = [ts_packet(0x0, 0), *sound[:3], picture, sound[3]]
+    assert len(out) == 188 * len(sent)
+    for n, packet in enumerate(sent):
+        got = out[n * 188 : (n + 1) * 188]
+        assert got[:3] == packet[:3] and got[4:] == packet[4:]
+    assert [out[n * 188 + 3] & 0x0F for n in (0, 1, 2, 3, 5)] == [0, 0, 1, 2, 3]
+    assert st.segment_start == base and st.segment_end == base + 4 * 1920
 
 
 # Tuner endpoints & guide ------------------------------------------------------

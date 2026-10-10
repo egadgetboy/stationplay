@@ -11,6 +11,9 @@ through:
   one. The exact end of each program's audio and video is read from the
   stream itself, so the next program can start precisely after it: no
   overlap, and no gap beyond a millisecond.
+
+A program's output is held back until its picture starts, so one that
+ends without any picture sends nothing (see begin_segment).
 """
 
 from __future__ import annotations
@@ -61,13 +64,20 @@ class TsStitcher:
         # small ones, like silence), so their payload is collected until the
         # next packet starts and the frames counted.
         self._audio_pes: dict[int, tuple[int, bytearray]] = {}
+        # A program's packets, held until its picture starts (begin_segment).
+        self._held: bytes | None = None
 
     def begin_segment(self, ts_offset_s: float) -> None:
-        """Called before each program; `ts_offset_s` is where it was asked to start."""
+        """Called before each program; `ts_offset_s` is where it was asked
+        to start. Nothing of the program is sent until its first picture:
+        one that ends with sound and no picture sends nothing. (FFmpeg 7
+        pads the sound of a file that ends just as it starts, which would
+        leave a hole in the station's picture.)"""
         self._reference = round(ts_offset_s * PTS_HZ)
         self.segment_start = None
         self.segment_end = None
         self._audio_pes.clear()
+        self._held = b""
 
     @property
     def segment_offset_s(self) -> float:
@@ -75,7 +85,9 @@ class TsStitcher:
         return self._reference / PTS_HZ
 
     def end_segment(self) -> None:
-        """Called after a program's output is fully fed; settles its end time."""
+        """Called after a program's output is fully fed; settles its end
+        time. A program that never showed a picture is dropped."""
+        self._held = None
         for pid in list(self._audio_pes):
             self._finish_audio(pid)
 
@@ -86,6 +98,16 @@ class TsStitcher:
 
     def feed(self, data: bytes) -> bytes:
         """Returns whole, fixed-up packets; keeps any trailing partial packet."""
+        if self._held is not None:
+            # Waiting for the program's picture: hold everything until then,
+            # then send it all, in order.
+            held = self._held + data
+            # (Only the packets not looked at yet.)
+            if not _has_picture(held, len(self._held) // PACKET_SIZE * PACKET_SIZE):
+                self._held = held
+                return b""
+            self._held = None
+            data = held
         buf = self._partial + data
         # Drop anything before the first sync byte (never expected from
         # ffmpeg, but a stitcher shouldn't wedge on it).
@@ -164,3 +186,20 @@ class TsStitcher:
     def flush_partial(self) -> None:
         """Drops a trailing partial packet at the end of a program."""
         self._partial = b""
+
+
+def _has_picture(data: bytes, start: int = 0) -> bool:
+    """Whether a video PES packet starts in `data` (TS packets from its
+    beginning) at or after `start`, a packet boundary."""
+    for pos in range(start, len(data) - PACKET_SIZE + 1, PACKET_SIZE):
+        flags = data[pos + 3]
+        if data[pos] != SYNC_BYTE or not data[pos + 1] & 0x40 or not flags & 0x10:
+            continue
+        p = pos + 4 + (1 + data[pos + 4] if flags & 0x20 else 0)
+        if (
+            p + 4 <= pos + PACKET_SIZE
+            and data[p : p + 3] == b"\x00\x00\x01"
+            and 0xE0 <= data[p + 3] <= 0xEF
+        ):
+            return True
+    return False
