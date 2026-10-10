@@ -57,7 +57,7 @@ PREFIX = "/api/v1/"
 # OpenAPI, no promise it stays the same; see docs/internal-api.md).
 INTERNAL = "/api/internal/"
 HEADER = (b"stationplay-api", str(VERSION).encode())
-FEATURES = ("hls", "speed-test", "reports", "night", "problems", "license")
+FEATURES = ("hls", "speed-test", "reports", "night", "problems")
 
 GUIDE_DEFAULT_MS = 6 * 3600_000
 GUIDE_MAX_MS = 2 * 86_400_000

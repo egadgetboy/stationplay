@@ -19,7 +19,7 @@ If you find it useful, you can [buy me a coffee](https://buymeacoffee.com/egadge
 - [What you need](#what-you-need)
 - [Install](#install): [TrueNAS SCALE](#truenas-scale) · [Docker Compose (Linux, Proxmox, Raspberry Pi)](#docker-compose-linux-proxmox-raspberry-pi) · [Synology](#synology) · [Unraid](#unraid) · [Windows and macOS](#windows-and-macos) · [docker run](#docker-run)
 - [GPU encoding](#gpu-encoding) · [Updating](#updating) · [Backups](#backups) · [How StationPlay reads your files](#how-stationplay-reads-your-files) · [Security and remote access](#security-and-remote-access)
-- [Watch your stations](#watch-your-stations): Plex, Jellyfin, Emby, Kodi and other apps · [StationPlay's own apps](#stationplays-own-apps) · [The apps' license](#the-apps-license)
+- [Watch your stations](#watch-your-stations): Plex, Jellyfin, Emby, Kodi and other apps · [StationPlay's own apps](#stationplays-own-apps) · [Unlocking the apps](#unlocking-the-apps)
 - [Reaching StationPlay from outside your home](#reaching-stationplay-from-outside-your-home): a VPN, a reverse proxy, or a Cloudflare Tunnel
 - [First-time setup](#first-time-setup)
 - [Making stations](#making-stations)
@@ -385,7 +385,6 @@ Channels DVR, TiviMate, VLC and most IPTV apps accept the playlist address, `htt
 | 1.29.0 | Languages and Admin alerts |
 | 1.29.1 | Converted copies on request, and more detail on problems |
 | 1.30.0 | Reporting a problem |
-| 1.31.0 | The server's license and device slots (the apps that use it come later) |
 
 The apps read the stations and guide through [StationPlay's API](#stationplays-api), like any other program. They sign in, test connections and browse your library through their own addresses, documented for the apps in [docs/internal-api.md](docs/internal-api.md).
 
@@ -422,18 +421,15 @@ StationPlay uses the most specific choice: the episode's or movie's, then the sh
 
 Subtitles the device can't show are drawn into a copy. If an episode's chosen subtitles are inside its file and the device can show them, the episode plays unchanged instead of with even sound, because a copy carries no subtitles. Someone who hasn't chosen anything gets each file as before. Stations don't use these choices.
 
-### The apps' license
+### Unlocking the apps
 
-StationPlay and its page are free. A license unlocks StationPlay's apps. Without one, the apps play only the server's first station, for free.
+StationPlay and its page are free and unlimited. StationPlay's apps will be free to download, with a demo, and unlocked with one purchase in each platform's store:
 
-- **What it unlocks.** One license is for one StationPlay server, for life. It unlocks the apps on up to 15 devices linked to that server. Devices are covered in the order they were linked. Plex, Jellyfin and other apps, and StationPlay's page, never count.
-- **Where it comes from.** An Admin buys one in StationPlay's apps, which install it on the server (buying comes with the apps' store releases).
-- **Where it is.** On the **Access** tab, at the top, under **License**. An Admin can also install one there, by uploading the license file or pasting the license code, then choosing **Install**. A new license replaces the one before. **Copy the license code** gives you a copy to keep. **License** lists the linked devices in order, each with **Remove**. Removing one signs it out, and the next device is covered.
-- **Signing in.** Devices are counted as people sign in on them, so a license needs signing in turned on. With it off, the apps play only the first station.
-- **The server ID.** Each license is for one server ID, shown under **License** with **Copy**. Give it for support, or to move a license to another server. A fresh install gets a new ID. StationPlay keeps the ID and license in its database and in `data/license.json`:
-  - Restoring a backup from this server, or rolling back an update, keeps the license, even if the backup is from before it was installed.
-  - Restoring a backup onto new hardware brings the backup's server ID and license, unless the new server has a license of its own and the backup has none: then it keeps its own.
-- **The server never locks anything.** Everything on the server works with or without a license. StationPlay makes no outside calls for it: it keeps the license and hands it to the apps, which check it themselves.
+- **The demo.** Each server's first Station, for up to 2 hours a day on each device, and the first 10 minutes of each title in Media.
+- **The unlock.** A one-time purchase in the App Store, Google Play or Roku's store unlocks everything, on every server, for every user, forever, on that store account's devices. Each platform is bought separately.
+- **Nothing on the server.** StationPlay itself needs no purchase and never locks anything. Plex, Jellyfin and other apps are never limited.
+
+Unlocking comes with the apps' store releases. Until then, the apps play as they do now.
 
 ## Reaching StationPlay from outside your home
 

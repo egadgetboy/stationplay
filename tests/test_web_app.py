@@ -155,29 +155,14 @@ def test_links_to_other_sites_open_outside_the_apps_window():
         assert re.search(r"""rel[=:] ?["'][^"']*\bnoopener\b""", a), a
 
 
-def test_the_access_tab_shows_the_license_and_installs_and_removes_one():
-    """The License section (see licensing.py) asks for what's installed,
-    installs a license (from its file or code) and removes it, and removes
-    a device, at the addresses the server has for them; and it says so in
-    the owner's words."""
-    assert 'id="licensePanel"' in PAGE and PAGE.index('id="licensePanel"') < PAGE.index(
-        'id="accessState"'
-    )  # (at the top of the Access tab)
-    assert "api('/api/access/license')" in PAGE
-    assert "api('/api/access/license', { method: 'PUT', body: { license: text } })" in PAGE
-    assert "api('/api/access/license', { method: 'DELETE' })" in PAGE
-    assert "api(`/api/access/devices/${d.id}`, { method: 'DELETE' })" in PAGE
-    assert "loadLicense();" in PAGE.split("if (name === 'access')", 1)[1].split("\n", 1)[0]
-    for words in (
-        "'Licensed. '), `StationPlay’s apps are unlocked on up to ${lic.deviceLimit} devices.`",
-        "`${Math.min(got.devices.length, lic.deviceLimit)} of ${lic.deviceLimit} devices in use`",
-        "'Not licensed. '), 'StationPlay’s apps play the first station for free.'",
-        "'Not covered'",
-        "'Remove license'",
-        "'Install'",
-        "'For support and transfers.'",
-    ):
-        assert words in PAGE, words
+def test_the_server_has_no_license():
+    """StationPlay's apps are unlocked in their own stores (the owner's
+    choice, October 10): the server has no License section, no license
+    addresses and no server ID, and its page says nothing of a license but
+    its own, the AGPL."""
+    assert "licensePanel" not in PAGE and "loadLicense" not in PAGE
+    assert "/api/access/license" not in PAGE and "serverId" not in PAGE
+    assert not (WEB_DIR.parent / "licensing.py").exists()
 
 
 def test_a_stations_progress_bar_marks_its_end():

@@ -8,8 +8,8 @@
 # is. The newest version is marked the latest release.
 #
 # Versions before FIRST_PUBLIC are never published: StationPlay's public
-# releases start with 1.31.0, the first under the AGPL with the server
-# license. Their notes stay in docs/releases as history.
+# releases start with 1.31.0, the first under the AGPL. Their notes stay in
+# docs/releases as history.
 #
 # A version is published only once the image workflow's tests have passed
 # on its commit, or on a later main commit with nothing but release notes

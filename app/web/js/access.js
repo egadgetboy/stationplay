@@ -297,7 +297,6 @@ function renderDevices() {
         try { await api(`/api/access/devices/${d.id}`, { method: 'DELETE' }); toast(`${d.name} is unlinked`); }
         catch (err) { toast(err.message, true); }
         loadAccess();
-        loadLicense();  // (the next device may be covered now)
       } }, 'Unlink')))))]
     : [h('tbody', {}, h('tr', {}, h('td', { class: 'muted small' }, 'None yet. A device is linked when someone signs in on it.')))]));
 }

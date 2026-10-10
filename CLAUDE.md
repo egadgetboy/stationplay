@@ -18,9 +18,11 @@ follow them in every change.
   do itself lives in the app.
 - **No real file names or paths** in anything the apps receive.
 - StationPlay stays labeled **alpha**. No web client for watching, no DVR.
-- **Licensing is per server** (from 1.31.0): the server never locks anything;
-  the apps play only the first station on an unlicensed server, and a
-  license unlocks them on up to 15 devices (see app/licensing.py).
+- **No licensing in the server** (the owner's final plan, October 10): it
+  stays fully open source and unlimited and never locks anything. The apps
+  are unlocked in their own stores, one purchase per platform, with a demo
+  until then (the apps repo's CLAUDE.md has the details). Never limit Plex,
+  Jellyfin or other clients.
 
 ## Tests
 - **Every bug gets a failing test first,** then a root-cause fix. The test

@@ -62,7 +62,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
 import contextlib
 import io
 import json
@@ -392,19 +391,6 @@ def tables_of(data: Path) -> list[tuple]:
         conn.close()
 
 
-def test_license(server_id: str) -> str:
-    """A license file for this server (its signature isn't the server's to
-    check: the apps' is)."""
-
-    def b64(raw: bytes) -> str:
-        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-    payload = {"license_id": "upgrade-check", "server_id": server_id, "tier": "lifetime",
-               "device_limit": 15, "issued_at": 1_791_000_000, "format_version": 1}  # fmt: skip
-    return json.dumps({"payload": b64(json.dumps(payload).encode()),
-                       "signature": b64(b"\x01" * 64), "key": "k1"})  # fmt: skip
-
-
 def kept_alerts(data: Path) -> list[tuple]:
     """The alerts kept in a data folder's database (none before 1.31.0)."""
     conn = sqlite3.connect(f"{(data / 'stationplay.db').resolve().as_uri()}?mode=ro", uri=True)
@@ -535,12 +521,6 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                       copies)  # fmt: skip
         if version_of(before) < (1, 30, 3):
             checks.ok("a new table, alerts" in logs, "(for the alerts it now keeps)")
-        # (From 1.31.0: the server's ID, and a license an Admin installs.)
-        ours = page.get("/api/access/license").json()
-        checks.ok(len(ours.get("serverId") or "") == 36 and ours.get("license") is None,
-                  "it has a server ID of its own, and no license yet", ours)  # fmt: skip
-        put = page.put("/api/access/license", json={"license": test_license(ours["serverId"])})
-        checks.ok(put.status_code == 200, "an Admin installs a license", put.text[:200])
         sent = page.post("/api/internal/problem", json={
             "kind": "crashed", "detail": "after the update", "journal": "a\nb", **APP})  # fmt: skip
         checks.ok(sent.status_code == 200, "what's new works (a problem with its journal)",
@@ -684,9 +664,6 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         default = page.get("/api/access/devices").json()["default"]
         checks.ok(default == "home", "the Admin's choice stays: new people show on every device "
                   "at home", default)  # fmt: skip
-        again = page.get("/api/access/license").json()
-        checks.ok(again.get("serverId") == ours["serverId"] and again.get("license") is not None,
-                  "the same server ID, and its license still installed", again)  # fmt: skip
         stopped(checks, sp, __version__)
 
         checks.section(f"A fresh install of {__version__}")
@@ -708,9 +685,6 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         checks.ok(shown == {NEW["name"]: "signed-in", KIDS["name"]: "selected"},
                   "new people show only on devices they sign in on (Kids, who can't sign in, on "
                   "none until an Admin chooses)", shown)  # fmt: skip
-        own = page.get("/api/access/license").json()
-        checks.ok(own.get("serverId") not in (None, ours["serverId"]) and own["license"] is None,
-                  "a server ID of its own, and no license", own)  # fmt: skip
         choices = page.get("/api/internal/report-choices").json().get("choices") or []
         checks.ok(len(choices) == 12, "people can report problems", choices)
         checks.ok(not list(fresh.glob("backups/before-*")), "no copy is made of a new database")

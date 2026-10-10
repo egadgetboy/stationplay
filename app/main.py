@@ -50,7 +50,6 @@ from . import (
     intro,
     jobs,
     languages,
-    licensing,
     limits,
     links,
     logbuffer,
@@ -462,7 +461,6 @@ class AppContext:
     bumpers: BumperLibrary = field(init=False)  # Intro Bumpers you've uploaded
     access: access.Access = field(init=False)  # who can sign in
     devices: devices.Devices = field(init=False)  # the apps linked, and their pickers
-    licensing: licensing.Licensing = field(init=False)  # the server's ID, license, slots
     away: away.Away = field(init=False)  # StationPlay's apps away from home
     reach: reach.Reach = field(init=False)  # whether they can reach it from outside
     capacity: capacity.Capacity = field(init=False)  # how many apps may watch at once
@@ -499,7 +497,6 @@ class AppContext:
         self.bumpers = BumperLibrary(self.settings.data_dir / "bumpers")
         self.access = access.Access(self.db)
         self.devices = devices.Devices(self.db, self.access)
-        self.licensing = licensing.Licensing(self.db, self.settings.data_dir)
         self.access.picker = self.devices
         self.away = away.Away(self.db, self.access)
         self.reach = reach.Reach(self.away, self.access, self.settings)
@@ -755,7 +752,6 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     access.routes(app, ctx.access)
     viewing.routes(app, ctx)  # (who sees what: Viewing Levels)
     devices.routes(app, ctx)  # (linked devices, and their pickers)
-    licensing.routes(app, ctx)  # (the server's ID, license and device slots)
     appapi.routes(app, ctx)  # (for StationPlay's apps)
     applibrary.routes(app, ctx)  # (your library in them)
     reports.routes(app, ctx)  # (people's reports, from them)

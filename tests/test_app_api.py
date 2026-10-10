@@ -6,7 +6,6 @@ tokens and its OpenAPI spec: test_api.py.)"""
 from __future__ import annotations
 
 import itertools
-import json
 import re
 import time
 from pathlib import Path
@@ -23,7 +22,6 @@ from app.plex import PlexClient
 
 from .fakeplex_library import LibraryPlex
 from .helpers import Proxy
-from .test_licensing import made as a_license
 
 DOCS = Path(__file__).resolve().parent.parent / "docs"
 API_DOC, INTERNAL_DOC = DOCS / "api.md", DOCS / "internal-api.md"
@@ -178,14 +176,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         )
         server = check.answer(home.get("/api/v1/server"), "GET /api/v1/server")
         assert server["api"] == 1 and not server["signIn"] and server["notSetUp"] is None
-        assert server["features"] == [
-            "hls",
-            "speed-test",
-            "reports",
-            "night",
-            "problems",
-            "license",
-        ]
+        assert server["features"] == ["hls", "speed-test", "reports", "night", "problems"]
         # From the internet, until signing in is on, there's nothing to do.
         outside = check.answer(internet.get("/api/v1/server"), "GET /api/v1/server")
         assert outside["signIn"] and "home network" in outside["notSetUp"]
@@ -365,7 +356,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         assert home.put("/api/app-libraries", json={"libraries": ["1", "2"]}).status_code == 200
         features = check.answer(phone.get("/api/v1/server"), "GET /api/v1/server")["features"]
         assert features == [
-            "hls", "speed-test", "reports", "night", "problems", "license", "library", "convert",
+            "hls", "speed-test", "reports", "night", "problems", "library", "convert",
             "convert-asked", "even-sound",
         ]  # fmt: skip
         libs = check.answer(
@@ -748,35 +739,10 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         assert internet.post(away["leave"]).status_code == 204
         assert internet.get(away["url"]).status_code == 404
 
-        # The server's license (see test_licensing.py): any app signed in
-        # reads it, with its device's slot; an Admin's installs or removes it.
-        read = "GET /api/internal/license"
-        none = check.answer(phone.get("/api/internal/license", headers=pat), read)
-        assert none["license"] is None and none["device"] is None
-        file = a_license(none["serverId"])
-        install = "POST /api/internal/license"
-        check.answer(phone.post("/api/internal/license", headers=pat, json={"license": "no"}),
-                     install, 400)  # fmt: skip
-        check.answer(
-            phone.post("/api/internal/license", headers=user, json={"license": json.dumps(file)}),
-            install,
-            403,
-        )
-        installed = check.answer(
-            phone.post("/api/internal/license", headers=pat, json={"license": json.dumps(file)}),
-            install,
-        )
-        assert installed["license"]["deviceLimit"] == 15
-        assert [(d["name"], d["slot"], d["covered"]) for d in installed["devices"]] == [
-            ("StationPlay for Roku on Den Roku", 1, True)
-        ]
-        on_tv = check.answer(tv.get("/api/internal/license", headers={**key, **pat}), read)
-        assert on_tv["license"] == file and on_tv["device"] == {"slot": 1, "linked": 1}
-        check.answer(phone.get("/api/internal/license"), read, 401)
-        removed = check.answer(
-            phone.delete("/api/internal/license", headers=pat), "DELETE /api/internal/license"
-        )
-        assert removed["license"] is None and len(removed["devices"]) == 1
+        # No license (the owner's choice: the apps are unlocked in their
+        # stores, and the server has no licensing at all).
+        for method in ("get", "post", "delete"):
+            assert getattr(phone, method)("/api/internal/license", headers=pat).status_code == 404
     check.everything_seen()
 
 
