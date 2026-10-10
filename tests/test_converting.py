@@ -229,6 +229,7 @@ def test_a_repackaged_copy_plays_from_the_start_and_from_anywhere(app):
         assert first_times(first.content)[0] == pytest.approx(converting.TS_OFFSET_S, abs=0.05)
         assert picture_of(first.content)["codec_name"] == "h264"
         assert home.get(f"{here}/piece-9.ts").status_code == 404  # (past its end)
+        assert home.get(f"{here}/piece--1.ts").status_code == 404  # (before its start)
         assert home.post(answer["leave"]).status_code == 204
         assert home.get(f"{here}/piece-1.ts").status_code == 404
 

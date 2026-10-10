@@ -1771,7 +1771,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if found is None:
             if session.copy.stopped:
                 raise HTTPException(404, PLAY_ENDED)
-            if session.copy.broken or n >= session.copy.end:
+            if session.copy.broken or not 0 <= n < session.copy.end:
                 raise HTTPException(404, COPY_FAILED)
             raise HTTPException(503, "That part isn't ready yet. Try again in a moment.")
         ctx.plays.get(session_id)  # (still watching)
