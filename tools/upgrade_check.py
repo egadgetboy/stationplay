@@ -8,29 +8,33 @@ one on its data folder, then back again, and a fresh install.
    temporary folder with git archive, so the repository is left as it is.
 2. It's started on a new data folder, against the tests' stand-in Plex
    served on a port of its own, and given data through its API: an Admin
-   signed in on the page, a User with a passcode and a Viewing Level, an app
-   signed in on a linked device, settings, a station, and a problem from
-   the app.
+   signed in on the page, a User with a passcode and a Viewing Level, a
+   "Kids" User with neither a password nor a passcode, an app signed in on
+   a linked device, settings, a station, and a problem from the app.
 3. It's stopped, and this checkout is started on the same data folder,
    which must find everything there: everyone still signed in (the page and
-   the app), the User's passcode and level, the linked device, the settings
-   and the station; and the database backed up first, as before-<this
-   version>-<date>.db, as the Logs tab says (if this version changes it: one
-   that doesn't makes no copy, and none is put back when rolling back).
-   What's new works with them: a problem with its journal, and (from
+   the app), the User's passcode and level, where everyone shows on the
+   apps' pickers, the linked device, the settings and the station; and, if
+   this version changes the database, the database backed up first, as
+   before-<this version>-<date>.db, as the Logs tab says (otherwise no
+   copy). What's new works with them: a problem with its journal, (from
    1.30.0) a person's report on the Broken files tab, with everyone able to
-   report to start with.
+   report to start with, and (from 1.30.1) new people showing only on
+   devices they sign in on, as the Admin never chose otherwise, and Use for
+   everyone, which keeps Kids as they were.
 4. It's stopped, and rolled back as the README's Rolling back says (the
-   copy put back as stationplay.db, its -wal and -shm removed); the release
-   before is started again, and must work with its data, signed in as
-   before, and with the broken-files list as this one left it: a program's
-   entry as before, an entry for another of its versions (listed from
-   1.30.0 on; left alone by a release before, which doesn't know it), and
-   (from 1.30.2) one about the second of a movie's two files listed as it
-   is. A release that makes no copy has none put back: the release before
-   reads the database as this one left it.
+   copy, if there is one, put back as stationplay.db, its -wal and -shm
+   removed); the release before is started again, and must work with its
+   data, signed in as before (or with what this version wrote, when there
+   was no copy to put back), and with the broken-files list as this one
+   left it: a program's entry as before, and an entry for another of its
+   versions (which a release before 1.30.0 doesn't know, and leaves alone;
+   one from 1.30.0 lists it too), and (from 1.30.2) one about the second of
+   a movie's two files, listed as it is. There,
+   the Admin chooses where new people show (Devices at home); this checkout
+   is started again, and keeps that choice.
 5. A fresh install of this checkout: it starts, takes its first Admin, and
-   makes no copy.
+   makes no copy; new people show only on devices they sign in on.
 
 It prints PASS or FAIL for each check (failures always; all with -v) and
 exits 1 if any failed. Each StationPlay it starts is on free ports of its
@@ -79,6 +83,8 @@ from tests.fakeplex import FakePlex  # noqa: E402
 
 ADMIN = {"name": "Ada", "password": "correct horse battery"}
 USER = {"name": "Sam", "password": "staple battery horse", "role": "user"}
+KIDS = {"name": "Kids", "role": "user"}  # (no password, no passcode)
+NEW = {"name": "Bo", "password": "horse staple battery", "role": "user"}
 PASSCODE = "4321"
 APP = {"app": "StationPlay for Android", "deviceName": "Den"}
 STATION = {"number": 5, "name": "Upgrade TV", "sources": [{"type": "show", "ratingKey": "100"}]}
@@ -250,8 +256,9 @@ class StationPlay:
 
 
 def give_data(checks: Checks, url: str) -> dict:
-    """An Admin, a User with a passcode and a Viewing Level, an app signed
-    in on a linked device, settings, a station and a problem; what was made."""
+    """An Admin, a User with a passcode and a Viewing Level, Kids, an app
+    signed in on a linked device, settings, a station and a problem; what
+    was made."""
     page = httpx.Client(base_url=url, timeout=30)
     app = httpx.Client(base_url=url, timeout=30)
     checks.ok(
@@ -267,6 +274,10 @@ def give_data(checks: Checks, url: str) -> dict:
         f"/api/access/users/{sam['id']}/picker", json={"pin": PASSCODE, "showOn": "all"}
     )
     checks.ok(picker.status_code == 200, "the User is given a passcode", picker.text[:200])
+    kids = page.post("/api/access/users", json=KIDS)
+    checks.ok(
+        kids.status_code == 201, "Kids are added, with no password or passcode", kids.text[:200]
+    )
     signed = app.post("/api/internal/sign-in", json={**ADMIN, **APP, "picker": True}).json()
     checks.ok(
         bool(signed.get("token") and signed.get("deviceKey")), "an app signs in on a linked device"
@@ -285,8 +296,14 @@ def give_data(checks: Checks, url: str) -> dict:
         "sam": sam["id"],
         "teen": teen,
         "users": sorted(u["name"] for u in page.get("/api/access/users").json()),
+        "shown": shown_on(page),
         "devices": sorted(d["name"] for d in page.get("/api/access/devices").json()["devices"]),
     }
+
+
+def shown_on(page: httpx.Client) -> dict[str, str]:
+    """Where each person shows on the apps' pickers (their Show on)."""
+    return {u["name"]: u["showOn"] for u in page.get("/api/access/users").json()}
 
 
 def has_data(checks: Checks, url: str, made: dict, version: str, where: str) -> None:
@@ -303,6 +320,8 @@ def has_data(checks: Checks, url: str, made: dict, version: str, where: str) -> 
               f"{where}: the app is still signed in", app_me)  # fmt: skip
     users = sorted(u["name"] for u in page.get("/api/access/users").json())
     checks.ok(users == made["users"], f"{where}: the same people", users)
+    shown = shown_on(page)
+    checks.ok(shown == made["shown"], f"{where}: everyone shows where they did", shown)
     level = page.get("/api/access/viewing").json()["users"].get(str(made["sam"]), {}).get("level")
     checks.ok(level == made["teen"], f"{where}: the User's Viewing Level is kept", level)
     devices = sorted(d["name"] for d in page.get("/api/access/devices").json()["devices"])
@@ -326,6 +345,36 @@ def has_data(checks: Checks, url: str, made: dict, version: str, where: str) -> 
     checks.ok(
         chose.status_code == 200, f"{where}: the User's passcode still works", chose.text[:200]
     )
+
+
+def new_people(checks: Checks, url: str, made: dict) -> dict:
+    """From 1.30.1: as the Admin never chose where new people show, they
+    show only on devices they sign in on; Use for everyone shows everyone
+    that way, but Kids, kept as they were; and the User, signed in on the
+    linked device, is on its list. What the release before should find, if
+    nothing is put back."""
+    page = httpx.Client(base_url=url, timeout=30, cookies=made["cookies"])
+    default = page.get("/api/access/devices").json()["default"]
+    checks.ok(default == "signed-in", "new people show only on devices they sign in on, as the "
+              "Admin never chose otherwise", default)  # fmt: skip
+    bo = page.post("/api/access/users", json=NEW)
+    checks.ok(bo.status_code == 201 and bo.json()["showOn"] == "signed-in",
+              "someone new shows only on devices they sign in on", bo.text[:200])  # fmt: skip
+    everyone = page.post("/api/access/devices/everyone", json={"showOn": "signed-in"})
+    said = everyone.json() if everyone.status_code == 200 else everyone.text[:200]
+    checks.ok(said == {"default": "signed-in", "changed": 2, "kept": [KIDS["name"]]},
+              "Use for everyone: the Admin and the User change, Kids are kept", said)  # fmt: skip
+    signed = httpx.post(f"{url}/api/internal/picker/sign-in", timeout=30,
+                        headers={"stationplay-device": made["device"]},
+                        json={"name": USER["name"], "password": USER["password"]})  # fmt: skip
+    checks.ok(
+        signed.status_code == 200, "the User signs in on the linked device", signed.text[:200]
+    )
+    return {
+        **made,
+        "users": sorted([*made["users"], NEW["name"]]),
+        "shown": shown_on(page),
+    }
 
 
 def stopped(checks: Checks, sp: StationPlay, version: str) -> None:
@@ -366,9 +415,8 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         stopped(checks, sp, before)
         # (What this version changes in that database, if anything: a release
         # that changes nothing in it makes no copy, as the README says.)
-        changes = changes_needed(data / "stationplay.db")
-
         checks.section(f"Updated to {__version__}")
+        changes = changes_needed(data / "stationplay.db")
         sp = start(ROOT, data, f"{__version__}-updated")
         if sp is None:
             return
@@ -406,6 +454,9 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         users = page.get("/api/access/users").json()
         checks.ok(all(u["canReport"] for u in users), "everyone can report problems, to start "
                   "with", [(u["name"], u.get("canReport")) for u in users])  # fmt: skip
+        # (With no copy to put back, the release before finds what's changed
+        # since, and the app's sign-in from just now.)
+        since = {**new_people(checks, sp.url, made), "bearer": bearer}
         stopped(checks, sp, __version__)
         # The broken-files list, as this version keeps it: the station's
         # program, and another version of it (Media's alone).
@@ -432,36 +483,45 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         sp = start(old_code, data, f"{before}-rolled-back")
         if sp is None:
             return
-        has_data(checks, sp.url, made, before, "rolled back")
+        has_data(checks, sp.url, made if copies else since, before, "rolled back")
         page = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
         said = [p["details"] for p in page.get("/api/problems").json()["problems"]]
         if copies:
-            checks.ok(
-                said == [["before the update"]], "the database is as it was before the update",
-                said,
-            )  # fmt: skip
+            checks.ok(said == [["before the update"]], "the database is as it was before the update",
+                      said)  # fmt: skip
         else:
-            checks.ok(
-                sorted(d for details in said for d in details)
-                == ["after the update", "before the update"],
-                "the database is as it was, with what was done since (no copy to put back)",
-                said,
-            )
+            checks.ok(sorted(d for details in said for d in details)
+                      == ["after the update", "before the update"],
+                      "with no copy to put back, it reads what was written since", said)  # fmt: skip
         entries = page.get("/api/broken").json()
-        listed = sorted((e["ratingKey"], e.get("version", ""), e["reason"]) for e in entries)
+        listed = sorted((e["ratingKey"], e.get("version") or "", e["reason"]) for e in entries)
         program = [
             ("201", "", "Deep scan: the picture breaks up around 3:00"),
             ("300", "", "Check: no sound anywhere in it, in part 2 of 2"),
         ]
-        version = [("201", "2011", "Check: no sound anywhere in it")]
-        checks.ok(
-            # (Another version's is listed from 1.30.0 on, and left alone before.)
-            listed in (program, sorted(program + version)),
-            "the broken-files list: the program's entry as before, another version's as that "
-            "release has it, and a movie's in two files listed as it is",
-            entries,
-        )
+        if version_of(before) < (1, 30, 0):
+            checks.ok(listed == program, "the broken-files list: the programs' entries as before "
+                      "(a movie's in two files listed as it is), another version's left alone",
+                      entries)  # fmt: skip
+        else:
+            other = [("201", "2011", "Check: no sound anywhere in it")]
+            checks.ok(listed == sorted(program + other), "the broken-files list, as this version "
+                      "left it: the programs' entries (a movie's in two files listed as it is), "
+                      "and another version's", entries)  # fmt: skip
+        chose = page.put("/api/access/devices/default", json={"showOn": "home"})
+        checks.ok(chose.status_code == 200, "the Admin chooses where new people show",
+                  chose.text[:200])  # fmt: skip
         stopped(checks, sp, before)
+
+        checks.section(f"Updated to {__version__} again")
+        sp = start(ROOT, data, f"{__version__}-again")
+        if sp is None:
+            return
+        page = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
+        default = page.get("/api/access/devices").json()["default"]
+        checks.ok(default == "home", "the Admin's choice stays: new people show on every device "
+                  "at home", default)  # fmt: skip
+        stopped(checks, sp, __version__)
 
         checks.section(f"A fresh install of {__version__}")
         fresh = work / "fresh"
@@ -477,6 +537,11 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         checks.ok(page.post("/api/access/sign-in", json=ADMIN).status_code == 200, "and signs in")
         made = page.post("/api/channels", json=STATION)
         checks.ok(made.status_code == 201, "a station is made", made.text[:200])
+        shown = {who["name"]: page.post("/api/access/users", json=who).json().get("showOn")
+                 for who in (NEW, KIDS)}  # fmt: skip
+        checks.ok(shown == {NEW["name"]: "signed-in", KIDS["name"]: "home"},
+                  "new people show only on devices they sign in on (Kids, on every device at "
+                  "home, as they can't sign in)", shown)  # fmt: skip
         choices = page.get("/api/internal/report-choices").json().get("choices") or []
         checks.ok(len(choices) == 12, "people can report problems", choices)
         checks.ok(not list(fresh.glob("backups/before-*")), "no copy is made of a new database")

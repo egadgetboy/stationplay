@@ -316,12 +316,14 @@ Answers 401 for a wrong name or password, 429 while signing in waits, and
 ## GET /api/internal/picker
 
 Asked with the device's key (`StationPlay-Device`; see Linked devices). Who
-can be picked on this device, by name, where it is now (from 1.28.0): at
-home (on the home network, or through a VPN), everyone shown on the
-household's devices at home; away from home (through the public port), only
-those an Admin shows on every device, those who signed in on this device,
-and those an Admin chose it for. Ask again when the app comes back to the
-front, as the device may have moved:
+can be picked on this device, by name, where it is now (from 1.28.0): those
+who signed in on this device, those an Admin chose it for, and those an
+Admin shows on every device, at home and away; and at home (on the home
+network, or through a VPN), those shown on every device at home too. From
+1.30.1, new people show only on devices they sign in on, unless an Admin
+chose otherwise, so a device just linked may list only whoever linked it.
+Ask again when the app comes back to the front, as the device may have
+moved:
 
 | Field | Type | What it is |
 |---|---|---|
