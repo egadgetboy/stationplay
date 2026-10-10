@@ -197,7 +197,8 @@ def test_the_journal_before_a_problem(app, monkeypatch):
         assert kept[-1] == "line 399: <script>alert(399)</script> end"
         assert len("\n".join(kept).encode()) <= problems.JOURNAL_MOST
         assert kept[0].startswith("line ") and len(kept) > 100
-        assert tv.get("/api/problems/999/journal").status_code == 404
+        for nothing in ("999", "0", "-1", "99999999999999999999"):
+            assert tv.get(f"/api/problems/{nothing}/journal").status_code == 404, nothing
         # A newest line too long alone is kept, cut; an empty journal is none.
         sent(tv, kind="crashed", journal="x" * 20_000)
         crash = next(

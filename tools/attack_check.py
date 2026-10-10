@@ -15,9 +15,13 @@ from home; setting a passcode or changing a password from the apps (as an
 outsider, as someone else, an Admin's passcode, its format, the limits);
 Admin alerts and the web address they're sent to (only for Admins; only
 http and https, no redirects followed, never waited on); each person's
-languages (their own only, and only languages StationPlay knows); and
-Media's addresses (every one refusing what a Kid's level hides, the same
-way, and taking only what's bounded).
+languages (their own only, and only languages StationPlay knows); Media's
+addresses (every one refusing what a Kid's level hides, the same way, and
+taking only what's bounded); converted copies on request (never of what a
+level hides, within the limit however many ask at once); no file names in
+anything the apps receive; problems sent later with their journals (only an
+Admin reads one, kept as text and bounded, a backlog within the limits); and
+the copies of the database made before an update (never downloadable).
 
 It's a tool, not part of CI (the test suite covers these as unit tests). Run
 it from the repo root:  python -m tools.attack_check   (add -v to see every
@@ -34,6 +38,7 @@ import asyncio
 import secrets
 import socket
 import sys
+import time
 from pathlib import Path
 
 # The stand-in Plex and library live beside the tests; make them importable
@@ -43,7 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import httpx
 import uvicorn
 
-from app import access
+from app import access, applibrary, problems
 from app.config import Settings
 from app.main import create_app
 from app.plex import PlexClient
@@ -433,6 +438,14 @@ async def _attacks(checks: Checks, app, home: str, net: str) -> None:
     # 17) Media: every address refuses what a level hides, the same way, and
     # takes only what's bounded.
     await _library(checks, app, home, admin_h, kit_h)
+
+    # 18) From 1.29.1: converted copies on request, no file names in the apps,
+    # problems sent later with their journals, and the copies made before an
+    # update.
+    await _converted_on_request(checks, app, home, admin_h, kit_h)
+    await _no_file_names(checks, home, admin_h)
+    await _problems_sent_later(checks, app, home, net, admin_h, sam_h, kit_h)
+    await _copies_before_updates(checks, app, home, admin_h)
 
 
 async def _media_away(
@@ -1080,6 +1093,173 @@ async def _library(checks: Checks, app, home: str, admin_h: dict, kit_h: dict) -
             checks.ok(r.status_code == wanted and said and plain_refusal(r),
                       f"{method} {path[:60]} is answered {wanted}, plainly",
                       f"got {r.status_code}: {r.text[:80]}")  # fmt: skip
+
+
+async def _converted_on_request(checks: Checks, app, home: str, admin_h: dict, kit_h: dict) -> None:
+    """A converted copy an app asks for: never of what a level hides; a
+    sentence for an app that can't take one; and however many devices ask at
+    once, no more converted than the limit."""
+    checks.section("Converted copies on request")
+    phone = {**TV, "hls": ["ts"]}
+    async with httpx.AsyncClient(base_url=home) as c:
+        gone = (await c.get("/api/internal/items/999999", headers=kit_h)).json()
+        hidden = await c.post("/api/internal/play", headers=kit_h,
+                              json={"key": "211", "device": phone, "convert": True})  # fmt: skip
+        checks.ok(hidden.status_code == 404 and hidden.json() == gone,
+                  "the Kid asking for a converted copy of what their level hides gets nothing",
+                  f"got {hidden.status_code}")  # fmt: skip
+        no_hls = await c.post("/api/internal/play", headers=admin_h,
+                              json={"key": "300", "device": TV, "convert": True})  # fmt: skip
+        checks.ok(no_hls.status_code == 422 and isinstance(no_hls.json().get("detail"), str),
+                  "asked for by an app that can't take one: 422, with a sentence",
+                  f"got {no_hls.status_code}")  # fmt: skip
+        for odd in ("yes please", 2, None, [True]):
+            r = await c.post("/api/internal/play", headers=admin_h,
+                             json={"key": "300", "device": phone, "convert": odd})  # fmt: skip
+            checks.ok(r.status_code in (200, 400) and "Traceback" not in r.text,
+                      f"convert={odd!r} is taken or refused plainly", f"got {r.status_code}")  # fmt: skip
+            if r.status_code == 200:
+                await c.post(r.json()["leave"])
+
+    # Five apps, each signed in on its own (a device is its sign-in), ask at
+    # once: no more converted than the limit.
+    async with httpx.AsyncClient(base_url=home) as c:
+        tokens = [
+            (await c.post("/api/internal/sign-in", json={**ADMIN, "app": f"Phone {n}"})).json()["token"]
+            for n in range(5)
+        ]  # fmt: skip
+
+        async def ask(token: str) -> httpx.Response:
+            return await c.post("/api/internal/play", headers={"Authorization": f"Bearer {token}"},
+                                json={"key": "300", "device": phone, "convert": True})  # fmt: skip
+
+        answers = await asyncio.gather(*(ask(t) for t in tokens))
+    made = [r for r in answers if r.status_code == 200]
+    busy = [r for r in answers if r.status_code == 503]
+    checks.ok(
+        len(made) == applibrary.CONVERTING_MOST and len(made) + len(busy) == len(answers)
+        and all(r.json()["why"][0] == applibrary.ASKED_WHY for r in made),
+        f"five devices asking at once: {applibrary.CONVERTING_MOST} converted, the rest told to "
+        "try again later",
+        [r.status_code for r in answers],
+    )  # fmt: skip
+    async with httpx.AsyncClient(base_url=home) as c:
+        for r in made:
+            await c.post(r.json()["leave"])
+
+
+async def _no_file_names(checks: Checks, home: str, admin_h: dict) -> None:
+    """Nothing an app receives names a file or a folder, even for an Admin:
+    details, versions and tracks, play answers, alerts, refusals."""
+    checks.section("No file names in the apps")
+    phone = {**TV, "hls": ["ts"]}
+    async with httpx.AsyncClient(base_url=home) as c:
+        answers = [
+            await c.get("/api/internal/items/300", headers=admin_h),
+            await c.get("/api/internal/items/201", headers=admin_h),
+            await c.get("/api/internal/home", headers=admin_h),
+            await c.get("/api/internal/alerts", headers=admin_h),
+            await c.get("/api/v1/stations", headers=admin_h),
+            await c.get("/api/v1/guide", headers=admin_h),
+            await c.post("/api/internal/play", headers=admin_h, json={"key": "300", "device": TV}),
+            await c.post("/api/internal/play", headers=admin_h,
+                         json={"key": "300", "device": phone, "convert": True}),
+            await c.post("/api/internal/play", headers=admin_h,
+                         json={"key": "300", "device": {**TV, "audio": []}}),
+        ]  # fmt: skip
+        for r in answers:
+            if r.status_code == 200 and "leave" in r.text:
+                await c.post(r.json()["leave"])
+            text = f"{r.headers} {r.text}"
+            checks.ok(
+                not any(name in text for name in ("picnic.mkv", "/m/", "/tv/p/", "/tv/n/")),
+                f"{r.request.method} {r.request.url.path} names no file",
+                text[:200],
+            )
+
+
+async def _problems_sent_later(
+    checks: Checks, app, home: str, net: str, admin_h: dict, sam_h: dict, kit_h: dict
+) -> None:
+    """Problems with when they happened and the app's journal: only someone
+    signed in sends one, only an Admin reads a journal, anything sent is
+    kept as text and within its bounds, and a backlog of old ones can't get
+    past the limits."""
+    checks.section("Problems sent later, with their journals")
+    script = "<img src=x onerror=alert(1)><script>alert(2)</script>"
+    async with httpx.AsyncClient(base_url=net, headers={"X-Forwarded-Proto": "https"}) as out:
+        r = await out.post("/api/internal/problem", json={"kind": "unreachable", "journal": script})
+        checks.ok(r.status_code == 401, "an outsider can't send a problem", f"got {r.status_code}")
+    async with httpx.AsyncClient(base_url=home) as c:
+        started = time.monotonic()
+        big = "\n".join([script] * 40_000)  # (about 2 MB)
+        r = await c.post("/api/internal/problem", headers=kit_h, json={
+            "kind": "unreachable", "detail": f"No network on this device {script}",
+            "lastedMs": 10**20, "at": 2**63, "journal": big, "deviceName": "Kit's tablet"})  # fmt: skip
+        checks.ok(r.status_code == 200 and time.monotonic() - started < 5,
+                  "a huge journal, an odd time and an odd length are taken quickly",
+                  f"got {r.status_code} in {time.monotonic() - started:.1f}s")  # fmt: skip
+        listed = (await c.get("/api/problems", headers=admin_h)).json()["problems"]
+        mine = next((p for p in listed if p["kind"] == "unreachable"), None)
+        checks.ok(mine is not None and abs(mine["lastMs"] - time.time() * 1000) < 60_000
+                  and "for " not in mine["label"],
+                  "a time too far ahead is taken as now, and a length past belief left out",
+                  mine and mine["label"])  # fmt: skip
+        journal_id = mine and mine["journal"]
+        for who, h, wanted in (("the Kid", kit_h, 403), ("a User", sam_h, 403)):
+            r = await c.get(f"/api/problems/{journal_id}/journal", headers=h)
+            checks.ok(
+                r.status_code == wanted, f"{who} can't read a journal", f"got {r.status_code}"
+            )
+        r = await c.get(f"/api/problems/{journal_id}/journal", headers=admin_h)
+        lines = r.json().get("lines", []) if r.status_code == 200 else []
+        checks.ok(r.status_code == 200 and len("\n".join(lines).encode()) <= problems.JOURNAL_MOST
+                  and lines[-1] == script,
+                  "an Admin reads it: its newest lines, within 8 KB, as text",
+                  f"got {r.status_code}")  # fmt: skip
+        for path in ("/api/problems/abc/journal", "/api/problems/99999999999999999999/journal",
+                     "/api/problems/-1/journal"):  # fmt: skip
+            r = await c.get(path, headers=admin_h)
+            checks.ok(r.status_code in (400, 404, 422), f"GET {path} is refused plainly",
+                      f"got {r.status_code}")  # fmt: skip
+        page = (await c.get("/")).text
+        shown = page[page.index("function journalOf") :][:800]
+        checks.ok("textContent" in shown and "innerHTML" not in shown,
+                  "the page shows a journal as text, never as HTML")  # fmt: skip
+        for at in (-5, "soon", 1.5, [1], 10**400):
+            r = await c.post("/api/internal/problem", headers=kit_h,
+                             json={"kind": "crashed", "at": at, "deviceName": f"odd {at!r}"[:40]})  # fmt: skip
+            checks.ok(r.status_code in (200, 400) and "Traceback" not in r.text,
+                      f"at={str(at)[:20]!r} is taken or refused plainly", f"got {r.status_code}")  # fmt: skip
+        # A backlog from one device, a week old: the limit still holds.
+        week_ago = int(time.time() * 1000) - 6 * 86_400_000
+        codes = []
+        for n in range(problems.MOST + 5):
+            r = await c.post("/api/internal/problem", headers=kit_h, json={
+                "kind": "library-failed", "title": f"Old {n}", "at": week_ago + n,
+                "deviceName": "Backlog"})  # fmt: skip
+            codes.append(r.status_code)
+        checks.ok(codes.count(200) == problems.MOST and codes[-1] == 429,
+                  "a backlog of old problems from one device can't get past its limit",
+                  f"{codes.count(200)} taken")  # fmt: skip
+
+
+async def _copies_before_updates(checks: Checks, app, home: str, admin_h: dict) -> None:
+    """The copies of the database made before an update (sign-ins and all)
+    can't be downloaded from the page, by anyone."""
+    checks.section("Copies made before an update")
+    folder = app.state.ctx.settings.data_dir / "backups"
+    folder.mkdir(parents=True, exist_ok=True)
+    copy = folder / "before-1.29.1-20261009-120000.db"
+    copy.write_bytes(b"SQLite format 3\x00 sign-ins")
+    async with httpx.AsyncClient(base_url=home) as c:
+        listed = (await c.get("/api/backups", headers=admin_h)).text
+        checks.ok(copy.name not in listed, "the page doesn't list them")
+        for name in (copy.name, f"..%2fbackups%2f{copy.name}", "before-1.29.1-*.db"):
+            r = await c.get(f"/api/backups/{name}", headers=admin_h)
+            checks.ok(r.status_code == 404 and b"sign-ins" not in r.content,
+                      f"an Admin can't download {name[:40]}", f"got {r.status_code}")  # fmt: skip
+    copy.unlink()
 
 
 async def _pin_limit(checks: Checks, app, home: str, device_key: str) -> None:

@@ -354,7 +354,7 @@ class Problems:
     def journal(self, problem_id: int) -> dict[str, Any] | None:
         """A problem's journal: what its app did before it (None if there's
         no such problem, or it has none)."""
-        found = self.db.problem_journal(problem_id)
+        found = self.db.problem_journal(problem_id) if 0 < problem_id < 2**63 else None
         if found is None:
             return None
         at, text = found
