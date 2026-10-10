@@ -1,7 +1,7 @@
 # StationPlay: standing rules
 
 StationPlay is a self-hosted TV and media server, free and open source under
-the GPL (version 3). Its paid apps live in a private repo
+the AGPL (version 3), copyright egadgetboy. Its paid apps live in a private repo
 (egadgetboy/stationplay-apps). These are the owner's standing decisions:
 follow them in every change.
 
@@ -10,7 +10,7 @@ follow them in every change.
   feature names excepted).
 - **Clear American English.** Friendly, short and plain on the page;
   concise in the logs. Short sentences, one idea each, no jargon. Say
-  **PIN**, not "passcode" (the owner's choice; the rename ships in 1.31.0).
+  **PIN**, never "passcode" (the owner's choice, from 1.31.0).
 - **No outside services** beyond those the plan names, and no AI features.
   Nothing outside the home is required.
 - **A look unlike Plex or Emby.** Original work only.
@@ -18,7 +18,9 @@ follow them in every change.
   do itself lives in the app.
 - **No real file names or paths** in anything the apps receive.
 - StationPlay stays labeled **alpha**. No web client for watching, no DVR.
-- The free app plays only the server's first station.
+- **Licensing is per server** (from 1.31.0): the server never locks anything;
+  the apps play only the first station on an unlicensed server, and a
+  license unlocks them on up to 15 devices (see app/licensing.py).
 
 ## Tests
 - **Every bug gets a failing test first,** then a root-cause fix. The test

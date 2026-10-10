@@ -1,3 +1,3 @@
 """StationPlay: custom, always-on TV stations in Plex, built from your own library."""
 
-__version__ = "1.30.4"
+__version__ = "1.31.0"

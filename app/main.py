@@ -499,7 +499,7 @@ class AppContext:
         self.bumpers = BumperLibrary(self.settings.data_dir / "bumpers")
         self.access = access.Access(self.db)
         self.devices = devices.Devices(self.db, self.access)
-        self.licensing = licensing.Licensing(self.db)
+        self.licensing = licensing.Licensing(self.db, self.settings.data_dir)
         self.access.picker = self.devices
         self.away = away.Away(self.db, self.access)
         self.reach = reach.Reach(self.away, self.access, self.settings)

@@ -140,7 +140,7 @@ def build_plex(tmp: Path) -> LibraryPlex:
         fp.files[f"32{n:02d}"] = b"a cartoon" * 100
     fp.add_movie("390", "Static", "/m/static.mkv", 7 * 60_000, section="2", contentRating=["G"])
     fp.describe("390")
-    # Movies in several files (from 1.30.2): one anyone may see, one only a
+    # Movies in several files (from 1.31.0): one anyone may see, one only a
     # grown-up may, and one whose second file's address isn't a path on Plex.
     for key, title, rating in (("340", "Feast", "PG"), ("341", "Vault", "R"), ("342", "Odd", "G")):
         fp.add_movie(key, title, f"/m/{title.lower()}-cd1.mkv", 120 * 60_000, section="2",
@@ -513,13 +513,13 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
     # update.
     await _converted_on_request(checks, app, home, admin_h, kit_h)
     await _no_file_names(checks, home, admin_h)
-    # 20) From 1.30.2: a movie in several files, played as one.
+    # 20) From 1.31.0: a movie in several files, played as one.
     await _several_files(checks, app, home, admin_h, sam_h, kit_h, fp)
     await _problems_sent_later(checks, app, home, net, admin_h, sam_h, kit_h)
     await _copies_before_updates(checks, app, home, admin_h)
     await _files_like_ffmpegs_words(checks, app)
 
-    # 20) From 1.30.3: alerts kept across restarts, and the corner mark's drift.
+    # 20) From 1.31.0: alerts kept across restarts, and the corner mark's drift.
     await _kept_alerts(checks, app, home, admin_h)
     await asyncio.to_thread(_drift, checks)
 
@@ -667,8 +667,20 @@ async def _new_people_and_everyone(
             checks.ok(r.status_code == 404,
                       f"{person.name}, who never signed in on it, can't be picked there",
                       f"got {r.status_code}")  # fmt: skip
+        # Someone with no password and no PIN, added as new people are: on no
+        # device's list, for anyone at home to pick, until an Admin chooses.
+        bare = await c.post("/api/access/users", headers=admin_h,
+                            json={"name": "Nobody Yet", "role": "user"})  # fmt: skip
+        r = await c.post("/api/internal/picker/choose", headers=key,
+                         json={"id": bare.json().get("id")})  # fmt: skip
+        checks.ok(bare.status_code == 201 and bare.json().get("showOn") == "selected"
+                  and r.status_code in (403, 404),
+                  "someone new with no password or PIN is on no device's list until chosen",
+                  f"{bare.text[:120]}; picked: {r.status_code}")  # fmt: skip
+        await c.delete(f"/api/access/users/{bare.json().get('id')}", headers=admin_h)
+        # (A household's, on every device at home as an Admin chose.)
         made = await c.post("/api/access/users", headers=admin_h,
-                            json={"name": "Little Ones", "role": "user"})  # fmt: skip
+                            json={"name": "Little Ones", "role": "user", "showOn": "home"})  # fmt: skip
 
         def shown() -> dict[str, str]:
             return {u.name: u.show_on for u in db.users()}

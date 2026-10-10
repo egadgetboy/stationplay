@@ -494,7 +494,7 @@ def test_everyone_on_all_devices_moves_to_devices_at_home_once(tmp_path):
 
 
 def test_new_people_show_only_on_devices_they_sign_in_on(tmp_path):
-    """From 1.30.1, unless an Admin chose otherwise: someone shows on a
+    """From 1.31.0, unless an Admin chose otherwise: someone shows on a
     device only once they've signed in on it. Unless Bo has signed in on
     Ada's TV, he isn't on its list, and Ada isn't on his phone's."""
     app = two_ports(tmp_path)
@@ -607,7 +607,7 @@ def test_use_for_everyone(tmp_path):
         assert (again["changed"], again["kept"]) == (0, ["Kids", "Rae"])
 
         # Every device at home: everyone who can sign in by name; Rae, kept to
-        # the TV by an Admin, stays there (the audit of 1.30.1: Use for
+        # the TV by an Admin, stays there (the audit of 1.31.0: Use for
         # everyone leaves who can't sign in by name as they were, either way).
         got = admin.post("/api/access/devices/everyone", json={"showOn": "home"}).json()
         assert got == {"default": "home", "changed": 4, "kept": ["Rae"]}
@@ -623,7 +623,7 @@ def test_use_for_everyone(tmp_path):
 
 
 def test_an_admins_earlier_choice_stays_on_updating(tmp_path):
-    """New people show on what an Admin chose before 1.30.1, if they chose;
+    """New people show on what an Admin chose before 1.31.0, if they chose;
     otherwise, only on devices they sign in on. Nobody already added moves."""
     with TestClient(two_ports(tmp_path)) as admin:
         admin.post("/api/access/users", json=ADA)
@@ -841,7 +841,7 @@ def test_a_new_passcode_doesnt_end_the_wait_after_wrong_ones(app):
         assert waits.status_code == 429
 
 
-# Found by the cold audit of 1.30.1 ------------------------------------------------
+# Found by the cold audit of 1.31.0 ------------------------------------------------
 
 
 def test_someone_with_no_password_or_pin_shows_nowhere_until_an_admin_chooses(app):

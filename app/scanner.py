@@ -2436,7 +2436,7 @@ class Scanner:
         key = program.key
         # (Judged anew: what took a program off the air under the old rules,
         # see _rules_changed. That was about its first file, the only one
-        # checked before 1.30.2.)
+        # checked before 1.31.0.)
         again = key in self._again and (part is None or part[0] == 1)
         anew = again and self._judged_anew(key, result, reason)
         if result == "ok":

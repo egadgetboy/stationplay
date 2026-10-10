@@ -192,19 +192,22 @@ home** on the public port.
 ### New people show on
 
 New people start with the **New people show on** setting, next to the linked
-devices: Only devices they sign in on, or Every device at home. From 1.30.1,
+devices: Only devices they sign in on, or Every device at home. From 1.31.0,
 it's Only devices they sign in on, unless an Admin chose otherwise before;
 that choice stays. Someone who can't sign in by name (no password and no
-PIN) starts on Every device at home instead, rather than on no device
-at all.
+PIN) can't be shown only where they sign in, so on that default they start
+on Only devices you choose, with none chosen: on no device's list until an
+Admin chooses theirs. (With Every device at home as the default, they start
+there.)
 
 Changing the setting doesn't move anyone already added. **Use for
 everyone**, next to it, does:
 
 - **A confirm first.** It shows how many people the change affects. Then
   everyone already added shows that way too, as does anyone added later.
-- **Some people are kept.** For Only devices they sign in on, anyone who
-  can't sign in by name keeps their setting. The page names them: "Kept as
+- **Some people are kept.** Either way, anyone who can't sign in by name
+  keeps their setting, so a profile an Admin kept to one TV never lands on
+  every device. The page names them: "Kept as
   they were: Kids (no password or PIN)."
 - **Picking isn't signing in.** Picking yourself on Who's tuning in? doesn't
   count as signing in on that device. So people appear again on a device
@@ -221,9 +224,9 @@ the server's default. All devices had been the household's default until
 then, and everyone added before Who's tuning in? existed was on it. The
 access log shows how many people moved.
 
-1.30.1 renamed the four choices. The values the API sends didn't change.
+1.31.0 renamed the four choices. The values the API sends didn't change.
 
-| Before 1.30.1 | From 1.30.1 | API value |
+| Before 1.31.0 | From 1.31.0 | API value |
 |---|---|---|
 | Devices at home | Every device at home | `home` |
 | All devices | Every device, at home and away | `all` |
@@ -355,7 +358,7 @@ people show on, and `POST /api/access/devices/everyone`),
 **Access** tab, they're for Admins only, and StationPlay refuses a change
 sent from another site's page.
 
-`POST /api/access/devices/everyone` (1.30.1) is Use for everyone. It takes
+`POST /api/access/devices/everyone` (1.31.0) is Use for everyone. It takes
 `{"showOn": "signed-in"}` (Only devices they sign in on) or
 `{"showOn": "home"}` (Every device at home). Anything else is refused (400),
 and nothing changes. It sets New people show on to that value, and sets

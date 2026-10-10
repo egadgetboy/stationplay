@@ -269,3 +269,21 @@ def test_no_outside_calls(app, monkeypatch):
         assert admin.get("/api/internal/license", headers=ada).status_code == 200
     source = Path(licensing.__file__).read_text()
     assert "httpx" not in source and "socket" not in source and "urllib" not in source
+
+
+def test_rolling_back_the_database_keeps_the_id_and_license(tmp_path):
+    """Rolled back to the database's copy from before an update (which had
+    neither), StationPlay updated again keeps its server ID and license:
+    the data folder keeps them too."""
+    data = tmp_path / "data"
+    with TestClient(app_for(data)) as admin:
+        admin.post("/api/access/users", json=ADA)
+        server = admin.get("/api/access/license").json()["serverId"]
+        admin.put("/api/access/license", json={"license": json.dumps(made(server))})
+        db = admin.app.state.ctx.db
+        db._conn.execute("DELETE FROM meta WHERE key IN ('server_id', 'license')")
+        db._conn.commit()
+    with TestClient(app_for(data)) as again:
+        again.post("/api/access/sign-in", json=ADA)
+        got = again.get("/api/access/license").json()
+        assert got["serverId"] == server and got["license"]["licenseId"] == "lic-0001"

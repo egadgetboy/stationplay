@@ -53,7 +53,7 @@ covers the server's side. The full product plan is in the document
   Media's files get the same checks as the stations': the checks reach
   Media, trouble playing a file gets it checked, a broken file doesn't
   play, and people report problems from a list (see Files that don't play).
-- **1.30.2.** A movie in several files plays as one. Its length covers all
+- **1.31.0.** A movie in several files plays as one. Its length covers all
   of them, and resume, progress, seeking, Up next and watched work across
   the whole (see A movie in several files).
 - **Later.** Fragmented MP4 copies, so Apple's player can get an HEVC
@@ -265,7 +265,7 @@ anyone watches a station or Media (see below).
 ## A movie in several files
 
 Plex keeps some movies as several files, with one version stacked from them
-("Movie-cd1.mkv", "Movie-cd2.mkv"; "part 1", "part 2"). From 1.30.2, such a
+("Movie-cd1.mkv", "Movie-cd2.mkv"; "part 1", "part 2"). From 1.31.0, such a
 movie plays as one program, on the stations and in Media. Before, only its
 first file played, and on a station, black filled the rest of its time.
 

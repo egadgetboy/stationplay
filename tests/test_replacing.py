@@ -801,7 +801,7 @@ def test_a_new_file_with_the_same_problem_in_the_same_places_wants_your_look(wor
     assert world.ctx.broken.entries() == []
 
 
-# Found by the cold audit of 1.30.2 ------------------------------------------------
+# Found by the cold audit of 1.31.0 ------------------------------------------------
 
 DUNE = "/movies/Dune (1984)"
 

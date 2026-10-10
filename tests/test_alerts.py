@@ -809,7 +809,7 @@ def test_a_failing_web_address_holds_nothing_up(app, monkeypatch):
         assert len(ctx.alerts.now()) == 2 * many
 
 
-# Found by the cold audit of 1.30.3 ------------------------------------------------
+# Found by the cold audit of 1.31.0 ------------------------------------------------
 
 
 async def test_an_alert_the_web_address_never_took_is_sent_after_a_restart(tmp_path, db):
@@ -841,7 +841,9 @@ async def test_an_alert_the_web_address_never_took_is_sent_after_a_restart(tmp_p
     last = Alerts(told, Database(db.path))  # type: ignore[arg-type]
     await last.look(ctx)
     await last.look(ctx)
-    assert told.said == [("StationPlay can reach Plex at 192.168.1.10:32400 again.", "plex", "fixed")]
+    assert told.said == [
+        ("StationPlay can reach Plex at 192.168.1.10:32400 again.", "plex", "fixed")
+    ]
 
 
 async def test_alerts_from_long_ago_arent_brought_back(tmp_path, db, monkeypatch, caplog):

@@ -20,7 +20,7 @@ services:
     build:
       context: ./src
       dockerfile: Dockerfile
-    image: stationplay:1.30.4
+    image: stationplay:1.31.0
     container_name: stationplay
     restart: unless-stopped
     init: true

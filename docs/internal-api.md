@@ -182,8 +182,9 @@ work on these addresses, which are for the apps' own sign-ins.
      well as when they open.
    - The Roku app shows how many there are in the guide's header, which
      opens the list.
-5. **Passcode.** StationPlay's page now says "passcode," as the apps do.
-   The fields are still `pin`.
+5. **PIN.** From 1.31.0, StationPlay's page and its sentences say "PIN"
+   (1.28.0 to 1.30.0 said "passcode"); the apps say the same. The fields
+   were always `pin`.
 
 A server before 1.29.0 doesn't send `languages` (in `GET /api/internal/me`
 and an item's details), `chosen` or `languageCode`, and answers 404 for the
@@ -341,7 +342,7 @@ device is now:
 - At home (on the home network, or through a VPN), also those shown on
   every device at home.
 
-From 1.30.1, new people show only on devices they sign in on, unless an
+From 1.31.0, new people show only on devices they sign in on, unless an
 Admin chose otherwise. So a device just linked may list only whoever linked
 it. Ask again when the app comes back to the front, since the device may
 have moved.
@@ -821,14 +822,14 @@ and every few minutes while it's open. On Android, also ask every 15
 minutes in the background (WorkManager), notifying once for each new `id`,
 and once when it's fixed.
 
-From 1.30.3, StationPlay keeps its alerts across a restart:
+From 1.31.0, StationPlay keeps its alerts across a restart:
 
 - **One still going** keeps its `id`. It isn't new, so don't notify again.
 - **One fixed while StationPlay was stopped** is listed as fixed, with its
   `id`, once its check finds it.
 - **Those fixed in the last 24 hours** stay listed.
 
-The apps need nothing new for it. Before 1.30.3 (and from 1.30.3, once a
+The apps need nothing new for it. Before 1.31.0 (and from 1.31.0, once a
 backup is restored), the list starts fresh after a restart, and anything
 still wrong starts again with a new `id`.
 
@@ -1496,7 +1497,7 @@ answer 404 from then on. So ask for the next episode when it's time to play
 it, not while another plays. A device is an app's sign-in (each app signs
 in on its own), or, while signing in is off, its address.
 
-From 1.30.2, a movie Plex has in several files (stacked: "Part 1" and "Part
+From 1.31.0, a movie Plex has in several files (stacked: "Part 1" and "Part
 2") plays as one program. (Before, its first file played.) Its `durationMs`
 is the whole, it counts as watched at 90% of the whole, and resume,
 progress, seeking and Up next use the whole, as for any program.
@@ -1553,7 +1554,7 @@ is, and otherwise offer it. With none, say so plainly.
 | `method` | string | How it plays: `direct` (the file unchanged), `repackage` or `convert` (a copy; from 1.24.0) |
 | `url` | string | What the player plays (it needs no token): the file, such as `/play/<session>/file.mkv`, whose ranges are answered so the player can seek; or a copy's HLS playlist, `/play/<session>/index.m3u8`, listing the whole program from its start (a jump far ahead takes a few seconds more to start). Relative to where the app asked: a program started through the public port plays there (and at home), one started at home never plays through the public port |
 | `why` | list or null | Why a copy is made (null for `direct`); and from 1.30.0, that another version plays, in place of one StationPlay found broken (for `direct` too) |
-| `why[]` | string | One reason, such as "its sound's format (DTS)", "even sound for the show's episodes" (from 1.27.0), "another version, as 4K can't play right now" (from 1.30.0), or "its 2 files, played as one" (from 1.30.2) |
+| `why[]` | string | One reason, such as "its sound's format (DTS)", "even sound for the show's episodes" (from 1.27.0), "another version, as 4K can't play right now" (from 1.30.0), or "its 2 files, played as one" (from 1.31.0) |
 | `audioTrack` | string or null | The sound track in a copy (null for `direct`, where the player chooses among `audio`) |
 | `drawnSubtitle` | string or null | The subtitle track drawn into a copy's picture, if any |
 | `chosen` | object or null | What StationPlay chose for this person from their languages, and plays (from 1.29.0: see Languages); null when the app sent `audio` or `subtitle`, or nothing is chosen anywhere for them |

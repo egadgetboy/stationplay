@@ -468,7 +468,7 @@ def test_medias_files_of_a_version_in_several_are_each_due_a_check():
     assert sc._unchecked(scans, program)  # (its second file changed)
 
 
-# Found by the cold audit of 1.30.2 ------------------------------------------------
+# Found by the cold audit of 1.31.0 ------------------------------------------------
 
 
 @needs_ffmpeg
@@ -513,9 +513,7 @@ def test_a_file_put_back_on_the_air_doesnt_hide_a_later_ones_problem(tmp_path, p
 
 
 @needs_ffmpeg
-def test_a_file_put_back_on_the_air_isnt_named_when_the_list_is_checked_again(
-    tmp_path, part_files
-):
+def test_a_file_put_back_on_the_air_isnt_named_when_the_list_is_checked_again(tmp_path, part_files):
     """File 2 kept on by an Admin, file 3 broken and then replaced: checking
     the Broken files list again clears the movie, rather than listing it
     again for file 2, which the Admin kept on the air."""

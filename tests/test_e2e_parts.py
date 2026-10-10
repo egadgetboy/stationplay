@@ -352,7 +352,7 @@ def test_media_plays_a_movie_in_two_files_from_inside_the_second(
     assert "joining its 2 files" in caplog.text
 
 
-# Found by the cold audit of 1.30.2 ------------------------------------------------
+# Found by the cold audit of 1.31.0 ------------------------------------------------
 
 
 def _length_ms(path: Path) -> int:
@@ -406,9 +406,7 @@ def test_a_converted_copy_carries_on_past_a_first_file_whose_sound_runs_longer(t
     )
     with TestClient(app) as home:
         home.put("/api/app-libraries", json={"libraries": ["2"]})
-        played = home.post(
-            "/api/internal/play", json={"key": "300", "device": PHONE, "startMs": 0}
-        )
+        played = home.post("/api/internal/play", json={"key": "300", "device": PHONE, "startMs": 0})
         assert played.status_code == 200, played.text
         answer = played.json()
         assert answer["method"] == "convert", answer

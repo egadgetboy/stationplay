@@ -287,7 +287,7 @@ async def test_on_the_air_it_steps_all_through_programs_and_across_them(tmp_path
     ), steps
 
 
-# Found by the cold audit of 1.30.3: every corner, and the whole of what's drawn -----
+# Found by the cold audit of 1.31.0: every corner, and the whole of what's drawn -----
 
 CORNERS = ["top-left", "top-right", "bottom-left", "bottom-right"]
 

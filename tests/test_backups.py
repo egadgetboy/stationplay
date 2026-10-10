@@ -371,7 +371,7 @@ def test_what_an_update_would_change_is_found(tmp_path):
     assert db.changes_needed(path) == []
     conn = sqlite3.connect(path)
     conn.execute("DROP TABLE titles")
-    conn.execute("DROP TABLE alerts")  # (as before 1.30.3)
+    conn.execute("DROP TABLE alerts")  # (as before 1.31.0)
     conn.execute("DROP INDEX progress_by_time")
     conn.execute("CREATE INDEX views_by_start ON views (start_ms)")
     conn.execute("CREATE TABLE channel_items (channel_id INTEGER)")

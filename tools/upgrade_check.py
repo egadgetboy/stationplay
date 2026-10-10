@@ -19,10 +19,10 @@ one on its data folder, then back again, and a fresh install.
    before-<this version>-<date>.db, as the Logs tab says (otherwise no
    copy). What's new works with them: a problem with its journal, (from
    1.30.0) a person's report on the Broken files tab, with everyone able to
-   report to start with, and (from 1.30.1) new people showing only on
+   report to start with, and (from 1.31.0) new people showing only on
    devices they sign in on, as the Admin never chose otherwise, and Use for
    everyone, which keeps Kids as they were.
-4. Live alerts, kept across a restart (from 1.30.3): with Notify a web
+4. Live alerts, kept across a restart (from 1.31.0): with Notify a web
    address on (to a stand-in here), the report becomes an alert, and
    backups failing another. The report is dismissed and StationPlay
    stopped before its next look, and started again: both alerts are there
@@ -38,7 +38,7 @@ one on its data folder, then back again, and a fresh install.
    copy to put back), and with the broken-files list as this one left it:
    a program's entry as before, an entry for another of its versions (which
    a release before 1.30.0 doesn't know, and leaves alone; one from 1.30.0
-   lists it too), and (from 1.30.2) one about the second of a movie's two
+   lists it too), and (from 1.31.0) one about the second of a movie's two
    files, listed as it is. There, the Admin chooses where new people show
    (Devices at home); this checkout is started again, and keeps that
    choice.
@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import contextlib
 import io
 import json
@@ -391,8 +392,21 @@ def tables_of(data: Path) -> list[tuple]:
         conn.close()
 
 
+def test_license(server_id: str) -> str:
+    """A license file for this server (its signature isn't the server's to
+    check: the apps' is)."""
+
+    def b64(raw: bytes) -> str:
+        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+    payload = {"license_id": "upgrade-check", "server_id": server_id, "tier": "lifetime",
+               "device_limit": 15, "issued_at": 1_791_000_000, "format_version": 1}  # fmt: skip
+    return json.dumps({"payload": b64(json.dumps(payload).encode()),
+                       "signature": b64(b"\x01" * 64), "key": "k1"})  # fmt: skip
+
+
 def kept_alerts(data: Path) -> list[tuple]:
-    """The alerts kept in a data folder's database (none before 1.30.3)."""
+    """The alerts kept in a data folder's database (none before 1.31.0)."""
     conn = sqlite3.connect(f"{(data / 'stationplay.db').resolve().as_uri()}?mode=ro", uri=True)
     try:
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'alerts'").fetchone():
@@ -419,7 +433,7 @@ def fail_backups(page: httpx.Client, data: Path) -> None:
 
 
 def new_people(checks: Checks, url: str, made: dict) -> dict:
-    """From 1.30.1: as the Admin never chose where new people show, they
+    """From 1.31.0: as the Admin never chose where new people show, they
     show only on devices they sign in on; Use for everyone shows everyone
     that way, but Kids, kept as they were; and the User, signed in on the
     linked device, is on its list. What the release before should find, if
@@ -432,7 +446,7 @@ def new_people(checks: Checks, url: str, made: dict) -> dict:
     checks.ok(bo.status_code == 201 and bo.json()["showOn"] == "signed-in",
               "someone new shows only on devices they sign in on", bo.text[:200])  # fmt: skip
     # (Who isn't shown that way yet: the Admin and the User, made before
-    # 1.30.1; fewer when the release before was 1.30.1 or later.)
+    # 1.31.0; fewer when the release before was 1.31.0 or later.)
     moving = [u["name"] for u in page.get("/api/access/users").json()
               if u["showOn"] != "signed-in" and u["name"] != KIDS["name"]]  # fmt: skip
     everyone = page.post("/api/access/devices/everyone", json={"showOn": "signed-in"})
@@ -521,6 +535,12 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                       copies)  # fmt: skip
         if version_of(before) < (1, 30, 3):
             checks.ok("a new table, alerts" in logs, "(for the alerts it now keeps)")
+        # (From 1.31.0: the server's ID, and a license an Admin installs.)
+        ours = page.get("/api/access/license").json()
+        checks.ok(len(ours.get("serverId") or "") == 36 and ours.get("license") is None,
+                  "it has a server ID of its own, and no license yet", ours)  # fmt: skip
+        put = page.put("/api/access/license", json={"license": test_license(ours["serverId"])})
+        checks.ok(put.status_code == 200, "an Admin installs a license", put.text[:200])
         sent = page.post("/api/internal/problem", json={
             "kind": "crashed", "detail": "after the update", "journal": "a\nb", **APP})  # fmt: skip
         checks.ok(sent.status_code == 200, "what's new works (a problem with its journal)",
@@ -589,7 +609,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                       problem="damaged", found=DEEP_SCAN)  # fmt: skip
         listed.record(replace(first, file_path="/tv/u1-4k.mkv"), "Check: no sound anywhere in it",
                       None, problem="damaged", version="2011", library="1")  # fmt: skip
-        # (From 1.30.2: one about the second of a movie's two files.)
+        # (From 1.31.0: one about the second of a movie's two files.)
         movie = Item(0, 0, 120 * 60_000, "300", "movie", "Two Discs", year=1999,
                      file_path="/films/two-cd1.mkv")  # fmt: skip
         listed.record(movie, "Check: no sound anywhere in it", None, "/films/two-cd2.mkv",
@@ -664,6 +684,9 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         default = page.get("/api/access/devices").json()["default"]
         checks.ok(default == "home", "the Admin's choice stays: new people show on every device "
                   "at home", default)  # fmt: skip
+        again = page.get("/api/access/license").json()
+        checks.ok(again.get("serverId") == ours["serverId"] and again.get("license") is not None,
+                  "the same server ID, and its license still installed", again)  # fmt: skip
         stopped(checks, sp, __version__)
 
         checks.section(f"A fresh install of {__version__}")
@@ -682,9 +705,12 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         checks.ok(made.status_code == 201, "a station is made", made.text[:200])
         shown = {who["name"]: page.post("/api/access/users", json=who).json().get("showOn")
                  for who in (NEW, KIDS)}  # fmt: skip
-        checks.ok(shown == {NEW["name"]: "signed-in", KIDS["name"]: "home"},
-                  "new people show only on devices they sign in on (Kids, on every device at "
-                  "home, as they can't sign in)", shown)  # fmt: skip
+        checks.ok(shown == {NEW["name"]: "signed-in", KIDS["name"]: "selected"},
+                  "new people show only on devices they sign in on (Kids, who can't sign in, on "
+                  "none until an Admin chooses)", shown)  # fmt: skip
+        own = page.get("/api/access/license").json()
+        checks.ok(own.get("serverId") not in (None, ours["serverId"]) and own["license"] is None,
+                  "a server ID of its own, and no license", own)  # fmt: skip
         choices = page.get("/api/internal/report-choices").json().get("choices") or []
         checks.ok(len(choices) == 12, "people can report problems", choices)
         checks.ok(not list(fresh.glob("backups/before-*")), "no copy is made of a new database")

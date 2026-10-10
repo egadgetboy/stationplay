@@ -9,7 +9,11 @@ arrives only from an app (after a purchase) or an Admin's upload.
 
 The server's ID is made once, at random, when StationPlay first starts, and
 kept in the database, so a backup restored onto new hardware keeps it, and
-the license with it; a fresh install gets a new one.
+the license with it; a fresh install gets a new one. Both are also kept in
+the data folder (KEPT_FILE), so rolling back to the database as it was
+before an update (see backups.py) keeps them too: when the database has
+none, the file's are used. When the two differ, the database's win (a
+backup restored from another server's install).
 
 A license file is JSON:
 
@@ -37,6 +41,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException, Request
@@ -54,6 +59,7 @@ log = logging.getLogger("stationplay.license")
 
 SERVER_ID_META = "server_id"
 LICENSE_META = "license"
+KEPT_FILE = "license.json"
 CODE_PREFIX = "SPL1."
 FORMAT_VERSION = 1
 LICENSE_MOST = 8 * 1024  # (a license, as uploaded or pasted: a few hundred bytes)
@@ -149,13 +155,47 @@ def code_of(file: dict[str, str]) -> str:
 class Licensing:
     """This server's ID, its license, and its devices' slots."""
 
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, folder: Path) -> None:
         self.db = db
+        self.file = folder / KEPT_FILE
+        kept = self._read_file()
         self.server_id = db.get_meta(SERVER_ID_META)
+        if not self.server_id and kept.get("serverId"):
+            # (The database is from before it had one: rolled back to its
+            # copy from before an update, say. The file's are this server's.)
+            self.server_id = str(kept["serverId"])
+            db.set_meta(SERVER_ID_META, self.server_id)
+            if kept.get("license") and not db.get_meta(LICENSE_META):
+                db.set_meta(LICENSE_META, str(kept["license"]))
+            log.info("Kept this StationPlay's server ID and license from its data folder")
         if not self.server_id:
             self.server_id = str(uuid.uuid4())
             db.set_meta(SERVER_ID_META, self.server_id)
             log.info("This StationPlay's server ID is %s", self.server_id)
+        self._write_file()
+
+    def _read_file(self) -> dict[str, Any]:
+        try:
+            kept = json.loads(self.file.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as e:
+            log.warning("Couldn't read %s (%s)", self.file.name, e)
+            return {}
+        return kept if isinstance(kept, dict) else {}
+
+    def _write_file(self) -> None:
+        """The server's ID and license, as the database has them, to the data
+        folder too (see the module's notes)."""
+        kept = {"serverId": self.server_id, "license": self.db.get_meta(LICENSE_META)}
+        if self._read_file() == kept:
+            return
+        try:
+            part = self.file.with_suffix(".json.part")
+            part.write_text(json.dumps(kept), encoding="utf-8")
+            part.replace(self.file)
+        except OSError as e:
+            log.warning("Couldn't keep the server's ID and license in %s (%s)", self.file.name, e)
 
     def current(self) -> License | None:
         """The license installed, if there's one (and it's still this
@@ -172,12 +212,14 @@ class Licensing:
         """Installs a license (in place of any before it). ValueError."""
         found = read(text, self.server_id)
         self.db.set_meta(LICENSE_META, json.dumps(found.file, sort_keys=True))
+        self._write_file()
         return found
 
     def remove(self) -> bool:
         """Removes the license: whether there was one."""
         had = bool(self.db.get_meta(LICENSE_META))
         self.db.set_meta(LICENSE_META, "")
+        self._write_file()
         return had
 
     def slots(self) -> list[tuple[int, Any]]:

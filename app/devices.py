@@ -188,7 +188,7 @@ class Devices:
 
     @property
     def default_show_on(self) -> str:
-        """Where new people are shown: as an Admin chose, or (from 1.30.1,
+        """Where new people are shown: as an Admin chose, or (from 1.31.0,
         if they never chose) only on devices they sign in on."""
         return HOME if self.db.get_meta(SHOW_ON_META) == HOME else SIGNED_IN
 
