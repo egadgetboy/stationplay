@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import itertools
 import logging
 import shutil
 import time
@@ -56,7 +57,7 @@ from .catalog import Entry, Media, Track
 from .ffmpeg import Encoder, ProbeResult, Subtitles, to_sdr
 from .library import LibraryError
 from .ondemand import NotShared
-from .sources import find_first, learn_mapping, local_candidates
+from .sources import find_first, learn_mapping, local_candidates, part_starts
 from .text import plain
 
 if TYPE_CHECKING:
@@ -322,6 +323,8 @@ def how_copied(
     as the app asked; it said: ERROR_CODE_DECODING_FAILED (...)"."""
     if plan.copies_picture:
         text = "repackaged"
+        if plan.parts:
+            text += f", joining its {len(plan.parts)} files"
         if plan.audio_codec != "copy" and not plan.night:
             text += (
                 f", its sound made {playing.sound_name(plan.audio_codec)} "
@@ -339,6 +342,8 @@ def how_copied(
             text = f"converted smaller to fit {allowed}: {made}"
         else:
             text = f"converted to {made}"
+        if plan.parts:
+            text += f", joining its {len(plan.parts)} files"
         if asked is not None:
             text += (
                 f", its sound made {playing.sound_name(plan.audio_codec)} "
@@ -973,20 +978,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     ) -> None:
         """The log's line for something starting to play in an app: who,
         in which app, what, its file, and how it plays."""
-        if session.media.parts > 1:
-            # (Its files can't be played one after another as one yet.)
-            log.info(
-                "%s is split into %d files in Plex; StationPlay's apps play only the first",
-                describe(session.entry),
-                session.media.parts,
-            )
+        media = session.media
+        more = len(media.parts) - 1 if media.joined else 0
         log.info(
             "%s started %s in %s, %s: %s (%s)%s, %s",
             session.user or "Someone",
             describe(session.entry),
             in_sentence(session.app or app_label("", "")),
             "away from home" if session.away else "at home",
-            playing.file_name(session.media.file or ""),
+            playing.file_name(media.file or "") + (f" and {more} more" if more else ""),
             sound_of(session.media, sound),
             " from Plex" if from_plex else "",
             how,
@@ -1074,29 +1074,68 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         return True
 
     def drawn_for(
-        picked: languages.Picked | None, shows: frozenset[str], copy: bool
+        picked: languages.Picked | None, shows: frozenset[str], copy: bool, joined: bool = False
     ) -> Track | None:
         """The subtitle chosen for someone from their languages (see
         languages.py) that's drawn into the picture, as an app's `subtitle`
         is: one the player doesn't show itself (`shows`: the formats it
         does), and in a copy (`copy`), one inside the file too, as a copy
-        holds none. Only one StationPlay can draw: otherwise none."""
+        holds none; in a copy that joins a version's several files
+        (`joined`), any, as one of its own goes with one of them alone. Only
+        one StationPlay can draw: otherwise none."""
         found = picked.subtitle if picked else None
-        if found is None or (found.codec in shows and (found.external or not copy)):
+        if found is None or (not joined and found.codec in shows and (found.external or not copy)):
             return None
         if converting.picture_subtitles(found):
             return None if found.external else found
         return found if ctx.subtitling and (not found.external or found.id.isdigit()) else None
 
     def shown_for(
-        picked: languages.Picked | None, drawn: Track | None, shows: frozenset[str], copy: bool
+        picked: languages.Picked | None,
+        drawn: Track | None,
+        shows: frozenset[str],
+        copy: bool,
+        joined: bool = False,
     ) -> Track | None:
         """The subtitle chosen for someone that's shown: drawn in, or by the
-        player itself (in a copy, only a file of its own, added beside it)."""
+        player itself (in a copy, only a file of its own, added beside it;
+        never beside a copy that joins several, `joined`)."""
         found = picked.subtitle if picked else None
         if found is None or drawn is not None:
             return drawn
-        return found if found.codec in shows and (found.external or not copy) else None
+        shown = found.codec in shows and (found.external or not copy) and not joined
+        return found if shown else None
+
+    async def drawing(
+        e: Entry, f: Media, track: Track, source: str
+    ) -> list[str] | str | tuple[Subtitles, Any]:
+        """How a subtitle track is drawn into a copy of one file (`f`, read
+        from `source`): the subtitles, and what's to be done first (read out
+        of the file), if anything; for a file of its own, where it's fetched
+        from (into the copy's folder: see play_copy); or why it can't be."""
+        inside = [t for t in sorted(f.subtitles, key=lambda t: t.index or 0) if not t.external]
+        nth = next((i for i, t in enumerate(inside) if t.id == track.id), None)
+        if converting.picture_subtitles(track):
+            if nth is None:
+                return ["its subtitles (a picture subtitle file of its own)"]
+            return Subtitles(stream=nth, image=True), None
+        if not ctx.subtitling:
+            return ["its subtitles (StationPlay can't draw text subtitles)"]
+        if track.external:
+            url = ctx.library.stream_url(e.key, f"/library/streams/{track.id}")
+            return url if url is not None and track.id.isdigit() else ["its subtitles"]
+        if nth is None:
+            return ["its subtitles"]
+        key = f"{source.split('?')[0]}|{nth}|{f.size}|{f.id}"
+        job = subtitles.Extraction(source, nth, settings.data_dir / subtitles.FOLDER
+                                   / f"app-{hashlib.sha1(key.encode()).hexdigest()[:24]}.ass",
+                                   track.codec == "ass")  # fmt: skip
+        try:
+            await asyncio.to_thread(job.target.parent.mkdir, parents=True, exist_ok=True)
+        except OSError as ex:
+            log.warning("A copy for a StationPlay app couldn't be made (%s)", ex)
+            raise HTTPException(503, COPY_FAILED) from None
+        return job.ready(), (None if job.target.exists() else subtitles.extract(settings, job))
 
     async def play_copy(
         body: PlayAsk,
@@ -1147,7 +1186,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             return JSONResponse({"detail": detail, "why": why}, status_code=422)
 
         def draws(m: Media) -> Track | None:
-            return drawn_for(languages.pick(m, wanted) if wanted else None, shows, copy=True)
+            picked = languages.pick(m, wanted) if wanted else None
+            return drawn_for(picked, shows, copy=True, joined=m.joined)
 
         # The version: the one asked for; or the best one whose picture can
         # be kept (away from home, within the cap); or for converting, the
@@ -1195,29 +1235,60 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         duration_s = (media.duration_ms or e.duration_ms or 0) / 1000
         if duration_s <= 0:
             return None if only_sound else refuse(["how long it is isn't known"])
-        path, stream = await source_of(e, media)
-        source = path or stream
-        if source is None:
+        # Where its file is read from: of a version in several (see
+        # catalog.Media), each of them, and where each starts in it.
+        sources = [await source_of(e, f) for f in media.files]
+        if any(path is None and stream is None for path, stream in sources):
             raise HTTPException(503, NO_FILE)
+        path, stream = sources[0]
+        source = path or stream
+        assert source is not None
+        starts_at: list[float] | None = [0.0]
+        if media.joined:
+            starts_at = await part_starts(
+                settings, ctx.library, e.key, media.parts, ctx.media_access
+            )
+        if starts_at is None or duration_s <= starts_at[-1]:
+            return refuse(["how long each of its files is isn't known"])
+        lengths = [b - a for a, b in itertools.pairwise([*starts_at, duration_s])]
         # Keeping the picture as it is, where it can be (its keyframes
         # known from the file's index); otherwise converting it.
         starts: tuple[float, ...] = ()
         keep = converting.picture_copyable(media, why, hls) and not (
             shown or smaller or capped or body.convert
         )
+        if media.joined:
+            why.insert(1 if body.convert else 0, ondemand.joined_why(media))
         if keep:
             try:
                 found = await asyncio.wait_for(
-                    keyframes.keyframes(reader(path, stream), media.container), KEYFRAMES_WAIT_S
-                )
+                    asyncio.gather(
+                        *(keyframes.keyframes(reader(*where), f.container)
+                          for where, f in zip(sources, media.files, strict=True))
+                    ),
+                    KEYFRAMES_WAIT_S,
+                )  # fmt: skip
             except TimeoutError:
-                found = None
-            if found:
-                starts = converting.pieces_at(found, duration_s)
+                found = []
+            if found and all(found):
+                starts = converting.pieces_of(
+                    [(at, converting.pieces_at(kf, length))
+                     for at, kf, length in zip(starts_at, found, lengths, strict=True)]
+                )  # fmt: skip
         if only_sound and not starts:
             return None  # (only the picture as it is will do: the file plays as it is)
+        # The sound track, in each file: one alike in them all is copied
+        # where the device plays it; otherwise it's made again.
+        maps = [_audio_map(sound, media.audio, f.audio if n else media.audio)
+                for n, f in enumerate(media.files)]  # fmt: skip
+        alike = all(
+            (t.codec, t.channels) == (sound.codec, sound.channels)
+            for f in media.files[1:]
+            if sound is not None
+            for t in [_matching(sound, media.audio, f.audio) or Track("", "")]
+        )
         audio_codec, channels = converting.sound_for(
-            sound, dev.audio, body.night, even, body.convert
+            sound, dev.audio, body.night, even or not alike, body.convert
         )
         if starts:
             method, height, kbps, tone_map = converting.REPACKAGE, 0, 0, ""
@@ -1237,42 +1308,31 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 media, dev.video.get("h264", (0, 0, 0))[1], body.maxKbps if smaller else None,
                 cap, converting.sound_kbps(audio_codec, channels),
             )  # fmt: skip
-            starts = converting.pieces_every(duration_s)
-        # Subtitles drawn in: a picture track as it is; text in the file,
-        # read out first; a file of its own, fetched first.
-        drawn: Subtitles | None = None
-        first: Any = None
-        fetch_from: str | None = None  # (a subtitle file of its own, fetched to be drawn in)
+            starts = converting.pieces_of(
+                [(at, converting.pieces_every(length))
+                 for at, length in zip(starts_at, lengths, strict=True)]
+            )  # fmt: skip
+        # Subtitles drawn in, into each of its files: a picture track as it
+        # is; text in the file, read out first; a file of its own, fetched
+        # first.
+        drawn: list[Subtitles | None] = [None] * len(sources)
+        jobs: list[Any] = []
+        fetches: list[tuple[int, str, Track]] = []  # (a subtitle file of its own: which, where)
         if shown is not None:
-            inside = [t for t in sorted(media.subtitles, key=lambda t: t.index or 0)
-                      if not t.external]  # fmt: skip
-            nth = next((i for i, t in enumerate(inside) if t.id == shown.id), None)
-            styled = shown.codec == "ass"
-            if converting.picture_subtitles(shown) and nth is not None:
-                drawn = Subtitles(stream=nth, image=True)
-            elif converting.picture_subtitles(shown):
-                return refuse(["its subtitles (a picture subtitle file of its own)"])
-            elif not ctx.subtitling:
-                return refuse(["its subtitles (StationPlay can't draw text subtitles)"])
-            elif shown.external:
-                fetch_from = ctx.library.stream_url(e.key, f"/library/streams/{shown.id}")
-                if fetch_from is None or not shown.id.isdigit():
-                    return refuse(["its subtitles"])
-            elif nth is not None:
-                key = f"{source.split('?')[0]}|{nth}|{media.size}|{media.id}"
-                job = subtitles.Extraction(source, nth, settings.data_dir / subtitles.FOLDER
-                                           / f"app-{hashlib.sha1(key.encode()).hexdigest()[:24]}.ass",
-                                           styled)  # fmt: skip
-                try:
-                    await asyncio.to_thread(job.target.parent.mkdir, parents=True, exist_ok=True)
-                except OSError as ex:
-                    log.warning("A copy for a StationPlay app couldn't be made (%s)", ex)
-                    raise HTTPException(503, COPY_FAILED) from None
-                drawn = job.ready()
-                if not job.target.exists():
-                    first = subtitles.extract(settings, job)
-            else:
-                return refuse(["its subtitles"])
+            for n, f in enumerate(media.files):
+                track = shown if n == 0 else _matching(shown, media.subtitles, f.subtitles)
+                if track is None:
+                    continue  # (none like it in this file: it plays without)
+                each = await drawing(e, f, track, sources[n][0] or sources[n][1] or "")
+                if isinstance(each, list):
+                    if n == 0:
+                        return refuse(each)
+                elif isinstance(each, str):
+                    fetches.append((n, each, track))
+                else:
+                    drawn[n], job = each
+                    if job is not None:
+                        jobs.append(job)
         if (over := ctx.capacity.refusal(ctx.app_watchers(), client, away_)) is not None:
             return over_the_limit(over, body, request, e, tag)
         try:
@@ -1290,20 +1350,22 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         ):
             await asyncio.to_thread(shutil.rmtree, folder, True)
             raise HTTPException(503, BUSY_CONVERTING)
-        if fetch_from is not None and shown is not None:
-            target = (
-                folder
-                / f"subtitles.{shown.codec if shown.codec in ('srt', 'ass', 'vtt') else 'srt'}"
-            )
-            drawn = Subtitles(path=str(target), styled=shown.codec == "ass")
-            first = fetch_subtitles(fetch_from, target)
+        for n, url, track in fetches:
+            kind = track.codec if track.codec in ("srt", "ass", "vtt") else "srt"
+            target = folder / f"subtitles-{n}.{kind}"
+            drawn[n] = Subtitles(path=str(target), styled=track.codec == "ass")
+            jobs.append(fetch_subtitles(url, target))
+        parts = tuple(
+            converting.Part(where[0] or where[1] or "", at, audio, subs)
+            for where, at, audio, subs in zip(sources, starts_at, maps, drawn, strict=True)
+        ) if media.joined else ()  # fmt: skip
         plan = converting.Plan(
             method=method, why=tuple(why), starts=starts, duration_s=duration_s, audio=sound,
             audio_codec=audio_codec, audio_channels=channels, picture=media.video,
-            night=body.night, even=even, height=height,
-            kbps=kbps, tone_map=tone_map, subtitles=drawn, drawn=shown.id if shown else None,
+            night=body.night, even=even, height=height, kbps=kbps, tone_map=tone_map,
+            subtitles=drawn[0], drawn=shown.id if shown else None, parts=parts,
         )  # fmt: skip
-        task = asyncio.ensure_future(first) if first is not None else None
+        task = asyncio.ensure_future(_all_of(jobs)) if jobs else None
         label = app_of(body, request)
         before = ctx.plays.before(user_id, e.key, client, STEP_S)
         again = ctx.plays.before(user_id, e.key, client) is not None
@@ -1313,10 +1375,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             user_id=user_id, user=name, sign_in=sign_in,
             entry=e, media=media, path=path, plex=stream, client=client, away=away_, app=label,
             tag=tag,
+            # (Subtitle files of their own, shown beside it: not of a copy that
+            # joins several files, whose times are the first one's.)
             subtitles={
                 t.id: (url, t.codec)
                 for t in media.subtitles
-                if t.external and t.id.isdigit()
+                if t.external and t.id.isdigit() and not media.joined
                 and (url := ctx.library.stream_url(e.key, f"/library/streams/{t.id}"))
             },
         )  # fmt: skip
@@ -1344,7 +1408,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "why": why,
             "audioTrack": sound.id if sound else None,
             "drawnSubtitle": shown.id if shown else None,
-            "chosen": chosen(picked, sound, shown_for(picked, shown, shows, copy=True)),
+            "chosen": chosen(
+                picked, sound, shown_for(picked, shown, shows, copy=True, joined=media.joined)
+            ),
             "leave": f"{here}/leave",
             "resumeMs": resume,
             "durationMs": media.duration_ms or e.duration_ms,
@@ -1434,8 +1500,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         client, tag = device_of(request)
         cap = ctx.away.media_kbps if away_ else None
         instead = instead_of(e, broken, body, dev, cap)
-        media, why = ondemand.choose(usable, dev, body.version, body.maxKbps, cap)
         hls = frozenset(h.strip().lower() for h in body.device.hls)
+        # (A version in several files plays as a copy that joins them.)
+        media, why = ondemand.choose(usable, dev, body.version, body.maxKbps, cap, "ts" in hls)
         # The tracks this person wants (see languages.py), unless the app
         # says which itself: then exactly those, as before. A subtitle chosen
         # for them that the player doesn't show itself is drawn in, as the
@@ -1450,6 +1517,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         capped = media is not None and ondemand.over_cap(media, cap)
         as_it_is = (
             media is not None
+            and not media.joined
             and not capped
             and not (body.subtitle or drawn or body.fit or body.night)
             and (sound is None or not sound.codec or sound.codec in dev.audio)
@@ -1859,6 +1927,37 @@ def too_fast(need: str, cap_kbps: int) -> str:
         "Media away from home, and this app can't take a copy made to fit. Watch it at home, "
         "or update the app."
     )
+
+
+def _matching(track: Track, first: tuple[Track, ...], theirs: tuple[Track, ...]) -> Track | None:
+    """The track of another of a version's files (`theirs`: its tracks of
+    a kind) that stands for `track` of its first (`first`: that file's): the
+    one at its place among those inside the file, or among files of their
+    own. None if it has none there."""
+    mine = [t for t in first if t.external == track.external]
+    place = next((i for i, t in enumerate(mine) if t.id == track.id), None)
+    others = [t for t in theirs if t.external == track.external]
+    return others[place] if place is not None and place < len(others) else None
+
+
+def _audio_map(sound: Track | None, first: tuple[Track, ...], theirs: tuple[Track, ...]) -> str:
+    """How ffmpeg takes a copy's sound track from one of a version's files:
+    the one there like `sound` in its first file (see _matching); by its
+    place among the sound tracks where the file's own aren't known; or else
+    its first."""
+    if sound is None:
+        return "0:a:0?"
+    match = _matching(sound, first, theirs)
+    if match is not None and match.index is not None:
+        return f"0:{match.index}"
+    place = next((i for i, t in enumerate(first) if t.id == sound.id), 0)
+    return "0:a:0?" if theirs else f"0:a:{place}?"
+
+
+async def _all_of(jobs: list[Any]) -> bool:
+    """Whether everything to be done before a copy is made (subtitles read
+    out or fetched) was."""
+    return all(await asyncio.gather(*jobs))
 
 
 def _slow_words(choice: str) -> str:

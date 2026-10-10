@@ -13,13 +13,14 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from . import replacing
-from .broken import CHECK, STAYS, file_key, found_by
+from .broken import CHECK, STAYS, entry_part, file_key, found_by, of_part
+from .catalog import Media
 from .db import Item
 from .ffmpeg import redact
 from .library import LibraryError
 from .playing import cap
 from .playing import station as station_named
-from .plex import Lookups, MediaPart, telling_title
+from .plex import Lookups, telling_title
 from .scanner import quick_check_item, quick_verdict, someone_watching
 from .sources import FIND_AGAIN_S, REMOVED, VERSION_GONE
 
@@ -352,8 +353,8 @@ def _label(entry: dict[str, Any]) -> str:
     return str(entry.get("title") or entry.get("ratingKey"))
 
 
-async def _version_part(ctx: AppContext, key: str, version: str) -> MediaPart | None:
-    """The file a version of a program has now (LibraryError 404 if the
+async def _version_files(ctx: AppContext, key: str, version: str) -> tuple[Media, ...]:
+    """The files a version of a program has now (LibraryError 404 if the
     program's gone; LookupError if the version is, or it's the program's
     first now, and known by its key alone)."""
     entry = await ctx.library.entry(key, details=True)
@@ -362,10 +363,10 @@ async def _version_part(ctx: AppContext, key: str, version: str) -> MediaPart | 
     media = entry.version(version)
     if media is None:
         raise LookupError(version)
-    return MediaPart(media.file, media.part_key, media.size, media.duration_ms)
+    return media.files
 
 
-def _item_for(entry: dict[str, Any], part: MediaPart) -> Item:
+def _item_for(entry: dict[str, Any], part: Media) -> Item:
     """A program on the list that's on no station now (or a version of one
     that isn't the one a station plays), to check its file."""
 
@@ -385,7 +386,7 @@ def _item_for(entry: dict[str, Any], part: MediaPart) -> Item:
         episode=number(entry.get("episode")),
         year=number(entry.get("year")),
         file_path=part.file or entry.get("file"),
-        part_key=part.key,
+        part_key=part.part_key,
         library=str(entry["library"]) if entry.get("library") else None,
     )
 
@@ -423,9 +424,9 @@ async def look_at(
         return CLEARED, {}
     try:
         if version:
-            part = await asyncio.wait_for(_version_part(ctx, key, version), PLEX_WAIT_S)
+            files = await asyncio.wait_for(_version_files(ctx, key, version), PLEX_WAIT_S)
         else:
-            part = await asyncio.wait_for(ctx.library.current_part(key), PLEX_WAIT_S)
+            files = await asyncio.wait_for(ctx.library.current_files(key), PLEX_WAIT_S)
     except LibraryError as e:
         if e.status != 404:
             raise PlexAway(str(e)) from e
@@ -435,19 +436,27 @@ async def look_at(
     except LookupError:
         log.info("Removed %s from the Broken files list: %s", _label(entry), VERSION_GONE)
         return CLEARED, {}
-    if part is None or not part.file:
+    if not files or not files[0].file:
         return (STILL, {}) if everything else None  # Plex has it, with no file
-    old_file, old_size = entry.get("file"), entry.get("fileSize")
-    changed = bool(
-        (old_file and part.file != old_file) or (old_size and part.size and part.size != old_size)
-    )
+    # (The file it's about: of a version in several, the one it says, if
+    # the version still has as many.)
+    was = entry_part(entry)
+    if was is not None and (len(files) != was[1]):
+        part, changed = files[0], True
+    else:
+        part = files[was[0] - 1] if was is not None else files[0]
+        old_file, old_size = entry.get("file"), entry.get("fileSize")
+        changed = bool(
+            (old_file and part.file != old_file)
+            or (old_size and part.size and part.size != old_size)
+        )
     if not changed and (
         not everything or entry.get("problem") == "unsupported" or found_by(entry) in STAYS
     ):
         return None
     # The quick check, of the file Plex has now: a new one, or the same one
     # again.
-    item = (on.by_key.get(key) if not version else None) or _item_for(entry, part)
+    item = (on.by_key.get(key) if not version else None) or _item_for(entry, files[0])
     async with check_turn(ctx):
         verdict, record, resolved = await quick_verdict(
             ctx, item, ctx.db.scan(file_key(entry)), version
@@ -464,13 +473,15 @@ async def look_at(
         )
         return CLEARED, {}
     found: dict[str, Any] = {
-        "reason": redact(f"Check: {verdict.reason}")[:500],
+        "reason": redact(of_part(f"Check: {verdict.reason}", verdict.part))[:500],
         "problem": verdict.result,
         "foundBy": CHECK,
     }
-    if changed:
+    if changed or verdict.part != was:
+        # (Of a version in several files, the one it's about now.)
         found["file"] = resolved.plex_file or part.file
         found["fileSize"] = resolved.size if resolved.size is not None else part.size
+        found["part"], found["parts"] = verdict.part or (None, None)
     return STILL, found
 
 

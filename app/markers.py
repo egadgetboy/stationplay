@@ -171,6 +171,26 @@ def pieces(
     return out
 
 
+def across(
+    stretches: list[tuple[float, float]], starts: list[float]
+) -> list[tuple[int, float, float]]:
+    """`stretches` of a program to play (as `pieces` gives them: where in
+    the program's file, and how long) for a program in several files (a
+    movie on two discs: see catalog.Media) starting at `starts` in it (the
+    first at 0): as (which file, where in it, how long), each stretch split
+    where one file ends and the next begins. The last file runs on as long
+    as it's played."""
+    out: list[tuple[int, float, float]] = []
+    for at, length in stretches:
+        end = at + length
+        while end - at > 1e-6:
+            n = max(i for i, s in enumerate(starts) if s <= at + 1e-6)
+            stop = min(end, starts[n + 1]) if n + 1 < len(starts) else end
+            out.append((n, max(0.0, at - starts[n]), stop - at))
+            at = stop
+    return out
+
+
 def _encode(markers: list[Marker]) -> str:
     return json.dumps([[m.kind, m.start_ms, m.end_ms, m.final] for m in markers])
 

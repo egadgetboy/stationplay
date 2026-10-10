@@ -973,7 +973,11 @@ def test_a_copy_left_by_an_app_gone_without_leaving(tmp_path, monkeypatch):
     assert sessions.find(session.id) is None and copy.stopped
 
 
-def test_a_movie_in_several_files_plays_its_first(app, plex, caplog):
+def test_a_movie_in_several_files_plays_as_one(app, plex, caplog):
+    """As one program, the whole of it: a copy that joins its files (an
+    app that takes copies), its length all of them, and watched by the
+    whole; an app that doesn't take copies is told why it can't. Nothing
+    names its files. (Real ffmpeg: see test_e2e_parts.py.)"""
     caplog.set_level("INFO")
     plex.add_movie("303", "Long Movie", "/films/cd1.mkv", 180 * MINUTE, section="2")
     streams = [{"id": 3031, "streamType": 1, "codec": "h264", "width": 1920, "height": 1080,
@@ -985,23 +989,28 @@ def test_a_movie_in_several_files_plays_its_first(app, plex, caplog):
             {"key": "/library/parts/303/1/file.mkv", "file": "/films/cd1.mkv",
              "duration": 100 * MINUTE, "size": 1000, "Stream": streams},
             {"key": "/library/parts/303/2/file.mkv", "file": "/films/cd2.mkv",
-             "duration": 80 * MINUTE, "size": 1000},
+             "duration": 80 * MINUTE, "size": 1000, "Stream": streams},
         ],
     }]}  # fmt: skip
-    plex.files["303"] = b"part one" * 100
     with TestClient(app) as home:
         shared(home)
-        played = play(home, "303").json()
-        assert played["method"] == "direct" and played["durationMs"] == 100 * MINUTE
+        played = play(home, "303", PHONE).json()
+        assert played["method"] in ("repackage", "convert") and played["durationMs"] == 180 * MINUTE
+        assert played["why"][0] == "its 2 files, played as one"
         assert [v["playable"] for v in played["versions"]] == [True]
-        assert home.get(played["url"]).content == b"part one" * 100
-        said = "Long Movie (2000) is split into 2 files in Plex; StationPlay's apps play only"
-        assert f"{said} the first" in caplog.text
-        # 90% of what plays (the first file) is watched.
-        watched = report(home, "303", 91 * MINUTE, session=played["session"], sequence=1)
+        listed = home.get(played["url"]).text
+        lengths = [float(x) for x in listed.split("#EXTINF:")[1:] for x in [x.split(",")[0]]]
+        assert abs(sum(lengths) - 180 * 60) < 0.01
+        assert "cd1" not in json.dumps(played) and "cd2" not in json.dumps(played)
+        assert "joining its 2 files" in caplog.text and "cd1.mkv and 1 more" in caplog.text
+        # Past the first file isn't the end: 90% of the whole is watched.
+        kept = report(home, "303", 91 * MINUTE, session=played["session"], sequence=1)
+        assert kept == {"positionMs": 91 * MINUTE, "watched": False}
+        watched = report(home, "303", 163 * MINUTE, session=played["session"], sequence=2)
         assert watched == {"positionMs": 0, "watched": True}
-        copied = play(home, "303", PHONE, night=True).json()
-        assert copied["method"] == "repackage" or copied["method"] == "convert"
+        # An app that doesn't take copies: why it can't, plainly.
+        refused(play(home, "303"), 422)
+        assert play(home, "303").json()["why"] == ["it's in 2 files"]
 
 
 # 2. Odd data, more ---------------------------------------------------------------------------

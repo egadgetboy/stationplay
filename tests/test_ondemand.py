@@ -77,7 +77,11 @@ def test_why_a_device_cant_play_a_file_as_it_is():
         (media(video="hevc", bit_depth=12), ["its 12-bit picture"]),
         (media(video="hevc", dv_profile=5), ["its Dolby Vision profile 5 picture"]),
         (media(audio=(Track("1", "dts", default=True),)), ["its sound's format (DTS)"]),
-        (media(parts=2, container="avi"), ["its file type (AVI)"]),  # (its first file plays)
+        # (A version in several files: each of them, said once.)
+        (
+            media(container="avi", parts=(media(container="avi"), media(container="avi"))),
+            ["its file type (AVI)"],
+        ),
     ]
     for found, why in cases:
         assert ondemand.unplayable(found, TV_BOX) == why, found

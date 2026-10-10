@@ -99,14 +99,6 @@ async def gather_all(aws) -> list:
 
 
 @dataclass
-class MediaPart:
-    file: str | None
-    key: str | None
-    size: int | None
-    duration_ms: int | None
-
-
-@dataclass
 class Lookups:
     """What Plex said, kept while going through a list (see find_again):
     shows' episodes by key, and shows and movies by title."""
@@ -1014,15 +1006,16 @@ class PlexClient:
                 },
             )
             for m in data.get("Metadata") or []:
-                part = first_part(m)
-                if part and part.file:
-                    out.append(part.file)
+                first = _first_file(m)
+                if first is not None and first[0]:
+                    out.append(first[0])
             if len(out) >= most:
                 break
         return out
 
-    async def current_part(self, rating_key: str) -> MediaPart | None:
-        """The file Plex currently has for an item.
+    async def current_files(self, rating_key: str) -> tuple[Media, ...]:
+        """The files Plex has for a program now (its first version's: one,
+        or a movie on two discs' two), in order; () if it has none.
 
         Asked at play time so a file Sonarr/Radarr upgraded or renamed is
         found without rebuilding the channel.
@@ -1030,8 +1023,8 @@ class PlexClient:
         data = await self._get(f"/library/metadata/{rating_key}")
         metadata = data.get("Metadata", [])
         if not metadata:
-            return None
-        return first_part(metadata[0])
+            return ()
+        return files_of(metadata[0])
 
     # For StationPlay's apps (see docs/on-demand.md) -------------------------
 
@@ -1245,7 +1238,7 @@ def to_entry(m: dict[str, Any], section: str = "", details: bool = False) -> Ent
     library = str(m.get("librarySectionID") or section or "")
     show_key = str(m.get("grandparentRatingKey") or "") if episode else ""
     media = tuple(to_media(m)) if details and kind != catalog.SHOW else ()
-    part = first_part(m) if kind != catalog.SHOW else None
+    first = _first_file(m) if kind != catalog.SHOW else None
     intro = credits = None
     if details and episode:  # (movies have no Skip buttons)
         intro, credits = _skips(duration, m.get("Marker"), [x.duration_ms for x in media])
@@ -1274,7 +1267,7 @@ def to_entry(m: dict[str, Any], section: str = "", details: bool = False) -> Ent
         credits=credits,
         media=media,
         sort_title=str(m.get("titleSort") or ""),
-        file=part.file if part is not None and isinstance(part.file, str) else "",
+        file=(first[0] or "") if first is not None else "",
         tagline=str(m.get("tagline") or "") if details else "",
         cast=_roles(m) if details else (),
         directors=_names(m, "Director") if details else (),
@@ -1378,43 +1371,125 @@ def _skips(
 
 
 def to_media(m: dict[str, Any]) -> list[Media]:
-    """The versions of a program's file, as Plex describes them."""
+    """The versions of a program's file, as Plex describes them. A version
+    Plex has in several files (its stacked parts: "cd1" and "cd2") has
+    each in `parts`, in order, with its own length (None where Plex doesn't
+    say: it's probed) and, when Plex was asked about the program alone,
+    what it holds; its own length and size are theirs together."""
     out = []
     for media in _each(m.get("Media")):
         if not isinstance(media, dict):
             continue
         parts = [p for p in _each(media.get("Part")) if isinstance(p, dict)]
-        part = parts[0] if parts else {}
-        streams = [s for s in _each(part.get("Stream")) if isinstance(s, dict)]
-        video = next((s for s in streams if s.get("streamType") == 1), {})
-        trc = str(video.get("colorTrc") or "").lower()
-        hdr = catalog.HDR10 if trc == "smpte2084" else catalog.HLG if trc == "arib-std-b67" else ""
-        dv = (_int(video.get("DOVIProfile")) or 0) if video.get("DOVIPresent") else None
+        if len(parts) <= 1:
+            out.append(_file(media, parts[0] if parts else {}, alone=True))
+            continue
+        files = [_file(media, p, alone=False) for p in parts]
+        sizes = [f.size for f in files]
         out.append(
-            Media(
-                container=catalog.container(part.get("container") or media.get("container")),
-                video=catalog.video_codec(video.get("codec") or media.get("videoCodec")),
-                width=_int(video.get("width")) or _int(media.get("width")) or 0,
-                height=_int(video.get("height")) or _int(media.get("height")) or 0,
-                bit_depth=_int(video.get("bitDepth")) or 8,
-                hdr=hdr,
-                dv_profile=dv,
-                bitrate_kbps=_int(media.get("bitrate")),
-                parts=max(1, len(parts)),
-                file=part.get("file") if isinstance(part.get("file"), str) else None,
-                part_key=part.get("key") if isinstance(part.get("key"), str) else None,
-                size=_int(part.get("size")),
-                duration_ms=_int(part.get("duration")) or _int(media.get("duration")),
+            dataclasses.replace(
+                files[0],
                 id=str(media.get("id") or ""),
-                audio=tuple(
-                    _track(s, catalog.audio_codec) for s in streams if s.get("streamType") == 2
-                ),
-                subtitles=tuple(
-                    _track(s, catalog.subtitle_codec) for s in streams if s.get("streamType") == 3
-                ),
+                duration_ms=_length(media, parts),
+                size=sum(n for n in sizes if n) if all(sizes) else None,
+                parts=tuple(files),
             )
         )
     return out
+
+
+def _length(media: dict[str, Any], parts: list[dict[str, Any]]) -> int | None:
+    """A version's length: of one in one file, the file's (or else Plex's
+    for the version); of one in several, Plex's for the version, or else
+    theirs together, if each says."""
+    lengths = [_part_length(p) for p in parts]
+    said = _int(media.get("duration"))
+    if len(parts) <= 1:
+        return (lengths[0] if lengths else None) or said
+    return said or (sum(n for n in lengths if n) if all(lengths) else None)
+
+
+def _part_length(part: dict[str, Any]) -> int | None:
+    length = _int(part.get("duration"))
+    return length if length and length > 0 else None
+
+
+def _first_file(m: dict[str, Any]) -> tuple[str | None, str | None, int | None] | None:
+    """Of a program's first version (the one a station plays): its first
+    file's path and Plex's address for it, and the version's length (all of
+    its files'); None if Plex lists no file of it. (For lists: quicker than
+    reading all it holds, as to_media does.)"""
+    for media in _each(m.get("Media")):
+        if not isinstance(media, dict):
+            continue
+        parts = [p for p in _each(media.get("Part")) if isinstance(p, dict)]
+        if not parts:
+            return None
+        file = parts[0].get("file")
+        return (
+            file if isinstance(file, str) else None,
+            _part_key(parts[0].get("key")),
+            _length(media, parts),
+        )
+    return None
+
+
+def _file(media: dict[str, Any], part: dict[str, Any], alone: bool) -> Media:
+    """One of a version's files (Plex's Part), as a version is described:
+    the version's own details (Plex's Media) where the file says nothing.
+    `alone`: it's the version's only file, so it's the version (its ID and
+    length are the version's)."""
+    streams = [s for s in _each(part.get("Stream")) if isinstance(s, dict)]
+    video = next((s for s in streams if s.get("streamType") == 1), {})
+    trc = str(video.get("colorTrc") or "").lower()
+    hdr = catalog.HDR10 if trc == "smpte2084" else catalog.HLG if trc == "arib-std-b67" else ""
+    dv = (_int(video.get("DOVIProfile")) or 0) if video.get("DOVIPresent") else None
+    return Media(
+        container=catalog.container(part.get("container") or media.get("container")),
+        video=catalog.video_codec(video.get("codec") or media.get("videoCodec")),
+        width=_int(video.get("width")) or _int(media.get("width")) or 0,
+        height=_int(video.get("height")) or _int(media.get("height")) or 0,
+        bit_depth=_int(video.get("bitDepth")) or 8,
+        hdr=hdr,
+        dv_profile=dv,
+        bitrate_kbps=_int(media.get("bitrate")),
+        file=part.get("file") if isinstance(part.get("file"), str) else None,
+        part_key=_part_key(part.get("key")),
+        size=_int(part.get("size")),
+        duration_ms=_length(media, [part]) if alone else _part_length(part),
+        id=str(media.get("id") or "") if alone else "",
+        audio=tuple(_track(s, catalog.audio_codec) for s in streams if s.get("streamType") == 2),
+        subtitles=tuple(
+            _track(s, catalog.subtitle_codec) for s in streams if s.get("streamType") == 3
+        ),
+    )
+
+
+def _part_key(key: Any) -> str | None:
+    """Plex's address for a file, as it's asked for it (see stream_url),
+    only if it's one: a path on Plex ("/library/parts/..."), so the token
+    sent with it never goes anywhere else."""
+    if not isinstance(key, str) or not key.startswith("/") or key.startswith("//"):
+        return None
+    return None if re.search(r"[\s\\?#]", key) else key
+
+
+def first_version(m: dict[str, Any]) -> Media | None:
+    """A program's first version (the one a station plays), if Plex lists
+    a file of it."""
+    for media in _each(m.get("Media")):
+        if isinstance(media, dict):
+            if not any(isinstance(p, dict) for p in _each(media.get("Part"))):
+                return None
+            return to_media({"Media": [media]})[0]
+    return None
+
+
+def files_of(m: dict[str, Any]) -> tuple[Media, ...]:
+    """The files of a program's first version, in order; () if Plex lists
+    none."""
+    version = first_version(m)
+    return version.files if version is not None else ()
 
 
 def _track(s: dict[str, Any], codec: Callable[[str | None], str]) -> Track:
@@ -1568,27 +1643,14 @@ def resolution(m: dict[str, Any]) -> str | None:
     return None
 
 
-def first_part(m: dict[str, Any]) -> MediaPart | None:
-    for media in _each(m.get("Media")):
-        for part in _each(media.get("Part") if isinstance(media, dict) else None):
-            if not isinstance(part, dict):
-                continue
-            return MediaPart(
-                file=part.get("file"),
-                key=part.get("key"),
-                size=part.get("size"),
-                duration_ms=part.get("duration") or media.get("duration"),
-            )
-    return None
-
-
 def to_item(m: dict[str, Any]) -> Item | None:
     """Converts Plex metadata into a playlist item, or None if unusable."""
     kind = m.get("type")
     if kind not in ("episode", "movie"):
         return None
-    part = first_part(m)
-    duration = m.get("duration") or (part.duration_ms if part else None)
+    first = _first_file(m)
+    # (A movie in several files: all of them, as Plex's own length is.)
+    duration = m.get("duration") or (first[2] if first else None)
     if not duration or duration < 1000:
         return None
     season = m.get("parentIndex")
@@ -1610,8 +1672,8 @@ def to_item(m: dict[str, Any]) -> Item | None:
         episode=m.get("index") if kind == "episode" else None,
         year=m.get("year"),
         summary=m.get("summary"),
-        file_path=part.file if part else None,
-        part_key=part.key if part else None,
+        file_path=first[0] if first else None,
+        part_key=first[1] if first else None,
         rating=str(m.get("contentRating") or "") or None,
         library=str(m.get("librarySectionID") or "") or None,
     )

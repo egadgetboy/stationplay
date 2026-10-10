@@ -772,10 +772,32 @@ def needs_dolby_vision(media: Media) -> bool:
     return profile == 5 or (profile == 0 and not media.hdr)
 
 
-def unplayable(media: Media, dev: Device) -> list[str]:
+def unplayable(media: Media, dev: Device, joins: bool = True) -> list[str]:
     """Why a device can't play a version of a file as it is, in words ([]:
-    it can). What the library didn't say isn't held against it. (A version
-    in several files plays its first: see applibrary.py.)"""
+    it can). What the library didn't say isn't held against it. A version in
+    several files (see catalog.Media) is said of each of them; it plays as
+    one only as a copy that joins them, for an app that takes one (`joins`:
+    otherwise, that's why it can't)."""
+    why = [] if joins or not media.joined else [in_files(media)]
+    for found in media.files:
+        why += [w for w in _unplayable_file(found, dev) if w not in why]
+    return why
+
+
+def in_files(media: Media) -> str:
+    """Why a version in several files can't play as it is, for an app that
+    doesn't take copies: "it's in 2 files"."""
+    return f"it's in {len(media.parts)} files"
+
+
+def joined_why(media: Media) -> str:
+    """Why a copy of a version in several files is made, as its `why` says
+    it: "its 2 files, played as one"."""
+    return f"its {len(media.parts)} files, played as one"
+
+
+def _unplayable_file(media: Media, dev: Device) -> list[str]:
+    """unplayable's work, for one file."""
     why = []
     if media.container and media.container not in dev.containers:
         why.append(f"its file type ({label(media.container)})")
@@ -853,6 +875,7 @@ def choose(
     version: str | None = None,
     max_kbps: int | None = None,
     cap_kbps: int | None = None,
+    joins: bool = True,
 ) -> tuple[Media | None, list[str]]:
     """The version of a program's file to play as it is on a device: the one
     asked for; or else the best the device can play that the connection
@@ -861,15 +884,16 @@ def choose(
     (`cap_kbps`), only those within it, or with none within it, the smallest
     (which is then converted down to fit: see applibrary.py). None, and why
     not, if it can't play any. A version that's gone counts as not asked
-    for."""
+    for. (A version in several files plays as a copy that joins them, for
+    an app that takes one: `joins`.)"""
     asked = next((m for m in entry.media if version and m.id == version), None)
     if asked is not None:
-        why = unplayable(asked, dev)
+        why = unplayable(asked, dev, joins)
         return (asked, []) if not why else (None, why)
     first_why: list[str] = []
     playable = []
     for media in best_first(entry.media):
-        why = unplayable(media, dev)
+        why = unplayable(media, dev, joins)
         if why:
             first_why = first_why or why
         else:
@@ -964,13 +988,10 @@ def track_name(track: Track, audio: bool) -> str:
 
 def length_of(entry: Entry, media: Media | None = None) -> int | None:
     """How long a program is as it plays: the version playing (`media`), if
-    it's known; a movie in several files plays its first (see applibrary.py),
-    so it's that file's length; otherwise its own."""
+    it's known (a movie in several files plays them all, as one); otherwise
+    its own."""
     if media is not None and media.duration_ms:
         return media.duration_ms
-    best = next(iter(best_first(entry.media)), None)
-    if best is not None and best.parts > 1 and best.duration_ms:
-        return best.duration_ms
     return entry.duration_ms
 
 

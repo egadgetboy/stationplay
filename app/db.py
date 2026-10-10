@@ -1524,6 +1524,18 @@ class Database:
             ).fetchone()
         return _scan_record(row) if row else None
 
+    def part_records(self, key: str) -> list[tuple[int, str]]:
+        """The records of a version's files after its first (see
+        broken.part_key): (which file, its record's key), in order."""
+        prefix = f"{key}/part"
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT rating_key FROM scans WHERE rating_key >= ? AND rating_key < ?",
+                (prefix, f"{key}/paru"),  # (by the key's index: those starting with it)
+            ).fetchall()
+        found = [(r["rating_key"][len(prefix) :], r["rating_key"]) for r in rows]
+        return sorted((int(n), k) for n, k in found if n.isdigit())
+
     def save_quick(self, record: ScanRecord) -> None:
         """Saves a quick check's result, leaving a deep scan's progress on
         the same file as it is (one may have moved on meanwhile)."""

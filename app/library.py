@@ -21,9 +21,9 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .catalog import Entry
+    from .catalog import Entry, Media
     from .db import Item
-    from .plex import Lookups, MediaPart, PlexClient
+    from .plex import Lookups, PlexClient
 
 
 class LibraryError(Exception):
@@ -146,10 +146,11 @@ class Library:
 
     # Playing ---------------------------------------------------------------
 
-    async def current_part(self, key: str) -> MediaPart | None:
-        """The file a program has now (None: the library has it, without a
-        file)."""
-        return await self._plex_for(key).current_part(key)
+    async def current_files(self, key: str) -> tuple[Media, ...]:
+        """The files a program has now, in order: one, or several for a
+        movie on two discs, say, played one after the other as one (see
+        catalog.Media); () if the library has it without a file."""
+        return await self._plex_for(key).current_files(key)
 
     def stream_url(self, key: str, part_key: str) -> str | None:
         """An address to stream a program's file from, for when StationPlay

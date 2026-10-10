@@ -52,8 +52,11 @@ library layer it builds on is in `docs/library.md`.
   file, the stations' and Media's: the checks reach Media, trouble playing
   a file has it checked, what's broken doesn't play, and people report
   problems from a list (see Files that don't play).
+- **1.30.2:** a movie in several files played as one: its length all of
+  them, with resume, progress, seeking, Up next and watched across the
+  whole (see A movie in several files).
 - **Later:** fragmented MP4 copies, so Apple's player can have an HEVC
-  picture as it is; a movie in several files played as one.
+  picture as it is.
 
 The `features` an app sees (`GET /api/v1/server`) say what this server
 offers where the app is: `library` once a library is shared, at home (and
@@ -233,12 +236,6 @@ track, or a smaller version). A device is an app's sign-in, or while
 signing in is off, its address. Every refusal is a status with `detail`, a
 sentence the apps show as it is.
 
-A movie in several files (Plex's stacked parts) plays its first file, as it
-is or as a copy, and the log says so; its length, for watched, is that
-file's. Playing the parts one after another as one is left for later: it
-would take a copy for every device, and a new way of making copies, where
-playing the first file as it is is sure.
-
 `/play/<session>/…` addresses need no sign-in (a player can't sign in):
 the session ID, 32 random characters (192 bits, from `secrets`), is what
 lets the player in, as the `/hls/k/` keys do. The file comes from where
@@ -256,6 +253,67 @@ A session counts as a device watching, for the Admin's limits (see
 allow is answered 503 with `limit` and `most`, as for stations. It also
 counts as someone watching for StationPlay's file checks, which wait while
 anyone watches, a station or Media (see below).
+
+## A movie in several files
+
+Plex keeps some movies as several files, one version stacked from them
+("Movie-cd1.mkv", "Movie-cd2.mkv"; "part 1", "part 2"). From 1.30.2 such a
+movie plays as one program, on the stations and in Media; before, only its
+first file played (on a station, black filled the rest of its time).
+
+- **Reading it.** Wherever StationPlay reads a version's file from Plex, it
+  keeps every file, in order, each with its own length (Plex's; where Plex
+  doesn't say, the file's own, found by opening it), and the whole
+  (`catalog.Media.parts`). A version in one file is read as before.
+- **The apps get one program.** Its `durationMs` is the whole; resume,
+  progress, seeking, Up next and watched (90% of the whole) work across it,
+  in the movie's own time; nothing an app receives names a file, or says
+  how many there are, but the copy's `why`.
+- **How it plays: a copy that joins the files.** A player plays one address,
+  so for an app that takes copies (`device.hls`), the server serves an HLS
+  copy (see Copies) whose playlist lists the whole movie, each file's
+  pieces after the one before's (none spans two), with the movie's own
+  times throughout, so the player sees one program and seeks anywhere in
+  it. It's **repackaged** when every file's picture is the same (format,
+  size, bit depth, HDR) and the device plays it, so nothing is converted
+  and it costs next to nothing; otherwise (the files' pictures differ, or
+  the device can't play them) it's **converted**, one picture for all of
+  them. The sound is copied when it's alike in every file and the device
+  plays it, and made again otherwise. Each file's pieces are made by runs
+  of ffmpeg of their own, the next file's run starting as one reaches its
+  file's end, and the pieces carry straight on (their times, and the MPEG-TS
+  stream's counters), so the player sees no join. Started from `startMs`
+  inside a later file, the copy is made from there, without reading the
+  files before it. Its `why` starts with "its 2 files, played as one".
+- **Why this way.** It's the one way that works for the apps as they are
+  (StationPlay for Android 0.3.2, Apple 0.2.0, Roku 0.5.0), which play one
+  address: their players already take copies, so they need nothing new.
+  The alternatives were worse: the apps playing the files one after
+  another (each app changed, a pause at the join, and resume and progress
+  split between files); a file joined on the fly (MKV and MP4 files can't
+  be joined end to end, and a joined container would have to be built as
+  it plays); or ffmpeg's concat demuxer as one input (it breaks where the
+  files' formats differ, which then needs this anyway). Repackaging keeps
+  the picture as it is, so a movie whose files are alike (nearly all)
+  plays at its full quality, at almost no cost.
+- **What it costs.** A copy for every device, where a movie in one file
+  might play as it is: so sound passed as it is to a receiver (Dolby
+  Atmos, DTS) comes as 5.1 or stereo, as for any copy. Subtitles in the
+  files, or subtitle files of their own, are drawn into the picture (each
+  file's own track, at the same place among its tracks: none, for a file
+  without one), as a subtitle file beside the copy would match only one
+  of the files. A converted one counts against the copies converted at
+  once.
+- **An app that doesn't take copies** (no `device.hls`) can't play one as
+  one: it's answered 422, with `why` ["it's in 2 files"] and the usual
+  sentence (another version in one file plays instead, if there is one it
+  plays as it is).
+- **Its files are checked** as every file is: each of them, in order, by the
+  quick check and the deep scan, each with a record of its own; a damaged
+  or broken one takes the version off the air (one entry on the Broken
+  files list, which says which: "Check: ..., in part 2 of 3", its times that
+  file's own). Trouble an app has at a place in the movie is checked in the
+  file that place is in.
 
 ## Files that don't play
 
@@ -512,8 +570,8 @@ progress (user_id, rating_key, show_key, position_ms, duration_ms,
 
 - **Watched**: into an episode's closing credits (Plex's marker), or 90%
   of the way through what plays (the version playing: its own length, as
-  versions of a title can differ; a movie in several files plays its first,
-  so it's that file's), whichever comes first. That marks it watched and
+  versions of a title can differ; a movie in several files, all of them),
+  whichever comes first. That marks it watched and
   puts its position back to the start. Watched stays watched while someone
   watches it again.
 - Less than a minute in starts from the beginning next time.
