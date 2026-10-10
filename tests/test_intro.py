@@ -429,10 +429,10 @@ async def test_the_corner_clock_shows_during_programs(tmp_path, monkeypatch):
 
 
 def test_the_clock_tells_the_time_each_frame_airs():
-    text = ff._clock(small(), ff.Watermark(clock="12", clock_at_s=1790773919.5), 1, "top", "left")
+    text = ff._clock(small(), ff.Watermark(clock="12", airs_at_s=1790773919.5), 1, "top", "left")
     assert r"%{pts\:localtime\:1790773919.500\:%-I\\\:%M %p}" in text
-    text = ff._clock(small(), ff.Watermark(clock="24", clock_at_s=0), 1, "bottom", "right")
-    assert r"%H\\\:%M" in text and "x=w-tw-" in text and "y=h-th-" in text
+    text = ff._clock(small(), ff.Watermark(clock="24", airs_at_s=0), 1, "bottom", "right")
+    assert r"%H\\\:%M" in text and "x='w-tw-" in text and "y='h-th-" in text
 
 
 @needs_ffmpeg
@@ -441,7 +441,7 @@ def test_the_clock_is_drawn(tmp_path, monkeypatch):
     shots = []
     for clock in (None, "24"):
         mark = (
-            ff.Watermark(clock=clock, clock_at_s=1790773919, position="top-right")
+            ff.Watermark(clock=clock, airs_at_s=1790773919, position="top-right")
             if clock
             else None
         )

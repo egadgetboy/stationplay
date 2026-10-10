@@ -2280,7 +2280,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         if mark is not None and mark.until_s is not None:
             mark = None  # shown only at the start of programs: gone by then
         elif mark is not None and mark.clock:
-            mark = replace(mark, clock_at_s=time.time())
+            mark = replace(mark, airs_at_s=time.time())
         root = ctx.settings.data_dir / "upnext"
         async with previews.turn():
             root.mkdir(parents=True, exist_ok=True)

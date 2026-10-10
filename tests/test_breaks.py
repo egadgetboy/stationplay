@@ -658,7 +658,7 @@ def test_the_corner_logo_goes_in_the_corner_chosen(media):
     for corner in ffm.WATERMARK_POSITIONS:
         text = ffm._watermark(settings, ffm.Watermark(text="Hits", position=corner))[1]
         left, top = corner.endswith("left"), corner.startswith("top")
-        assert (":x=22:" in text) == left and (":y=18" in text) == top, (corner, text)
+        assert (":x='22+" in text) == left and (":y='18+" in text) == top, (corner, text)
 
 
 @needs_ffmpeg
