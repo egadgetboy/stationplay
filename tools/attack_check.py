@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import secrets
+import shutil
 import socket
 import sys
 import time
@@ -132,6 +133,7 @@ async def run(checks: Checks) -> None:
     finally:
         server.should_exit = True
         await task
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _cf(address: str) -> dict[str, str]:
