@@ -19,7 +19,7 @@ If you find it useful, you can [buy me a coffee](https://buymeacoffee.com/egadge
 - [What you need](#what-you-need)
 - [Install](#install): [TrueNAS SCALE](#truenas-scale) · [Docker Compose (Linux, Proxmox, Raspberry Pi)](#docker-compose-linux-proxmox-raspberry-pi) · [Synology](#synology) · [Unraid](#unraid) · [Windows and macOS](#windows-and-macos) · [docker run](#docker-run)
 - [GPU encoding](#gpu-encoding) · [Updating](#updating) · [Backups](#backups) · [How StationPlay reads your files](#how-stationplay-reads-your-files) · [Security and remote access](#security-and-remote-access)
-- [Watch your stations](#watch-your-stations): Plex, Jellyfin, Emby, Kodi and other apps · [StationPlay's own apps](#stationplays-own-apps)
+- [Watch your stations](#watch-your-stations): Plex, Jellyfin, Emby, Kodi and other apps · [StationPlay's own apps](#stationplays-own-apps) · [The apps' license](#the-apps-license)
 - [Reaching StationPlay from outside your home](#reaching-stationplay-from-outside-your-home): a VPN, a reverse proxy, or a Cloudflare Tunnel
 - [First-time setup](#first-time-setup)
 - [Making stations](#making-stations)
@@ -420,6 +420,15 @@ Even sound is on by default. To keep each episode's original sound, such as Dolb
 StationPlay uses the most specific choice: the episode's or movie's, then the show's, then the person's own, then the file's default. It picks sound in their language, never a commentary track when there's another. With subtitles on, it picks their language, preferring a full track over a forced one. With subtitles off, it shows only forced subtitles, for parts in another language.
 
 Subtitles the device can't show are drawn into a copy. If an episode's chosen subtitles are inside its file and the device can show them, the episode plays unchanged instead of with even sound, because a copy carries no subtitles. Someone who hasn't chosen anything gets each file as before. Stations don't use these choices.
+
+### The apps' license
+
+StationPlay and its page are free. A license unlocks StationPlay's apps. Without one, the apps play only the server's first station, for free.
+
+- **What it unlocks.** One license is for one StationPlay server, for life. It unlocks the apps on up to 15 devices linked to that server. Devices are covered in the order they were linked. Plex, Jellyfin and other apps, and StationPlay's page, never count.
+- **Where it is.** On the **Access** tab, at the top, under **License**. An Admin installs a license there by uploading the license file or pasting the license code, then choosing **Install**. An Admin can also install one from an app. **License** lists the linked devices in order, each with **Remove**. Removing one signs it out, and the next device is covered.
+- **The server ID.** Each license is for one server ID, shown under **License** with **Copy**. Give it for support, or to move a license to another server. A backup restored onto new hardware keeps the server ID, and the license with it. A fresh install gets a new ID.
+- **Nothing locks.** StationPlay never locks anything and makes no outside calls for the license. It keeps the license and hands it to the apps, which check it themselves.
 
 ## Reaching StationPlay from outside your home
 
@@ -1292,10 +1301,11 @@ StationPlay is free and open-source software. You're welcome to fork it, change 
 
 ## License
 
-StationPlay is Copyright © 2026 egadgetboy and is licensed under the [GNU General Public License, version 3](LICENSE) (GPL-3.0). In short:
+StationPlay is Copyright © 2026 egadgetboy and is licensed under the [GNU Affero General Public License, version 3](LICENSE) (AGPL-3.0). In short:
 
 - You may use, study, change and share StationPlay, including for profit.
 - If you share StationPlay, changed or not, you must include its source code or offer it, under the same license.
+- If you run a changed StationPlay that other people use over a network, you must offer them its source code too. The **Source** link at the bottom of StationPlay's page is there for this.
 - Keep the copyright and license notices, and mark what you changed.
 - StationPlay comes with no warranty.
 

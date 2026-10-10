@@ -5,7 +5,7 @@
     "description": "StationPlay's API: the server, its stations, their guide and streams, and things an Admin can have it do. Send an API token (made on StationPlay's Access tab) as `Authorization: Bearer <token>`: a Viewer token reads, an Admin token also does what's marked Admin. Version 1 only grows; see docs/api.md.",
     "version": "1",
     "license": {
-      "name": "GPL-3.0-only"
+      "name": "AGPL-3.0-only"
     }
   },
   "paths": {

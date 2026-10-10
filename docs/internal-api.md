@@ -847,6 +847,98 @@ Anyone else gets 403. Lists the current alerts, and those fixed in the last
 | `alerts[].since` | number | When it started |
 | `alerts[].fixed` | number or null | When it was fixed; null while it lasts |
 
+## The server's license
+
+From 1.31.0, a server can have a license. It unlocks StationPlay's apps on
+up to its number of devices (15 for every license sold now). Without one,
+the apps play only the server's first station, for free.
+
+StationPlay never locks anything itself. It keeps the license file, checks
+only that it's well formed and for this server, and hands it to the apps.
+The apps check its signature with the public keys built into them, and
+decide. StationPlay never contacts anything to do this. A license arrives
+only from an app (after a purchase, or restoring one) or an Admin's upload
+on the page.
+
+- **The server's ID.** Made once, at random, when StationPlay first starts,
+  and kept in its database. A backup restored onto new hardware keeps it,
+  and the license with it. A fresh install gets a new one.
+- **The license file** is JSON:
+  `{"payload": "<the payload's JSON, base64url>", "signature": "<its Ed25519
+  signature, base64url>", "key": "<which public key signed it>"}`. The
+  payload is `{"license_id", "server_id", "tier", "device_limit",
+  "issued_at" (seconds since 1970), "format_version" (1)}`, with no expiry.
+- **The license code** is the same file on one line, to paste: `SPL1.`
+  and then the file, base64url.
+- **Devices.** A device is one of StationPlay's apps linked to the server
+  (with a picker: see Linked devices, and Who's tuning in?). Its slot is
+  its place in the order the devices were linked, and the first
+  `device_limit` are covered. Unlinking one frees its slot, and each one
+  after it moves up. Plex, Jellyfin and other tuner apps, StationPlay's
+  page, and an app that doesn't link, never take a slot.
+
+## GET /api/internal/license
+
+For any app signed in (from 1.31.0; while signing in is off, anyone at
+home). Without a sign-in, 401. Says this server's ID, its license file as
+installed, and this device's slot.
+
+| Field | Type | What it is |
+|---|---|---|
+| `serverId` | string | This server's ID |
+| `license` | object or null | The license file, as installed (null: not licensed) |
+| `license.payload` | string | The payload's JSON, base64url |
+| `license.signature` | string | Its Ed25519 signature, base64url |
+| `license.key` | string | Which public key signed it |
+| `device` | object or null | This device's slot (null: not a linked device) |
+| `device.slot` | number | Its place in the order the devices were linked (1 for the first) |
+| `device.linked` | number | How many devices are linked |
+
+## POST /api/internal/license
+
+For an Admin (from 1.31.0; while signing in is off, anyone at home), in
+an app: after buying a license, or to restore one. A User gets 403. Send
+`{"license": "<the license file's text, or the license code>"}`. It
+replaces any license installed before. Answers 400 with a sentence to show
+when it isn't a license, is for another server, or needs a newer
+StationPlay; and 422 for one over 8 KB. The access log shows "Tia installed
+a license for 15 devices (license lic-0001)".
+
+| Field | Type | What it is |
+|---|---|---|
+| `serverId` | string | This server's ID |
+| `license` | object or null | The license installed now, as StationPlay read it (null: none) |
+| `license.licenseId` | string | The license's ID |
+| `license.tier` | string | Its kind, such as `lifetime` |
+| `license.deviceLimit` | number | How many devices it covers |
+| `license.issuedAt` | number | When it was issued, in seconds since 1970 (as in its payload) |
+| `devices` | list | The linked devices, in the order they were linked |
+| `devices[].id` | number | The device's ID |
+| `devices[].name` | string | Its name, such as "StationPlay for Android on Tia's phone" |
+| `devices[].slot` | number | Its place in that order (1 for the first) |
+| `devices[].covered` | boolean | Whether the license covers it (its slot is within `deviceLimit`) |
+| `devices[].linkedMs` | number | When it was linked |
+| `devices[].seenMs` | number | When it was last used |
+
+## DELETE /api/internal/license
+
+For an Admin (from 1.31.0; while signing in is off, anyone at home). A
+User gets 403. Removes the license. The access log shows "Tia removed the
+license". Answers as installing one does, with no license now, so no
+device is covered.
+
+| Field | Type | What it is |
+|---|---|---|
+| `serverId` | string | This server's ID |
+| `license` | object or null | Null: no license now |
+| `devices` | list | The linked devices, in the order they were linked |
+| `devices[].id` | number | The device's ID |
+| `devices[].name` | string | Its name, such as "StationPlay for Android on Tia's phone" |
+| `devices[].slot` | number | Its place in that order (1 for the first) |
+| `devices[].covered` | boolean | Whether the license covers it (its slot is within `deviceLimit`) |
+| `devices[].linkedMs` | number | When it was linked |
+| `devices[].seenMs` | number | When it was last used |
+
 ## Your library
 
 When an Admin shares libraries with the apps (on the **Access** tab, under

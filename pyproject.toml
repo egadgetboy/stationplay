@@ -3,7 +3,7 @@ name = "stationplay"
 version = "1.30.4"
 description = "Custom, always-on TV stations in Plex, built from your own Plex library"
 requires-python = ">=3.11"
-license = "GPL-3.0-only"
+license = "AGPL-3.0-only"
 
 [tool.ruff]
 target-version = "py311"

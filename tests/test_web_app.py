@@ -6,6 +6,7 @@ outside its window."""
 
 from __future__ import annotations
 
+import json
 import re
 import struct
 
@@ -148,7 +149,7 @@ def test_links_to_other_sites_open_outside_the_apps_window():
     # (Links in the page's HTML, and those its script makes.)
     links = re.findall(r"<a\b[^>]*>", PAGE) + re.findall(r"h\('a', \{.*?\}\)", PAGE)
     outside = [a for a in links if re.search(r"""href[=:] ?["'`]https?://""", a)]
-    assert len(outside) >= 2  # (Buy Me a Coffee, and the license)
+    assert len(outside) >= 3  # (Buy Me a Coffee, the license, and the source)
     for a in outside:
         assert re.search(r"""target[=:] ?["']_blank["']""", a), a
         assert re.search(r"""rel[=:] ?["'][^"']*\bnoopener\b""", a), a
@@ -227,3 +228,28 @@ def test_the_users_table_sets_changes_and_removes_pins():
     controls = access.split("function pinControls(", 1)[1].split("\n}\n", 1)[0]
     assert "save({ pin: pin.value.trim() }, 'PIN saved')" in controls
     assert "save({ pin: '' }, 'PIN removed')" in controls
+
+
+def test_the_page_says_its_license_and_offers_its_source(client):
+    """StationPlay is under the GNU AGPL v3 (LICENSE, pyproject.toml, the
+    API's spec): the page's foot says so, with the license's link and a link
+    to StationPlay's source, as the AGPL asks of a program used over a
+    network."""
+    root = WEB_DIR.parent.parent
+    assert (
+        (root / "LICENSE")
+        .read_text()
+        .startswith("GNU AFFERO GENERAL PUBLIC LICENSE\nVersion 3, 19 November 2007\n")
+    )
+    assert 'license = "AGPL-3.0-only"' in (root / "pyproject.toml").read_text()
+    spec = json.loads((root / "docs" / "openapi-v1.json").read_text())
+    assert spec["info"]["license"] == {"name": "AGPL-3.0-only"}
+    foot = client.get("/").text.split('<footer class="foot">', 1)[1].split("</footer>", 1)[0]
+    assert (
+        "© 2026 egadgetboy · Open source under the "
+        '<a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" '
+        'rel="noopener noreferrer">GNU AGPL v3</a> · '
+        '<a href="https://github.com/egadgetboy/stationplay" target="_blank" '
+        'rel="noopener noreferrer">Source</a> · No warranty'
+    ) in foot
+    assert "/gpl-3.0.html" not in PAGE and "GNU GPL" not in PAGE

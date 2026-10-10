@@ -350,7 +350,7 @@ def spec(app: FastAPI) -> dict[str, Any]:
         routes=v1,
         tags=[{"name": ADMIN_TAG, "description": "Needs an Admin token"}],
     )
-    out["info"]["license"] = {"name": "GPL-3.0-only"}
+    out["info"]["license"] = {"name": "AGPL-3.0-only"}
     components = out.setdefault("components", {})
     components["securitySchemes"] = {
         "token": {
