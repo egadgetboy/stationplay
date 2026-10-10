@@ -146,7 +146,7 @@ def test_a_stall_isnt_held_against_the_gpu(monkeypatch, tmp_path, how, events):
 
         async def prepare(it, aspect_mode):
             probe = ff.ProbeResult(ok=True, duration_s=1320.0, audio_index=0)
-            return ResolvedSource("/tv/x.mkv", "/tv/x.mkv", 1), probe, None
+            return bc.Opened(ResolvedSource("/tv/x.mkv", "/tv/x.mkv", 1), probe)
 
         monkeypatch.setattr(b, "_prepare", prepare)
         monkeypatch.setattr(b, "_run_ffmpeg", runs.run)
