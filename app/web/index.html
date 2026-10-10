@@ -6040,7 +6040,9 @@ $('#showOnEveryone').addEventListener('click', async () => {
   const kept = showOn === 'signed-in' ? moving.filter(u => !signsInByName(u)).map(u => u.name) : [];
   const changing = moving.length - kept.length;
   if (!changing) { said.textContent = kept.length ? `Nothing to change.${keptSaid(kept)}` : `Everyone already shows on ${label}.`; return; }
-  if (!confirm(`Change ${peopleCount(changing)} to ${label}?${keepsSaid(kept)}`)) return;
+  // (Picking themselves from a device's list isn't signing in on it.)
+  const then = showOn === 'signed-in' ? ' Each shows on a device once they sign in on it with their password or an invite code.' : '';
+  if (!confirm(`Change ${peopleCount(changing)} to ${label}?${then}${keepsSaid(kept)}`)) return;
   try {
     const got = await api('/api/access/devices/everyone', { method: 'POST', body: { showOn } });
     said.textContent = `Changed ${peopleCount(got.changed)} to ${label}.${keptSaid(got.kept)}`;
@@ -6326,10 +6328,13 @@ $('#addUserForm').addEventListener('submit', async e => {
   $('#addUserHint').textContent = '';
   const first = !me.required;
   await loadMe();
-  // (Someone who can't sign in by name starts on every device at home.)
-  const athome = linked?.default === 'signed-in' && added.showOn === 'home';
+  // Someone who can't sign in by name starts on every device at home; with
+  // only a passcode, their first sign-in on a device takes an invite code.
+  const atHome = linked?.default === 'signed-in' && added.showOn === 'home';
+  const invited = added.showOn === 'signed-in' && !added.hasPassword;
   toast(first ? `Sign-in is on, and you’re signed in as ${name}`
-    : athome ? `${name} is added. With no password or passcode, they show on every device at home.` : `${name} is added`);
+    : atHome ? `${name} is added, on every device at home (no password or passcode)`
+    : invited ? `${name} is added. To sign in on a device, they need an invite code: see Devices.` : `${name} is added`);
   loadAccess();
   loadChannels();
 });

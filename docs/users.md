@@ -177,17 +177,20 @@ or **away from home** (the public port):
 
 New users start where **New people show on**, beside the linked devices,
 says when they're added: Only devices they sign in on, or Every device at
-home. From 1.30.1, it's Only devices they sign in on, unless an Admin chose
-otherwise before, which stays as they chose it.
-Someone who can't sign in by name (no password and no passcode) starts on
-Every device at home instead, rather than on no device at all. Changing it
-doesn't move anyone already added. **Use for everyone**, beside it, does:
-after a confirm that says how many it changes, everyone already added shows
-that way too (and anyone added later). For Only devices they sign in on,
+home. From 1.30.1, it's Only devices they sign in on, unless an Admin
+chose otherwise before, which stays as they chose it. Someone who can't
+sign in by name (no password and no passcode) starts on Every device at
+home instead, rather than on no device at all. Changing it doesn't move
+anyone already added. **Use for everyone**, beside it, does: after a
+confirm that says how many it changes, everyone already added shows that
+way too (and anyone added later). For Only devices they sign in on,
 someone who can't sign in by name is kept as they were, and the page names
-them ("Kept as they were: Kids (no password or passcode)"). The devices an
-Admin chose for someone stay chosen. The access log says "<Admin> set
-everyone to show on <choice>: <n> people changed", and who was kept.
+them ("Kept as they were: Kids (no password or passcode)"); and as picking
+yourself from a picker isn't signing in on its device, the others are on a
+device they used that way again once they sign in on it (the confirm says
+so). The devices an Admin chose for someone stay chosen. The access log
+says "<Admin> set everyone to show on <choice>: <n> people changed", and
+who was kept.
 
 In 1.28.0, everyone on All devices (the household's default until then,
 which everyone added before there were pickers was on too) moved to Devices
