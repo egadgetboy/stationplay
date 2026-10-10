@@ -368,6 +368,17 @@ CREATE TABLE IF NOT EXISTS reports (
 );
 CREATE INDEX IF NOT EXISTS reports_by_state ON reports (state);
 CREATE INDEX IF NOT EXISTS reports_by_day ON reports (day);
+-- Admin alerts (see alerts.py): those going now and those fixed lately,
+-- written as they change, so a restart neither says them again nor loses
+-- them. An alert's ID is its kind, about and since_ms.
+CREATE TABLE IF NOT EXISTS alerts (
+    kind         TEXT    NOT NULL,
+    about        TEXT    NOT NULL DEFAULT '',  -- within its kind (a station's id)
+    since_ms     INTEGER NOT NULL,
+    sentence     TEXT    NOT NULL,
+    fixed_ms     INTEGER,                      -- NULL while it's going
+    PRIMARY KEY (kind, about, since_ms)
+);
 """
 
 Segments = tuple[tuple[int, int], ...]
@@ -2317,6 +2328,60 @@ class Database:
         with self._lock, self._conn:
             self._conn.execute(
                 "DELETE FROM reports WHERE done_ms IS NOT NULL AND done_ms < ?", (done_before_ms,)
+            )
+
+    # Admin alerts (see alerts.py) -------------------------------------------------------
+
+    def kept_alerts(self) -> list[sqlite3.Row]:
+        """The alerts kept: those fixed, the first fixed first, then those
+        going, the oldest first."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT kind, about, since_ms, sentence, fixed_ms FROM alerts "
+                "ORDER BY fixed_ms IS NULL, fixed_ms, since_ms"
+            ).fetchall()
+
+    def keep_alert(
+        self,
+        kind: str,
+        about: str,
+        since_ms: int,
+        sentence: str,
+        fixed_ms: int | None,
+        instead_of_ms: int | None = None,
+    ) -> None:
+        """Keeps an alert as it is now: going, or fixed at `fixed_ms`; in
+        place of the one about the same thing since `instead_of_ms`, if
+        given (it ended, unsaid)."""
+        with self._lock, self._conn:
+            if instead_of_ms is not None:
+                self._conn.execute(
+                    "DELETE FROM alerts WHERE kind = ? AND about = ? AND since_ms = ?",
+                    (kind, about, instead_of_ms),
+                )
+            self._conn.execute(
+                "INSERT INTO alerts (kind, about, since_ms, sentence, fixed_ms) "
+                "VALUES (?, ?, ?, ?, ?) ON CONFLICT (kind, about, since_ms) "
+                "DO UPDATE SET sentence = excluded.sentence, fixed_ms = excluded.fixed_ms",
+                (kind, about, since_ms, sentence, fixed_ms),
+            )
+
+    def forget_alert(self, kind: str, about: str, since_ms: int) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "DELETE FROM alerts WHERE kind = ? AND about = ? AND since_ms = ?",
+                (kind, about, since_ms),
+            )
+
+    def forget_fixed_alerts(self, before_ms: int, keep: int) -> None:
+        """Forgets the alerts fixed before `before_ms`, and all but the
+        `keep` fixed last."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "DELETE FROM alerts WHERE fixed_ms IS NOT NULL AND (fixed_ms < ? OR rowid NOT IN "
+                "(SELECT rowid FROM alerts WHERE fixed_ms IS NOT NULL "
+                "ORDER BY fixed_ms DESC LIMIT ?))",
+                (before_ms, keep),
             )
 
     # Viewing (see stats.py) ---------------------------------------------------

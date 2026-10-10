@@ -511,7 +511,7 @@ class AppContext:
         self.problems = problems.Problems(self.db)
         self.languages = languages.Languages(self.db)
         self.notify = notify.Notify(self.db)
-        self.alerts = alerts.Alerts(self.notify)
+        self.alerts = alerts.Alerts(self.notify, self.db)
         self.access.judge_watching_by(self.viewing.watches_only)
         self.updater = Updater(self)
         self.markers = MarkerFinder(self.db, self.library)

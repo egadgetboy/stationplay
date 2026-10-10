@@ -11,7 +11,8 @@ Restoring never swaps files under a running StationPlay: the backup is
 checked, unpacked into restore/ (and what's in it checked again: see
 main.py), marked ready, and StationPlay restarts (Docker starts it again).
 On the way up, before anything opens the database, the files are moved
-into place, after a backup of what was there before.
+into place, after a backup of what was there before. (Its Admin alerts are
+left out: they were about when it was made. See _forget_alerts.)
 
 Before an update changes the database (a new table or column, or anything
 else Database does to bring one up to date: see db.changes_needed), the
@@ -392,6 +393,7 @@ def _put_in_place(data_dir: Path, staging: Path) -> None:
             copy_database(current, copy)
             _write_zip(folder / f"stationplay-before-restore-{_stamp()}.zip", data_dir, copy)
         prune(folder, "before-restore")
+    _forget_alerts(staging / DB_NAME)
     for suffix in ("-wal", "-shm"):
         (data_dir / (DB_NAME + suffix)).unlink(missing_ok=True)
     os.replace(staging / DB_NAME, current)
@@ -407,6 +409,21 @@ def _put_in_place(data_dir: Path, staging: Path) -> None:
         old.unlink()
     for new in (staging / "logos").glob("upload-*.png"):
         os.replace(new, logos / new.name)
+
+
+def _forget_alerts(path: Path) -> None:
+    """A backup's Admin alerts were about when it was made, not now: they're
+    forgotten as it's put in place (what's still wrong is found, and said,
+    again). One from before they were kept has none."""
+    conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=rw", uri=True)  # (never made here)
+    try:
+        with conn:
+            if conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'alerts'"
+            ).fetchone():
+                conn.execute("DELETE FROM alerts")
+    finally:
+        conn.close()
 
 
 # Every night ---------------------------------------------------------------------
