@@ -341,3 +341,13 @@ def test_what_an_update_would_change_is_found(tmp_path):
     with pytest.raises(sqlite3.OperationalError):
         db.changes_needed(tmp_path / "not-there.db")
     assert not (tmp_path / "not-there.db").exists()
+
+
+def test_a_database_that_cant_be_read_is_left_alone(tmp_path, caplog):
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / backups.DB_NAME).write_bytes(b"not a database at all" * 100)
+    with pytest.raises(SystemExit):
+        client_for(data, plex())
+    assert (data / backups.DB_NAME).read_bytes() == b"not a database at all" * 100
+    assert "couldn't read its database to see whether it needs updating" in caplog.text

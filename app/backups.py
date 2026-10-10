@@ -177,7 +177,11 @@ def before_update(data_dir: Path) -> Path | None:
     try:
         changes = changes_needed(current)
     except sqlite3.Error as e:
-        raise CantBackUp(f"StationPlay couldn't read its database to back it up ({e})") from None
+        raise CantBackUp(
+            f"StationPlay {__version__} couldn't read its database to see whether it needs "
+            f"updating ({e}), so it changed nothing and stopped. Check its data folder's "
+            "stationplay.db, or restore a backup."
+        ) from None
     if not changes:
         return None
     folder = backups_dir(data_dir)
