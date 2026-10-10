@@ -3,15 +3,15 @@
 Starts StationPlay with stand-in data (the tests' stand-in Plex, from
 tests/fakeplex_library.py, with shows, movies and collections; and
 stations, people, a linked device, stats, logs, problems from the apps,
-broken files and a person's report), then, in Playwright's Chromium,
-looks at every tab and every dialog and panel that opens, signed in as an
-Admin and as a User, at each size, light and dark. It saves a screenshot
-of each into a folder (one folder for each size), and says what's wrong
-with each: a page that scrolls sideways, something cut off or sticking out
-of its panel, things on top of each other, text smaller than the page's
-smallest (11px), a tap target smaller than about 40px on a phone or
-tablet, or a dialog that doesn't fit the screen. It's a tool, not a test:
-the tests don't run it.
+broken files and a person's report, and Admin alerts kept from before it
+last stopped), then, in Playwright's Chromium, looks at every tab and
+every dialog and panel that opens, signed in as an Admin and as a User, at
+each size, light and dark. It saves a screenshot of each into a folder
+(one folder for each size), and says what's wrong with each: a page that
+scrolls sideways, something cut off or sticking out of its panel, things
+on top of each other, text smaller than the page's smallest (11px), a tap
+target smaller than about 40px on a phone or tablet, or a dialog that
+doesn't fit the screen. It's a tool, not a test: the tests don't run it.
 
     pip install playwright pillow       (and: python -m playwright install chromium)
     python tools/page_sizes.py /tmp/page-sizes
@@ -48,7 +48,7 @@ from app import jobs, scanner, stats  # noqa: E402
 from app import main as server  # noqa: E402
 from app.broadcaster import Viewer  # noqa: E402
 from app.config import Settings  # noqa: E402
-from app.db import Item  # noqa: E402
+from app.db import Database, Item  # noqa: E402
 from app.plex import PlexClient  # noqa: E402
 from tests.fakeplex_library import LibraryPlex  # noqa: E402
 from tests.helpers import Proxy  # noqa: E402
@@ -217,6 +217,28 @@ class Running:
     def stop(self) -> None:
         self.server.should_exit = True
         self.thread.join(10)
+
+
+def kept_from_before(data: Path) -> None:
+    """Admin alerts kept from before StationPlay last stopped, as it finds
+    them when it starts (see alerts.py): the clock off since three hours
+    ago, still going (the stand-in Plex doesn't say the time, so it stays),
+    and the data folder's space, fixed an hour ago."""
+    now = int(time.time() * 1000)
+    db = Database(data / "stationplay.db")
+    db.keep_alert(
+        "clock", "", now - 3 * 3600_000,
+        "StationPlay's clock is 7 minutes ahead of Plex's. The guide and the stations' clocks "
+        "go by it: check the date and time on this server (and on Plex's, if it runs elsewhere).",
+        None,
+    )  # fmt: skip
+    db.keep_alert(
+        "data-full", "", now - 5 * 3600_000,
+        "StationPlay's data folder has only 1.4 GB free (1% of its disk). Free up room on its "
+        "disk, or StationPlay can't keep stations, backups and settings.",
+        now - 3600_000,
+    )  # fmt: skip
+    db.close()
 
 
 def fill(sp: Running, data: Path) -> None:
@@ -831,6 +853,7 @@ def main() -> None:
     said: list[str] = []
     with tempfile.TemporaryDirectory() as tmp:
         data = Path(tmp) / "data"
+        kept_from_before(data)
         sp = Running(data, library())
         try:
             print(f"StationPlay is at {sp.home} (and {sp.internet} for the internet)")

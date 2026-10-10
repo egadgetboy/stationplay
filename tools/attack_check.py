@@ -28,8 +28,13 @@ away said plainly, changing nothing); converted
 copies on request (never of what a level hides, within the limit however
 many ask at once); no file names in anything the apps receive; problems
 sent later with their journals (only an Admin reads one, kept as text and
-bounded, a backlog within the limits); and the copies of the database
-made before an update (never downloadable).
+bounded, a backlog within the limits); the copies of the database
+made before an update (never downloadable); and Admin alerts kept across
+restarts (whatever a sentence holds, kept and given back as it was; never
+brought back by a backup, a forged one included; never stopped by a
+database that can't be written; only so many fixed ones kept however many
+come) and the corner mark's drift (only numbers, drawing whatever the
+clock says).
 
 It's a tool, not part of CI (the test suite covers these as unit tests). Run
 it from the repo root:  python -m tools.attack_check   (add -v to see every
@@ -43,12 +48,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import json
 import secrets
 import shutil
 import socket
+import sqlite3
+import subprocess
 import sys
+import tempfile
 import time
+import zipfile
 from pathlib import Path
 
 # The stand-in Plex and library live beside the tests; make them importable
@@ -58,9 +68,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import httpx
 import uvicorn
 
-from app import access, applibrary, problems, scanner
+from app import access, alerts, applibrary, backups, problems, scanner
+from app import ffmpeg as ff
 from app.config import Settings
-from app.db import Item
+from app.db import Database, Item
 from app.main import create_app
 from app.plex import PlexClient
 from tests.fakeplex_library import LibraryPlex
@@ -477,6 +488,10 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
     await _no_file_names(checks, home, admin_h)
     await _problems_sent_later(checks, app, home, net, admin_h, sam_h, kit_h)
     await _copies_before_updates(checks, app, home, admin_h)
+
+    # 20) From 1.30.3: alerts kept across restarts, and the corner mark's drift.
+    await _kept_alerts(checks, app, home, admin_h)
+    await asyncio.to_thread(_drift, checks)
 
 
 async def _media_away(
@@ -1528,6 +1543,127 @@ async def _copies_before_updates(checks: Checks, app, home: str, admin_h: dict) 
             checks.ok(r.status_code == 404 and b"sign-ins" not in r.content,
                       f"an Admin can't download {name[:40]}", f"got {r.status_code}")  # fmt: skip
     copy.unlink()
+
+
+class _Told:
+    """Stands in for the web address alerts go to, as StationPlay starts."""
+
+    def __init__(self) -> None:
+        self.said: list[tuple] = []
+
+    def send(self, *said) -> None:
+        self.said.append(said)
+
+
+async def _kept_alerts(checks: Checks, app, home: str, admin_h: dict) -> None:
+    """Admin alerts kept in the database, and StationPlay starting again on
+    it (a second Alerts on the same database, as a restart makes)."""
+    checks.section("Alerts kept across restarts")
+    ctx = app.state.ctx
+    odd = "Backups');DROP TABLE alerts;--<script>alert(1)</script>\n%s {0} \u202e are failing."
+    ctx.alerts.start("backups", odd)
+    told = _Told()
+    again = alerts.Alerts(told, Database(ctx.db.path))  # type: ignore[arg-type]
+    restored = [a.sentence for a in again.now() if a.kind == "backups"]
+    checks.ok(restored == [odd] and not told.said,
+              "whatever a sentence holds, it's kept and given back as it was, unsent",
+              f"{restored} {told.said}")  # fmt: skip
+    async with httpx.AsyncClient(base_url=home) as c:
+        r = await c.get("/api/internal/alerts", headers=admin_h)
+        checks.ok(odd in [a["sentence"] for a in r.json().get("alerts", [])],
+                  "and the apps are given it as it is (as text)")  # fmt: skip
+    again.db.close()
+    ctx.alerts.fix("backups", "The attack check's backups are working.")
+
+    # A database that can't be written (a disk gone read-only): alerts go on.
+    with ctx.db._lock:
+        ctx.db._conn.execute("PRAGMA query_only = ON")
+    try:
+        ctx.alerts.start("data-full", "The attack check's disk is full.")
+        going = [a.sentence for a in ctx.alerts.now()]
+    finally:
+        with ctx.db._lock:
+            ctx.db._conn.execute("PRAGMA query_only = OFF")
+    checks.ok("The attack check's disk is full." in going,
+              "an alert that can't be kept is still said")  # fmt: skip
+    ctx.alerts.fix("data-full", "The attack check's disk has room.")
+    kept = [r["sentence"] for r in ctx.db.kept_alerts()]
+    checks.ok("The attack check's disk is full." in kept,
+              "and kept once the database can be written again", kept)  # fmt: skip
+
+    # A flood of them: only so many fixed ones are kept, however many come.
+    for n in range(alerts.FIXED_MOST * 3):
+        ctx.alerts.start("station", f"Station {n} keeps failing.", f"flood{n}")
+        ctx.alerts.fix("station", f"Station {n} plays.", f"flood{n}")
+    fixed = [r for r in ctx.db.kept_alerts() if r["fixed_ms"] is not None]
+    checks.ok(len(fixed) <= alerts.FIXED_MOST, "a flood keeps only so many fixed alerts",
+              f"{len(fixed)} kept")  # fmt: skip
+
+    # A backup restored never brings alerts back: a forged one in it included.
+    ctx.alerts.start("plex", "The attack check's Plex is away.")
+    listed, kept, told = await asyncio.to_thread(_restore_forged_backup, ctx)
+    checks.ok(listed == [] and kept == [] and not told,
+              "a restored backup brings no alerts back, a forged one included", listed)  # fmt: skip
+    ctx.alerts.fix("plex", "The attack check's Plex is back.")
+
+
+def _restore_forged_backup(ctx) -> tuple[list, list, list]:
+    """A backup of StationPlay now (an alert going), with a forged alert
+    added, restored into another data folder: what the alerts are once it
+    starts there (listed, kept, sent)."""
+    made = backups.make_backup(ctx)
+    forged = io.BytesIO()
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        with zipfile.ZipFile(made) as z:
+            z.extractall(folder)
+        conn = sqlite3.connect(folder / backups.DB_NAME)
+        with conn:
+            conn.execute("INSERT INTO alerts (kind, about, since_ms, sentence) VALUES "
+                         "('outside', '', 1, '<img src=x onerror=alert(1)> Forged.')")  # fmt: skip
+        conn.close()
+        with zipfile.ZipFile(forged, "w") as z:
+            for path in folder.rglob("*"):
+                if path.is_file():
+                    z.write(path, path.relative_to(folder).as_posix())
+        elsewhere = folder / "elsewhere"
+        elsewhere.mkdir()
+        backups.stage_restore(elsewhere, forged.getvalue())
+        backups.tidy_staged_stations(elsewhere)
+        backups.mark_ready(elsewhere)
+        backups.apply_staged_restore(elsewhere)
+        restored_db = Database(elsewhere / backups.DB_NAME)
+        told = _Told()
+        restored = alerts.Alerts(told, restored_db)  # type: ignore[arg-type]
+        found = ([a.sentence for a in restored.listed()], restored_db.kept_alerts(), told.said)
+        restored_db.close()
+    made.unlink()
+    return found
+
+
+def _drift(checks: Checks) -> None:
+    """The corner mark's drift is only numbers, worked out from StationPlay's
+    clock: whatever that says (1970, before it, far ahead, a fraction of a
+    second), what's drawn draws, odd station names included."""
+    checks.section("The corner mark's drift")
+    small = Settings(plex_url="", plex_token="", video_width=320, video_height=180)
+    logo = str(Path(ff.__file__).parent / "logos" / "classic-tv.png")
+    for at in (0.0, -86_400.5, 2.0**40, 1_791_000_000.123456):
+        said = ff.drift(0, at) + ff.drift(1, at)
+        checks.ok(set(said) <= set("0123456789.+-*/(),;tsmodflreq"),
+                  f"the drift at {at} is only numbers", said)  # fmt: skip
+        for mark in (ff.Watermark(logo=logo, airs_at_s=at),
+                     ff.Watermark(text="Rock 'n' Roll: 24/7 \\ ;[x],y", airs_at_s=at),
+                     ff.Watermark(clock="12", position="top-left", airs_at_s=at)):  # fmt: skip
+            drawn = subprocess.run(
+                ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=320x180:r=30",
+                 "-vf", ff._video_filter(small, watermark=mark), "-frames:v", "2",
+                 "-f", "null", "-"],
+                capture_output=True, text=True, timeout=60,
+            )  # fmt: skip
+            what = "logo" if mark.logo else "clock" if mark.clock else "name"
+            checks.ok(drawn.returncode == 0, f"the {what} drifted at {at} draws",
+                      drawn.stderr[-300:])  # fmt: skip
 
 
 async def _pin_limit(checks: Checks, app, home: str, device_key: str) -> None:

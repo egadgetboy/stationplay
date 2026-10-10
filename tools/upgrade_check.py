@@ -18,13 +18,22 @@ one on its data folder, then back again, and a fresh install.
    version>-<date>.db, as the Logs tab says. What's new works with them: a
    problem with its journal, and (from 1.30.0) a person's report on the
    Broken files tab, with everyone able to report to start with.
-4. It's stopped, and rolled back as the README's Rolling back says (the
-   copy put back as stationplay.db, its -wal and -shm removed); the release
+4. Live alerts, kept across a restart (from 1.30.3): with Notify a web
+   address on (to a stand-in here), the report becomes an alert, and
+   backups failing another. The report is dismissed and StationPlay
+   stopped before its next look, and started again: both alerts are there
+   at once with the same IDs, neither is sent again, and the one fixed
+   while it was stopped is said to be, once, at its first look; the other
+   stays live.
+5. It's stopped, and rolled back: first the release before is started on
+   the database as it is, live alert and all (which it ignores, leaving the
+   alerts as they were); then as the README's Rolling back says (the copy
+   put back as stationplay.db, its -wal and -shm removed); the release
    before is started again, and must work with its data, signed in as
    before, and with the broken-files list as this one left it: a program's
    entry as before, and an entry for another of its versions (which a
    release before 1.30.0 doesn't know) left alone.
-5. A fresh install of this checkout: it starts, takes its first Admin, and
+6. A fresh install of this checkout: it starts, takes its first Admin, and
    makes no copy.
 
 It prints PASS or FAIL for each check (failures always; all with -v) and
@@ -46,12 +55,14 @@ import argparse
 import asyncio
 import contextlib
 import io
+import json
 import logging
 import os
 import re
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import tarfile
@@ -79,6 +90,9 @@ APP = {"app": "StationPlay for Android", "deviceName": "Den"}
 STATION = {"number": 5, "name": "Upgrade TV", "sources": [{"type": "show", "ratingKey": "100"}]}
 SETTINGS = {"tuners": 3, "picture": "1080p"}
 START_S = 90.0  # how long a StationPlay may take to start (it tests ffmpeg first)
+# The longest an alert is waited for: its checks look 20 seconds after
+# StationPlay starts, then every minute.
+ALERT_WAIT_S = 100.0
 
 
 class Checks:
@@ -151,9 +165,11 @@ def unpack(tag: str, folder: Path) -> None:
 
 class StandInPlex:
     """The tests' stand-in Plex (a show of two episodes), served over HTTP on
-    a port of its own, in a thread of its own."""
+    a port of its own, in a thread of its own; and, at /notify, the web
+    address alerts are sent to (what's sent, in `notified`)."""
 
     def __init__(self) -> None:
+        self.notified: list[dict] = []
         self.fp = FakePlex()
         self.fp.add_show("100", "Upgrade Show")
         for n in (1, 2):
@@ -178,6 +194,11 @@ class StandInPlex:
             body += message.get("body", b"")
             if not message.get("more_body"):
                 break
+        if scope["path"] == "/notify":
+            self.notified.append(json.loads(body))
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+            return
         query = scope["query_string"].decode()
         request = httpx.Request(
             scope["method"],
@@ -323,6 +344,48 @@ def has_data(checks: Checks, url: str, made: dict, version: str, where: str) -> 
     )
 
 
+def alerts_of(url: str, bearer: dict) -> dict[str, dict]:
+    """The alerts an Admin's app is given now, by kind."""
+    got = httpx.get(f"{url}/api/internal/alerts", headers=bearer, timeout=10).json()["alerts"]
+    return {a["kind"]: a for a in got}
+
+
+def waited(found, seconds: float = ALERT_WAIT_S) -> bool:
+    """Whether `found()` came true within `seconds`."""
+    deadline = time.monotonic() + seconds
+    while not found():
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(1)
+    return True
+
+
+def kept_alerts(data: Path) -> list[tuple]:
+    """The alerts kept in a data folder's database (none before 1.30.3)."""
+    conn = sqlite3.connect(f"{(data / 'stationplay.db').resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'alerts'").fetchone():
+            return []
+        return conn.execute(
+            "SELECT kind, about, since_ms, sentence, fixed_ms FROM alerts ORDER BY since_ms"
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def fail_backups(page: httpx.Client, data: Path) -> None:
+    """Backups failing twice: the backups folder a file meanwhile."""
+    folder, aside = data / "backups", data / "backups-aside"
+    folder.rename(aside)
+    folder.write_text("not a folder")
+    try:
+        for _ in range(2):
+            page.post("/api/backups")
+    finally:
+        folder.unlink()
+        aside.rename(folder)
+
+
 def stopped(checks: Checks, sp: StationPlay, version: str) -> None:
     """It stops when asked, its database closed (nothing left in its -wal).
     (Uvicorn raises SIGTERM again once it has shut down, as Docker expects.)"""
@@ -364,13 +427,18 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         sp = start(ROOT, data, f"{__version__}-updated")
         if sp is None:
             return
+        page = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
+        notify = {"on": True, "url": f"{plex.url}/notify", "format": "json"}
+        checks.ok(page.put("/api/notify", json=notify).status_code == 200,
+                  "alerts are sent to a web address")  # fmt: skip
         has_data(checks, sp.url, made, __version__, "updated")
         copies = sorted((data / "backups").glob(f"before-{__version__}-*.db"))
         checks.ok(len(copies) == 1, "the database was backed up before it was changed", copies)
-        page = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
         logs = page.get("/api/logs").text
         checks.ok(bool(copies) and f"Backed up the database to backups/{copies[0].name}" in logs,
                   "the Logs tab says so")  # fmt: skip
+        if version_of(before) < (1, 30, 3):
+            checks.ok("a new table, alerts" in logs, "(for the alerts it now keeps)")
         sent = page.post("/api/internal/problem", json={
             "kind": "crashed", "detail": "after the update", "journal": "a\nb", **APP})  # fmt: skip
         checks.ok(sent.status_code == 200, "what's new works (a problem with its journal)",
@@ -390,6 +458,39 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         users = page.get("/api/access/users").json()
         checks.ok(all(u["canReport"] for u in users), "everyone can report problems, to start "
                   "with", [(u["name"], u.get("canReport")) for u in users])  # fmt: skip
+        # Live alerts: the report (at the checks' next look), and backups.
+        fail_backups(page, data)
+        checks.ok(waited(lambda: alerts_of(sp.url, bearer).keys() == {"files", "backups"}),
+                  "the report and backups failing are alerts", alerts_of(sp.url, bearer))  # fmt: skip
+        live = {kind: a["id"] for kind, a in alerts_of(sp.url, bearer).items()}
+        checks.ok(waited(lambda: len(plex.notified) == 2, 10)
+                  and sorted(n["kind"] for n in plex.notified) == ["backups", "files"],
+                  "each is sent to the web address", plex.notified)  # fmt: skip
+        # The report dealt with, then stopped before the checks look again.
+        if rows:
+            page.post(f"/api/reports/{rows[0]['key']}/dismiss")
+        stopped(checks, sp, __version__)
+
+        checks.section(f"{__version__} started again, with the alerts live")
+        sp = start(ROOT, data, f"{__version__}-restarted")
+        if sp is None:
+            return
+        now = alerts_of(sp.url, bearer)
+        checks.ok({k: a["id"] for k, a in now.items() if a["fixed"] is None} == live,
+                  "both are there at once, with the same IDs", now)  # fmt: skip
+        page = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
+        logs = page.get("/api/logs").json()["text"]
+        checks.ok(logs.count("Alert still going: ") == 2, "the Logs tab says they're still going",
+                  logs[-2000:])  # fmt: skip
+        checks.ok(waited(lambda: alerts_of(sp.url, bearer)["files"]["fixed"] is not None),
+                  "the one fixed while StationPlay was stopped is fixed at its first look")  # fmt: skip
+        now = alerts_of(sp.url, bearer)
+        checks.ok({k: a["id"] for k, a in now.items()} == live and now["backups"]["fixed"] is None,
+                  "with its ID, and the other still live", now)  # fmt: skip
+        waited(lambda: len(plex.notified) > 2, 10)
+        said = sorted((n["kind"], n["state"]) for n in plex.notified)
+        checks.ok(said == [("backups", "started"), ("files", "fixed"), ("files", "started")],
+                  "neither was sent again, and the fix was sent once", said)  # fmt: skip
         stopped(checks, sp, __version__)
         # The broken-files list, as this version keeps it: the station's
         # program, and another version of it (Media's alone).
@@ -402,6 +503,28 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         listed.record(replace(first, file_path="/tv/u1-4k.mkv"), "Check: no sound anywhere in it",
                       None, problem="damaged", version="2011", library="1")  # fmt: skip
         logging.disable(logging.NOTSET)
+
+        checks.section(f"{before} on {__version__}'s database as it is, alerts and all")
+        as_is = work / "data-as-is"
+        shutil.copytree(data, as_is)
+        kept = kept_alerts(as_is)
+        checks.ok(sorted((k[0], k[4] is None) for k in kept) == [("backups", True), ("files", False)],
+                  "the alerts are kept, one live", kept)  # fmt: skip
+        sp = start(old_code, as_is, f"{before}-as-is")
+        if sp is None:
+            return
+        page = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
+        server = page.get("/api/v1/server").json()
+        me = page.get("/api/access/me").json().get("user") or {}
+        stations = [(c["number"], c["name"]) for c in page.get("/api/channels").json()]
+        checks.ok((server["version"], me.get("name"), stations)
+                  == (before, ADMIN["name"], [(STATION["number"], STATION["name"])]),
+                  "it starts, the Admin still signed in, the station there",
+                  (server["version"], me, stations))  # fmt: skip
+        stopped(checks, sp, before)
+        checks.ok(kept_alerts(as_is) == kept, "it leaves the alerts as they were",
+                  kept_alerts(as_is))  # fmt: skip
+        shutil.rmtree(as_is)
 
         checks.section(f"Rolled back to {before}, as the README says")
         if copies:
@@ -418,10 +541,13 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
             said == [["before the update"]], "the database is as it was before the update", said
         )
         entries = page.get("/api/broken").json()
+        listed = [("201", None, "Deep scan: the picture breaks up around 3:00")]
+        if version_of(before) >= (1, 30, 0):  # (it knows a program's other versions)
+            listed.append(("201", "2011", "Check: no sound anywhere in it"))
         checks.ok(
-            [(e["ratingKey"], e.get("version"), e["reason"]) for e in entries]
-            == [("201", None, "Deep scan: the picture breaks up around 3:00")],
-            "the broken-files list: the program's entry as before, another version's left alone",
+            [(e["ratingKey"], e.get("version"), e["reason"]) for e in entries] == listed,
+            "the broken-files list as this one left it (a program's other versions left alone "
+            "before 1.30.0)",
             entries,
         )
         stopped(checks, sp, before)
