@@ -963,14 +963,14 @@
     <div class="panel" style="margin-top:16px" id="userPanel" hidden><table class="users" id="userTable"></table></div>
     <div class="panel" style="margin-top:16px" id="appsPanel" hidden>
       <div class="panel-pad"><strong>Signed-in apps</strong>
-      <p class="hint" style="margin:4px 0 0">StationPlay’s apps that are signed in, on which device and as whom. Signing one out ends its sign-in at once, away from home too. A sign-in also ends after 30 days unused, when its person gets a new password, or when they’re removed.</p></div>
+      <p class="hint" style="margin:4px 0 0">StationPlay’s apps that are signed in, and as whom. Signing one out ends its sign-in at once; one unused for 30 days ends by itself.</p></div>
       <table class="users" id="appsTable"></table>
     </div>
     <div class="panel" style="margin-top:16px" id="devicesPanel" hidden>
       <div class="panel-pad"><strong>Linked devices</strong>
-      <p class="hint" style="margin:4px 0 0">TVs, phones and tablets with StationPlay’s apps that show Who’s tuning in?, so the people who use them pick themselves. Away from home, a device lists fewer people: see Devices beside each person. Unlinking one signs it out at once; it can be linked again by signing in on it.</p></div>
+      <p class="hint" style="margin:4px 0 0">Devices where people pick who’s watching. Unlinking one signs it out.</p></div>
       <table class="users" id="devicesTable"></table>
-      <div class="panel-pad scan-set"><label for="showOnDefault" class="small"><strong>New people show on</strong></label><select id="showOnDefault"><option value="home">Devices at home (a household)</option><option value="signed-in">Only where they sign in (a larger server)</option></select></div>
+      <div class="panel-pad scan-set"><label for="showOnDefault" class="small"><strong>New people show on</strong></label><select id="showOnDefault"><option value="signed-in">Only devices they sign in on</option><option value="home">Every device at home</option></select><button class="btn" type="button" id="showOnEveryone">Use for everyone</button><span class="hint" id="showOnEveryoneSaid" role="status"></span></div>
     </div>
     <form class="panel setup" style="margin-top:16px" id="addUserForm">
       <strong id="addUserTitle">Add a user</strong>
@@ -6009,16 +6009,42 @@ function renderDevices() {
       h('td', { class: 'small', 'data-label': 'Linked' }, d.linkedBy ? `By ${d.linkedBy}, ${when(d.linkedMs)}` : when(d.linkedMs)),
       h('td', { class: 'small', 'data-label': 'Last used' }, when(d.seenMs)),
       h('td', {}, h('button', { class: 'btn danger', type: 'button', onclick: async () => {
-        if (!confirm(`Unlink ${d.name}? It’s signed out at once, and needs someone to sign in on it again.`)) return;
+        if (!confirm(`Unlink ${d.name}? It’s signed out now.`)) return;
         try { await api(`/api/access/devices/${d.id}`, { method: 'DELETE' }); toast(`${d.name} is unlinked`); }
         catch (err) { toast(err.message, true); }
         loadAccess();
       } }, 'Unlink')))))]
-    : [h('tbody', {}, h('tr', {}, h('td', { class: 'muted small' }, 'No devices are linked yet. One is linked when someone signs in on a StationPlay app that shows Who’s tuning in?')))]));
+    : [h('tbody', {}, h('tr', {}, h('td', { class: 'muted small' }, 'None yet. A device is linked when someone signs in on it.')))]));
 }
 $('#showOnDefault').addEventListener('change', async e => {
-  try { await api('/api/access/devices/default', { method: 'PUT', body: { showOn: e.target.value } }); toast('Saved. People you add from now on start this way.'); }
+  $('#showOnEveryoneSaid').textContent = '';
+  try { await api('/api/access/devices/default', { method: 'PUT', body: { showOn: e.target.value } }); toast('Saved. New people start this way.'); }
   catch (err) { toast(err.message, true); }
+  loadAccess();
+});
+// Who can sign in on a device by name: with a password or a passcode (as the
+// server says: see devices.py).
+const signsInByName = u => u.hasPassword || u.pin;
+const peopleCount = n => n === 1 ? '1 person' : `${n} people`;
+const andList = names => names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names.join('');
+const keptSaid = kept => kept.length ? ` Kept as they were: ${andList(kept)} (no password or passcode).` : '';
+const keepsSaid = kept => kept.length ? ` ${andList(kept)} will stay as they are (no password or passcode).` : '';
+// Use for everyone: everyone already added shows where new people do.
+$('#showOnEveryone').addEventListener('click', async () => {
+  const select = $('#showOnDefault');
+  const showOn = select.value, label = select.selectedOptions[0].textContent;
+  const said = $('#showOnEveryoneSaid');
+  let users;
+  try { users = await api('/api/access/users'); } catch (err) { said.textContent = err.message; return; }
+  const moving = users.filter(u => u.showOn !== showOn);
+  const kept = showOn === 'signed-in' ? moving.filter(u => !signsInByName(u)).map(u => u.name) : [];
+  const changing = moving.length - kept.length;
+  if (!changing) { said.textContent = kept.length ? `Nothing to change.${keptSaid(kept)}` : `Everyone already shows on ${label}.`; return; }
+  if (!confirm(`Change ${peopleCount(changing)} to ${label}?${keepsSaid(kept)}`)) return;
+  try {
+    const got = await api('/api/access/devices/everyone', { method: 'POST', body: { showOn } });
+    said.textContent = `Changed ${peopleCount(got.changed)} to ${label}.${keptSaid(got.kept)}`;
+  } catch (err) { said.textContent = err.message; }
   loadAccess();
 });
 // Someone's devices: where they show, their passcode, and an invite code.
@@ -6043,7 +6069,7 @@ async function savePicker(body, said) {
 }
 function paintUserDevices() {
   const u = devicesFor;
-  const byName = u.hasPassword || u.pin;
+  const byName = signsInByName(u);
   const chosen = new Set((linked.chosen || {})[u.id] || []);
   const radio = (value, label, hint, disabled = false) => {
     const input = h('input', { type: 'radio', name: 'showOn', value, checked: u.showOn === value, disabled, onchange: () => {
@@ -6052,8 +6078,8 @@ function paintUserDevices() {
     } });
     return h('label', { class: 'choice' }, input, h('span', {}, h('strong', {}, label), h('span', { class: 'hint' }, hint)));
   };
-  // The devices chosen for them: their only ones (Selected devices), or the
-  // ones they're on away from home too (Devices at home).
+  // The devices chosen for them: their only ones (Only devices you choose),
+  // or the ones they're on away from home too (Every device at home).
   const boxes = linked.devices.map(d => [d.id, h('input', { type: 'checkbox', checked: chosen.has(d.id) })]);
   const pick = ['home', 'selected'].includes(u.showOn) ? h('div', { class: 'checks-col', style: 'margin-left:26px' },
     u.showOn === 'home' ? h('span', { class: 'small' }, 'Away from home too, on:') : null,
@@ -6061,26 +6087,27 @@ function paintUserDevices() {
     boxes.length ? h('div', {}, h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ showOn: u.showOn, devices: boxes.filter(([, b]) => b.checked).map(([id]) => id) }, 'Saved') }, 'Save devices')) : null) : null;
   const pin = h('input', { type: 'text', inputmode: 'numeric', pattern: '[0-9]{4}', maxlength: 4, placeholder: '4 digits', autocomplete: 'off', 'aria-label': 'New passcode' });
   const invite = h('div', { class: 'small' });
+  const needsOne = ' Needs a password or a passcode.';
   $('#userDevicesBody').replaceChildren(...[
     h('div', { class: 'playback' },
       h('strong', {}, 'Show on'),
-      radio('home', 'Devices at home', ' On every linked device’s list while it’s at home, on your network or through your VPN. Away from home, only on a device they signed in on, or one you choose. Suits a household.'),
+      radio('signed-in', 'Only devices they sign in on', byName ? ' They show on a device once they sign in on it.' : needsOne, !byName),
+      radio('home', 'Every device at home', ' Away from home, only devices they signed in on or that you choose.'),
       u.showOn === 'home' ? pick : null,
-      radio('all', 'All devices', byName ? ' On every linked device’s list, at home and away: a device away from home, such as a phone at a friend’s, shows their name too.' : ' Needs a password or a passcode, as a device away from home would show their name for anyone there to pick.', !byName),
-      radio('selected', 'Selected devices', ' Only on the devices you choose, at home and away, such as a family iPad that travels.'),
-      u.showOn === 'selected' ? pick : null,
-      radio('signed-in', 'Only where they sign in', byName ? ' On no list until they sign in on a device, by name; then on that device’s, at home and away.' : ' Needs a password or a passcode, to sign in by name.', !byName)),
+      radio('all', 'Every device, at home and away', byName ? ' Even on a phone at a friend’s house.' : needsOne, !byName),
+      radio('selected', 'Only devices you choose', ' At home and away, such as a family iPad.'),
+      u.showOn === 'selected' ? pick : null),
     h('div', { class: 'playback' },
       h('strong', {}, 'Passcode'),
       h('p', { class: 'hint', style: 'margin:0' }, u.pin
-        ? `${u.name} has a passcode: a device asks for it when they pick themselves.`
-        : `${u.name} has no passcode, so anyone using a device they’re on can pick them. ${u.role === 'admin' ? 'As an Admin, they give their password instead.' : ''}`),
+        ? 'Asked for when they pick themselves.'
+        : u.role === 'admin' ? 'None: they give their password instead.' : 'None: anyone at a device they’re on can pick them.'),
       h('div', { class: 'scan-set' }, pin,
         h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ pin: pin.value.trim() }, 'Passcode saved') }, u.pin ? 'Change passcode' : 'Set passcode'),
         u.pin ? h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ pin: '' }, 'Passcode removed') }, 'Remove passcode') : null)),
     byName ? h('div', { class: 'playback' },
       h('strong', {}, 'Invite code'),
-      h('p', { class: 'hint', style: 'margin:0' }, `For signing in on a device the first time without a password: ${u.name} chooses Sign in on Who’s tuning in? and enters their name and the code. It works once, for 7 days.`),
+      h('p', { class: 'hint', style: 'margin:0' }, 'To sign in on a device without a password: it works once, within 7 days.'),
       h('div', {}, h('button', { class: 'btn', type: 'button', onclick: async () => {
         try {
           const got = await api(`/api/access/users/${u.id}/invite`, { method: 'POST' });
@@ -6289,16 +6316,20 @@ async function removeUser(u, count) {
 $('#addUserForm').addEventListener('submit', async e => {
   e.preventDefault();
   const name = $('#newUserName').value.trim();
+  let added;
   try {
     const pin = $('#newUserPin').value.trim();
-    await api('/api/access/users', { method: 'POST', body: { name, password: $('#newUserPassword').value, role: $('#newUserRole').value, maxStations: limitOf($('#newUserStations')), ...(pin ? { pin } : {}) } });
+    added = await api('/api/access/users', { method: 'POST', body: { name, password: $('#newUserPassword').value, role: $('#newUserRole').value, maxStations: limitOf($('#newUserStations')), ...(pin ? { pin } : {}) } });
   } catch (err) { $('#addUserHint').textContent = err.message; return; }
   $('#addUserForm').reset();
   $('#newUserStations').value = String(ACCESS.newUserStations);
   $('#addUserHint').textContent = '';
   const first = !me.required;
   await loadMe();
-  toast(first ? `Sign-in is on, and you’re signed in as ${name}` : `${name} is added`);
+  // (Someone who can't sign in by name starts on every device at home.)
+  const athome = linked?.default === 'signed-in' && added.showOn === 'home';
+  toast(first ? `Sign-in is on, and you’re signed in as ${name}`
+    : athome ? `${name} is added. With no password or passcode, they show on every device at home.` : `${name} is added`);
   loadAccess();
   loadChannels();
 });

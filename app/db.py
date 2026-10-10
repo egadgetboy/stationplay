@@ -2066,9 +2066,11 @@ class Database:
             ).fetchone()
         return str(row["password"]) if row else ""
 
-    def set_show_on(self, user_id: int, show_on: str) -> None:
+    def set_show_on(self, user_ids: list[int], show_on: str) -> None:
         with self._lock, self._conn:
-            self._conn.execute("UPDATE users SET show_on = ? WHERE id = ?", (show_on, user_id))
+            self._conn.executemany(
+                "UPDATE users SET show_on = ? WHERE id = ?", [(show_on, i) for i in user_ids]
+            )
 
     def move_show_on(self, was: tuple[str, ...], now: str) -> int:
         """Everyone shown in one of the ways in `was` is shown as `now`

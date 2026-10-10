@@ -202,7 +202,9 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
 
         # Signing in on: an app signs in, and sends its token.
         assert home.post("/api/access/users", json=PAT).status_code == 201
-        assert home.post("/api/access/users", json={**SAM, "role": "user"}).status_code == 201
+        # (On every device at home, as in a household: see test_picker.py.)
+        household = {**SAM, "role": "user", "showOn": "home"}
+        assert home.post("/api/access/users", json=household).status_code == 201
         phone = TestClient(app)  # (no cookies: an app)
         check.answer(phone.get("/api/v1/stations"), "GET /api/v1/stations", 401)
         wrong = phone.post("/api/internal/sign-in", json={**SAM, "password": "not it at all"})

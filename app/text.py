@@ -1,7 +1,8 @@
 """Text people type (station names and descriptions, the names of uploaded
 logos and bumpers), made plain before it's kept: it's shown on the page,
 drawn by ffmpeg and passed to it as an argument, where a control character
-(a NUL can't even be passed to a program) has no business."""
+(a NUL can't even be passed to a program) has no business. And a list said
+in a sentence."""
 
 from __future__ import annotations
 
@@ -23,3 +24,10 @@ def name_from_file(file_name: str, otherwise: str) -> str:
     `otherwise`, if that leaves nothing)."""
     name = re.sub(r"\.[A-Za-z0-9]{2,4}$", "", plain(file_name))
     return plain(name.replace("_", " "))[:40] or otherwise
+
+
+def and_list(parts: list[str]) -> str:
+    """The parts in a sentence: A; A and B; A, B and C."""
+    if len(parts) <= 1:
+        return "".join(parts)
+    return ", ".join(parts[:-1]) + " and " + parts[-1]

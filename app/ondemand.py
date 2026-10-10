@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import catalog
 from .catalog import Entry, Media, Track
-from .text import plain
+from .text import and_list, plain
 
 if TYPE_CHECKING:
     from .db import Database
@@ -914,12 +914,6 @@ def cant_play(why: list[str]) -> str:
         f"This device can't play this file as it is ({and_list(why)}), and this app can't "
         "take a copy made for it. Update the app to play it."
     )
-
-
-def and_list(parts: list[str]) -> str:
-    if len(parts) <= 1:
-        return "".join(parts)
-    return ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
 # A track title that's a file's name or a path, as some tools write into a
