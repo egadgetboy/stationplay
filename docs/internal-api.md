@@ -1065,6 +1065,24 @@ H.264, at most 1080p, ordinary rather than HDR). A copy is also made, with
   when no version keeps up. The copy is converted.
 - `night: true`: night mode's sound (as the stations' `nightHls`), for an
   app that can't make it itself.
+- `convert: true` (from 1.29.1, when `features` lists `convert-asked`): a
+  converted copy, whatever `device` says it plays, for when the device's
+  decoder failed at the file (Media3's `ERROR_CODE_DECODING_FAILED`, say),
+  so asking for the same again would only fail again. The picture is made
+  H.264 at 8 bits, at most 1080p (within 1920×1080, or the device's own
+  H.264 size if that's smaller), ordinary rather than HDR; the sound AAC,
+  5.1 where the file's has more than two channels and `device.audio` lists
+  a surround format (`ac3`, `eac3`, `dts` or `truehd`), otherwise stereo.
+  Everything else asked for holds: `startMs`, `version`, `audio`,
+  `subtitle`, `night`, `fit` with `maxKbps`, and the cap away from home.
+  Its `why` starts with "a converted copy, as the app asked". It counts
+  against the copies converted at once, as any converted copy does. Send
+  the problem the app ran into first (`POST /api/internal/problem`, kind
+  `library-failed` or `library-stopped`, with the player's error in
+  `detail`): StationPlay's log then says the app asked for the copy after
+  that. Without `device.hls` (`ts`), the answer is 422 with `detail`; a
+  file that can't be converted (a Dolby Vision profile 5 picture, say) is
+  answered 422 with `detail` and `why`, as below.
 
 From 1.27.0, while `features` lists `even-sound` (an Admin's switch, on to
 start), every episode (never a movie) comes at the stations' loudness, so a

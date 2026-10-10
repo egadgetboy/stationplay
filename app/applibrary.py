@@ -42,6 +42,7 @@ from . import (
     languages,
     ondemand,
     playing,
+    problems,
     subtitles,
     viewing,
 )
@@ -69,6 +70,10 @@ PLAY_ENDED = "That program's address has ended. Choose it again to play it."
 # Even sound for a show's episodes, as a copy's `why` says it (the apps show
 # it in their player).
 EVEN_WHY = "even sound for the show's episodes"
+# A converted copy an app asked for, as its `why` says it; and what an app
+# that doesn't take copies is told when it asks for one.
+ASKED_WHY = "a converted copy, as the app asked"
+CANT_TAKE_COPY = "This app can't take a converted copy. Update the app to play this here."
 NOT_PLAYABLE = "Choose an episode or a movie to play"
 NO_PICTURE = "There's no such picture"
 PAST_END = "That's past the end of this program"
@@ -141,6 +146,9 @@ class PlayAsk(BaseModel):
     subtitle: str | None = Field(default=None, max_length=40)
     fit: bool = False
     night: bool = False
+    # A converted copy, whatever the device says it plays (from 1.29.1: its
+    # decoder failed at the file; see play_copy).
+    convert: bool = False
 
 
 class ProgressReport(BaseModel):
@@ -289,6 +297,7 @@ def how_copied(
     smaller: bool,
     encoder: Encoder,
     cap_kbps: int | None = None,
+    asked: str | None = None,
 ) -> str:
     """How a copy plays, for the log: "repackaged, its sound made AAC
     stereo, because this device can't play its sound's format (DTS)";
@@ -296,7 +305,10 @@ def how_copied(
     "converted smaller to fit the connection: 720p H.264 at 4 Mbps on the
     CPU, with subtitles drawn in"; away from home, a file over the Admin's
     cap (`cap_kbps`): "converted smaller to fit the 10 Mbps allowed away from
-    home: 1080p H.264 at 8 Mbps on the CPU"."""
+    home: 1080p H.264 at 8 Mbps on the CPU". A converted copy the app asked
+    for (`asked`: what it said went wrong just before, "" if nothing):
+    "converted to 1080p H.264 at 8 Mbps on the CPU, its sound made AAC 5.1,
+    as the app asked; it said: ERROR_CODE_DECODING_FAILED (...)"."""
     if plan.copies_picture:
         text = "repackaged"
         if plan.audio_codec != "copy" and not plan.night:
@@ -316,6 +328,11 @@ def how_copied(
             text = f"converted smaller to fit {allowed}: {made}"
         else:
             text = f"converted to {made}"
+        if asked is not None:
+            text += (
+                f", its sound made {playing.sound_name(plan.audio_codec)} "
+                f"{playing.channels(plan.audio_channels)}"
+            )
     extras = [
         what
         for what, on in (
@@ -327,7 +344,9 @@ def how_copied(
     ]
     if extras:
         text += f", with {ondemand.and_list(extras)}"
-    if cant:
+    if asked is not None:
+        text += f", as the app asked{f'; it said: {asked}' if asked else ''}"
+    elif cant:
         text += f", because this device can't play {ondemand.and_list(cant)}"
     return text
 
@@ -973,6 +992,13 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             status_code=503,
         )
 
+    def said_before(body: PlayAsk, request: Request) -> str:
+        """What the app said lately about why it asks for this ("" if
+        nothing): for a converted copy, what went wrong playing; otherwise,
+        that playing couldn't keep up (see problems.py)."""
+        kinds = problems.FAILED_KINDS if body.convert else problems.KEPT_UP
+        return ctx.problems.said_lately(access.address(request.scope), STEP_S, kinds)
+
     def said_step_down(
         before: ondemand.PlaySession | None,
         after: ondemand.PlaySession,
@@ -991,13 +1017,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             after.away, after.user, after.user_id or None, after.app, after.tag,
         )  # fmt: skip
         fits = f" (about {playing.mbps(body.maxKbps)})" if body.maxKbps else ""
-        if body.fit or body.maxKbps:
+        if body.convert:
+            why = "the app asked for a converted copy"
+        elif body.fit or body.maxKbps:
             why = f"to fit its connection{fits}"
         elif cap and any(ondemand.over_cap(m, cap) for m in after.entry.media):
             why = f"to fit the {playing.mbps(cap)} allowed away from home"
         else:
             why = "the app asked for it"
-        said = ctx.problems.said_lately(access.address(request.scope), STEP_S)
+        said = said_before(body, request)
         log.info(
             "%s switched %s to a smaller %s, from %s to %s: %s%s",
             who.subject(),
@@ -1061,7 +1089,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
         `only_sound`: a version the device plays as it is, copied only for
         even sound: its picture kept as it is, and only its sound made. None
-        (play it as it is, then) if its picture can't be kept."""
+        (play it as it is, then) if its picture can't be kept.
+
+        With the app's `convert` (its decoder failed at the file), the copy
+        is converted whatever the device says it plays: H.264 at 8 bits, at
+        most 1080p, ordinary rather than HDR, and AAC sound (see
+        converting.sound_for)."""
         user_id, name = person(request)
         away_ = access.outside(request.scope)
         versions = [m for m in ondemand.best_first(e.media) if m.id] or list(e.media)
@@ -1071,7 +1104,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         def refuse(why: list[str]) -> JSONResponse:
             log.info("StationPlay can't make a copy of %s for an app (%s)", describe(e),
                      ondemand.and_list(why))  # fmt: skip
-            return JSONResponse({"detail": cant_copy(why), "why": why}, status_code=422)
+            detail = cant_convert(why) if body.convert else cant_copy(why)
+            return JSONResponse({"detail": detail, "why": why}, status_code=422)
 
         def draws(m: Media) -> Track | None:
             return drawn_for(languages.pick(m, wanted) if wanted else None, shows, copy=True)
@@ -1082,7 +1116,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         media = only_sound or (asked[0] if asked else None)
         if media is None:
             keepable = [m for m in versions
-                        if converting.picture_copyable(m, ondemand.unplayable(m, dev), hls)
+                        if not body.convert
+                        and converting.picture_copyable(m, ondemand.unplayable(m, dev), hls)
                         and not ondemand.over_cap(m, cap)]  # fmt: skip
             if keepable and not (body.subtitle or smaller or draws(keepable[0])):
                 media = keepable[0]
@@ -1095,14 +1130,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if only_sound and subtitle:
             return None  # (only the picture as it is will do: the file plays as it is)
         capped = ondemand.over_cap(media, cap)
-        why = ondemand.unplayable(media, dev)
+        # (Asked for, what the device says it can't play is beside the point.)
+        why = [ASKED_WHY] if body.convert else ondemand.unplayable(media, dev)
         sound = converting.audio_track(
             media, picked.audio.id if picked and picked.audio else body.audio
         )
         even = even and sound is not None  # (no sound, nothing to even)
         if only_sound and not even:
             return None
-        if sound is not None and sound.codec and sound.codec not in dev.audio:
+        if sound is not None and sound.codec and sound.codec not in dev.audio and not body.convert:
             label = f"its sound's format ({ondemand.label(sound.codec)})"
             if label not in why:
                 why.append(label)
@@ -1127,7 +1163,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         # Keeping the picture as it is, where it can be (its keyframes
         # known from the file's index); otherwise converting it.
         starts: tuple[float, ...] = ()
-        keep = converting.picture_copyable(media, why, hls) and not (shown or smaller or capped)
+        keep = converting.picture_copyable(media, why, hls) and not (
+            shown or smaller or capped or body.convert
+        )
         if keep:
             try:
                 found = await asyncio.wait_for(
@@ -1139,7 +1177,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 starts = converting.pieces_at(found, duration_s)
         if only_sound and not starts:
             return None  # (only the picture as it is will do: the file plays as it is)
-        audio_codec, channels = converting.sound_for(sound, dev.audio, body.night, even)
+        audio_codec, channels = converting.sound_for(
+            sound, dev.audio, body.night, even, body.convert
+        )
         if starts:
             method, height, kbps, tone_map = converting.REPACKAGE, 0, 0, ""
         else:
@@ -1151,7 +1191,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     return refuse([f"its {ondemand.hdr_label(media)} picture"])
                 tone_map = to_sdr(ProbeResult(
                     ok=True, hdr="arib-std-b67" if media.hdr == catalog.HLG else "smpte2084"))  # fmt: skip
-            if "h264" not in dev.video:
+            if "h264" not in dev.video and not body.convert:
                 return refuse(["this device doesn't play H.264"])
             on_gpu = ctx.gpu is not None and ctx.gpu.encoder_for_copies().is_gpu
             # (Not counting this device's own, which this one takes over from.)
@@ -1162,7 +1202,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 raise HTTPException(503, BUSY_CONVERTING)
             # (Away from home, never more than the cap, whatever it's converted for.)
             height, kbps = converting.convert_size(
-                media, dev.video["h264"][1], body.maxKbps if smaller else None,
+                media, dev.video.get("h264", (0, 0, 0))[1], body.maxKbps if smaller else None,
                 cap, converting.sound_kbps(audio_codec, channels),
             )  # fmt: skip
             starts = converting.pieces_every(duration_s)
@@ -1246,8 +1286,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if sound is not None and sound.codec and sound.codec not in dev.audio:
             cant.append(f"its sound's format ({ondemand.label(sound.codec)})")
         how = how_copied(
-            plan, list(dict.fromkeys(cant)), smaller, session.copy.encoder, cap if capped else None
-        )
+            plan, list(dict.fromkeys(cant)), smaller, session.copy.encoder,
+            cap if capped else None, said_before(body, request) if body.convert else None,
+        )  # fmt: skip
         if not said_step_down(before, session, body, request, cap):
             said_start(session, sound, how, path is None)
         if not again:
@@ -1328,6 +1369,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         # whatever the order or the app), where an Admin has it on: never a
         # movie.
         even = ctx.shared.even_sound and e.kind == catalog.EPISODE
+        if body.convert:
+            if "ts" not in hls:
+                why = ["this app doesn't take copies"]
+                log.info("A StationPlay app asked for a converted copy of %s, but can't take one",
+                         describe(e))  # fmt: skip
+                return JSONResponse({"detail": CANT_TAKE_COPY, "why": why}, status_code=422)
+            return await play_copy(
+                body, request, e, dev, hls, client, tag, cap, even, wanted=wanted, shows=shows
+            )
         if not as_it_is and "ts" in hls:
             return await play_copy(
                 body, request, e, dev, hls, client, tag, cap, even, wanted=wanted, shows=shows
@@ -1700,6 +1750,12 @@ def cant_copy(why: list[str]) -> str:
         f"This device can't play this file as it is ({ondemand.and_list(why)}), and StationPlay "
         "can't make a copy of it that the device can."
     )
+
+
+def cant_convert(why: list[str]) -> str:
+    """Why StationPlay can't make the converted copy an app asked for, in a
+    sentence."""
+    return f"StationPlay can't make a converted copy of this file ({ondemand.and_list(why)})."
 
 
 def too_fast(need: str, cap_kbps: int) -> str:

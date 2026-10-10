@@ -99,7 +99,11 @@ LEAST_CAPPED_KBPS = 300
 # piece starts (as libx264 makes them on the CPU).
 GPU_GOP = 250
 AUDIO_KBPS = 192
-SURROUND_KBPS = 640
+SURROUND_KBPS = 640  # (Dolby Digital 5.1)
+AAC_SURROUND_KBPS = 384
+# Sound formats a device that takes surround sound lists (one asking for a
+# converted copy gets its sound as AAC 5.1 then: see sound_for).
+SURROUND = frozenset({"ac3", "eac3", "dts", "truehd"})
 # Sound kept as it is in a copy, when the device plays it (MPEG-TS carries these).
 TS_AUDIO = frozenset({"aac", "ac3", "eac3", "mp3", "mp2"})
 # Even sound for a show's episodes (see applibrary.py): the stations' own
@@ -128,7 +132,7 @@ class Plan:
     starts: tuple[float, ...]  # where each piece starts, in seconds
     duration_s: float
     audio: Track | None  # the sound track in the copy
-    audio_codec: str  # "copy", "aac" or "ac3"
+    audio_codec: str  # "copy", "aac" or "ac3" (see sound_for)
     picture: str = ""  # the file's picture's format ("h264", "hevc")
     audio_channels: int = 2
     night: bool = False
@@ -149,8 +153,7 @@ class Plan:
         """What the copy needs, in kilobits a second (None: as the file)."""
         if self.method == REPACKAGE:
             return None
-        sound = SURROUND_KBPS if self.audio_codec == "ac3" else AUDIO_KBPS
-        return self.kbps + sound
+        return self.kbps + sound_kbps(self.audio_codec, self.audio_channels)
 
 
 # Pieces and the playlist --------------------------------------------------------------
@@ -275,7 +278,11 @@ def command(
     elif codec == "ac3":
         sound = ["-c:a", "ac3", "-b:a", f"{SURROUND_KBPS}k", "-ac", str(plan.audio_channels)]
     else:
-        sound = ["-c:a", "aac", "-b:a", f"{AUDIO_KBPS}k", "-ac", "2", "-ar", "48000"]
+        # (Night mode's sound is stereo; so is sound that would have been
+        # copied as it is but for its filters, as before.)
+        channels = plan.audio_channels if plan.audio_codec == "aac" and not plan.night else 2
+        sound = ["-c:a", "aac", "-b:a", f"{sound_kbps('aac', channels)}k", "-ac", str(channels),
+                 "-ar", "48000"]  # fmt: skip
     if chain:
         sound = ["-af", chain, *sound]
     return [
@@ -304,17 +311,21 @@ def sound_chain(plan: Plan) -> str:
 
 
 def _converted_picture(plan: Plan, first: int, video_index: int, encoder: Encoder) -> list[str]:
-    """Converting the picture: deinterlaced where needed, square pixels, at
-    most plan.height lines, ordinary (not HDR), subtitles drawn in last, and
-    a keyframe at the start of every piece. All of that is done on the CPU
-    with a GPU too, as for the stations: the GPU only decodes the file
-    (where it can) and encodes the picture."""
+    """Converting the picture: deinterlaced where needed, square pixels,
+    within a 16:9 picture plan.height lines high (so a wide film at 1080p is
+    1920 wide, as H.264 decoders made for 1080p take, not 2592), ordinary
+    (not HDR), subtitles drawn in last, and a keyframe at the start of every
+    piece. All of that is done on the CPU with a GPU too, as for the
+    stations: the GPU only decodes the file (where it can) and encodes the
+    picture."""
     # (VA-API: the finished picture goes up to the GPU, as the stations' does.)
     upload = ",format=nv12,hwupload" if encoder.kind == "vaapi" else ""
+    widest = plan.height * 16 // 9 // 2 * 2
     steps = [
         "bwdif=mode=send_frame:deint=interlaced",
         "scale=w='trunc(iw*sar/2)*2':h=ih,setsar=1",
-        f"scale=w=-2:h='min({plan.height},ih)':flags=bicubic",
+        f"scale=w='min({widest},iw)':h='min({plan.height},ih)':"
+        "force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic",
         *([plan.tone_map] if plan.tone_map else []),
         "format=yuv420p",
     ]
@@ -405,24 +416,34 @@ def sound_kbps(audio_codec: str, channels: int) -> int:
     about what it would take made)."""
     if audio_codec == "ac3" or (audio_codec == "copy" and channels > 2):
         return SURROUND_KBPS
+    if audio_codec == "aac" and channels > 2:
+        return AAC_SURROUND_KBPS
     return AUDIO_KBPS
 
 
 def sound_for(
-    track: Track | None, device_audio: frozenset[str], night: bool, even: bool = False
+    track: Track | None,
+    device_audio: frozenset[str],
+    night: bool,
+    even: bool = False,
+    asked: bool = False,
 ) -> tuple[str, int]:
     """How a copy's sound is made: ("copy" | "aac" | "ac3", channels). With
     even sound (`even`), it's what the device would get anyway, but made
     again rather than copied, since its loudness changes: Dolby Digital 5.1
     where the device plays it and the sound has more than two channels,
-    otherwise AAC stereo."""
-    if track is None:
+    otherwise AAC stereo. A converted copy an app asked for (`asked`: its
+    decoder failed, so nothing it says it plays is trusted) has AAC: 5.1
+    where the sound has more than two channels and the device takes
+    surround sound, otherwise stereo."""
+    if track is None or night:
         return "aac", 2
-    if night:
-        return "aac", 2
+    surround = (track.channels or 2) > 2
+    if asked:
+        return "aac", 6 if surround and device_audio & SURROUND else 2
     if track.codec in device_audio and track.codec in TS_AUDIO and not even:
         return "copy", track.channels or 2
-    if (track.channels or 2) > 2 and "ac3" in device_audio:
+    if surround and "ac3" in device_audio:
         return "ac3", min(6, track.channels or 6)
     return "aac", 2
 

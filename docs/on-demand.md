@@ -56,7 +56,10 @@ The `features` an app sees (`GET /api/v1/server`) say what this server
 offers where the app is: `library` once a library is shared, at home (and
 from 1.27.0, through the public port too while watching away from home is
 on); `convert` from 1.24.0, where `library` is; `even-sound` from 1.27.0,
-where `library` is, while an Admin has it on.
+where `library` is, while an Admin has it on; `convert-asked` from 1.29.1,
+where `library` is: an app whose decoder failed at a file asks for a
+converted copy (`convert: true`), and gets one whatever the device says it
+plays.
 
 ## Sharing libraries
 

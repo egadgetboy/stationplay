@@ -778,3 +778,197 @@ def test_even_sound_can_be_turned_off(app, caplog):
         assert ondemand.Shared(app.state.ctx.db).even_sound is False
         home.put("/api/app-libraries", json={"libraries": ["1", "2"], "evenSound": True})
         assert "even-sound" in home.get("/api/v1/server").json()["features"]
+
+
+# A converted copy on request (an app whose decoder failed at the file) ---------------------
+
+
+def sound_of_piece(data: bytes) -> dict:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
+         "stream=codec_name,channels", "-of", "json", "-"],
+        input=data, capture_output=True, check=True,
+    ).stdout  # fmt: skip
+    return json.loads(out)["streams"][0]
+
+
+def picture_in_full(data: bytes) -> dict:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+         "stream=codec_name,width,height,pix_fmt,color_transfer", "-of", "json", "-"],
+        input=data, capture_output=True, check=True,
+    ).stdout  # fmt: skip
+    return json.loads(out)["streams"][0]
+
+
+def test_how_an_asked_for_copys_sound_is_made():
+    """AAC whatever the device says it plays: 5.1 for surround sound where the
+    device takes surround, otherwise stereo; night mode's always stereo."""
+    ac3 = Track("1", "ac3", channels=6)
+    aac = Track("2", "aac", channels=2)
+    eac3 = Track("3", "eac3", channels=8)
+    surround = frozenset({"aac", "ac3", "eac3"})
+    assert converting.sound_for(ac3, surround, False, asked=True) == ("aac", 6)
+    assert converting.sound_for(eac3, surround, False, asked=True) == ("aac", 6)
+    assert converting.sound_for(ac3, frozenset({"aac"}), False, asked=True) == ("aac", 2)
+    assert converting.sound_for(aac, surround, False, asked=True) == ("aac", 2)  # (never copied)
+    assert converting.sound_for(ac3, surround, True, asked=True) == ("aac", 2)  # (night mode)
+    assert converting.sound_for(None, surround, False, asked=True) == ("aac", 2)
+    assert converting.sound_kbps("aac", 6) == converting.AAC_SURROUND_KBPS
+    plan = replace(converted(2, 12.0), audio=ac3, audio_codec="aac", audio_channels=6)
+    assert plan.kbps_needed == 800 + converting.AAC_SURROUND_KBPS
+    args = converting.command("ffmpeg", "/films/a.mkv", plan, 0)
+    assert part_at(["-c:a", "aac", "-b:a", "384k", "-ac", "6", "-ar", "48000"], args) > 0
+    # (Night mode's filters on AAC 5.1 asked for: still made as asked; a copied
+    # sound that goes through filters is made stereo, as before.)
+    copied = replace(plan, audio_codec="copy", night=True)
+    assert part_at(["-c:a", "aac", "-b:a", "192k", "-ac", "2"],
+                   converting.command("ffmpeg", "/films/a.mkv", copied, 0)) > 0  # fmt: skip
+
+
+def test_a_converted_picture_fits_1080p_whatever_its_shape():
+    """Within 1920x1080 at 1080p (a wide film is 1920 wide, not 2592), as
+    H.264 decoders made for 1080p take; never made bigger."""
+    plan = replace(converted(2, 12.0), height=1080)
+    chain = converting.command("ffmpeg", "/films/a.mkv", plan, 0)
+    vf = chain[chain.index("-vf") + 1]
+    assert ("scale=w='min(1920,iw)':h='min(1080,ih)':force_original_aspect_ratio=decrease:"
+            "force_divisible_by=2:flags=bicubic") in vf  # fmt: skip
+    small = converting.command("ffmpeg", "/films/a.mkv", replace(plan, height=480), 0)
+    assert "scale=w='min(852,iw)':h='min(480,ih)'" in small[small.index("-vf") + 1]
+
+
+@needs_ffmpeg
+def test_a_converted_copy_when_the_app_asks(app, library, tmp_path, caplog):
+    """Asked for, a copy is converted whatever the device says it plays (the
+    file here plays as it is on this phone): H.264 at 8 bits, AAC, from
+    where the player starts, with the version, sound and night mode asked
+    for; the log says the app asked, after what it said went wrong."""
+    caplog.set_level(logging.INFO)
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
+        features = home.get("/api/v1/server").json()["features"]
+        assert {"convert", "convert-asked"} <= set(features)
+        surround = {**PHONE, "audio": ["aac", "ac3"]}
+        # The movie plays as it is here (H.264 and Dolby Digital in Matroska).
+        direct = home.post("/api/internal/play", json={"key": "400", "device": surround}).json()
+        assert direct["method"] == "direct"
+        home.post(direct["leave"])
+        # The app said its decoder failed, then asks for a converted copy.
+        failure = "ERROR_CODE_DECODING_FAILED (MediaCodecVideoDecoderException: Decoder failed)"
+        home.post("/api/internal/problem", json={"kind": "library-stopped", "title": "A Copy",
+                                                 "detail": failure, "app": "StationPlay for Android"})  # fmt: skip
+        played = home.post(
+            "/api/internal/play",
+            json={"key": "400", "device": surround, "convert": True, "startMs": 12_000,
+                  "version": "40000", "audio": "4002"},
+        )  # fmt: skip
+        assert played.status_code == 200, played.text
+        answer = played.json()
+        assert answer["method"] == "convert"
+        assert answer["why"] == [applibrary.ASKED_WHY]
+        assert (answer["version"], answer["audioTrack"]) == ("40000", "4002")
+        assert answer["bitrateKbps"] == 2_000 + converting.AAC_SURROUND_KBPS
+        here = answer["url"].rsplit("/", 1)[0]
+        assert "#EXT-X-START:TIME-OFFSET=12.000" in home.get(answer["url"]).text
+        piece = home.get(f"{here}/piece-2.ts")
+        assert piece.status_code == 200
+        assert picture_in_full(piece.content)["codec_name"] == "h264"
+        assert picture_in_full(piece.content)["pix_fmt"] == "yuv420p"  # (8 bits)
+        assert sound_of_piece(piece.content) == {"codec_name": "aac", "channels": 6}
+        assert first_times(piece.content)[0] == pytest.approx(12 + converting.TS_OFFSET_S,
+                                                              abs=0.05)  # fmt: skip
+        # (A smaller copy of what it was just playing: said as a switch.)
+        switched = [r.getMessage() for r in caplog.records if " switched " in r.getMessage()]
+        assert switched[-1].endswith(
+            "switched A Copy (2000) to a smaller copy, from SD at 8 Mbps to 180p H.264 at 2 Mbps "
+            f"on the CPU: the app asked for a converted copy; the app said: {failure}"
+        ), switched
+        # Night mode's sound, on a phone without surround: AAC stereo.
+        night = home.post(
+            "/api/internal/play",
+            json={"key": "400", "device": PHONE, "convert": True, "night": True},
+        ).json()  # fmt: skip
+        assert night["why"] == [applibrary.ASKED_WHY, "night mode's sound"]
+        piece = home.get(f"{night['url'].rsplit('/', 1)[0]}/piece-0.ts")
+        assert sound_of_piece(piece.content) == {"codec_name": "aac", "channels": 2}
+        said = [r.getMessage() for r in caplog.records if "started A Copy" in r.getMessage()]
+        assert said[-1].endswith(
+            "converted to 180p H.264 at 2 Mbps on the CPU, its sound made AAC stereo, with night "
+            f"mode's sound, as the app asked; it said: {failure}"
+        ), said[-1]
+        home.post(night["leave"])
+        # An episode that plays as it is, with even sound and subtitles drawn
+        # in: converted, with both, and saying so.
+        episode = home.post(
+            "/api/internal/play",
+            json={"key": "501", "device": PHONE, "convert": True},
+        ).json()  # fmt: skip
+        assert episode["method"] == "convert"
+        assert episode["why"] == [applibrary.ASKED_WHY, applibrary.EVEN_WHY]
+        home.post(episode["leave"])
+
+
+@needs_ffmpeg
+def test_a_wide_film_converted_on_request_is_1080p_wide(app, library, tmp_path):
+    """A 2560x1080 film comes 1920 wide, its shape kept: a 1080p decoder
+    takes it."""
+    wide = tmp_path / "wide.mkv"
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+         "testsrc2=size=2560x1080:rate=5:duration=3", "-f", "lavfi", "-i",
+         "sine=frequency=440:sample_rate=48000:duration=3", "-c:v", "libx264", "-preset",
+         "ultrafast", "-c:a", "aac", str(wide)],
+        check=True,
+    )  # fmt: skip
+    library.add_movie("410", "Wide", str(wide), 3_000, section="2")
+    library.describe("410", width=2560, height=1080)
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["2"]})
+        answer = home.post(
+            "/api/internal/play", json={"key": "410", "device": PHONE, "convert": True}
+        ).json()
+        assert answer["method"] == "convert", answer
+        piece = home.get(f"{answer['url'].rsplit('/', 1)[0]}/piece-0.ts")
+        shown = picture_in_full(piece.content)
+        assert (shown["width"], shown["height"]) == (1920, 810)
+        home.post(answer["leave"])
+
+
+def test_what_an_asked_for_copy_cant_be(app, caplog):
+    """Without device.hls, a sentence; a Dolby Vision profile 5 file still
+    can't be converted; and it counts against the copies converted at once."""
+    caplog.set_level(logging.INFO)
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["2"]})
+        old = {k: v for k, v in PHONE.items() if k != "hls"}
+        refused = home.post("/api/internal/play", json={"key": "401", "device": old,
+                                                        "convert": True})  # fmt: skip
+        assert refused.status_code == 422
+        assert refused.json()["detail"] == applibrary.CANT_TAKE_COPY
+        assert (
+            "asked for a converted copy of Dolby Vision (2000), but can't take one" in caplog.text
+        )
+        dv = home.post("/api/internal/play", json={"key": "401", "device": PHONE,
+                                                   "convert": True})  # fmt: skip
+        assert dv.status_code == 422
+        assert dv.json()["why"] == ["its Dolby Vision profile 5 picture"]
+        assert dv.json()["detail"] == (
+            "StationPlay can't make a converted copy of this file (its Dolby Vision profile 5 "
+            "picture)."
+        )
+
+
+@needs_ffmpeg
+def test_asked_for_copies_count_against_those_converted_at_once(app):
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["2"]})
+        devices = iter(range(2, 50))
+
+        def play() -> int:
+            device = TestClient(app, client=(f"10.0.1.{next(devices)}", 50000))
+            asked = {"key": "400", "device": PHONE, "convert": True}
+            return device.post("/api/internal/play", json=asked).status_code
+
+        most = applibrary.CONVERTING_MOST
+        assert [play() for _ in range(most + 1)] == [200] * most + [503]

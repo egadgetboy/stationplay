@@ -12,8 +12,10 @@ StationPlay's log, as a warning, naming the station as the log does (see
 playing.station). Kept 30 days, the newest 5,000 at most.
 
 What an app says about playing that couldn't keep up ("kept-up") is also
-why it went to a smaller version, which the log says as it does (see
-applibrary.py): kept a little while for that, in memory only.
+why it went to a smaller version, and what it says about something from the
+library that didn't play is why it asked for a converted copy, which the log
+says as it does (see applibrary.py): kept a little while for that, in memory
+only.
 """
 
 from __future__ import annotations
@@ -41,6 +43,10 @@ KINDS = {
     "crashed": "The app closed unexpectedly",
 }
 STATION_KINDS = ("station-failed", "station-stopped")
+# What's said about why a smaller version played, and about something from
+# the library that didn't play (why an app asked for a converted copy).
+KEPT_UP = ("kept-up",)
+FAILED_KINDS = ("library-failed", "library-stopped")
 
 KEEP = 5000
 KEEP_DAYS = 30
@@ -50,7 +56,7 @@ MOST = 30
 MOST_IN_S = 10 * 60
 TEXT_MOST = 300
 NAME_MOST = 120
-SAID_KEPT_S = 300  # how long what an app said about keeping up is kept (see said_lately)
+SAID_KEPT_S = 300  # how long what an app said lately is kept (see said_lately)
 
 
 class Refused(Exception):
@@ -100,13 +106,13 @@ class Problems:
         self.db = db
         self._recent: dict[str, deque[float]] = {}
         self._forgot_ms = 0
-        self._said: dict[str, tuple[float, str]] = {}  # address -> (when, what) about keeping up
+        self._said: dict[str, tuple[float, str, str]] = {}  # address -> (when, kind, what)
 
-    def said_lately(self, address: str, within_s: float) -> str:
-        """What an app at `address` said in the last `within_s` about
-        playing that couldn't keep up ("" if nothing)."""
-        when, what = self._said.get(address, (0.0, ""))
-        return what if what and time.monotonic() - when <= within_s else ""
+    def said_lately(self, address: str, within_s: float, kinds: tuple[str, ...]) -> str:
+        """What an app at `address` last said, in the last `within_s`, about
+        a problem of one of `kinds` ("" if nothing)."""
+        when, kind, what = self._said.get(address, (0.0, "", ""))
+        return what if kind in kinds and time.monotonic() - when <= within_s else ""
 
     def note(self, sent: Sent, user_id: int | None, away: bool, address: str) -> None:
         """Keeps a problem an app sent (from `address`). Refused if it isn't one
@@ -137,9 +143,9 @@ class Problems:
         times.append(now)
         for key in [k for k, v in self._recent.items() if not v or now - v[-1] > MOST_IN_S]:
             del self._recent[key]
-        if sent.kind == "kept-up" and fields["detail"]:
+        if sent.kind in KEPT_UP + FAILED_KINDS and fields["detail"]:
             self._said = {a: s for a, s in self._said.items() if now - s[0] <= SAID_KEPT_S}
-            self._said[address] = (now, fields["detail"])
+            self._said[address] = (now, sent.kind, fields["detail"])
         at = int(time.time() * 1000)
         self._forget_old(at)
         if self.db.add_problem(at, fields, at - SAME_MS, KEEP):
