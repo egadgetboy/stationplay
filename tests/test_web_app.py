@@ -206,3 +206,24 @@ def test_a_stations_progress_bar_marks_its_end():
     assert "const BAR_END = 0.98;" in stations
     assert "Math.round(n.start + (n.end - n.start) * BAR_END - now)" in stations
     assert "h('div', { class: 'bar', style: `--arrive:${arrive}ms` }" in stations
+
+
+def test_the_users_table_sets_changes_and_removes_pins():
+    """Beside New password, for each person (an Admin's own row too): Set
+    PIN or Change PIN, then Remove PIN, through the Devices dialog's own
+    controls and address; what the server says against it is shown."""
+    access = (WEB_DIR / "js/access.js").read_text(encoding="utf-8")
+    row = access.split("const actions = h('td', {},", 1)[1].split("ownPassword, canReport);", 1)[0]
+    assert row.index("'New password'") < row.index(
+        "onclick: () => editPin(u, actions) }, u.pin ? 'Change PIN' : 'Set PIN')"
+    )
+    assert "u.id === me.user" not in row  # (every row)
+    # One set of controls, in the table and in the Devices dialog.
+    assert access.count("'Remove PIN'") == 1 and access.count("pinControls(") == 3
+    assert "pinControls(u, savePicker)" in access
+    editing = access.split("function editPin(u, cell) {", 1)[1].split("\n}\n", 1)[0]
+    assert "api(`/api/access/users/${u.id}/picker`, { method: 'PUT', body })" in editing
+    assert "said.textContent = err.message" in editing
+    controls = access.split("function pinControls(", 1)[1].split("\n}\n", 1)[0]
+    assert "save({ pin: pin.value.trim() }, 'PIN saved')" in controls
+    assert "save({ pin: '' }, 'PIN removed')" in controls

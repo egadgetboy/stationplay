@@ -637,6 +637,9 @@ table.stats .station img.shaped { padding: 2px; }
 table.users td { vertical-align: middle; }
 table.users select { width: auto; }
 table.users .inline-add { flex-wrap: wrap; }
+table.users .pin-set input { width: 7em; }
+.pin-said { margin: 6px 0 0; }
+.pin-said:empty { display: none; }
 table.users .own-password { display: flex; gap: 6px; align-items: center; margin-top: 6px; font-size: 13px; color: var(--ink-2); cursor: pointer; }
 table.users .own-password:has(input:disabled) { cursor: default; }
 .level-edit input[type=text] { max-width: 320px; }

@@ -264,6 +264,7 @@ async function loadAccess() {
         h('button', { class: 'btn', type: 'button', onclick: () => renameUser(u, named) }, 'Rename'), ' ',
         h('button', { class: 'btn', type: 'button', onclick: () => openUserDevices(u) }, 'Devices'), ' ',
         h('button', { class: 'btn', type: 'button', onclick: () => newPassword(u, actions) }, u.hasPassword ? 'New password' : 'Add a password'), ' ',
+        h('button', { class: 'btn', type: 'button', onclick: () => editPin(u, actions) }, u.pin ? 'Change PIN' : 'Set PIN'), ' ',
         h('button', { class: 'btn danger', type: 'button', onclick: () => removeUser(u, users.length) }, 'Remove'),
         ownPassword, canReport);
       return h('tr', {},
@@ -371,7 +372,6 @@ function paintUserDevices() {
     u.showOn === 'home' ? h('span', { class: 'small' }, 'Away from home too, on:') : null,
     ...(boxes.length ? boxes.map(([id, box]) => h('label', {}, box, ` ${linked.devices.find(d => d.id === id).name}`)) : [h('span', { class: 'muted small' }, 'No devices are linked yet.')]),
     boxes.length ? h('div', {}, h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ showOn: u.showOn, devices: boxes.filter(([, b]) => b.checked).map(([id]) => id) }, 'Saved') }, 'Save devices')) : null) : null;
-  const pin = h('input', { type: 'text', inputmode: 'numeric', pattern: '[0-9]{4}', maxlength: 4, placeholder: '4 digits', autocomplete: 'off', 'aria-label': 'New PIN' });
   const invite = h('div', { class: 'small' });
   const needsOne = ' Needs a password or a PIN.';
   $('#userDevicesBody').replaceChildren(...[
@@ -388,9 +388,7 @@ function paintUserDevices() {
       h('p', { class: 'hint', style: 'margin:0' }, u.pin
         ? 'Asked for when they pick themselves.'
         : u.role === 'admin' ? 'None: they give their password instead.' : 'None: anyone at a device they’re on can pick them.'),
-      h('div', { class: 'scan-set' }, pin,
-        h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ pin: pin.value.trim() }, 'PIN saved') }, u.pin ? 'Change PIN' : 'Set PIN'),
-        u.pin ? h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ pin: '' }, 'PIN removed') }, 'Remove PIN') : null)),
+      pinControls(u, savePicker)),
     byName ? h('div', { class: 'playback' },
       h('strong', {}, 'Invite code'),
       h('p', { class: 'hint', style: 'margin:0' }, 'To sign in on a device without a password, they choose Sign in on Who’s tuning in? and enter their name and this code. It works once, for 7 days.'),
@@ -401,6 +399,33 @@ function paintUserDevices() {
         } catch (err) { $('#userDevicesStatus').textContent = err.message; }
       } }, 'Make an invite code')),
       invite) : null].filter(Boolean));
+}
+// Someone's PIN: a box for a new one, Set PIN or Change PIN, and Remove PIN
+// (in the Devices dialog, and in the Users table). `save(body, said)` sends
+// it (see PUT /api/access/users/{id}/picker) and shows `said`, or why not.
+function pinControls(u, save, extra = null) {
+  const pin = h('input', { type: 'text', inputmode: 'numeric', pattern: '[0-9]{4}', maxlength: 4, placeholder: '4 digits', autocomplete: 'off', 'aria-label': `New PIN for ${u.name}`,
+    onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); save({ pin: pin.value.trim() }, 'PIN saved'); } } });
+  return h('div', { class: 'scan-set pin-set' }, pin,
+    h('button', { class: 'btn', type: 'button', onclick: () => save({ pin: pin.value.trim() }, 'PIN saved') }, u.pin ? 'Change PIN' : 'Set PIN'),
+    u.pin ? h('button', { class: 'btn', type: 'button', onclick: () => save({ pin: '' }, 'PIN removed') }, 'Remove PIN') : null,
+    extra);
+}
+// In the Users table: someone's PIN, in place of their buttons until it's
+// saved (or Cancel). What the server says against it shows below.
+function editPin(u, cell) {
+  const said = h('p', { class: 'hint pin-said', role: 'status' });
+  const save = async (body, done) => {
+    try { await api(`/api/access/users/${u.id}/picker`, { method: 'PUT', body }); }
+    catch (err) { said.textContent = err.message; return false; }
+    toast(`${done} for ${u.name}`);
+    loadAccess();
+    return true;
+  };
+  const controls = pinControls(u, save, h('button', { class: 'btn', type: 'button', onclick: loadAccess }, 'Cancel'));
+  controls.addEventListener('keydown', e => { if (e.key === 'Escape') loadAccess(); });
+  cell.replaceChildren(controls, said);
+  controls.querySelector('input').focus();
 }
 const closeUserDevices = () => { $('#userDevices').close(); devicesFor = null; loadAccess(); };
 $('#closeUserDevices').addEventListener('click', closeUserDevices);
