@@ -217,9 +217,27 @@ header.top {
 .now .label { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); font-weight: 600; }
 /* How far into its program a station is: a thin line, and a mark where it is now
    (in the text color, so it stands out from the teal). */
-.bar { height: 2px; background: var(--line); border-radius: var(--pill); margin: 9px 0 7px; max-width: 420px; }
+.bar { position: relative; height: 2px; background: var(--line); border-radius: var(--pill); margin: 9px 0 7px; max-width: 420px; }
 .bar > span { position: relative; display: block; height: 100%; background: var(--accent); border-radius: var(--pill); }
 .bar > span.at::after { content: ''; position: absolute; right: -1px; top: -4px; width: 2px; height: 10px; border-radius: var(--pill); background: var(--ink); }
+/* And where the program ends: a mark like it, in orange (inside the line,
+   so it never sticks out). As the program reaches its last moments, the
+   mark turns red with a short glow. It starts at the time the page gives
+   it (--arrive, from now: below zero if it's past), so it turns once, on
+   time, however often the card is drawn again; and stays red after. */
+.bar::after {
+  content: ''; position: absolute; right: 0; top: -4px; width: 2px; height: 10px; border-radius: var(--pill);
+  background: var(--warn); animation: bar-end 1.6s ease-out var(--arrive, 0s) both;
+}
+@keyframes bar-end {
+  from { background: var(--warn); box-shadow: 0 0 0 0 transparent; }
+  30% { box-shadow: 0 0 6px 2px color-mix(in srgb, var(--bad) 70%, transparent); }
+  50% { background: var(--bad); }
+  to { background: var(--bad); box-shadow: 0 0 0 0 transparent; }
+}
+/* (With less motion: only the color changes.) */
+@keyframes bar-end-still { from { background: var(--warn); } to { background: var(--bad); } }
+@media (prefers-reduced-motion: reduce) { .bar::after { animation-name: bar-end-still; } }
 .channel .desc { color: var(--ink-2); font-size: 14px; margin: 2px 0 10px; max-width: 70ch; }
 /* A station's details, rolled up under a line that sums them up. */
 .more { margin-top: 8px; font-size: 13px; }

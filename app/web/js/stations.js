@@ -1,6 +1,8 @@
 // The Stations tab: the list of stations, and each one's guide.
 // Channels -------------------------------------------------------------------
 let channels = [];
+// A program's last 2%: its bar's end mark turns from orange to red (see .bar in page.css).
+const BAR_END = 0.98;
 async function loadChannels() {
   try { channels = await api('/api/channels'); }
   catch (e) { toast(e.message, true); return; }
@@ -48,6 +50,8 @@ function renderChannels() {
   box.replaceChildren(...shown.map(ch => {
     const n = ch.now;
     const pct = n ? Math.min(100, Math.max(0, (now - n.start) / (n.end - n.start) * 100)) : 0;
+    // When the bar's end mark turns red (see .bar in page.css): from now, in ms.
+    const arrive = n ? Math.round(n.start + (n.end - n.start) * BAR_END - now) : 0;
     const check = ch.check;
     const art = ch.logo
       ? h('div', { class: 'chart' }, logoImg(ch.logo), h('span', { class: 'no' }, ch.number))
@@ -74,7 +78,7 @@ function renderChannels() {
         n ? h('div', { class: 'now' },
           h('div', { class: 'label' }, n.special ? `On now · ${n.special}` : 'On now'),
           h('div', {}, epLabel(n)),
-          h('div', { class: 'bar' }, h('span', { class: pct > 0 ? 'at' : '', style: `width:${pct.toFixed(1)}%` }))) : null,
+          h('div', { class: 'bar', style: `--arrive:${arrive}ms` }, h('span', { class: pct > 0 ? 'at' : '', style: `width:${pct.toFixed(1)}%` }))) : null,
         stationDetails(ch, check, now),
         h('div', { class: 'actions' },
           h('button', { class: 'btn', onclick: () => openGuide(ch) }, icon('<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M2 7h12M6 3v10"/>'), h('span', {}, 'Guide')),

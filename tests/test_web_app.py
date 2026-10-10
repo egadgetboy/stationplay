@@ -177,3 +177,32 @@ def test_the_access_tab_shows_the_license_and_installs_and_removes_one():
         "'For support and transfers.'",
     ):
         assert words in PAGE, words
+
+
+def test_a_stations_progress_bar_marks_its_end():
+    """The bar under what's playing has an end mark like the playhead's (the
+    same size), in orange, inside the bar; it turns red with a short glow
+    in the program's last 2%, timed by the page, and with less motion only
+    its color changes."""
+    css = (WEB_DIR / "page.css").read_text(encoding="utf-8")
+    playhead = re.search(r"\.bar > span\.at::after \{([^}]*)\}", css)
+    end = re.search(r"\.bar::after \{([^}]*)\}", css)
+    assert playhead and end
+    for size in ("top: -4px", "width: 2px", "height: 10px"):
+        assert size in playhead[1] and size in end[1], size
+    # (Inside the bar: it never sticks out.)
+    assert "right: 0;" in end[1] and "background: var(--warn)" in end[1]
+    assert "animation: bar-end 1.6s ease-out var(--arrive, 0s) both" in end[1]
+    keyframes = css.split("@keyframes bar-end {", 1)[1].split("\n}", 1)[0]
+    assert "background: var(--warn)" in keyframes and "background: var(--bad)" in keyframes
+    assert "box-shadow" in keyframes  # (the glow)
+    still = css.split("@keyframes bar-end-still {", 1)[1].split("}\n", 1)[0]
+    assert "var(--bad)" in still and "box-shadow" not in still
+    assert (
+        "@media (prefers-reduced-motion: reduce) { .bar::after { animation-name: bar-end-still; } }"
+        in css
+    )
+    stations = (WEB_DIR / "js/stations.js").read_text(encoding="utf-8")
+    assert "const BAR_END = 0.98;" in stations
+    assert "Math.round(n.start + (n.end - n.start) * BAR_END - now)" in stations
+    assert "h('div', { class: 'bar', style: `--arrive:${arrive}ms` }" in stations
