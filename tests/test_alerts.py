@@ -634,6 +634,7 @@ def test_after_a_restart_the_apps_and_the_page_see_the_same_alerts(app, tmp_path
         before = home.get("/api/internal/alerts").json()["alerts"]
         header = home.get("/api/status").json()["alerts"]
     assert len(before) == 2 and len(sent) == 3
+    restarted = time.time()
     again = create_app(
         Settings(plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "d"),
         PlexClient("http://plex.test", "token", transport=FakePlex().transport()),
@@ -641,11 +642,10 @@ def test_after_a_restart_the_apps_and_the_page_see_the_same_alerts(app, tmp_path
     with TestClient(again) as home:
         assert home.get("/api/internal/alerts").json()["alerts"] == before
         assert home.get("/api/status").json()["alerts"] == header
-        logs = home.get("/api/logs").json()["text"]
-        still = [line for line in logs.splitlines() if "Alert still going" in line]
-        assert [line.split(": ", 1)[1] for line in still] == [
-            "Alert still going: StationPlay's backups are failing."
-        ]
+        logged = home.get("/api/logs").json()["entries"]
+        assert [
+            e["message"] for e in logged if e["time"] >= restarted and "Alert" in e["message"]
+        ] == ["Alert still going: StationPlay's backups are failing."]
     assert len(sent) == 3
 
 
