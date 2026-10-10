@@ -331,14 +331,20 @@ def test_your_logos_are_kept_and_never_handed_out_at_random(tmp_path):
 
 
 def test_the_page_can_show_the_version(client):
+    import re
     import tomllib
     from pathlib import Path
 
     from app import __version__
 
     assert client.get("/api/status").json()["version"] == __version__
-    project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
+    root = Path(__file__).parents[1]
+    project = tomllib.loads((root / "pyproject.toml").read_text())
     assert project["project"]["version"] == __version__  # one version everywhere
+    # (The image TrueNAS and Docker Compose build, too.)
+    for name in ("stationplay.yaml", "docker-compose.yml"):
+        images = re.findall(r"^\s*image: stationplay:(\S+)$", (root / name).read_text(), re.M)
+        assert images == [__version__], name
 
 
 def test_the_page_starts_in_the_appearance_this_browser_chose(client):
