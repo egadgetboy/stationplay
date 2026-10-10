@@ -715,6 +715,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             log.warning("StationPlay started from the backup you restored")
     except Exception:
         log.exception("Couldn't restore the backup, so StationPlay is keeping its current settings")
+    try:
+        backups.before_update(settings.data_dir)
+    except backups.CantBackUp as e:
+        log.error("%s", e)
+        raise SystemExit(1) from None
     db = Database(settings.data_dir / backups.DB_NAME)
     ctx = AppContext(
         settings=settings,
@@ -2486,6 +2491,15 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         Logs tab: each problem, how often, and on what kinds of device."""
         names = {u.id: u.name for u in ctx.db.users()}
         return ctx.problems.summary(max(1, min(days, problems.KEEP_DAYS)), names)
+
+    @app.get("/api/problems/{problem_id}/journal")
+    async def problem_journal(problem_id: int):
+        """What an app did before a problem, for the Logs tab's What led up
+        to it (fetched when it's opened: journals are long)."""
+        found = ctx.problems.journal(problem_id)
+        if found is None:
+            raise HTTPException(404, "That problem has no journal now")
+        return found
 
     @app.delete("/api/problems", status_code=204)
     async def clear_problems():

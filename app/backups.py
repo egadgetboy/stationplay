@@ -12,6 +12,13 @@ checked, unpacked into restore/ (and what's in it checked again: see
 main.py), marked ready, and StationPlay restarts (Docker starts it again).
 On the way up, before anything opens the database, the files are moved
 into place, after a backup of what was there before.
+
+Before an update changes the database (a new table or column, or anything
+else Database does to bring one up to date: see db.changes_needed), the
+database is copied as it is, sign-ins and all, to backups/ as
+before-<version>-<date>.db (the newest BEFORE_KEPT kept), so going back to
+the version before is putting that copy in place (see the README's
+Updating). If the copy can't be made, StationPlay changes nothing and stops.
 """
 
 from __future__ import annotations
@@ -34,7 +41,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import __version__
-from .db import copy_database
+from .db import changes_needed, copy_database
 from .text import plain
 
 if TYPE_CHECKING:
@@ -43,6 +50,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 KEEP = 7
+BEFORE_KEPT = 3  # copies of the database from before an update changed it
 BACKUP_DIR = "backups"
 RESTORE_DIR = "restore"
 READY = "READY"
@@ -51,6 +59,7 @@ DB_NAME = "stationplay.db"
 FILES = ("device.json", "broken-files.json")
 LOGO_NAME = re.compile(r"logos/upload-[0-9a-f]{1,32}\.png")
 BACKUP_NAME = re.compile(r"stationplay-(backup|before-restore)-\d{8}-\d{6}\.zip")
+BEFORE_NAME = re.compile(r"before-[0-9A-Za-z.+-]+-(\d{8}-\d{6})\.db")
 MANIFEST = "stationplay-backup.json"
 # A backup bigger than this, unpacked, isn't StationPlay's.
 MAX_UNPACKED = 500 * 1024 * 1024
@@ -64,6 +73,11 @@ CHECK_EVERY_S = 15 * 60
 
 class BackupError(Exception):
     """A file that can't be restored, and why."""
+
+
+class CantBackUp(Exception):
+    """The database can't be copied before an update changes it: why, in a
+    sentence for the log."""
 
 
 def _stamp() -> str:
@@ -147,6 +161,87 @@ def backup_path(data_dir: Path, name: str) -> Path | None:
         return None
     path = backups_dir(data_dir) / name
     return path if path.is_file() else None
+
+
+# Before an update changes the database -----------------------------------------------
+
+
+def before_update(data_dir: Path) -> Path | None:
+    """At startup, before the database is opened: if this version will change
+    it, a copy of it as it is (see the module's notes), returned; None if
+    there's nothing to change. CantBackUp if the copy can't be made, so
+    nothing is changed."""
+    current = data_dir / DB_NAME
+    if not current.is_file():
+        return None  # (a new install)
+    try:
+        changes = changes_needed(current)
+    except sqlite3.Error as e:
+        raise CantBackUp(
+            f"StationPlay {__version__} couldn't read its database to see whether it needs "
+            f"updating ({e}), so it changed nothing and stopped. Check its data folder's "
+            "stationplay.db, or restore a backup."
+        ) from None
+    if not changes:
+        return None
+    folder = backups_dir(data_dir)
+    path = folder / f"before-{__version__}-{_stamp()}.db"
+    part = path.with_name(path.name + ".part")
+    stop = (
+        f"StationPlay {__version__} needs to update its database, but couldn't back it up "
+        "first, so it changed nothing and stopped"
+    )
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        for old in folder.glob("before-*.db.part"):
+            old.unlink()  # (a copy cut off last time)
+        # (Room for the database and what's waiting to go into it, and a little more.)
+        wal = current.with_name(DB_NAME + "-wal")
+        need = current.stat().st_size + (wal.stat().st_size if wal.is_file() else 0) + (8 << 20)
+        free = shutil.disk_usage(folder).free
+        if free < need:
+            raise CantBackUp(
+                f"{stop}: its data folder's disk has {_mb(free)} free, and the copy needs about "
+                f"{_mb(need)}. Free up room on that disk, then start StationPlay again."
+            )
+        copy_database(current, part, sign_ins=True)
+        _check_copy(part)
+        os.replace(part, path)
+    except (OSError, sqlite3.Error) as e:
+        part.unlink(missing_ok=True)
+        raise CantBackUp(
+            f"{stop} ({e}). Check that its data folder can be written to and its disk has "
+            "room, then start StationPlay again."
+        ) from None
+    ours = sorted(
+        ((found.group(1), p) for p in folder.glob("before-*.db")
+         if (found := BEFORE_NAME.fullmatch(p.name))),
+        reverse=True,
+    )  # fmt: skip
+    for _, old in ours[BEFORE_KEPT:]:
+        old.unlink(missing_ok=True)
+    log.info(
+        "Backed up the database to backups/%s before updating it for StationPlay %s (%s). "
+        "To go back to the version before, see Rolling back in the README.",
+        path.name,
+        __version__,
+        "; ".join(changes),
+    )
+    return path
+
+
+def _check_copy(path: Path) -> None:
+    """Raises sqlite3.DatabaseError unless a copy just made is whole."""
+    conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        if conn.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+            raise sqlite3.DatabaseError("the copy isn't whole")
+    finally:
+        conn.close()
+
+
+def _mb(size: int) -> str:
+    return f"{size / 1024**2:,.0f} MB"
 
 
 # Restoring ----------------------------------------------------------------------

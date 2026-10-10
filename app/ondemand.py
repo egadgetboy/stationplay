@@ -922,12 +922,31 @@ def and_list(parts: list[str]) -> str:
     return ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
+# A track title that's a file's name or a path, as some tools write into a
+# file ("Northbound.S02E04.1080p.mkv"): the apps never show one (an Admin's
+# page and the log may name files; nothing an app receives does).
+_FILE_NAME = re.compile(
+    r"[\\/]|\.(mkv|mp4|m4v|mov|avi|ts|m2ts|mts|wmv|webm|mpe?g|vob|iso|srt|ass|ssa|vtt|sub|idx"
+    r"|sup|mka|mks|ac3|eac3|dts|aac|flac|mp3|ogg|opus|wav)$",
+    re.IGNORECASE,
+)
+
+
+def file_like(title: str) -> bool:
+    """Whether a track's title looks like a file's name or a path: with a
+    slash, ending with a media file's extension, or words joined by dots or
+    underscores, as a file's name has them ("Northbound.S02E04.1080p")."""
+    return bool(_FILE_NAME.search(title)) or (
+        " " not in title and max(title.count("."), title.count("_")) >= 2
+    )
+
+
 def track_name(track: Track, audio: bool) -> str:
     """How a track is listed in the apps: "English · Commentary · AAC ·
     Stereo", "Spanish · Forced"."""
     parts = [plain(track.language) or "Unknown language"]
     title = plain(track.title)
-    if title and title.casefold() != parts[0].casefold():
+    if title and title.casefold() != parts[0].casefold() and not file_like(title):
         parts.append(title)
     if audio:
         if track.codec:

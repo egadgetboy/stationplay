@@ -135,9 +135,9 @@ work here: these addresses are for the apps' own sign-ins.
 
 ## What 1.29.0 asks of the apps
 
-1. **Options: Audio language and Captions.** Ask `GET /api/internal/me`
+1. **Options: Audio language and Subtitles.** Ask `GET /api/internal/me`
    when Options opens. Offer **Audio language** (each file's own, or one of
-   `languages.choices`, listed by `name`) and **Captions**: on or off, and
+   `languages.choices`, listed by `name`) and **Subtitles**: on or off, and
    their language (the audio's, or one of `choices`). Save each change with
    `PUT /api/internal/languages`: it holds on every device the person uses
    (see Languages).
@@ -415,8 +415,8 @@ From 1.29.0, their languages too. Answers 401 when the sign-in has ended.
 | `languages.audio` | object or null | The sound's language; null: each file's default track |
 | `languages.audio.code` | string | Its code, such as `jpn` |
 | `languages.audio.name` | string | Its name, such as "Japanese" |
-| `languages.captions` | boolean | Whether captions are on |
-| `languages.captionLanguage` | object or null | The captions' language; null: the language of the sound that plays |
+| `languages.captions` | boolean | Whether subtitles are on |
+| `languages.captionLanguage` | object or null | The subtitles' language; null: the language of the sound that plays |
 | `languages.captionLanguage.code` | string | Its code |
 | `languages.captionLanguage.name` | string | Its name |
 | `languages.choices` | list | Every language StationPlay knows, A to Z by name, to choose from |
@@ -434,18 +434,18 @@ app's Options. Send what changes (what isn't sent stays as it is):
 ```
 
 `audio` and `captionLanguage` are a language's code, or null (each file's
-default track; the sound's language); `captions` is true or false. Only
-ever the person signed in: anything else sent is ignored. Answers 400, with
-the sentence to show, for a language StationPlay doesn't know, and for
-`captions` that isn't true or false.
+default track; the sound's language); `captions` (subtitles on or off) is
+true or false. Only ever the person signed in: anything else sent is
+ignored. Answers 400, with the sentence to show, for a language StationPlay
+doesn't know, and for `captions` that isn't true or false.
 
 | Field | Type | What it is |
 |---|---|---|
 | `audio` | object or null | The sound's language, as in `GET /api/internal/me` |
 | `audio.code` | string | Its code |
 | `audio.name` | string | Its name |
-| `captions` | boolean | Whether captions are on |
-| `captionLanguage` | object or null | The captions' language |
+| `captions` | boolean | Whether subtitles are on |
+| `captionLanguage` | object or null | The subtitles' language |
 | `captionLanguage.code` | string | Its code |
 | `captionLanguage.name` | string | Its name |
 
@@ -587,7 +587,8 @@ device's, or everyone's. Send what's known:
 ```json
 {"kind": "station-stopped", "station": 5, "detail": "The picture stopped...",
  "app": "StationPlay for Roku", "version": "0.5.0",
- "device": "Roku Ultra 4850X, Roku OS 14.0", "deviceName": "Den"}
+ "device": "Roku Ultra 4850X, Roku OS 14.0", "deviceName": "Den",
+ "at": 1791580000000, "journal": "Tuned to station 5\nThe picture stopped at 0:42"}
 ```
 
 `kind` says when the app sends it:
@@ -611,14 +612,47 @@ app last said it was.)
   (`title`, or `station`).
 - `crashed`: the app closed unexpectedly last time (sent when it opens
   again; `detail` is the crash's first line).
+- `unreachable` (from 1.29.1): the app couldn't reach StationPlay for a
+  minute or more, sent once it's back. `detail` says what kind of trouble,
+  starting with one of "No network on this device", "StationPlay's address
+  couldn't be found", "StationPlay didn't answer", "A secure connection
+  couldn't be made" or "StationPlay answered with an error (503)", then
+  the device's kind of network (Wi-Fi, mobile data, Ethernet; never its
+  name or address) and how long it lasted; `lastedMs` says how long, in
+  milliseconds (without it, StationPlay reads "for 3 min 20 s" or "for 1
+  hr 5 min" from `detail`); `at` is when it began. The Logs tab says it as
+  "Den couldn't reach StationPlay for 12 minutes · No network on this
+  device".
 
-`detail` is what the app saw, in a sentence (at most 300 characters kept);
-`device` is the kind of device, its model and its system, as a problem
-report's `Device:` line has it. Never a token, a password or a stream's
-private address. The same problem from the same app and device within 10
-minutes counts on its first, and is said in StationPlay's log once. At most
-30 in 10 minutes from one app on one device: more are answered 429. A
-`kind` StationPlay doesn't know is answered 400.
+`detail` is what the app saw, in a sentence (at most 300 characters kept):
+for a player's error, its code first, as the player names it
+(`ERROR_CODE_DECODING_FAILED` from Media3; `AVFoundationErrorDomain -11821`
+or `NSURLErrorDomain -1009` from Apple's players, as "<domain> <code>"; `Roku
+error -5` from Roku's), then what else it said. The Logs tab says what the
+codes it knows mean, in plain words. `device` is the kind of device, its
+model and its system, as a problem report's `Device:` line has it. Never a
+token, a password or a stream's private address.
+
+From 1.29.1, also send:
+
+- `at`: when it happened (milliseconds since 1970). An app keeps the
+  problems it couldn't send (StationPlay out of reach, say) and sends them
+  once it's back, oldest first. One from up to 7 days ago, or up to 5
+  minutes ahead (a device's clock a little off), is kept as happening
+  then; otherwise, as when it came. The Logs tab goes by when each
+  happened.
+- `journal`: the app's last lines before it, as a problem report has them,
+  joined with `\n` (never a token, a password or a stream's private
+  address). StationPlay keeps its newest lines, within 8 KB (8,192 bytes
+  in UTF-8), for the Logs tab's **What led up to it**; a longer one is cut,
+  its oldest lines left out.
+
+The same problem from the same app and device within 10 minutes of when the
+first happened counts on its first, and is said in StationPlay's log once.
+At most 30 in 10 minutes from one app on one device: more are answered 429
+(keep them, and send them later). The 5,000 that happened last are kept,
+so a backlog of old ones never pushes out newer ones. A `kind` StationPlay
+doesn't know is answered 400.
 
 | Field | Type | What it is |
 |---|---|---|
@@ -766,6 +800,12 @@ away, or says something StationPlay can't read, they answer 503 with
 500). What StationPlay was fetching carries on meanwhile, so asking again a
 little later often finds it ready.
 
+Nothing the apps are sent names a file or a folder (from 1.29.1): not a
+play answer, details, versions, tracks, alerts or refusals. A track whose
+title in the file is a file's name ("Northbound.S02E04.1080p.mkv") is
+listed without it. A program's own address ends in a plain name
+(`file.mkv`, `index.m3u8`).
+
 Keys are strings, and the same key always means the same show, movie or
 episode. Pictures (`poster`, `backdrop`, `thumb`) are addresses under
 `/api/internal/art`: add `&w=` with the width it will be shown at, in
@@ -783,7 +823,7 @@ one set):
 
 - **Their own** (`languages` in `GET /api/internal/me`; set with
   `PUT /api/internal/languages`): the sound's language (null: each file's
-  default track), captions on or off, and the captions' language (null:
+  default track), subtitles on or off, and the subtitles' language (null:
   the language of the sound that plays).
 - **For a show, or for an episode or a movie alone** (`languages` in
   `GET /api/internal/items/{key}`; set from the player with
@@ -807,9 +847,9 @@ default.
 - **Sound:** the first track in that language (the file's default among
   them first), never a commentary when there's another; with none in it,
   the file's default.
-- **Captions on:** a subtitle track in the captions' language, a full one
+- **Subtitles on:** a subtitle track in the subtitles' language, a full one
   before a forced one (one for the deaf and hard of hearing is a full one).
-- **Captions off:** only a forced track in the language of the sound that
+- **Subtitles off:** only a forced track in the language of the sound that
   plays (forced subtitles are the parts in another language, meant to be
   read).
 
@@ -1017,8 +1057,8 @@ A show's, movie's or episode's details: its card's fields, and more.
 | `languages.item.audio` | object or null | The sound's language; null: not chosen here |
 | `languages.item.audio.code` | string | Its code, such as `jpn` |
 | `languages.item.audio.name` | string | Its name, such as "Japanese" |
-| `languages.item.captions` | boolean or null | Captions on or off; null: not chosen here |
-| `languages.item.captionLanguage` | object or null | The captions' language; null: not chosen here |
+| `languages.item.captions` | boolean or null | Subtitles on or off; null: not chosen here |
+| `languages.item.captionLanguage` | object or null | The subtitles' language; null: not chosen here |
 | `languages.item.captionLanguage.code` | string | Its code |
 | `languages.item.captionLanguage.name` | string | Its name |
 | `languages.show` | object or null | (An episode) for its whole show; null: nothing (or not an episode) |
@@ -1084,8 +1124,8 @@ say), and 404 for what isn't shared or can't be seen, as its details do.
 | `item.audio` | object or null | The sound's language; null: not chosen here |
 | `item.audio.code` | string | Its code |
 | `item.audio.name` | string | Its name |
-| `item.captions` | boolean or null | Captions on or off; null: not chosen here |
-| `item.captionLanguage` | object or null | The captions' language; null: not chosen here |
+| `item.captions` | boolean or null | Subtitles on or off; null: not chosen here |
+| `item.captionLanguage` | object or null | The subtitles' language; null: not chosen here |
 | `item.captionLanguage.code` | string | Its code |
 | `item.captionLanguage.name` | string | Its name |
 | `show` | object or null | (An episode) what's chosen for its whole show, as `languages.show` |
@@ -1185,6 +1225,24 @@ H.264, at most 1080p, ordinary rather than HDR). A copy is also made, with
   when no version keeps up. The copy is converted.
 - `night: true`: night mode's sound (as the stations' `nightHls`), for an
   app that can't make it itself.
+- `convert: true` (from 1.29.1, when `features` lists `convert-asked`): a
+  converted copy, whatever `device` says it plays, for when the device's
+  decoder failed at the file (Media3's `ERROR_CODE_DECODING_FAILED`, say),
+  so asking for the same again would only fail again. The picture is made
+  H.264 at 8 bits, at most 1080p (within 1920×1080, or the device's own
+  H.264 size if that's smaller), ordinary rather than HDR; the sound AAC,
+  5.1 where the file's has more than two channels and `device.audio` lists
+  a surround format (`ac3`, `eac3`, `dts` or `truehd`), otherwise stereo.
+  Everything else asked for holds: `startMs`, `version`, `audio`,
+  `subtitle`, `night`, `fit` with `maxKbps`, and the cap away from home.
+  Its `why` starts with "a converted copy, as the app asked". It counts
+  against the copies converted at once, as any converted copy does. Send
+  the problem the app ran into first (`POST /api/internal/problem`, kind
+  `library-failed` or `library-stopped`, with the player's error in
+  `detail`): StationPlay's log then says the app asked for the copy after
+  that. Without `device.hls` (`ts`), the answer is 422 with `detail`; a
+  file that can't be converted (a Dolby Vision profile 5 picture, say) is
+  answered 422 with `detail` and `why`, as below.
 
 From 1.27.0, while `features` lists `even-sound` (an Admin's switch, on to
 start), every episode (never a movie) comes at the stations' loudness, so a
@@ -1287,7 +1345,7 @@ so plainly.
 | `chosen.audio` | string or null | The sound track that plays: select it in the player (a copy holds only it); null for a file without sound |
 | `chosen.audioWhy` | string | Why, in a few words to show: "Japanese, as chosen for this show", "The file's default: it has no Japanese sound" |
 | `chosen.subtitle` | string or null | The subtitle track to show: select it in the player (for a file of its own, add it from `subtitles[].url`), unless it's `drawnSubtitle`; null for none |
-| `chosen.subtitleWhy` | string | Why: "English captions, as you chose", "Forced English subtitles, for the parts in another language", "Captions are off" |
+| `chosen.subtitleWhy` | string | Why: "English subtitles, as you chose", "Forced English subtitles, for the parts in another language", "Subtitles are off" (from 1.29.1; "captions" before) |
 | `leave` | string | Where to `POST` when the player stops |
 | `resumeMs` | number | Where this person stopped last time (0: the start). Offer to resume there, or start over |
 | `durationMs` | number or null | How long it is |

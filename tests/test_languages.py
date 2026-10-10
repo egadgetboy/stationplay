@@ -59,7 +59,7 @@ def test_what_an_app_sends_is_checked():
     assert languages.changes({}, own=True) == {}
     with pytest.raises(ValueError, match="doesn't know the language “xx”"):
         languages.changes({"audio": "xx"}, own=False)
-    with pytest.raises(ValueError, match="true or false"):
+    with pytest.raises(ValueError, match="Subtitles must be on or off"):
         languages.changes({"captions": None}, own=True)
     assert languages.changes({"captions": None}, own=False) == {"captions": None}
 
@@ -119,7 +119,7 @@ def test_the_episode_then_the_show_then_the_person_then_the_file(chosen):
     wanted = chosen.wanted(1, EP)
     found = languages.pick(FILE, wanted)
     assert (found.audio_why, found.subtitle_why) == (
-        "The file's default", "English captions, as you chose"
+        "The file's default", "English subtitles, as you chose"
     )  # fmt: skip
     # The show's: English sound (never the commentary, though it comes first).
     chosen.change(1, "100", {"audio": "eng"})
@@ -132,7 +132,7 @@ def test_the_episode_then_the_show_then_the_person_then_the_file(chosen):
     chosen.change(1, "201", {"audio": "jpn", "captions": False})
     assert picked(chosen, 1) == ("a1", None)
     found = languages.pick(FILE, chosen.wanted(1, EP))
-    assert found.subtitle_why == "Captions are off, as chosen for this episode"
+    assert found.subtitle_why == "Subtitles are off, as chosen for this episode"
     # Cleared, one at a time: the show's sound again, and the person's captions.
     chosen.change(1, "201", {"audio": None})
     assert picked(chosen, 1) == ("a3", "s1")  # (captions off: the English forced ones)
@@ -157,7 +157,7 @@ def test_captions_in_the_sounds_language_and_what_isnt_there(chosen):
     assert found.audio_why == "The file's default: it has no Spanish sound"
     chosen.change(1, languages.OWN, {"audio": None, "caption_language": "ger"})
     found = languages.pick(FILE, chosen.wanted(1, EP))
-    assert found.subtitle is None and found.subtitle_why == "No captions: it has none in German"
+    assert found.subtitle is None and found.subtitle_why == "No subtitles: it has none in German"
 
 
 def test_a_full_track_before_a_forced_one_and_the_files_default_first():
@@ -177,7 +177,7 @@ def test_a_full_track_before_a_forced_one_and_the_files_default_first():
     assert languages.pick(only_commentary, english).audio.id == "a2"  # (when there's no other)
     silent = Media(container="mkv", video="h264")
     assert languages.pick(silent, english) == languages.Picked(None, "It has no sound", None,
-                                                               "Captions are off")  # fmt: skip
+                                                               "Subtitles are off")  # fmt: skip
 
 
 def test_one_persons_choices_are_theirs_alone(chosen):
@@ -267,7 +267,7 @@ def test_playing_what_each_person_chose(app):
         answer = play(home, "201", tia)
         assert answer["method"] == "direct" and answer["chosen"] == {
             "audio": "2014", "audioWhy": "English, as you chose",
-            "subtitle": "2016", "subtitleWhy": "English captions, as you chose",
+            "subtitle": "2016", "subtitleWhy": "English subtitles, as you chose",
         }  # fmt: skip
         # Sam has chosen nothing: his plays are as before.
         assert play(home, "201", sam)["chosen"] is None

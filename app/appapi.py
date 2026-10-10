@@ -186,6 +186,12 @@ class Problem(BaseModel):
     # POST /api/internal/play, and where in it the trouble was.)
     session: str | None = Field(default=None, max_length=64)
     positionMs: int | None = Field(default=None, ge=0, le=7 * 86_400_000)
+    # From 1.29.1: when it happened (ms), the app's journal before it (cut
+    # to its newest lines: see problems.cleaned_journal), and how long
+    # trouble reaching StationPlay lasted (ms).
+    at: int | None = None
+    journal: str = ""
+    lastedMs: int | None = None
 
 
 def report_text(text: str) -> str:
@@ -299,8 +305,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 *FEATURES,
                 *(["away"] if away else []),
                 *(["library"] if media else []),
-                # (Copies of what a device can't play as it is: see converting.py.)
-                *(["convert"] if media else []),
+                # (Copies of what a device can't play as it is: see converting.py.
+                # And from 1.29.1, a converted copy when an app asks for one.)
+                *(["convert", "convert-asked"] if media else []),
                 # (Even sound for a show's episodes, while it's on: see applibrary.py.)
                 *(["even-sound"] if media and ctx.shared.even_sound else []),
             ],
@@ -866,7 +873,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         user = access.signed_in(request)
         sent = problems.Sent(
             body.kind, body.detail, body.station, body.title, body.app, body.version,
-            body.device, body.deviceName,
+            body.device, body.deviceName, body.at, body.journal, body.lastedMs,
         )  # fmt: skip
         try:
             ctx.problems.note(

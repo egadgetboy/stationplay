@@ -370,8 +370,10 @@ class Alerts:
         self.checked(
             DATA_WRITE,
             bool(problem),
-            f"StationPlay can't write to its data folder, {folder} ({problem}). Check the "
-            "folder's permissions, and that its disk has room.",
+            # (Not the folder's path: the apps show alerts, and never name a
+            # file or folder.)
+            f"StationPlay can't write to its data folder ({problem}). Check the folder's "
+            "permissions, and that its disk has room.",
             "StationPlay can write to its data folder again.",
             2,
             2,

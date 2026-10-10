@@ -142,6 +142,20 @@ def minutes(seconds: float) -> str:
     return f"{hours} hr {rest} min" if rest else f"{hours} hr"
 
 
+def ago(seconds: float) -> str:
+    """How long ago: "a moment ago", "12 minutes ago", "3 hours ago", "2
+    days ago"."""
+    if seconds < 90:
+        return "a moment ago"
+    if seconds < 90 * 60:
+        return f"{round(seconds / 60)} minutes ago"
+    if seconds < 36 * 3600:
+        hours = round(seconds / 3600)
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    days = round(seconds / 86400)
+    return f"{days} days ago"
+
+
 def title(entry: Entry) -> str:
     """Something from Media, as the log names it: "Northbound · S2 E4",
     "Jaws (1975)"."""
