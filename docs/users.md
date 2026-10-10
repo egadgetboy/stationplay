@@ -4,13 +4,13 @@ This design covers what each person may **see**, and how a household shares
 one TV or tablet. An Admin already adds people on the **Access** tab. Each
 person signs in with a name and password, and the apps link with a code.
 This design adds limits on what each person sees, and a **Who's tuning
-in?** screen with optional passcodes. The server decides everything. The
+in?** screen with optional PINs. The server decides everything. The
 apps show only what the server sends.
 
 ## Goals
 
 1. **Off until it's used.** A StationPlay with one person, or none, works
-   exactly as it always has. Viewing Levels, passcodes and Who's tuning in?
+   exactly as it always has. Viewing Levels, PINs and Who's tuning in?
    appear only once there's a second person.
 2. **Nothing leaks.** Anything a person can't see is missing from every
    list, search, guide, Resume row and "on now" for them. There's no title,
@@ -29,7 +29,7 @@ apps show only what the server sends.
 
 - **Phase 1.** Viewing Levels (rating and libraries), and stations allowed
   or blocked for each person, enforced everywhere. Linked devices, Who's
-  tuning in?, passcodes, invite codes and "Show on." Users can be
+  tuning in?, PINs, invite codes and "Show on." Users can be
   watch-only.
 - **Phase 2.** Genre, tag, title and collection rules; rating overrides;
   title exceptions for each person; Station Audience warnings; Preview as
@@ -145,8 +145,8 @@ change when some stations are hidden.
   a few comparisons.
 - **`levels`.** Name, movie age, TV age, whether unrated titles are shown,
   and libraries (all, or a list).
-- **`users`.** Gains each person's level, passcode (`pin`: a hash, or
-  none), whether they chose to have no passcode, Show on (see below) and
+- **`users`.** Gains each person's level, PIN (`pin`: a hash, or
+  none), whether they chose to have no PIN, Show on (see below) and
   whether they may change their own password. A User may have no password.
   They use only Who's tuning in?
 - **`user_stations`.** A station allowed or blocked for a person.
@@ -195,7 +195,7 @@ New people start with the **New people show on** setting, next to the linked
 devices: Only devices they sign in on, or Every device at home. From 1.30.1,
 it's Only devices they sign in on, unless an Admin chose otherwise before;
 that choice stays. Someone who can't sign in by name (no password and no
-passcode) starts on Every device at home instead, rather than on no device
+PIN) starts on Every device at home instead, rather than on no device
 at all.
 
 Changing the setting doesn't move anyone already added. **Use for
@@ -205,7 +205,7 @@ everyone**, next to it, does:
   everyone already added shows that way too, as does anyone added later.
 - **Some people are kept.** For Only devices they sign in on, anyone who
   can't sign in by name keeps their setting. The page names them: "Kept as
-  they were: Kids (no password or passcode)."
+  they were: Kids (no password or PIN)."
 - **Picking isn't signing in.** Picking yourself on Who's tuning in? doesn't
   count as signing in on that device. So people appear again on a device
   they used that way once they sign in on it. The confirm says so.
@@ -234,60 +234,60 @@ access log shows how many people moved.
 
 Who's tuning in? always has **Sign in**. The person enters their name and,
 the first time on that device, their invite code or password. After that,
-they switch with their passcode. Each person can choose **Remove me from
+they switch with their PIN. Each person can choose **Remove me from
 this device**.
 
 - **A name alone never works.** Someone with neither a password nor a
-  passcode, such as a "Kids" account, can only be on Every device at home or
+  PIN, such as a "Kids" account, can only be on Every device at home or
   Only devices you choose. They never sign in by name, so no one can get in
   from anywhere by guessing a name like "Kids." No device away from home
   lists them unless an Admin chose it.
 - **A password still works.** Someone with a password signs in with it, on
   StationPlay's page or in an app, as before.
 - **The first sign-in needs more.** The first sign-in on a device takes an
-  invite code or a password, never just a passcode. An Admin makes an
+  invite code or a password, never just a PIN. An Admin makes an
   **invite code** for one person. It works once and expires after 7 days.
-- **Admins always unlock.** An Admin always needs their passcode (or
+- **Admins always unlock.** An Admin always needs their PIN (or
   password) on Who's tuning in?
-- **Passcodes.** A passcode is 4 digits, stored as a hash. After 5 wrong
-  passcodes, that person waits 15 minutes, on every device.
+- **PINs.** A PIN is 4 digits, stored as a hash. After 5 wrong
+  PINs, that person waits 15 minutes, on every device.
 - **Linked devices only.** Who's tuning in? exists only on a device that's
   already linked. A stranger who installs an app never sees a name.
 - **Away from home.** Picking someone the device doesn't list there is
   refused, the same as picking someone who isn't on it at all.
 
-### A passcode after the first sign-in
+### A PIN after the first sign-in
 
 From 1.28.0, once someone has signed in with their password or an invite
-code, later sign-ins are open, or locked with a 4-digit passcode if they
+code, later sign-ins are open, or locked with a 4-digit PIN if they
 choose. The first time they sign in on a device that way (by name in an
 app, or with a code entered on StationPlay's page), the app asks them to
-choose a passcode or No passcode. It doesn't ask if they already have one,
+choose a PIN or No PIN. It doesn't ask if they already have one,
 or already chose none. Either answer applies on every device, and
 they can change it in the app's Options. Everyone in a household, from
 adults and teens to kids and little kids, can choose either way.
 
 - **Proof it's them.** A sign-in made with their password, an invite code
-  or their passcode proves it's them, so choosing a new passcode needs
-  nothing more. Picking them without a passcode doesn't, since anyone at
+  or their PIN proves it's them, so choosing a new PIN needs
+  nothing more. Picking them without a PIN doesn't, since anyone at
   that device could have.
 - **No lockouts by others.** From 1.28.1, a sign-in made by picking them
-  without a passcode can't set one for them and lock them out. They sign in
+  without a PIN can't set one for them and lock them out. They sign in
   with their password or an invite code to set one.
-- **Admins keep theirs.** An Admin who has a passcode keeps it, because an
-  Admin needs a passcode, or their password on a device others use too. An
-  Admin with none who chooses No passcode gives their password there, as
+- **Admins keep theirs.** An Admin who has a PIN keeps it, because an
+  Admin needs a PIN, or their password on a device others use too. An
+  Admin with none who chooses No PIN gives their password there, as
   before.
-- **Passcode-only people keep it.** Someone without a password keeps their
-  passcode, because it's how they sign in.
+- **PIN-only people keep it.** Someone without a password keeps their
+  PIN, because it's how they sign in.
 - **Never asked.** Someone with neither, such as "Kids," is never asked.
-  They never sign in by name, and only an Admin gives them a passcode.
-- **Wrong tries still count.** Wrong passcodes still count after a new one
+  They never sign in by name, and only an Admin gives them a PIN.
+- **Wrong tries still count.** Wrong PINs still count after a new one
   is chosen.
 - **Admins can still change it.** An Admin can still set or remove anyone's
-  passcode on the **Access** tab.
-- **It's logged.** The access log shows "<name> set a passcode" or "<name>
-  chose no passcode," and in which app.
+  PIN on the **Access** tab.
+- **It's logged.** The access log shows "<name> set a PIN" or "<name>
+  chose no PIN," and in which app.
 
 ### Changing your password in the apps
 
@@ -305,7 +305,7 @@ in <the app, on the device>."
 - **When it's off.** StationPlay's page and the apps both refuse the change
   with a plain sentence, and `GET /api/internal/me` reports it
   (`canChangePassword: false`). An Admin can always change their own.
-- **No password yet.** Someone without a password, such as a passcode-only
+- **No password yet.** Someone without a password, such as a PIN-only
   person or "Kids," can't set one this way. An Admin gives them a password
   or an invite code.
 
@@ -341,8 +341,8 @@ The apps' own addresses (`docs/internal-api.md`):
   `POST /api/internal/picker/choose`, `POST /api/internal/picker/sign-in`
   and `POST /api/internal/picker/remove` are sent with that key, in the
   `StationPlay-Device` header.
-- **Passcodes.** Signing in answers `askPin`, and `POST /api/internal/pin`
-  sets a person's own passcode.
+- **PINs.** Signing in answers `askPin`, and `POST /api/internal/pin`
+  sets a person's own PIN.
 - **Passwords.** `POST /api/internal/password` changes a person's own
   password (1.28.0).
 - **Reports.** `POST /api/internal/report-problem` sends a report (1.30.0).
@@ -367,7 +367,7 @@ access log:
 |---|---|---|
 | `default` | string | New people show on, now |
 | `changed` | number | How many people it changed |
-| `kept` | list | The names of the people it left unchanged (no password or passcode) |
+| `kept` | list | The names of the people it left unchanged (no password or PIN) |
 
 ## Streams
 
@@ -384,7 +384,7 @@ stations.)
 
 ## The apps
 
-- **What they show.** Who's tuning in? on start, a passcode pad, Sign in,
+- **What they show.** Who's tuning in? on start, a PIN pad, Sign in,
   and Remove me from this device.
 - **No filtering on the device.** The apps show exactly what the server
   sends.
@@ -402,6 +402,6 @@ stations.)
 - A User can't make an Admin, or change their own level.
 - A first Admin can't be added from the internet (as before).
 - A revoked device is signed out on its next request.
-- Someone with neither a password nor a passcode can't sign in by name.
-- Five wrong passcodes lock that person out for 15 minutes, on every device.
+- Someone with neither a password nor a PIN can't sign in by name.
+- Five wrong PINs lock that person out for 15 minutes, on every device.
 - A StationPlay with one person, or none, answers exactly as before.

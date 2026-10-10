@@ -766,7 +766,7 @@ _ADDED_COLUMNS = (
     ("users", "can_report", "INTEGER NOT NULL DEFAULT 1"),
     # Added in 1.28.1: whether a sign-in was made by picking someone with no
     # PIN on a device's list (see devices.py), which proves nothing about
-    # who's there, so it can't change their passcode.
+    # who's there, so it can't change their PIN.
     ("sessions", "unlocked", "INTEGER NOT NULL DEFAULT 0"),
     # Added in 1.29.1: an app's journal before a problem, and how long
     # trouble reaching StationPlay lasted (see problems.py).

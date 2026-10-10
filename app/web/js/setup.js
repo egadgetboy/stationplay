@@ -331,7 +331,7 @@ const SETUP_PAGES = {
       return h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, u.name), h('div', { class: 'opt-ctl' }, select));
     });
     return { node: h('div', { class: 'playback' }, intro, ...rows,
-      h('p', { class: 'hint', style: 'margin:0' }, 'On the Access tab, Stations beside someone’s name allows or blocks a station for them, and Devices chooses which devices they’re on and gives them a passcode.')),
+      h('p', { class: 'hint', style: 'margin:0' }, 'On the Access tab, Stations beside someone’s name allows or blocks a station for them, and Devices chooses which devices they’re on and gives them a PIN.')),
     save: async () => {
       for (const [id, [select, was]] of picks) {
         if (select.value === was) continue;

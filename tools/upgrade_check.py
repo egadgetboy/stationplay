@@ -8,12 +8,12 @@ one on its data folder, then back again, and a fresh install.
    temporary folder with git archive, so the repository is left as it is.
 2. It's started on a new data folder, against the tests' stand-in Plex
    served on a port of its own, and given data through its API: an Admin
-   signed in on the page, a User with a passcode and a Viewing Level, a
-   "Kids" User with neither a password nor a passcode, an app signed in on
+   signed in on the page, a User with a PIN and a Viewing Level, a
+   "Kids" User with neither a password nor a PIN, an app signed in on
    a linked device, settings, a station, and a problem from the app.
 3. It's stopped, and this checkout is started on the same data folder,
    which must find everything there: everyone still signed in (the page and
-   the app), the User's passcode and level, where everyone shows on the
+   the app), the User's PIN and level, where everyone shows on the
    apps' pickers, the linked device, the settings and the station; and, if
    this version changes the database, the database backed up first, as
    before-<this version>-<date>.db, as the Logs tab says (otherwise no
@@ -94,7 +94,7 @@ from tests.fakeplex import FakePlex  # noqa: E402
 
 ADMIN = {"name": "Ada", "password": "correct horse battery"}
 USER = {"name": "Sam", "password": "staple battery horse", "role": "user"}
-KIDS = {"name": "Kids", "role": "user"}  # (no password, no passcode)
+KIDS = {"name": "Kids", "role": "user"}  # (no password, no PIN)
 NEW = {"name": "Bo", "password": "horse staple battery", "role": "user"}
 PASSCODE = "4321"
 APP = {"app": "StationPlay for Android", "deviceName": "Den"}
@@ -277,7 +277,7 @@ class StationPlay:
 
 
 def give_data(checks: Checks, url: str) -> dict:
-    """An Admin, a User with a passcode and a Viewing Level, Kids, an app
+    """An Admin, a User with a PIN and a Viewing Level, Kids, an app
     signed in on a linked device, settings, a station and a problem; what
     was made."""
     page = httpx.Client(base_url=url, timeout=30)
@@ -294,10 +294,10 @@ def give_data(checks: Checks, url: str) -> dict:
     picker = page.put(
         f"/api/access/users/{sam['id']}/picker", json={"pin": PASSCODE, "showOn": "all"}
     )
-    checks.ok(picker.status_code == 200, "the User is given a passcode", picker.text[:200])
+    checks.ok(picker.status_code == 200, "the User is given a PIN", picker.text[:200])
     kids = page.post("/api/access/users", json=KIDS)
     checks.ok(
-        kids.status_code == 201, "Kids are added, with no password or passcode", kids.text[:200]
+        kids.status_code == 201, "Kids are added, with no password or PIN", kids.text[:200]
     )
     signed = app.post("/api/internal/sign-in", json={**ADMIN, **APP, "picker": True}).json()
     checks.ok(
@@ -364,7 +364,7 @@ def has_data(checks: Checks, url: str, made: dict, version: str, where: str) -> 
                        headers={"stationplay-device": made["device"]},
                        json={"id": made["sam"], "pin": PASSCODE})  # fmt: skip
     checks.ok(
-        chose.status_code == 200, f"{where}: the User's passcode still works", chose.text[:200]
+        chose.status_code == 200, f"{where}: the User's PIN still works", chose.text[:200]
     )
 
 

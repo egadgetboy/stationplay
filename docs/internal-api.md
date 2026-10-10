@@ -73,7 +73,7 @@ StationPlay-Device: <deviceKey>
 
 From then on, the app opens on the picker (`GET /api/internal/picker`).
 Whoever is using it picks themselves (`POST /api/internal/picker/choose`,
-with their passcode if they have one) or signs in by name
+with their PIN if they have one) or signs in by name
 (`POST /api/internal/picker/sign-in`). Either gives a token for that
 person, as signing in does. This token lasts a day from when it was last
 used, and picking someone else ends it.
@@ -83,34 +83,34 @@ That also signs out whoever is signed in on it. Anything asked with its key
 then answers 401, and the app links again.
 
 An app shows the picker when it lists more than one person, or one person
-with a passcode. Otherwise it picks that person itself. (An Admin without a
-passcode gives their password only on a device others use too.)
+with a PIN. Otherwise it picks that person itself. (An Admin without a
+PIN gives their password only on a device others use too.)
 
 Apps that don't send `"picker": true` sign in as they always have, and get
 no `deviceKey`.
 
-### A passcode, after the first sign-in
+### A PIN, after the first sign-in
 
 From 1.28.0, three sign-in answers carry `askPin`: signing in with a
 password or an invite code (`POST /api/internal/sign-in`,
 `POST /api/internal/picker/sign-in`), or with a code entered on
 StationPlay's page (`POST /api/internal/link/check`). `askPin` says whether
-to ask this person, right then, to choose a 4-digit passcode for picking
+to ask this person, right then, to choose a 4-digit PIN for picking
 themselves on Who's tuning in? (The fields call it `pin`.) It's true while
 they have none and haven't chosen to have none. Offer both:
 
-- **A passcode.** 4 digits, typed twice to be sure, sent with
+- **A PIN.** 4 digits, typed twice to be sure, sent with
   `POST /api/internal/pin` as `{"pin": "1234"}`. From then on, picking them
   on any device asks for it.
-- **No passcode.** Send `{"pin": null}`. They aren't asked again, on any
+- **No PIN.** Send `{"pin": null}`. They aren't asked again, on any
   device. For an Admin, explain what that means: on a device others use
   too, they give their password instead.
 
 If they leave without choosing, they're asked again the next time they sign
-in with their password or a code. Someone with a passcode isn't asked. The
+in with their password or a code. Someone with a PIN isn't asked. The
 app's Options shows whether they have one (`user.pin` in
 `GET /api/internal/me`), so they can choose a new one there, or none. An
-Admin who has a passcode can't remove it in an app. That's refused, with
+Admin who has a PIN can't remove it in an app. That's refused, with
 the sentence to show, so offer an Admin only a new one.
 
 ### What 1.28.0 asks of the apps
@@ -121,11 +121,11 @@ the sentence to show, so offer an Admin only a new one.
    404, they aren't on this device's list where it is now, so ask for the
    list again.
 2. **After signing in** with a password, an invite code or a code entered on
-   StationPlay's page: when `askPin` is true, ask for a passcode (typed
-   twice) or No passcode, and send it with `POST /api/internal/pin`.
+   StationPlay's page: when `askPin` is true, ask for a PIN (typed
+   twice) or No PIN, and send it with `POST /api/internal/pin`.
 3. **Options.** Ask `GET /api/internal/me` when Options opens. Show whether
-   the person has a passcode (`user.pin`), with Change passcode and No
-   passcode (not for an Admin who has one). Show Change password only while
+   the person has a PIN (`user.pin`), with Change PIN and No
+   PIN (not for an Admin who has one). Show Change password only while
    `user.canChangePassword` is true (`POST /api/internal/password`), and
    keep the `token` it answers with in place of the app's.
 4. **Every refusal** carries a sentence to show unchanged (`detail`).
@@ -298,7 +298,7 @@ while the code is waiting to be entered, and 404 once the code has expired
 | `user` | object | Who linked it |
 | `user.name` | string | Their name |
 | `user.role` | string | `admin` or `user` |
-| `askPin` | boolean | Whether to ask them now to choose a passcode, or none (from 1.28.0: see A passcode, after the first sign-in) |
+| `askPin` | boolean | Whether to ask them now to choose a PIN, or none (from 1.28.0: see A PIN, after the first sign-in) |
 
 ## POST /api/internal/sign-in
 
@@ -324,7 +324,7 @@ an app with a picker (see Linked devices, above).
 | `user` | object | Who signed in |
 | `user.name` | string | Their name |
 | `user.role` | string | `admin` or `user` |
-| `askPin` | boolean | Whether to ask them now to choose a passcode, or none (from 1.28.0: see A passcode, after the first sign-in) |
+| `askPin` | boolean | Whether to ask them now to choose a PIN, or none (from 1.28.0: see A PIN, after the first sign-in) |
 
 Answers 401 for a wrong name or password, 429 while signing in must wait,
 and 400 when signing in is off.
@@ -352,8 +352,8 @@ have moved.
 | `people` | list | Who's on its picker |
 | `people[].id` | number | Who they are, for `POST /api/internal/picker/choose` |
 | `people[].name` | string | Their name |
-| `people[].pin` | boolean | Whether picking them asks for their passcode |
-| `people[].admin` | boolean | Whether they're an Admin (picking an Admin with no passcode asks for their password) |
+| `people[].pin` | boolean | Whether picking them asks for their PIN |
+| `people[].admin` | boolean | Whether they're an Admin (picking an Admin with no PIN asks for their password) |
 
 Answers 401 when the key isn't valid (the device was unlinked, so link it
 again), and 400 when signing in is off.
@@ -366,8 +366,8 @@ Sent with the device's key. Picks someone on its picker:
 {"id": 3, "pin": "1234"}
 ```
 
-Send `pin` (their passcode) when they have one. Send `password` instead for
-an Admin with no passcode on a device others use too (its picker lists more
+Send `pin` (their PIN) when they have one. Send `password` instead for
+an Admin with no PIN on a device others use too (its picker lists more
 than one person).
 
 | Field | Type | What it is |
@@ -377,8 +377,8 @@ than one person).
 | `user.name` | string | Their name |
 | `user.role` | string | `admin` or `user` |
 
-Answers 403 for a wrong passcode or password (with the sentence to show).
-Answers 429 after 5 wrong passcodes for that person in 15 minutes, on any
+Answers 403 for a wrong PIN or password (with the sentence to show).
+Answers 429 after 5 wrong PINs for that person in 15 minutes, on any
 device. Answers 404 for someone not on this device's picker where it is
 now, such as someone listed only at home while the device is away from
 home. 401 always means the device isn't linked anymore, here and on every
@@ -405,11 +405,11 @@ picker from then on.
 | `user` | object | Who signed in |
 | `user.name` | string | Their name |
 | `user.role` | string | `admin` or `user` |
-| `askPin` | boolean | Whether to ask them now to choose a passcode, or none (from 1.28.0: see A passcode, after the first sign-in) |
+| `askPin` | boolean | Whether to ask them now to choose a PIN, or none (from 1.28.0: see A PIN, after the first sign-in) |
 
 Answers 403, with the sentence to show, for a wrong name, code or password.
 It also answers 403 for someone who can't sign in by name, because they have
-neither a password nor a passcode (pick them from the list instead).
+neither a password nor a PIN (pick them from the list instead).
 Answers 429 after 10 wrong tries on this device in 15 minutes.
 
 ## POST /api/internal/picker/remove
@@ -435,7 +435,7 @@ sign-in has ended.
 | `user` | object or null | Who it is; null while signing in is off |
 | `user.name` | string | Their name, now |
 | `user.role` | string | `admin` or `user` |
-| `user.pin` | boolean | Whether they have a passcode (from 1.28.0) |
+| `user.pin` | boolean | Whether they have a PIN (from 1.28.0) |
 | `user.canChangePassword` | boolean | Whether they may change their password in the app (from 1.28.0): false for someone without a password, and for someone an Admin turned that off for. Offer Change password only when it's true |
 | `user.canReport` | boolean | Whether they may report a problem (from 1.30.0: see Reporting a problem): false for someone an Admin turned that off for. Offer Report a problem only when it's true (and while signing in is off, always) |
 | `languages` | object | Their own languages, for Options (from 1.29.0: see Languages); while signing in is off, everyone's |
@@ -480,37 +480,37 @@ StationPlay doesn't know, and for `captions` that isn't true or false.
 
 ## POST /api/internal/pin
 
-From 1.28.0, the person signed in chooses their own passcode, with the
+From 1.28.0, the person signed in chooses their own PIN, with the
 app's token. Send `{"pin": "1234"}` (exactly 4 digits, each 0 to 9), or
-`{"pin": null}` for none. None removes any passcode they have, and they
+`{"pin": null}` for none. None removes any PIN they have, and they
 aren't asked again, on any device.
 
-A sign-in made with their password, an invite code or their passcode
-proves it's them. So a new passcode needs nothing more, even to replace one
+A sign-in made with their password, an invite code or their PIN
+proves it's them. So a new PIN needs nothing more, even to replace one
 they have. A sign-in made by picking them on Who's tuning in? without a
-passcode doesn't prove it, since anyone at that device could have done it.
-From 1.28.1, such a sign-in can't set or remove a passcode, so sign in with
+PIN doesn't prove it, since anyone at that device could have done it.
+From 1.28.1, such a sign-in can't set or remove a PIN, so sign in with
 a password or an invite code first.
 
-The access log shows "Tia set a passcode in StationPlay for Android on
-Tia's phone" or "Tia chose no passcode in ...".
+The access log shows "Tia set a PIN in StationPlay for Android on
+Tia's phone" or "Tia chose no PIN in ...".
 
 | Field | Type | What it is |
 |---|---|---|
-| `pin` | boolean | Whether they have a passcode now |
+| `pin` | boolean | Whether they have a PIN now |
 
-Answers 400 for a passcode that isn't 4 digits, and 400 while signing in is
+Answers 400 for a PIN that isn't 4 digits, and 400 while signing in is
 off. Answers 403, with the sentence to show:
 
-- **An Admin removing theirs.** An Admin needs a passcode, or their
+- **An Admin removing theirs.** An Admin needs a PIN, or their
   password on a device others use too.
 - **Someone without a password removing theirs.** It's how they sign in.
-- **Someone with neither** a password nor a passcode, such as "Kids." Only
+- **Someone with neither** a password nor a PIN, such as "Kids." Only
   an Admin gives them one.
-- **A sign-in made by picking someone** without a passcode (from 1.28.1).
+- **A sign-in made by picking someone** without a PIN (from 1.28.1).
 - **A browser's sign-in,** since this is for the apps.
 
-Wrong passcodes tried recently still count after a new one is chosen: 5
+Wrong PINs tried recently still count after a new one is chosen: 5
 within 15 minutes still means a wait.
 
 ## POST /api/internal/password
@@ -541,7 +541,7 @@ sentence to show:
 - **Changing it is turned off.** An Admin has turned off changing their own
   password for them. `canChangePassword` in `GET /api/internal/me` shows
   this beforehand. An Admin can always change their own.
-- **No password.** For someone without a password (a passcode-only person,
+- **No password.** For someone without a password (a PIN-only person,
   or "Kids"), an Admin gives them one.
 - **A browser's sign-in.**
 

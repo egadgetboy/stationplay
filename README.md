@@ -381,7 +381,7 @@ Channels DVR, TiviMate, VLC and most IPTV apps accept the playlist address, `htt
 | StationPlay | What the apps gain |
 |---|---|
 | 1.22.0 | The minimum |
-| 1.28.0 | Passcodes |
+| 1.28.0 | PINs |
 | 1.29.0 | Languages and Admin alerts |
 | 1.29.1 | Converted copies on request, and more detail on problems |
 | 1.30.0 | Reporting a problem |
@@ -996,12 +996,12 @@ StationPlay's apps can share one device among several people, such as the living
   - **Every device at home:** for a household. They're on every device while it's at home or on your VPN. Away from home, they're only on devices they signed in on or that you choose.
   - **Every device, at home and away:** even a phone at a friend's house.
   - **Only devices you choose:** such as a family iPad that travels.
-- **Where new people start.** **New people show on**, under **Linked devices**, sets this. The default is **Only devices they sign in on**. If you chose **Devices at home** there before 1.30.1, that choice stays (as **Every device at home**). Someone with no password and no passcode can't sign in, so they start on **Every device at home**.
-- **Changing everyone.** Changing **New people show on** doesn't move anyone already added. **Use for everyone**, next to it, does. It first asks, showing how many people it changes. Devices you chose for someone stay chosen. People with no password and no passcode can't be on **Only devices they sign in on**, so that choice leaves them unchanged, and the page names them ("Kept as they were: Kids (no password or passcode)").
+- **Where new people start.** **New people show on**, under **Linked devices**, sets this. The default is **Only devices they sign in on**. If you chose **Devices at home** there before 1.30.1, that choice stays (as **Every device at home**). Someone with no password and no PIN can't sign in, so they start on **Every device at home**.
+- **Changing everyone.** Changing **New people show on** doesn't move anyone already added. **Use for everyone**, next to it, does. It first asks, showing how many people it changes. Devices you chose for someone stay chosen. People with no password and no PIN can't be on **Only devices they sign in on**, so that choice leaves them unchanged, and the page names them ("Kept as they were: Kids (no password or PIN)").
 - **Signing in again.** With **Only devices they sign in on**, someone who used to pick themselves on a device must sign in on it once (**Sign in**, with their password or an invite code) to be on its list again. Picking yourself isn't signing in.
-- **Passcodes.** A person can have a 4-digit passcode, which the device asks for when they pick themselves. An Admin without a passcode enters their password instead. After 5 wrong passcodes, that person must wait 15 minutes, on every device.
-- **Choosing a passcode.** The first time someone signs in on a device with their password or an invite code, the app asks them to choose a passcode or none. They can change it in the app's Options. An Admin who has a passcode keeps one. An Admin can set or remove anyone's passcode under **Devices** on the **Access** tab.
-- **No password needed.** A User can have no password, such as a "Kids" user who only picks themselves on the TV. Without a password or a passcode, they can't sign in by name, so they can only be on **Every device at home** or **Only devices you choose**.
+- **PINs.** A person can have a 4-digit PIN, which the device asks for when they pick themselves. An Admin without a PIN enters their password instead. After 5 wrong PINs, that person must wait 15 minutes, on every device.
+- **Choosing a PIN.** The first time someone signs in on a device with their password or an invite code, the app asks them to choose a PIN or none. They can change it in the app's Options. An Admin who has a PIN keeps one. An Admin can set or remove anyone's PIN under **Devices** on the **Access** tab.
+- **No password needed.** A User can have no password, such as a "Kids" user who only picks themselves on the TV. Without a password or a PIN, they can't sign in by name, so they can only be on **Every device at home** or **Only devices you choose**.
 - **Sign in on a new device.** Choose **Sign in** on Who's tuning in?, then enter your name and password, or an **invite code** an Admin made for you under **Devices**. An invite code works once, for 7 days. You're then on that device's list. Anyone can take themselves off a device's list.
 - **Unlinking.** **Linked devices** on the **Access** tab lists each device and who's on its list. **Unlink** signs the device out at once.
 
@@ -1190,7 +1190,7 @@ The tests need ffmpeg on the `PATH`. The HDR and real-world tests also need ffmp
 
 **Updating, rolling back and installing fresh.** For every release, `python tools/upgrade_check.py` tests the upgrade path:
 
-1. Starts the previous release (by its git tag, unpacked into a temporary folder) on a new data folder. Through its API, adds an Admin, a User with a passcode and a Viewing Level, a linked device, settings and a station.
+1. Starts the previous release (by its git tag, unpacked into a temporary folder) on a new data folder. Through its API, adds an Admin, a User with a PIN and a Viewing Level, a linked device, settings and a station.
 2. Starts this checkout on the same folder, and checks that everything is there, everyone is still signed in, and the database was backed up first (a release that doesn't change the database makes no copy).
 3. Makes two alerts live, sent to a web address it stands in for, and restarts with them. Checks that neither is sent again, and that one fixed while StationPlay was stopped is reported fixed once.
 4. Starts the previous release on the current database, live alert and all.
@@ -1258,7 +1258,7 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/backups.py` | Backups and restores, and the database copy made before an update changes it |
 | `app/access.py` | Sign-in, Admins and Users, and the access log |
 | `app/viewing.py`, `app/ratings.py`, `app/titles.py` | Viewing Levels: what each person can see, ratings read as ages, and the ratings of what's on each station |
-| `app/devices.py` | Linked devices, Who's tuning in?, passcodes and invite codes |
+| `app/devices.py` | Linked devices, Who's tuning in?, PINs and invite codes |
 | `app/stats.py`, `app/watching.py` | Viewing stats, who's watching now, and matching Plex sessions to stations |
 | `app/health.py` | The server's health for the Stats tab: processor, memory, network and storage, from Linux's own files |
 | `app/alerts.py`, `app/notify.py` | Admin alerts, and notifying a web address of them |

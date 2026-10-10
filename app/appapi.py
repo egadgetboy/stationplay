@@ -128,7 +128,7 @@ class LinkCheck(BaseModel):
 
 
 class PinChange(BaseModel):
-    pin: str | None = Field(max_length=10)  # (4 digits; null: no passcode)
+    pin: str | None = Field(max_length=10)  # (4 digits; null: no PIN)
 
 
 class PasswordChange(BaseModel):
@@ -475,7 +475,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.post("/api/internal/pin")
     async def own_pin(body: PinChange, request: Request):
-        """Someone chooses their own PIN (a passcode, as the apps say), or
+        """Someone chooses their own PIN, or
         says they want none (see devices.set_own_pin): when an app asks,
         after they sign in with their password or an invite code (`askPin`),
         or in its Options. Not on a sign-in made by picking them without
@@ -485,7 +485,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             has = await ctx.devices.set_own_pin(user, body.pin, unlocked=signed.unlocked)
         except devices.Refused as e:
             raise HTTPException(e.status, str(e)) from None
-        chose = "set a passcode" if has else "chose no passcode"
+        chose = "set a PIN" if has else "chose no PIN"
         ctx.access.record(logging.INFO, f"{user.name} {chose} in {in_sentence(signed.app)}")
         return {"pin": has}
 

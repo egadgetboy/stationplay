@@ -244,7 +244,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         me = check.answer(phone.get("/api/internal/me", headers=sam), "GET /api/internal/me")
         assert me["languages"]["captionLanguage"]["code"] == "spa"
         check.answer(phone.get("/api/internal/me"), "GET /api/internal/me", 401)
-        # A passcode, as the app asks after signing in (see test_picker.py).
+        # A PIN, as the app asks after signing in (see test_picker.py).
         assert signed["askPin"] is True
         pin = "POST /api/internal/pin"
         check.answer(phone.post("/api/internal/pin", headers=sam, json={"pin": "12"}), pin, 400)

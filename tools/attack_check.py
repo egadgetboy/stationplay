@@ -10,12 +10,12 @@ tries what an attacker would and prints PASS or FAIL for each: routes
 without and with the wrong role; forged headers; CSRF from another site;
 path traversal; oversized bodies; script in names; guessing or reusing keys,
 play addresses and reach nonces; reaching Media and stations a level hides;
-the sign-in, passcode and link-code limits; who a linked device lists (new
+the sign-in, PIN and link-code limits; who a linked device lists (new
 people only on devices they sign in on, and Use for everyone: only for an
 Admin, from StationPlay's own page, only its two choices, never moving who
-can't sign in by name) and lists away from home; setting a passcode or
+can't sign in by name) and lists away from home; setting a PIN or
 changing a password from the apps (as an
-outsider, as someone else, an Admin's passcode, its format, the limits);
+outsider, as someone else, an Admin's PIN, its format, the limits);
 Admin alerts and the web address they're sent to (only for Admins; only
 http and https, no redirects followed, never waited on); each person's
 languages (their own only, and only languages StationPlay knows); Media's
@@ -245,7 +245,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
         kid_level = next(lv["id"] for lv in levels if lv["builtin"] == "kid")
         await c.put(f"/api/access/users/{kit['id']}/viewing", json={"level": kid_level},
                     headers=admin_h)  # fmt: skip
-        # Give the User a passcode, for the passcode brute-force test later.
+        # Give the User a PIN, for the PIN brute-force test later.
         await c.put(f"/api/access/users/{sam['id']}/picker", json={"pin": "4321"}, headers=admin_h)
 
     # 1) The public port: no Plex, no home-only addresses, sign-in required.
@@ -445,8 +445,8 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
         checks.ok(r.status_code == 404, "a wrong reach nonce is answered as not found",
                   f"got {r.status_code}")  # fmt: skip
 
-    # 10) Brute-forcing the sign-in and the device passcode.
-    checks.section("The sign-in and passcode limits")
+    # 10) Brute-forcing the sign-in and the device PIN.
+    checks.section("The sign-in and PIN limits")
     # From the internet, behind a proxy that sets X-Real-IP (so the limit is
     # by that address). A dedicated address, so this doesn't spend any other.
     guesser = {"X-Real-IP": "203.0.113.40", "X-Forwarded-Proto": "https"}
@@ -458,7 +458,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
                                headers=guesser)  # fmt: skip
         checks.ok(blocked.status_code == 429, "sign-in waits after too many wrong passwords",
                   f"got {blocked.status_code}")  # fmt: skip
-    # Many passcode guesses at once can't beat the five-tries limit (the limit is
+    # Many PIN guesses at once can't beat the five-tries limit (the limit is
     # by person, so it isn't spent by anything above).
     await _pin_limit(checks, app, home, device_key)
 
@@ -486,7 +486,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
     await _new_people_and_everyone(checks, app, home, net, admin_h, sam_h, kit_h, device_key)
     await _picker_away(checks, app, home, net, device_key)
 
-    # 14) Passcodes and passwords from the apps: only one's own, as the rules say.
+    # 14) PINs and passwords from the apps: only one's own, as the rules say.
     await _own_pin_and_password(checks, app, home, net, admin_h, sam_h, kit_h, device_key)
 
     # 15) Admin alerts, and the web address they're sent to: only for Admins.
@@ -715,7 +715,7 @@ async def _new_people_and_everyone(
         little = db.user(made.json()["id"])
         checks.ok(got.status_code == 200 and got.json().get("kept") == ["Little Ones"]
                   and little is not None and little.show_on == "home",
-                  "someone with no password or passcode is kept as they were, and named",
+                  "someone with no password or PIN is kept as they were, and named",
                   got.text[:200])  # fmt: skip
         r = await c.post("/api/internal/picker/choose", headers=key,
                          json={"id": made.json()["id"]})  # fmt: skip
@@ -764,11 +764,11 @@ async def _own_pin_and_password(
     device_key: str,
 ) -> None:  # fmt: skip
     """POST /api/internal/pin and /api/internal/password: an outsider can't
-    use them; one person can't change another's; an Admin's passcode can't be
-    removed in an app; a passcode is exactly 4 digits; and the limits hold
+    use them; one person can't change another's; an Admin's PIN can't be
+    removed in an app; a PIN is exactly 4 digits; and the limits hold
     (wrong current passwords, many at once, and the wait after wrong
-    passcodes, which a new one doesn't end)."""
-    checks.section("Passcodes and passwords from the apps")
+    PINs, which a new one doesn't end)."""
+    checks.section("PINs and passwords from the apps")
     db = app.state.ctx.db
     ids = {u.name: u.id for u in db.users()}
     pin_of = db.pin_hash
@@ -799,7 +799,7 @@ async def _own_pin_and_password(
         async with httpx.AsyncClient(base_url=home) as page:
             await page.post("/api/access/sign-in", json=KID)
             r = await page.post("/api/internal/pin", json={"pin": "1111"})
-            checks.ok(r.status_code == 403, "a browser's sign-in can't set a passcode",
+            checks.ok(r.status_code == 403, "a browser's sign-in can't set a PIN",
                       f"got {r.status_code}")  # fmt: skip
 
         # One person can't change another's: whatever else is sent, it's theirs.
@@ -809,7 +809,7 @@ async def _own_pin_and_password(
                                "user": {"name": USER["name"]}})  # fmt: skip
         checks.ok(r.status_code == 200 and pin_of(ids[USER["name"]]) == sams_pin
                   and pin_of(ids[KID["name"]]) != "",
-                  "a passcode set with someone else's name or id is the sender's own",
+                  "a PIN set with someone else's name or id is the sender's own",
                   f"got {r.status_code}")  # fmt: skip
         r = await c.post("/api/internal/password", headers=kit_h,
                          json={"current": USER["password"], "new": "taken over now",
@@ -827,26 +827,26 @@ async def _own_pin_and_password(
             checks.ok(r.status_code == 403, f"a User can't {method} {path} {body}",
                       f"got {r.status_code}")  # fmt: skip
 
-        # An Admin's passcode can't be removed in an app.
+        # An Admin's PIN can't be removed in an app.
         set_it = await c.post("/api/internal/pin", headers=admin_h, json={"pin": "1357"})
         kept = await c.post("/api/internal/pin", headers=admin_h, json={"pin": None})
         checks.ok(set_it.status_code == 200 and kept.status_code == 403
                   and pin_of(ids[ADMIN["name"]]) != "",
-                  "an Admin's passcode can't be removed in an app",
+                  "an Admin's PIN can't be removed in an app",
                   f"got {set_it.status_code}, {kept.status_code}")  # fmt: skip
 
-        # A passcode is exactly 4 digits, 0 to 9.
+        # A PIN is exactly 4 digits, 0 to 9.
         kits_pin = pin_of(ids[KID["name"]])
         for wrong in ("123", "12345", "abcd", "12a4", " 1234", "1234 ", "1234\n", "",
                       "\u0661\u0662\u0663\u0664", "\uff11\uff12\uff13\uff14", "+123",
                       "-123", "12.3", "0x12", 1234, ["1234"], {"pin": "1234"}):  # fmt: skip
             r = await c.post("/api/internal/pin", headers=kit_h, json={"pin": wrong})
             checks.ok(r.status_code == 400 and pin_of(ids[KID["name"]]) == kits_pin,
-                      f"the passcode {wrong!r} is refused", f"got {r.status_code}")  # fmt: skip
+                      f"the PIN {wrong!r} is refused", f"got {r.status_code}")  # fmt: skip
         r = await c.post("/api/internal/pin", headers=kit_h, json={})
-        checks.ok(r.status_code == 400, "a passcode must be sent (or null)", f"got {r.status_code}")
+        checks.ok(r.status_code == 400, "a PIN must be sent (or null)", f"got {r.status_code}")
 
-        # Someone anyone at home may pick ("Kids") gets a passcode only from an Admin.
+        # Someone anyone at home may pick ("Kids") gets a PIN only from an Admin.
         made = await c.post("/api/access/users", headers=admin_h,
                             json={"name": "Kids", "role": "user"})  # fmt: skip
         picked = await c.post("/api/internal/picker/choose", json={"id": made.json()["id"]},
@@ -854,14 +854,14 @@ async def _own_pin_and_password(
         kids_h = {"Authorization": f"Bearer {picked.json().get('token', '')}"}
         for pin in ("2222", None):
             r = await c.post("/api/internal/pin", headers=kids_h, json={"pin": pin})
-            checks.ok(r.status_code == 403, f"Kids can't set their own passcode ({pin!r})",
+            checks.ok(r.status_code == 403, f"Kids can't set their own PIN ({pin!r})",
                       f"got {r.status_code}")  # fmt: skip
         r = await c.post("/api/internal/password", headers=kids_h,
                          json={"current": "", "new": "a brand new password"})  # fmt: skip
         checks.ok(r.status_code == 403, "Kids can't give themselves a password",
                   f"got {r.status_code}")  # fmt: skip
 
-        # Someone with a password but no passcode, picked by whoever is at the
+        # Someone with a password but no PIN, picked by whoever is at the
         # device, isn't locked out by them.
         made = await c.post("/api/access/users", headers=admin_h,
                             json={"name": "Lee", "password": "lee password", "role": "user"})  # fmt: skip
@@ -872,14 +872,14 @@ async def _own_pin_and_password(
             r = await c.post("/api/internal/pin", headers=lee_h, json={"pin": pin})
             checks.ok(r.status_code == 403 and pin_of(made.json()["id"]) == ""
                       and picked.status_code == 200,
-                      f"picking someone without a passcode can't set theirs ({pin!r})",
+                      f"picking someone without a PIN can't set theirs ({pin!r})",
                       f"got {picked.status_code}, {r.status_code}")  # fmt: skip
 
-        # The wait after wrong passcodes holds, even after a new one is set.
+        # The wait after wrong PINs holds, even after a new one is set.
         await c.post("/api/internal/pin", headers=sam_h, json={"pin": "2468"})
         r = await c.post("/api/internal/picker/choose", json={"id": ids[USER["name"]], "pin": "2468"},
                          headers={"StationPlay-Device": device_key})  # fmt: skip
-        checks.ok(r.status_code == 429, "a new passcode doesn't end the wait after wrong ones",
+        checks.ok(r.status_code == 429, "a new PIN doesn't end the wait after wrong ones",
                   f"got {r.status_code}")  # fmt: skip
 
     kits_password = password_of(ids[KID["name"]])
@@ -1940,8 +1940,8 @@ def _drift(checks: Checks) -> None:
 
 
 async def _pin_limit(checks: Checks, app, home: str, device_key: str) -> None:
-    """Try every wrong passcode at once and confirm the limit holds and none
-    gets in. (The User already has the passcode 4321 from setup.)"""
+    """Try every wrong PIN at once and confirm the limit holds and none
+    gets in. (The User already has the PIN 4321 from setup.)"""
     async with httpx.AsyncClient(base_url=home, headers={"StationPlay-Device": device_key}) as c:
         people = (await c.get("/api/internal/picker")).json()["people"]
         sam = next(p for p in people if p["name"] == USER["name"])
@@ -1953,7 +1953,7 @@ async def _pin_limit(checks: Checks, app, home: str, device_key: str) -> None:
         codes = await asyncio.gather(*(guess(f"{n:04d}") for n in range(4300, 4400) if n != 4321))
         checks.ok(
             codes.count(403) <= access.TRIES and 200 not in codes and 429 in codes,
-            "many passcode guesses at once can't beat the limit or get in",
+            "many PIN guesses at once can't beat the limit or get in",
             f"checked={codes.count(403)} got-in={codes.count(200)}",
         )
 

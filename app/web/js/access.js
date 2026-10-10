@@ -306,13 +306,13 @@ $('#showOnDefault').addEventListener('change', async e => {
   catch (err) { toast(err.message, true); }
   loadAccess();
 });
-// Who can sign in on a device by name: with a password or a passcode (as the
+// Who can sign in on a device by name: with a password or a PIN (as the
 // server says: see devices.py).
 const signsInByName = u => u.hasPassword || u.pin;
 const peopleCount = n => n === 1 ? '1 person' : `${n} people`;
 const andList = names => names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names.join('');
-const keptSaid = kept => kept.length ? ` Kept as they were: ${andList(kept)} (no password or passcode).` : '';
-const keepsSaid = kept => kept.length ? ` ${andList(kept)} will stay as they are (no password or passcode).` : '';
+const keptSaid = kept => kept.length ? ` Kept as they were: ${andList(kept)} (no password or PIN).` : '';
+const keepsSaid = kept => kept.length ? ` ${andList(kept)} will stay as they are (no password or PIN).` : '';
 // Use for everyone: everyone already added shows where new people do.
 $('#showOnEveryone').addEventListener('click', async () => {
   const select = $('#showOnDefault');
@@ -333,7 +333,7 @@ $('#showOnEveryone').addEventListener('click', async () => {
   } catch (err) { said.textContent = err.message; }
   loadAccess();
 });
-// Someone's devices: where they show, their passcode, and an invite code.
+// Someone's devices: where they show, their PIN, and an invite code.
 let devicesFor = null;
 function openUserDevices(u) {
   devicesFor = u;
@@ -371,9 +371,9 @@ function paintUserDevices() {
     u.showOn === 'home' ? h('span', { class: 'small' }, 'Away from home too, on:') : null,
     ...(boxes.length ? boxes.map(([id, box]) => h('label', {}, box, ` ${linked.devices.find(d => d.id === id).name}`)) : [h('span', { class: 'muted small' }, 'No devices are linked yet.')]),
     boxes.length ? h('div', {}, h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ showOn: u.showOn, devices: boxes.filter(([, b]) => b.checked).map(([id]) => id) }, 'Saved') }, 'Save devices')) : null) : null;
-  const pin = h('input', { type: 'text', inputmode: 'numeric', pattern: '[0-9]{4}', maxlength: 4, placeholder: '4 digits', autocomplete: 'off', 'aria-label': 'New passcode' });
+  const pin = h('input', { type: 'text', inputmode: 'numeric', pattern: '[0-9]{4}', maxlength: 4, placeholder: '4 digits', autocomplete: 'off', 'aria-label': 'New PIN' });
   const invite = h('div', { class: 'small' });
-  const needsOne = ' Needs a password or a passcode.';
+  const needsOne = ' Needs a password or a PIN.';
   $('#userDevicesBody').replaceChildren(...[
     h('div', { class: 'playback' },
       h('strong', {}, 'Show on'),
@@ -384,13 +384,13 @@ function paintUserDevices() {
       radio('selected', 'Only devices you choose', ' At home and away, such as a family iPad.'),
       u.showOn === 'selected' ? pick : null),
     h('div', { class: 'playback' },
-      h('strong', {}, 'Passcode'),
+      h('strong', {}, 'PIN'),
       h('p', { class: 'hint', style: 'margin:0' }, u.pin
         ? 'Asked for when they pick themselves.'
         : u.role === 'admin' ? 'None: they give their password instead.' : 'None: anyone at a device they’re on can pick them.'),
       h('div', { class: 'scan-set' }, pin,
-        h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ pin: pin.value.trim() }, 'Passcode saved') }, u.pin ? 'Change passcode' : 'Set passcode'),
-        u.pin ? h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ pin: '' }, 'Passcode removed') }, 'Remove passcode') : null)),
+        h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ pin: pin.value.trim() }, 'PIN saved') }, u.pin ? 'Change PIN' : 'Set PIN'),
+        u.pin ? h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ pin: '' }, 'PIN removed') }, 'Remove PIN') : null)),
     byName ? h('div', { class: 'playback' },
       h('strong', {}, 'Invite code'),
       h('p', { class: 'hint', style: 'margin:0' }, 'To sign in on a device without a password: it works once, within 7 days.'),

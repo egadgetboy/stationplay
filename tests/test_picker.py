@@ -156,7 +156,7 @@ def test_a_household_tv(app):
                 headers=device(key),
             )
             assert wrong.status_code == 403 and wrong.json()["detail"] == (
-                "That passcode isn't right"
+                "That PIN isn't right"
             )
         waits = tv.post(
             "/api/internal/picker/choose", json={"id": tia_id, "pin": "4321"}, headers=device(key)
@@ -181,7 +181,7 @@ def test_a_household_tv(app):
         assert tv.get("/api/v1/stations", headers=bearer(ada.json()["token"])).status_code == 401
         log = admin.get("/api/logs?access_log=true").json()["text"]
         assert "Ada unlinked StationPlay for Roku on Living Room Roku" in log
-        assert "Too many wrong passcodes for Tia: they wait 15 minutes" in log
+        assert "Too many wrong PINs for Tia: they wait 15 minutes" in log
 
 
 def test_an_invite_code_works_once(app):
@@ -225,7 +225,7 @@ def test_who_can_be_shown_where(app):
         refused = admin.post(
             "/api/access/users", json={"name": "Kids", "role": "user", "showOn": "signed-in"}
         )
-        assert refused.status_code == 400 and "passcode or a password" in refused.json()["detail"]
+        assert refused.status_code == 400 and "PIN or a password" in refused.json()["detail"]
         assert [u["name"] for u in admin.get("/api/access/users").json()] == ["Ada"]
         # An Admin always has a password.
         assert (
@@ -265,7 +265,7 @@ def test_who_can_be_shown_where(app):
         assert admin.get("/api/access/devices").json()["chosen"] == {str(kids["id"]): [tv_id]}
         assert (
             admin.put(f"/api/access/users/{kids['id']}/picker", json={"pin": "12"}).json()["detail"]
-            == "A passcode is 4 digits"
+            == "A PIN is 4 digits"
         )
 
 
@@ -599,7 +599,7 @@ def test_use_for_everyone(tmp_path):
         log = admin.get("/api/logs?access_log=true").json()["text"]
         assert (
             "Ada set everyone to show on only devices they sign in on: 3 people changed, and "
-            "Kids and Rae kept as they were (no password or passcode)"
+            "Kids and Rae kept as they were (no password or PIN)"
         ) in log
         # And anyone added from now on.
         cy = admin.post("/api/access/users", json={"name": "Cy", "password": "cy password",
@@ -620,7 +620,7 @@ def test_use_for_everyone(tmp_path):
         log = admin.get("/api/logs?access_log=true").json()["text"]
         assert (
             "Ada set everyone to show on every device at home: 4 people changed, and Rae kept as "
-            "they were (no password or passcode)"
+            "they were (no password or PIN)"
         ) in log
 
 
@@ -687,7 +687,7 @@ def test_a_passcode_right_after_the_first_sign_in(app):
         ).json()
         assert phone["askPin"] is False
 
-        # No passcode: removed, and not asked again, on any device.
+        # No PIN: removed, and not asked again, on any device.
         none = tv.post("/api/internal/pin", json={"pin": None}, headers=hers)
         assert none.status_code == 200 and none.json() == {"pin": False}
         again = tv.post(
@@ -698,8 +698,8 @@ def test_a_passcode_right_after_the_first_sign_in(app):
         assert picked.status_code == 200
         hers = bearer(picked.json()["token"])
         log = admin.get("/api/logs?access_log=true").json()["text"]
-        assert "Tia set a passcode in StationPlay for Roku on Living Room Roku" in log
-        assert "Tia chose no passcode in StationPlay for Roku on Living Room Roku" in log
+        assert "Tia set a PIN in StationPlay for Roku on Living Room Roku" in log
+        assert "Tia chose no PIN in StationPlay for Roku on Living Room Roku" in log
 
         # Exactly 4 digits.
         for wrong in ("123", "12345", "abcd", "12 4", "١٢٣٤", ""):
@@ -729,7 +729,7 @@ def test_picking_someone_without_a_passcode_doesnt_let_you_set_theirs(app):
         )  # fmt: skip
 
         # Anyone at the TV may pick her now: that sign-in can't set a
-        # passcode for her (and lock her out), or choose none.
+        # PIN for her (and lock her out), or choose none.
         picked = tv.post("/api/internal/picker/choose", json={"id": tia["id"]}, headers=device(key))
         unlocked = bearer(picked.json()["token"])
         for pin in ("1234", None):
@@ -774,7 +774,7 @@ def test_an_admin_keeps_their_passcode_and_kids_get_one_from_an_admin(app):
         key, ada = signed["deviceKey"], bearer(signed["token"])
         choose_tv(admin, kids)
 
-        # An Admin with a passcode can't remove it in an app; a new one is fine.
+        # An Admin with a PIN can't remove it in an app; a new one is fine.
         assert tv.post("/api/internal/pin", json={"pin": "4321"}, headers=ada).status_code == 200
         kept = tv.post("/api/internal/pin", json={"pin": None}, headers=ada)
         assert kept.status_code == 403 and kept.json()["detail"] == devices.ADMIN_KEEPS_PIN

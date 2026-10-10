@@ -16,13 +16,13 @@ too), every device at home and away, or only devices an Admin chooses. Away
 from home (the public port), a device lists only who's on every device, and
 who signed in on it or was chosen for it. The picker always has Sign in, by
 name: the first time on a device with an invite code (made by an Admin,
-once, for 7 days) or a password, never just a passcode; after that, they're
+once, for 7 days) or a password, never just a PIN; after that, they're
 on that device's picker. Anyone can take themselves off a device's picker.
 
-A passcode (a PIN: 4 digits, kept as a hash) is asked for when someone
+A PIN (4 digits, kept as a hash) is asked for when someone
 picks themselves, if they have one; an Admin without one gives their
-password. Five wrong passcodes for someone means a 15-minute wait for them,
-on every device. Someone with neither a password nor a passcode (a "Kids"
+password. Five wrong PINs for someone means a 15-minute wait for them,
+on every device. Someone with neither a password nor a PIN (a "Kids"
 user, say) can't sign in by name, so they're on every device at home or
 chosen ones only (and start on every device at home): no one can get in
 from anywhere by guessing a name, and no device away from home lists them
@@ -71,31 +71,31 @@ INVITE_MS = 7 * 86_400_000
 CODE_LETTERS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 NAME_MOST = 120
 DEVICE_HEADER = "stationplay-device"
-WRONG_PIN = "That passcode isn't right"
+WRONG_PIN = "That PIN isn't right"
 ADMIN_PASSWORD = (
-    "Enter your password: on a device others use too, an Admin needs a passcode or their password"
+    "Enter your password: on a device others use too, an Admin needs a PIN or their password"
 )
 # (The same whether or not there's anyone by that name: it isn't said who
 # has a sign-in, or had one.)
 WRONG_SIGN_IN = (
     "That name, code or password isn't right. If you should have access here, ask an Admin."
 )
-# Someone's own passcode (a PIN, in the code), in an app: see set_own_pin.
-PIN_DIGITS = "A passcode is 4 digits"
+# Someone's own PIN, in an app: see set_own_pin.
+PIN_DIGITS = "A PIN is 4 digits"
 ADMIN_KEEPS_PIN = (
-    "An Admin needs a passcode, or their password on a device others use too, so an Admin "
-    "can't remove their passcode here. Choose a new one instead."
+    "An Admin needs a PIN, or their password on a device others use too, so an Admin "
+    "can't remove their PIN here. Choose a new one instead."
 )
 PIN_ONLY = (
-    "Your passcode is how you sign in, as you don't have a password, so you can't remove it "
+    "Your PIN is how you sign in, as you don't have a password, so you can't remove it "
     "here. An Admin can, on StationPlay's Access tab."
 )
 NO_SECRET = (
-    "You don't have a password or a passcode, so only an Admin can give you a passcode, on "
+    "You don't have a password or a PIN, so only an Admin can give you a PIN, on "
     "StationPlay's Access tab."
 )
 PICKED_UNLOCKED = (
-    "To set a passcode, sign in on this device with your password or an invite code first."
+    "To set a PIN, sign in on this device with your password or an invite code first."
 )
 
 
@@ -369,7 +369,7 @@ class Devices:
         if len(wrong) >= PIN_TRIES:
             minutes = max(1, round((PIN_WAIT_S - (now - wrong[0])) / 60))
             raise Refused(
-                f"Too many wrong passcodes for {user.name}. Try again in {minutes} minute"
+                f"Too many wrong PINs for {user.name}. Try again in {minutes} minute"
                 f"{'' if minutes == 1 else 's'}.",
                 429,
             )
@@ -383,7 +383,7 @@ class Devices:
             if tries == PIN_TRIES:
                 self.access.record(
                     logging.WARNING,
-                    f"Too many wrong passcodes for {user.name}: they wait 15 minutes",
+                    f"Too many wrong PINs for {user.name}: they wait 15 minutes",
                 )
             raise Refused(WRONG_PIN)
         wrong.clear()
@@ -558,9 +558,9 @@ def _needs_one(name: str, show_on: str) -> str | None:
     way, if they can't: they'd sign in by name, or be on devices away from
     home that no one chose for them, for anyone there to pick."""
     if show_on == SIGNED_IN:
-        return f"{name} needs a passcode or a password to sign in by name."
+        return f"{name} needs a PIN or a password to sign in by name."
     if show_on == ALL:
-        return f"{name} needs a passcode or a password to show on devices away from home."
+        return f"{name} needs a PIN or a password to show on devices away from home."
     return None
 
 
@@ -665,7 +665,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if kept:
             said += (
                 f", and {and_list([u.name for u in kept])} kept as they were "
-                "(no password or passcode)"
+                "(no password or PIN)"
             )
         ctx.access.record(logging.INFO, said)
         return {"default": d.default_show_on, "changed": changed, "kept": [u.name for u in kept]}
@@ -677,7 +677,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         try:
             if body.pin is not None:
                 await d.set_pin(user, body.pin)
-                said.append(f"{'set' if body.pin else 'removed'} {user.name}'s passcode")
+                said.append(f"{'set' if body.pin else 'removed'} {user.name}'s PIN")
                 user = user_or_404(user_id)
             if body.showOn is not None or body.devices is not None:
                 was = d.show_on(user)
