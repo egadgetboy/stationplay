@@ -760,8 +760,13 @@ and how long it's lasted, and can say when one is fixed. Ask
 `GET /api/internal/alerts` when the app opens and comes back to the front,
 and every few minutes while it's open; on Android, also every 15 minutes in
 the background (WorkManager), notifying once for each new `id`, and once
-when it's fixed. StationPlay keeps alerts in memory: after a restart, the
-list starts afresh, and what's still wrong starts again, with a new `id`.
+when it's fixed. From 1.30.3, StationPlay keeps its alerts across a
+restart: one still going keeps its `id` (it isn't new: don't notify again),
+one fixed while StationPlay was stopped is listed as fixed, with its `id`,
+once its check finds it, and those fixed in the last 24 hours stay listed.
+The apps need nothing new for it. Before 1.30.3 (and from 1.30.3, once a
+backup is restored), the list starts afresh after a restart, and what's
+still wrong starts again, with a new `id`.
 
 ## GET /api/internal/alerts
 
