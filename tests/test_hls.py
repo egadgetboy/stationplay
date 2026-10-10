@@ -405,6 +405,7 @@ async def test_an_app_away_from_home_watches_through_the_public_port(
                 "reports",
                 "night",
                 "problems",
+                "license",
                 "away",
             ]
             at_home = (await inside.get("/api/v1/server")).json()
