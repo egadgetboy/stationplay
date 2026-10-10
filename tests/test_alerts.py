@@ -7,9 +7,11 @@ most, follows no redirect, and never holds anything else up."""
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import logging
 import shutil
+import sqlite3
 import time
 from types import SimpleNamespace
 
@@ -71,6 +73,12 @@ def plenty_of_room(monkeypatch):
     )
 
 
+@pytest.fixture
+def db(tmp_path) -> Database:
+    """Where the alerts are kept."""
+    return Database(tmp_path / "kept.db")
+
+
 def status(state: str, short: str = "Ready") -> reach.Status:
     return reach.Status(state, "", short, None, 0, None)
 
@@ -89,10 +97,10 @@ def checks(tmp_path, plex: Plex | None = None, outside: str = reach.OFF) -> Simp
     )
 
 
-async def test_an_alert_starts_once_and_is_fixed_once(tmp_path, caplog):
+async def test_an_alert_starts_once_and_is_fixed_once(tmp_path, caplog, db):
     caplog.set_level(logging.INFO)
     told = Told()
-    found = Alerts(told)  # type: ignore[arg-type]
+    found = Alerts(told, db)  # type: ignore[arg-type]
     plex = Plex()
     ctx = checks(tmp_path, plex)
     # Down, up, down, up: never long enough to say anything.
@@ -135,9 +143,9 @@ async def test_an_alert_starts_once_and_is_fixed_once(tmp_path, caplog):
     assert found.now()[0].id != first_id
 
 
-async def test_the_clock_is_checked_by_plexs_own(tmp_path):
+async def test_the_clock_is_checked_by_plexs_own(tmp_path, db):
     told = Told()
-    found = Alerts(told)  # type: ignore[arg-type]
+    found = Alerts(told, db)  # type: ignore[arg-type]
     plex = Plex()
     ctx = checks(tmp_path, plex)
     for ahead in (None, None, None, None):  # (no Date from Plex: nothing to go by)
@@ -160,9 +168,9 @@ async def test_the_clock_is_checked_by_plexs_own(tmp_path):
     assert found.now() == [] and told.said[-1][2] == "fixed"
 
 
-async def test_the_data_folder(tmp_path, monkeypatch):
+async def test_the_data_folder(tmp_path, monkeypatch, db):
     told = Told()
-    found = Alerts(told)  # type: ignore[arg-type]
+    found = Alerts(told, db)  # type: ignore[arg-type]
     ctx = checks(tmp_path)
     free = {"bytes": 10 * 1024**3}
     total = 100 * 1024**3
@@ -208,9 +216,9 @@ async def test_the_data_folder(tmp_path, monkeypatch):
     assert not (tmp_path / "data" / alerts.WRITE_TEST).exists()
 
 
-async def test_the_outside_check_goes_by_its_own(tmp_path):
+async def test_the_outside_check_goes_by_its_own(tmp_path, db):
     told = Told()
-    found = Alerts(told)  # type: ignore[arg-type]
+    found = Alerts(told, db)  # type: ignore[arg-type]
     for state in (reach.CHECKING, reach.CANT, reach.DOWN, reach.CHECKING, reach.DOWN):
         await found.look(checks(tmp_path, outside=state))
     [alert] = found.now()
@@ -226,10 +234,10 @@ async def test_the_outside_check_goes_by_its_own(tmp_path):
     )
 
 
-def test_a_station_failing_to_start_and_backups_failing():
+def test_a_station_failing_to_start_and_backups_failing(db):
     told = Told()
     now = [0.0]
-    found = Alerts(told, clock=lambda: now[0])  # type: ignore[arg-type]
+    found = Alerts(told, db, clock=lambda: now[0])  # type: ignore[arg-type]
     # Three times, but not within ten minutes: nothing.
     for at in (0.0, 400.0, 800.0):
         now[0] = at
@@ -261,10 +269,10 @@ def test_a_station_failing_to_start_and_backups_failing():
     assert found.now() == [] and told.said[-1][1:] == ("backups", "fixed")
 
 
-def test_whats_on_the_broken_files_tab_is_said_at_most_once_an_hour():
+def test_whats_on_the_broken_files_tab_is_said_at_most_once_an_hour(db):
     told = Told()
     now = [0.0]
-    found = Alerts(told, clock=lambda: now[0])  # type: ignore[arg-type]
+    found = Alerts(told, db, clock=lambda: now[0])  # type: ignore[arg-type]
     found.files([])
     assert found.now() == [] and told.said == []
     tia = (1_000, "report:204", "Tia reported No sound on Northbound S2 E4")
@@ -332,14 +340,230 @@ def test_whats_on_the_broken_files_tab_is_said_at_most_once_an_hour():
     assert told.said[-1] == ("Nothing on the Broken files tab needs you now.", "files", "fixed")
 
 
-def test_alerts_fixed_more_than_a_day_ago_arent_listed(monkeypatch):
-    found = Alerts(Told())  # type: ignore[arg-type]
+def test_alerts_fixed_more_than_a_day_ago_arent_listed(monkeypatch, db):
+    found = Alerts(Told(), db)  # type: ignore[arg-type]
     found.start("plex", "Plex is down.")
     found.fix("plex", "Plex is back.")
     assert len(found.listed()) == 1
     later = int((time.time() + alerts.FIXED_KEPT_S + 60) * 1000)
     monkeypatch.setattr(alerts, "_now_ms", lambda: later)
     assert found.listed() == []
+
+
+# Kept across restarts ----------------------------------------------------------------------
+
+
+def as_apps_see(found: Alerts) -> list[dict]:
+    return [a.as_dict() for a in found.listed()]
+
+
+async def test_an_alert_still_going_after_a_restart_isnt_said_again(tmp_path, db, caplog):
+    """Its ID, sentence and start stay as they were (so the apps' pill
+    doesn't count it as new), the log says it's still going, and it's
+    fixed by its check's own rules, said once."""
+    caplog.set_level(logging.INFO)
+    plex = Plex()
+    plex.down = 0
+    ctx = checks(tmp_path, plex)
+    told = Told()
+    before = Alerts(told, db)  # type: ignore[arg-type]
+    for _ in range(5):
+        await before.look(ctx)
+    [going] = as_apps_see(before)
+    assert len(told.said) == 1
+    # StationPlay starts again.
+    told = Told()
+    after = Alerts(told, Database(db.path))  # type: ignore[arg-type]
+    assert as_apps_see(after) == [going]
+    assert f"Alert still going: {going['sentence']}" in caplog.text
+    for _ in range(6):  # (still down: never said again)
+        await after.look(ctx)
+    assert as_apps_see(after) == [going] and told.said == []
+    plex.down = None
+    await after.look(ctx)
+    assert after.now() and told.said == []  # (Plex's 2 checks, as ever)
+    await after.look(ctx)
+    await after.look(ctx)
+    [fixed] = as_apps_see(after)
+    assert fixed["id"] == going["id"] and fixed["fixed"] is not None
+    assert told.said == [
+        ("StationPlay can reach Plex at 192.168.1.10:32400 again.", "plex", "fixed")
+    ]
+
+
+async def test_one_fixed_while_stationplay_was_down_is_said_once_its_check_finds_it(tmp_path, db):
+    """The data folder fixed while StationPlay was stopped: said to be
+    fixed, once, as soon as its check (2 in a row) finds it. Those that
+    can't be checked yet stay as they were: the clock while Plex can't be
+    reached, a station until it plays, the outside check while it's still
+    checking."""
+    told = Told()
+    station = db.create_channel(5, "Cartoon Classics", []).id
+    before = Alerts(told, db)  # type: ignore[arg-type]
+    plex = Plex()
+    plex.ahead = 600.0
+    ctx = checks(tmp_path, plex, outside=reach.DOWN)
+    ctx.settings.data_dir = tmp_path / "gone"
+    for _ in range(3):
+        await before.look(ctx)
+    for _ in range(3):
+        before.station_failed(station, 5, "Cartoon Classics")
+    assert sorted(a.kind for a in before.now()) == ["clock", "data-write", "outside", "station"]
+    ids = {a.kind: a.id for a in before.now()}
+    # Back, with the folder there again, Plex away, and the outside check
+    # checking afresh.
+    told = Told()
+    after = Alerts(told, Database(db.path))  # type: ignore[arg-type]
+    plex.down = 0
+    ctx = checks(tmp_path, plex, outside=reach.CHECKING)
+    await after.look(ctx)
+    assert {a.kind: a.id for a in after.now()} == ids and told.said == []
+    for _ in range(3):
+        await after.look(ctx)
+    assert {a.kind for a in after.now()} == {"clock", "outside", "station"}
+    assert told.said == [("StationPlay can write to its data folder again.", "data-write", "fixed")]
+    # Each of the rest, once its check can tell.
+    after.station_played(station, 5, "Cartoon Classics")
+    plex.down, plex.ahead = None, 5.0
+    await after.look(checks(tmp_path, plex, outside=reach.UP))
+    await after.look(ctx)
+    assert after.now() == []
+    assert [(s[1], s[2]) for s in told.said] == [
+        ("data-write", "fixed"), ("station", "fixed"), ("outside", "fixed"), ("clock", "fixed")
+    ]  # fmt: skip
+    assert {a.kind: a.id for a in after.listed()} == ids
+
+
+def test_the_days_fixed_alerts_are_kept_across_a_restart(db, monkeypatch):
+    ticks = itertools.count(int(time.time() * 1000), 1000)
+    monkeypatch.setattr(alerts, "_now_ms", lambda: next(ticks))
+    found = Alerts(Told(), db)  # type: ignore[arg-type]
+    for n in range(3):
+        found.start("station", f"Station {n} keeps failing.", str(n))
+        found.fix("station", f"Station {n} is playing again.", str(n))
+    found.start("backups", "Backups are failing.")
+    kept = as_apps_see(found)
+    again = Alerts(Told(), Database(db.path))  # type: ignore[arg-type]
+    assert as_apps_see(again) == kept and len(kept) == 4
+    # (Only as long as the list shows them: a day.)
+    later = int((time.time() + alerts.FIXED_KEPT_S + 60) * 1000)
+    monkeypatch.setattr(alerts, "_now_ms", lambda: later)
+    again = Alerts(Told(), Database(db.path))  # type: ignore[arg-type]
+    assert [a["kind"] for a in as_apps_see(again)] == ["backups"]
+
+
+def test_only_so_many_fixed_alerts_are_kept(db, monkeypatch):
+    ticks = itertools.count(int(time.time() * 1000), 1000)
+    monkeypatch.setattr(alerts, "_now_ms", lambda: next(ticks))
+    monkeypatch.setattr(alerts, "FIXED_MOST", 3)
+    found = Alerts(Told(), db)  # type: ignore[arg-type]
+    for n in range(5):
+        found.start("station", "Failing.", str(n))
+        found.fix("station", "Playing.", str(n))
+    assert [r["about"] for r in db.kept_alerts()] == ["2", "3", "4"]
+
+
+async def test_the_database_isnt_written_at_every_check(tmp_path, db):
+    """Only when an alert starts, says something new, or is fixed."""
+    plex = Plex()
+    plex.down = 0
+    ctx = checks(tmp_path, plex)
+    found = Alerts(Told(), db)  # type: ignore[arg-type]
+
+    def written() -> int:
+        return db._conn.total_changes - base
+
+    base = 0
+    base = written()
+    for _ in range(4):  # (not yet an alert)
+        await found.look(ctx)
+    assert written() == 0
+    await found.look(ctx)
+    assert written() == 1  # (it starts)
+    for _ in range(10):
+        await found.look(ctx)
+        found.files([])
+        found.station_played(7, 5, "Cartoon Classics")
+        found.backup_made()
+    assert written() == 1
+    plex.down = 401  # (what it says changes)
+    await found.look(ctx)
+    await found.look(ctx)
+    assert written() == 2
+    plex.down = None
+    for _ in range(5):
+        await found.look(ctx)
+    assert written() == 3  # (fixed)
+
+
+def test_whats_on_the_broken_files_tab_after_a_restart(db, monkeypatch):
+    """It keeps its ID, and its hour: what came before it was said isn't
+    new after a restart, and what came after is said once the hour's up."""
+    wall = [1_791_000_000_000]  # (ms: the time of day)
+    monkeypatch.setattr(alerts, "_now_ms", lambda: wall[0])
+    told = Told()
+    before = Alerts(told, db, clock=lambda: 0.0)  # type: ignore[arg-type]
+    tia = (wall[0] - 60_000, "report:204", "Tia reported No sound on Northbound S2 E4")
+    before.files([tia])
+    [first] = before.now()
+    # Something new a second later, within the hour, so not said yet; then
+    # StationPlay starts again ten seconds later, its clock anew.
+    wall[0] += 1_000
+    five = (wall[0], "file:205", "StationPlay found Northbound S2 E5 broken")
+    before.files([tia, five])
+    wall[0] += 10_000
+    told = Told()
+    clock = [50_000.0]
+    after = Alerts(told, Database(db.path), clock=lambda: clock[0])  # type: ignore[arg-type]
+    after.files([tia, five])
+    assert [a.id for a in after.now()] == [first.id] and told.said == []
+    # Its hour runs from when it was said, not from the restart.
+    clock[0] += 3600 - 11 - 1
+    after.files([tia, five])
+    assert [a.id for a in after.now()] == [first.id] and told.said == []
+    clock[0] += 1
+    after.files([tia, five])
+    [again] = after.now()
+    assert again.id != first.id and told.said == [(again.sentence, "files", "started")]
+    assert [(r["since_ms"], r["fixed_ms"]) for r in db.kept_alerts()] == [(again.since_ms, None)]
+    # Nothing new since: never said again, however long ago it was said.
+    wall[0] += 2 * 3600_000
+    told = Told()
+    later = Alerts(told, Database(db.path), clock=lambda: 10**6)  # type: ignore[arg-type]
+    later.files([tia, five])
+    assert [a.id for a in later.now()] == [again.id] and told.said == []
+
+
+def test_whats_left_from_before_that_no_longer_applies(db, caplog):
+    """A station alert kept for a station that's gone (its deletion said,
+    but not kept) is let go; a kind this version doesn't know (a later
+    version's, before going back to this one) is left for that version."""
+    db.keep_alert("station", "99", 1_000, "Station 9 keeps failing.", None)
+    db.keep_alert("gpu", "", 2_000, "The GPU keeps failing.", None)
+    found = Alerts(Told(), db)  # type: ignore[arg-type]
+    assert found.now() == []
+    assert [r["kind"] for r in db.kept_alerts()] == ["gpu"]
+
+
+def test_when_the_alerts_cant_be_kept_they_go_on(db, monkeypatch, caplog):
+    """The database full or read-only: alerts are said as ever, and the log
+    says (once) that they couldn't be kept."""
+    told = Told()
+    found = Alerts(told, db)  # type: ignore[arg-type]
+
+    def full(*_args):
+        raise sqlite3.OperationalError("database or disk is full")
+
+    works = db.keep_alert
+    monkeypatch.setattr(db, "keep_alert", full)
+    found.start("data-full", "Only 300 MB free.")
+    found.start("data-full", "Only 200 MB free.")
+    found.fix("data-full", "Room again.")
+    assert [s[2] for s in told.said] == ["started", "fixed"]
+    assert caplog.text.count("Couldn't keep the alerts in the database") == 1
+    monkeypatch.setattr(db, "keep_alert", works)
+    found.start("backups", "Backups are failing.")
+    assert [r["kind"] for r in db.kept_alerts()] == ["backups"]
 
 
 # For Admins: the apps, the page, the Logs tab ----------------------------------------------
@@ -394,6 +618,35 @@ def test_alerts_are_for_admins(app, monkeypatch, caplog):
         lines = home.get("/api/logs").json()["text"]
         assert "Alert: StationPlay's backups are failing: the last 2 tries didn't work." in lines
         assert "Alert fixed: StationPlay made a backup again." in lines
+
+
+def test_after_a_restart_the_apps_and_the_page_see_the_same_alerts(app, tmp_path, monkeypatch):
+    """StationPlay stopped and started again: the same alerts, with the same
+    IDs, for the apps and the page's header; none sent anywhere again; and
+    the Logs tab says which are still going."""
+    sent: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(notify.Notify, "send", lambda self, *said: sent.append(said))
+    with TestClient(app) as home:
+        ctx = app.state.ctx
+        home.portal.call(ctx.alerts.start, "backups", "StationPlay's backups are failing.")
+        home.portal.call(ctx.alerts.start, "plex", "StationPlay can't reach Plex.")
+        home.portal.call(ctx.alerts.fix, "plex", "StationPlay can reach Plex again.")
+        before = home.get("/api/internal/alerts").json()["alerts"]
+        header = home.get("/api/status").json()["alerts"]
+    assert len(before) == 2 and len(sent) == 3
+    restarted = time.time()
+    again = create_app(
+        Settings(plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "d"),
+        PlexClient("http://plex.test", "token", transport=FakePlex().transport()),
+    )
+    with TestClient(again) as home:
+        assert home.get("/api/internal/alerts").json()["alerts"] == before
+        assert home.get("/api/status").json()["alerts"] == header
+        logged = home.get("/api/logs").json()["entries"]
+        assert [
+            e["message"] for e in logged if e["time"] >= restarted and "Alert" in e["message"]
+        ] == ["Alert still going: StationPlay's backups are failing."]
+    assert len(sent) == 3
 
 
 # Notifying a web address -----------------------------------------------------------------------

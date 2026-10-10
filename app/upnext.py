@@ -47,16 +47,14 @@ class UpNext:
     """A banner to show near the end of a program: what's on next, the
     station's logo (None for none), and how long and how big it is. If the
     station's corner logo is in the bottom-left corner, `corner_logo` is its
-    size, and the banner's logo takes its exact place (`nudge`: where the
-    corner logo is moved to for this program, against burn-in: see
-    ffmpeg.NUDGES)."""
+    size, and the banner's logo takes its exact place (wherever it has
+    drifted to, against burn-in: see ffmpeg.drift)."""
 
     title: str
     logo: str | None
     seconds: int
     size: str
     corner_logo: int | None = None
-    nudge: tuple[int, int] = (0, 0)
 
     @property
     def on_corner_logo(self) -> bool:
@@ -224,8 +222,7 @@ def banner_command(
     ]  # fmt: skip
     margin_x, margin_y = ff.corner_margins(settings)
     if banner.on_corner_logo:
-        dx, dy = banner.nudge
-        where = (margin_x - pad + dx, settings.video_height - margin_y - logo_h - logo_y + dy)
+        where = (margin_x - pad, settings.video_height - margin_y - logo_h - logo_y)
     else:
         where = (margin_x, settings.video_height - margin_y - height)
     return args, (where[0] - room, where[1] - room)

@@ -59,7 +59,7 @@ routing between the two; this table is what each source provides:
 | Building stations | `items_for_source(source)`, `find_again(item)` | `items_for_source`, `find_again` |
 | Filters | `filter_fields`, `choices`, `filter_matches`, `filter_episodes` | the same Plex calls |
 | Collections | `collections()`, `followed_collection(...)` | the same |
-| Playing | `current_part(key)` → `MediaPart`, `stream_url(part)` | the same; folders have no stream URL (files are local) |
+| Playing | `current_files(key)` → its files (`Media`, in order: one, or several for a movie on two discs), `stream_url(part)` | the same; folders have no stream URL (files are local) |
 | Markers | `markers(key)`, `markers_and_added(key)` | the same; folders get detected markers (Phase 3) |
 | Artwork | `art(key)`, `poster(key)`, `clear_logo(key)`, `logo_bytes(url)` | the same |
 | IDs | `ids(key)` → tvdb, tmdb, imdb, library | the same |
@@ -67,8 +67,10 @@ routing between the two; this table is what each source provides:
 | Commercials | `locations()` → each library's folders and kind | sections' locations |
 | Status | `configured`, `check()` | `configured`, `identity()` |
 
-`Item`, `MediaPart` and the source JSON shapes stay the shared language: a
-source turns its own data into those, as `plex.to_item` does today.
+`Item`, `Media` (a version of a program's file, with its `parts` when it's
+in several files: see `catalog.py`) and the source JSON shapes stay the
+shared language: a source turns its own data into those, as `plex.to_item`
+and `plex.to_media` do today.
 
 What moves off `ctx.plex` (every call site listed in the Plex map): browsing,
 station building, filters, smart stations, collections, playing,

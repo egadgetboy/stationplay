@@ -658,12 +658,15 @@ WATERMARK_TIMINGS = ("always", "start")
 WATERMARK_STYLES = ("color", "white")
 WATERMARK_START_S = 30.0
 WATERMARK_FADE_S = 1.0
-# Against burn-in on screens that keep a still picture too long: each program
-# on a station starts with its corner mark moved to the next of these
-# places, (right, down) of where the station puts it, in the stream's
-# pixels. A 3 by 3 grid 4 px apart, all within 6 px of it. (Pictures go over
-# the stream's at even pixels, so the steps are even, and exact.)
+# Against burn-in on screens that keep a still picture too long: all through
+# every program, the corner mark steps to the next of these places every
+# DRIFT_S, (right, down) of where the station puts it, in the stream's
+# pixels. A 3 by 3 grid 4 px apart, all within 6 px of it, each step to a
+# neighbour. (Pictures go over the stream's at even pixels, so the steps are
+# even, and exact.) The place goes by the time each frame airs (see drift).
 NUDGES = ((0, 0), (4, 0), (4, 4), (0, 4), (-4, 4), (-4, 0), (-4, -4), (0, -4), (4, -4))
+# Whole minutes, so a step comes as the corner clock's minutes change.
+DRIFT_S = 240
 
 
 @dataclass(frozen=True)
@@ -679,20 +682,19 @@ class Watermark:
     # Shown for only this many seconds from the start of what's played (then
     # faded out); None: all the time.
     until_s: float | None = None
-    # A clock instead (12 or 24 hours), showing the time each frame airs:
-    # clock_at_s is the time (seconds since 1970) the first one does.
+    # A clock instead (12 or 24 hours), showing the time each frame airs.
     clock: str | None = None
-    clock_at_s: float = 0.0
-    # Moved this far from where the station puts it, (right, down), in
-    # pixels: one of NUDGES, against burn-in (see nudge).
-    nudge: tuple[int, int] = (0, 0)
+    # The time (seconds since 1970) the first frame of what's played airs:
+    # what the clock tells from, and where the mark has drifted to (see drift).
+    airs_at_s: float = 0.0
 
 
 @dataclass(frozen=True)
 class Banner:
     """The Up Next Banner over a part of a program, from `at_s` into the part
     for `seconds`: its picture, with its top-left corner at (x, y). It slides
-    in, or (taking the corner logo's place) only fades in."""
+    in, or (taking the corner logo's place) only fades in, and drifts as the
+    logo does (see with_overlays)."""
 
     path: str
     at_s: float
@@ -707,10 +709,19 @@ BANNER_IN_S = 0.5
 BANNER_OUT_S = 0.6
 
 
-def nudge(program: int) -> tuple[int, int]:
-    """Where the corner mark goes for a station's `program`th program (any
-    count that goes up by one a program): the next of NUDGES each time."""
-    return NUDGES[program % len(NUDGES)]
+def drift(axis: int, airs_at_s: float) -> str:
+    """How far the corner mark has moved from its place along `axis` (0:
+    right, 1: down), as an expression of each frame's time t in what's
+    played, which starts airing at `airs_at_s` (seconds since 1970): through
+    the nth DRIFT_S since 1970, it's at the nth of NUDGES (going round), on
+    every station alike. So it moves on all through a program however it's
+    played, and a program starting, resuming or being tuned in to never
+    moves it or holds it."""
+    step, into = divmod(airs_at_s, DRIFT_S)
+    # (Which of NUDGES, kept in st(0), then how far that one is along `axis`.)
+    place = f"st(0,mod({int(step) % len(NUDGES)}+floor((t+{into:.3f})/{DRIFT_S}),{len(NUDGES)}))"
+    far = "".join(f"{n[axis]:+d}*eq(ld(0),{i})" for i, n in enumerate(NUDGES) if n[axis])
+    return f"({place};{far})"
 
 
 def escape_text(text: str) -> str:
@@ -809,7 +820,7 @@ def _watermark(
             source += _WHITE.format(blur=max(1.0, size / 60))
         source += f",colorchannelmixer=aa={0.65 * opacity:.2f}"
         x, y = _corner(settings, mark, vertical, horizontal, "W-w", "H-h")
-        put_on = f"[base][wm]overlay={x}:{y}:format=auto"
+        put_on = f"[base][wm]overlay=x='{x}':y='{y}':format=auto"
         if mark.until_s is None and away is None:
             return source + "[wm]", put_on
         # The logo as a steady picture that can fade: gone after until_s,
@@ -833,7 +844,7 @@ def _watermark(
     return "", (
         f"[base]drawtext=text='{text}':expansion=none:fontcolor=white@{0.7 * opacity:.2f}"
         f":fontsize={mark_size(settings, mark)}"
-        f":shadowcolor=black@{0.6 * opacity:.2f}:shadowx=2:shadowy=2:x={x}:y={y}"
+        f":shadowcolor=black@{0.6 * opacity:.2f}:shadowx=2:shadowy=2:x='{x}':y='{y}'"
         f"{_shown(mark, away)}"
     )
 
@@ -841,14 +852,13 @@ def _watermark(
 def _corner(
     settings: Settings, mark: Watermark, vertical: str, horizontal: str, right: str, bottom: str
 ) -> tuple[str, str]:
-    """Where the corner mark goes, as a filter's x and y: in its corner,
-    moved by its nudge (`right` and `bottom`: the expressions for the far
-    sides, "W-w" and "H-h" for an overlay)."""
+    """Where the corner mark goes, as a filter's x and y expressions: in its
+    corner, drifted (see drift). `right` and `bottom` are the expressions
+    for the far sides ("W-w" and "H-h" for an overlay)."""
     margin_x, margin_y = corner_margins(settings)
-    dx, dy = mark.nudge
-    x = str(margin_x + dx) if horizontal == "left" else f"{right}-{margin_x - dx}"
-    y = str(margin_y + dy) if vertical == "top" else f"{bottom}-{margin_y - dy}"
-    return x, y
+    x = str(margin_x) if horizontal == "left" else f"{right}-{margin_x}"
+    y = str(margin_y) if vertical == "top" else f"{bottom}-{margin_y}"
+    return f"{x}+{drift(0, mark.airs_at_s)}", f"{y}+{drift(1, mark.airs_at_s)}"
 
 
 def _shown(mark: Watermark, away: tuple[float, float] | None) -> str:
@@ -880,7 +890,7 @@ def _clock(
     timestamp (so it's right however far ahead of real time the stream is
     made), in the container's time zone (TZ)."""
     fmt = r"%H\\\:%M" if mark.clock == "24" else r"%-I\\\:%M %p"
-    text = rf"%{{pts\:localtime\:{mark.clock_at_s:.3f}\:{fmt}}}"
+    text = rf"%{{pts\:localtime\:{mark.airs_at_s:.3f}\:{fmt}}}"
     font = (
         f"fontfile='{CLOCK_FONT}':"
         if usable_picture(str(CLOCK_FONT)) and CLOCK_FONT.is_file()
@@ -890,7 +900,7 @@ def _clock(
     return (
         f"[base]drawtext={font}text='{text}':fontcolor=white@{0.8 * opacity:.2f}"
         f":fontsize={mark_size(settings, mark)}"
-        f":shadowcolor=black@{0.6 * opacity:.2f}:shadowx=2:shadowy=2:x={x}:y={y}"
+        f":shadowcolor=black@{0.6 * opacity:.2f}:shadowx=2:shadowy=2:x='{x}':y='{y}'"
         f"{_shown(mark, away)}"
     )
 
@@ -924,10 +934,13 @@ def banner_times(banner: Banner) -> tuple[float, float]:
     return starts, starts + max(1, _frames(banner.seconds)) * FPS_DEN / FPS_NUM
 
 
-def banner_filter(settings: Settings, banner: Banner) -> tuple[str, str]:
+def banner_filter(
+    settings: Settings, banner: Banner, drifts_from_s: float | None = None
+) -> tuple[str, str]:
     """(the filter chain that makes [bn], how to put it on [under]) for the
-    Up Next Banner. (A corner logo where it goes makes way for it: see
-    _watermark.)"""
+    Up Next Banner; drifting as a corner mark that starts airing at
+    `drifts_from_s` does, if given. (A corner logo where it goes makes way
+    for it: see _watermark.)"""
     starts, _ = banner_times(banner)
     # Only the frames it's shown in, counted in the stream's frames: from
     # its start, after which the program shows through as if it weren't
@@ -940,14 +953,14 @@ def banner_filter(settings: Settings, banner: Banner) -> tuple[str, str]:
         f"fade=t=out:st={fades_at:.3f}:d={BANNER_OUT_S}:alpha=1,"
         f"setpts=PTS+{_frames(banner.at_s)}[bn]"
     )
-    x = str(banner.x)
+    x, y = str(banner.x), str(banner.y)
     if banner.slide:
         # From a little to the left, slowing as it arrives.
         travel = round(settings.video_height * 0.04)
         x += f"-{travel}*pow(1-clip((t-{starts:.3f})/{BANNER_IN_S},0,1),3)"
-    return source, (
-        f"[under][bn]overlay=x='{x}':y={banner.y}:eval=frame:eof_action=pass:format=auto"
-    )
+    if drifts_from_s is not None:
+        x, y = f"{x}+{drift(0, drifts_from_s)}", f"{y}+{drift(1, drifts_from_s)}"
+    return source, f"[under][bn]overlay=x='{x}':y='{y}':eval=frame:eof_action=pass:format=auto"
 
 
 def with_overlays(
@@ -955,7 +968,8 @@ def with_overlays(
 ) -> str:
     """The filter chain `chain` (a picture the stream's size, in yuv420p)
     with the corner mark and the Up Next Banner over it. A corner mark in
-    the bottom-left corner makes way for the banner while it's up."""
+    the bottom-left corner makes way for the banner while it's up; a banner
+    in the corner logo's place drifts with it."""
     if watermark is not None and (watermark.logo or watermark.text or watermark.clock):
         away = (
             banner_times(banner)
@@ -965,7 +979,8 @@ def with_overlays(
         source, put_on = _watermark(settings, watermark, away)
         chain = ";".join(filter(None, [f"{chain}[base]", source, f"{put_on},format=yuv420p"]))
     if banner is not None:
-        source, put_on = banner_filter(settings, banner)
+        drifts = None if banner.slide or watermark is None else watermark.airs_at_s
+        source, put_on = banner_filter(settings, banner, drifts)
         chain = ";".join([f"{chain}[under]", source, f"{put_on},format=yuv420p"])
     return chain
 

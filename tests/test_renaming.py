@@ -51,6 +51,12 @@ def ids(client: TestClient) -> dict[str, int]:
     return {u["name"]: u["id"] for u in client.get("/api/access/users").json()}
 
 
+def household(admin: TestClient) -> None:
+    """Everyone on every device at home, as a household chooses (see
+    test_picker.py)."""
+    assert admin.post("/api/access/devices/everyone", json={"showOn": "home"}).status_code == 200
+
+
 def rename(client: TestClient, user_id: int, name: str):
     return client.put(f"/api/access/users/{user_id}", json={"name": name})
 
@@ -124,6 +130,7 @@ def test_everything_of_theirs_stays_theirs(app):
     with TestClient(app) as pat:
         pat.post("/api/access/users", json=PAT)
         pat.post("/api/access/users", json=SAM)
+        household(pat)
         pat.put("/api/app-libraries", json={"libraries": ["1", "2"]})
         ctx = app.state.ctx
         sam_id = ids(pat)["Sam"]
@@ -192,6 +199,7 @@ def test_the_apps_show_the_new_name_the_next_time_they_ask(app):
     with TestClient(app) as pat:
         pat.post("/api/access/users", json=PAT)
         pat.post("/api/access/users", json=SAM)
+        household(pat)
         tv = TestClient(app)
         signed = tv.post("/api/internal/sign-in", json={**SAM, **TV}).json()
         key = {"StationPlay-Device": signed["deviceKey"]}
@@ -224,6 +232,7 @@ def test_a_device_is_its_linkers_by_who_they_are_not_their_name(app):
         pat.post("/api/access/users", json=PAT)
         eve = pat.post("/api/access/users", json={"name": "Eve", "password": "eve's password",
                                                   "role": "user"})  # fmt: skip
+        household(pat)
         tv = TestClient(app)
         key = {"StationPlay-Device": tv.post(
             "/api/internal/sign-in", json={"name": "Eve", "password": "eve's password", **TV}

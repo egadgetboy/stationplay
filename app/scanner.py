@@ -92,12 +92,21 @@ from typing import TYPE_CHECKING
 from . import catalog, ondemand
 from . import ffmpeg as ff
 from .broadcaster import fmt_offset, played_whole
-from .broken import CHECK, DEEP_SCAN, TARGETED, file_key, version_key
-from .catalog import Entry, Media
+from .broken import (
+    CHECK,
+    DEEP_SCAN,
+    TARGETED,
+    file_key,
+    of_part,
+    part_key,
+    version_key,
+    version_of_part,
+)
+from .catalog import Entry, Media, part_words
 from .db import Item, ScanRecord
 from .library import LibraryError
 from .markers import CREDITS, parse_markers
-from .sources import ResolvedSource, resolve_version
+from .sources import ResolvedSource, locate, part_starts, resolve_version
 
 if TYPE_CHECKING:
     from .main import AppContext
@@ -350,6 +359,10 @@ class Verdict:
     # right: see ff.DOLBY_VISION_ONLY), or "skipped" (couldn't tell).
     result: str
     reason: str = ""
+    # Of a version in several files (see catalog.Media), the one it's about,
+    # (n, of); and whether an Admin put that file back on the air (Retry).
+    part: tuple[int, int] | None = None
+    kept: bool = False
 
 
 def _decode_args(
@@ -973,7 +986,7 @@ async def quick_check_item(
     verdict, record, resolved = await quick_verdict(ctx, item, record, version)
     if verdict.result in ("ok", "skipped"):
         return verdict, record
-    if record is not None and record.kept:
+    if verdict.kept:
         log.info(
             "Quick check found a problem in %s (%s), but you put it back on the air, so it "
             "stays on",
@@ -991,6 +1004,7 @@ async def quick_check_item(
         found=CHECK,
         version=version,
         library=library,
+        part=verdict.part,
     )
     return verdict, record
 
@@ -1010,37 +1024,112 @@ async def quick_verdict(
     first, by its ID), taking nothing off the air: the verdict ("ok",
     "broken", "damaged" or "skipped": couldn't tell), the updated scan
     record (None if the file couldn't be looked at), and where the file was
-    found."""
+    found.
+
+    A version in several files (see catalog.Media) has each of them checked,
+    in order, each with a record of its own (see broken.part_key: the
+    first's is `record`, returned; the others' are saved as they're
+    checked). The verdict is about the first that has a problem (its
+    `part` says which, and the file returned is that one), or else, if one
+    couldn't be checked, "skipped"; "ok" when they all pass."""
     resolved = await resolve(ctx, item, version)
+    key = version_key(item.rating_key, version)
+    first = await _quick_file(ctx, item, resolved, record, key)
+    files = resolved.parts
+    if not resolved.error:
+        # (Records of files it no longer has: it was in more before.)
+        ctx.db.forget_scans([k for n, k in ctx.db.part_records(key) if n > len(files)])
+    if len(files) < 2:
+        return first[0], first[1], resolved
+    found = [(*first, resolved)]
+    for n, part in enumerate(files[1:], 2):
+        here = await locate(ctx.settings, ctx.library, item.rating_key, part, ctx.media_access)
+        verdict, checked = await _quick_file(
+            ctx, item, here, ctx.db.scan(part_key(key, n)), part_key(key, n),
+            _credits_in(ctx, item, resolved, n - 1),
+        )  # fmt: skip
+        if checked is not None:
+            ctx.db.save_quick(checked)
+        found.append((verdict, checked, here))
+    of = len(files)
+    for n, (verdict, _checked, here) in enumerate(found, 1):
+        if verdict.result not in ("ok", "skipped"):
+            return replace(verdict, part=(n, of)), first[1], here
+    skipped = next(
+        ((n, v) for n, (v, _k, _h) in enumerate(found, 1) if v.result == "skipped"), None
+    )
+    if skipped is not None:
+        return replace(skipped[1], part=(skipped[0], of)), None, resolved
+    return first[0], first[1], resolved
+
+
+async def _quick_file(
+    ctx: AppContext,
+    item: Item,
+    resolved: ResolvedSource,
+    record: ScanRecord | None,
+    key: str,
+    credits_from: Callable[[], Awaitable[list[tuple[float, float]]]] | None = None,
+) -> tuple[Verdict, ScanRecord | None]:
+    """The quick check of one file (found at `resolved`), as quick_verdict
+    says, its record kept under `key` (see broken.part_key). `credits_from`:
+    where Plex says the end credits are in it (by default, the program's)."""
     if resolved.error or not resolved.source:
         if resolved.transient:
-            return Verdict("skipped", resolved.error or ""), None, resolved
-        return Verdict("broken", resolved.error or "file not found"), None, resolved
+            return Verdict("skipped", resolved.error or ""), None
+        return Verdict("broken", resolved.error or "file not found"), None
     file = resolved.plex_file or resolved.source
     size = resolved.size or 0
     if record is None or record.file != file or (size and record.size and record.size != size):
         # A new file: start afresh.
-        record = ScanRecord(version_key(item.rating_key, version), file, size)
+        record = ScanRecord(key, file, size)
     record.size = size or record.size
     probe = await ff.probe(ctx.settings, resolved.source)
     streamed = resolved.source.startswith(("http://", "https://"))
     if probe.timed_out or (not probe.ok and streamed):
         # Through Plex, a failure may well be Plex's or the share's (a pool
         # offline); playing it will tell.
-        return Verdict("skipped", probe.error or ""), None, resolved
+        return Verdict("skipped", probe.error or ""), None
     if not probe.ok:
         verdict = Verdict("broken", probe.error or "the file can't be opened")
     else:
 
-        async def credits_from() -> list[tuple[float, float]]:
+        async def program_credits() -> list[tuple[float, float]]:
             return await credits_of(ctx, item)
 
-        verdict = await quick_check(ctx, resolved.source, probe, item.year, credits_from)
+        verdict = await quick_check(
+            ctx, resolved.source, probe, item.year, credits_from or program_credits
+        )
     if verdict.result == "skipped":
-        return verdict, None, resolved
+        return verdict, None
     record.quick_ms = int(time.time() * 1000)
     record.quick = verdict.result
-    return verdict, record, resolved
+    return replace(verdict, kept=record.kept), record
+
+
+def _credits_in(
+    ctx: AppContext, item: Item, resolved: ResolvedSource, n: int
+) -> Callable[[], Awaitable[list[tuple[float, float]]]]:
+    """Where Plex says a program's end credits are, in the `n`th (from 0)
+    of its files (`resolved.parts`): from that file's start (Plex's are in
+    the whole program's time)."""
+
+    async def credits() -> list[tuple[float, float]]:
+        rolls = await credits_of(ctx, item)
+        starts = await part_starts(
+            ctx.settings, ctx.library, item.rating_key, resolved.parts, ctx.media_access
+        )
+        if starts is None:
+            raise Unknown("StationPlay couldn't tell where this file starts in the program")
+        return [(a - starts[n], b - starts[n]) for a, b in rolls if b > starts[n]]
+
+    return credits
+
+
+def _file_label(item: Item, part: tuple[int, int] | None) -> str:
+    """A program as the log names one of its files (`part`: which, of a
+    version in several): "“Long Movie” (2000), part 2 of 3"."""
+    return f"{item.label}, {part_words(*part)}" if part else item.label
 
 
 async def check_stretch(
@@ -1269,6 +1358,9 @@ class Program:
     station: int | None  # the number of a station it's on (None: only in Media)
     version: str = ""  # the version's ID, for one that isn't the program's first
     library: str | None = None  # the library it's in, if that's known
+    # A version in several files (see catalog.Media): each, as the library
+    # listed them (a station's program doesn't say: its check finds them).
+    files: tuple[Media, ...] = ()
 
     @property
     def key(self) -> str:
@@ -1300,7 +1392,13 @@ def versions_of(entry: Entry) -> list[Program]:
     """An episode's or a movie's files: its first version (the one a
     station plays), and any others with an ID (in Media)."""
     return [
-        Program(item_of(entry, media), None, "" if n == 0 else media.id, entry.library or None)
+        Program(
+            item_of(entry, media),
+            None,
+            "" if n == 0 else media.id,
+            entry.library or None,
+            media.parts,
+        )
         for n, media in enumerate(entry.media)
         if n == 0 or media.id
     ]
@@ -1647,7 +1745,7 @@ class Scanner:
             return False
         if self._retry_at.get(key, 0) > time.time():
             return False
-        return _unchecked(scans.get(key), p.item)
+        return _unchecked(scans, p)
 
     async def _media_watching(self) -> list[Program]:
         """Media's files people are watching, for the deep scan: what's in
@@ -1708,7 +1806,7 @@ class Scanner:
         every = [p for e in entries for p in versions_of(e)]
         scans = ctx.db.scans()
         self.media_keys = {p.key for p in every}
-        self._media_all = [p for p in every if _deep_due(scans.get(p.key), p.item)]
+        self._media_all = [p for p in every if _deep_due(scans, p)]
         self._media_all_at, self._media_all_print = now, fingerprint
         return self._media_all
 
@@ -1832,7 +1930,9 @@ class Scanner:
         if entry is None or media is None or entry.kind not in (catalog.EPISODE, catalog.MOVIE):
             self._done_with(target, GONE, "It's no longer in Plex")
             return
-        program = Program(item_of(entry, media), target.station, target.version, entry.library)
+        program = Program(
+            item_of(entry, media), target.station, target.version, entry.library, media.parts
+        )
         target.label = program.item.label
         listed = ctx.broken.entry(target.key)
         if listed is not None:
@@ -1857,85 +1957,118 @@ class Scanner:
             if record is not None:
                 ctx.db.save_quick(record)
             if verdict.result != "ok":
-                self._found(target, program, record, f"Check: {verdict.reason}", verdict.result,
-                            CHECK, resolved)  # fmt: skip
+                self._found(target, program, verdict.kept, f"Check: {verdict.reason}",
+                            verdict.result, CHECK, resolved, verdict.part)  # fmt: skip
                 return
-            if record is not None and record.kept and record.deep in ("broken", "damaged"):
+            before = _found_deep(self._records(target.key))
+            if before is not None and before[1]:
                 # (Its deep scan found something before, and you put it back on the air.)
-                self._done_with(target, KEPT, f"Deep scan: {record.note}")
+                self._done_with(target, KEPT, before[0])
                 return
-            if not target.full or record is None or record.deep_ms:
+            if not target.full or record is None or _deep_left(self._records(target.key)) is None:
                 self._done_with(target, NOTHING, _nothing_found(target))
                 return
             target.stage = FULL
             self._save_targets()
-        if record is None or record.deep_ms:
+        if record is None or _deep_left(self._records(target.key)) is None:
             self._done_with(target, NOTHING, _nothing_found(target))
             return
         if not await self.deep_scan(program, record, anytime=True):
             if not self.watching():  # (stopped for a viewer: it carries on later)
                 self._later(target, "the file couldn't be read now")
             return
-        record = ctx.db.scan(target.key)
-        if record is None or not record.deep_ms:
-            self._later(target, (record.note if record is not None else "") or "it can't be read")
+        records = self._records(target.key)
+        found = _found_deep(records)
+        left = _deep_left(records)
+        if found is None and left is not None:
+            self._later(target, left.note or "it can't be read")
             return
         target.ran.append("the deep scan")
-        if record.deep not in ("broken", "damaged"):
+        if found is None:
             self._done_with(target, NOTHING, _nothing_found(target))
-        elif record.kept:
-            self._done_with(target, KEPT, f"Deep scan: {record.note}")
         else:
-            self._done_with(target, FOUND, f"Deep scan: {record.note}")
+            self._done_with(target, KEPT if found[1] else FOUND, found[0])
+
+    def _records(self, key: str) -> list[tuple[int, ScanRecord]]:
+        """The records of a file's checks (see broken.part_key): its own,
+        or for a version in several files, each one's, as (which file, its
+        record), in order: those there are."""
+        db = self.ctx.db
+        found = [(1, db.scan(key)), *((n, db.scan(k)) for n, k in db.part_records(key))]
+        return [(n, r) for n, r in found if r is not None]
 
     async def _stretch(self, program: Program, target: Target) -> bool:
         """The stretch of a file where someone had trouble with it (see
-        check_stretch). True if it found what's wrong (and the target's
-        done with)."""
+        check_stretch): of a version in several files, the one that's in.
+        True if it found what's wrong (and the target's done with)."""
         assert target.at_s is not None
-        record = self.ctx.db.scan(target.key)
         resolved = await resolve(self.ctx, program.item, program.version)
         if resolved.error or not resolved.source:
             return False  # (the quick check says what's what)
-        probe = await ff.probe(self.ctx.settings, resolved.source)
+        n, at_s, here = 1, target.at_s, resolved
+        part = None
+        if resolved.parts:
+            starts = await part_starts(
+                self.ctx.settings, self.ctx.library, program.item.rating_key, resolved.parts,
+                self.ctx.media_access,
+            )  # fmt: skip
+            if starts is None:
+                return False
+            n = max(i for i, s in enumerate(starts, 1) if s <= at_s)
+            at_s -= starts[n - 1]
+            part = (n, len(resolved.parts))
+            if n > 1:
+                here = await locate(
+                    self.ctx.settings, self.ctx.library, program.item.rating_key,
+                    resolved.parts[n - 1], self.ctx.media_access,
+                )  # fmt: skip
+                if here.error or not here.source:
+                    return False
+        probe = await ff.probe(self.ctx.settings, here.source)
         if not probe.ok:
             return False
-        verdict, start = await check_stretch(self.ctx, resolved.source, probe, target.at_s)
+        verdict, start = await check_stretch(self.ctx, here.source, probe, at_s)
         if verdict.result == "skipped":
             return False
         stretch = f"{fmt_offset(start)} to {fmt_offset(start + STRETCH_S)}"
-        target.ran.append(f"from {stretch}")
+        target.ran.append(f"from {stretch}" + (f" of {part_words(*part)}" if part else ""))
         if verdict.result == "ok":
             return False
+        record = self.ctx.db.scan(part_key(target.key, n))
         reason = f"Check from {fmt_offset(start)}: {verdict.reason}"
-        self._found(target, program, record, reason, verdict.result, TARGETED, resolved)
+        kept = record is not None and record.kept and record.file == here.plex_file
+        self._found(target, program, kept, reason, verdict.result, TARGETED, here, part)
         return True
 
     def _found(
         self,
         target: Target,
         program: Program,
-        record: ScanRecord | None,
+        kept: bool,
         reason: str,
         problem: str,
         how: str,
         resolved: ResolvedSource,
+        part: tuple[int, int] | None = None,
     ) -> None:
-        """A target's check found what's wrong: the file goes on the list
-        (unless an Admin put it back on the air before)."""
-        if record is not None and record.kept and record.file == resolved.plex_file:
+        """A target's check found what's wrong (`part`: in which file, of a
+        version in several): the file goes on the list, unless an Admin put
+        it back on the air before (`kept`)."""
+        said = of_part(reason, part)
+        if kept:
             log.info(
                 "Checking %s found a problem (%s), but you put it back on the air, so it stays on",
                 _target_label(target),
-                reason,
+                said,
             )
-            self._done_with(target, KEPT, reason)
+            self._done_with(target, KEPT, said)
             return
         self.ctx.broken.record(
             program.item, reason, program.station, resolved.plex_file, resolved.size,
             problem=problem, found=how, version=program.version, library=program.library,
+            part=part,
         )  # fmt: skip
-        self._done_with(target, FOUND, reason)
+        self._done_with(target, FOUND, said)
 
     def _check_again_if_the_checks_changed(self) -> None:
         """When the checks change, every program's file is checked again by
@@ -2043,12 +2176,12 @@ class Scanner:
             record = scans.get(key)
             if (
                 record is None
-                or record.quick != "ok"
-                or record.deep_ms
                 or (key in broken and key not in self._again)
                 or self._retry_at.get(key, 0) > time.time()  # its quick check is waiting
-                or record.note.endswith(_night_note(night))  # tried tonight: another night
             ):
+                continue
+            left = _deep_left(_records_in(scans, key))
+            if left is None or left.note.endswith(_night_note(night)):  # (tried tonight)
                 continue
             if self._make_way():
                 return False
@@ -2062,16 +2195,15 @@ class Scanner:
                 key in broken
                 or self._retry_at.get(key, 0) > time.time()
                 or self.waiting(key)  # (someone had trouble with it: that's checked first)
-                or (record is not None and not _unchecked(record, program.item) and (
-                    record.quick != "ok"
-                    or record.deep_ms
-                    or record.note.endswith(_night_note(night))
-                ))
-            ):  # fmt: skip
+            ):
+                continue
+            unchecked = _unchecked(scans, program)
+            left = None if unchecked else _deep_left(_records_in(scans, key))
+            if not unchecked and (left is None or left.note.endswith(_night_note(night))):
                 continue
             if self._make_way():
                 return False
-            if record is None or _unchecked(record, program.item):
+            if unchecked or record is None:
                 self.state = "checking"
                 self._skipped(key, await self._quick(program, record))
                 self.state = "idle"
@@ -2081,31 +2213,72 @@ class Scanner:
 
     async def deep_scan(self, program: Program, record: ScanRecord, anytime: bool = False) -> bool:
         """Decodes a program's whole file, from where an earlier scan got
-        to. True if it finished with the file; False if it stopped (the
-        window ended, or someone started watching) and will carry on later.
-        `anytime`: in or out of the window (for someone's report: see
-        Target)."""
+        to; of a version in several files (see catalog.Media), each of them
+        in turn, each with a record of its own (see broken.part_key), until
+        one's found broken or damaged. True if it finished with the file
+        (or them all); False if it stopped (the window ended, or someone
+        started watching) and will carry on later. `anytime`: in or out of
+        the window (for someone's report: see Target)."""
         item = program.item
         resolved = await resolve(self.ctx, item, program.version)
         if resolved.error or not resolved.source:
             return False  # Plex or the share is down; the quick check handles gone files
         if (resolved.plex_file or resolved.source) != record.file:
-            # A new file since its quick check: that comes first.
-            record.quick_ms, record.quick = 0, ""
-            self.ctx.db.save_scan(record)
-            return True
+            return self._check_first(record)
+        files = resolved.parts
+        if len(files) < 2:
+            return await self._deep_file(program, record, resolved, anytime)
+        for n, part in enumerate(files, 1):
+            key = part_key(program.key, n)
+            here, now = resolved, record
+            if n > 1:
+                here = await locate(
+                    self.ctx.settings, self.ctx.library, item.rating_key, part,
+                    self.ctx.media_access,
+                )  # fmt: skip
+                if here.error or not here.source:
+                    return False
+                now = self.ctx.db.scan(key)
+                if now is None or (here.plex_file or here.source) != now.file:
+                    return self._check_first(record)
+            if now.quick != "ok" or now.deep_ms:
+                continue
+            credits = _credits_in(self.ctx, item, resolved, n - 1)
+            if not await self._deep_file(program, now, here, anytime, (n, len(files)), credits):
+                return False
+            done = self.ctx.db.scan(key)
+            if done is None or not done.deep_ms or done.deep in ("broken", "damaged"):
+                return True  # (another night; or it's off the air now, or you kept it on)
+        return True
+
+    def _check_first(self, record: ScanRecord) -> bool:
+        """A new file since a program's quick check: that comes first."""
+        record.quick_ms, record.quick = 0, ""
+        self.ctx.db.save_scan(record)
+        return True
+
+    async def _deep_file(
+        self,
+        program: Program,
+        record: ScanRecord,
+        resolved: ResolvedSource,
+        anytime: bool,
+        part: tuple[int, int] | None = None,
+        credits_from: Callable[[], Awaitable[list[tuple[float, float]]]] | None = None,
+    ) -> bool:
+        """deep_scan's work on one file (`part`: which, of a version in
+        several; `credits_from`: where Plex says the end credits are in it,
+        by default the program's)."""
+        item = program.item
+        label = _file_label(item, part)
         probe = await ff.probe(self.ctx.settings, resolved.source)
         if not probe.ok:
             self._another_night(record, f"couldn't be opened ({probe.error})")
             return True
         duration = probe.duration_s or 0.0
         start = record.deep_at_s
-        log.info(
-            "Deep-scanning %s%s",
-            item.label,
-            f", resuming at {fmt_offset(start)}" if start else "",
-        )
-        self.state, self.current = "scanning", item.label
+        log.info("Deep-scanning %s%s", label, f", resuming at {fmt_offset(start)}" if start else "")
+        self.state, self.current = "scanning", label
         saved = time.monotonic()
         seek = max(0.0, start - RESUME_BACK_S) if start else 0.0
         before = replace(
@@ -2150,7 +2323,7 @@ class Scanner:
             got = task.result()
             progress(got)
         except Exception:
-            log.exception("Deep scan of %s failed; trying again another night", item.label)
+            log.exception("Deep scan of %s failed; trying again another night", label)
             self._another_night(record, "the scan failed")
             return True
         finally:
@@ -2163,20 +2336,20 @@ class Scanner:
         if got.stalled:
             log.info(
                 "Deep scan of %s stalled at %s; trying again another night",
-                item.label,
+                label,
                 fmt_offset(got.at),
             )
             self._another_night(record, f"stalled at {fmt_offset(got.at)}")
             return True
         if got.unreadable:
-            return self._read_failure(program, record, resolved, got.at)
+            return self._read_failure(program, record, resolved, got.at, part)
         if max(got.at, got.picture_to) <= seek + 1.0:
             if seek:
                 # Carrying on, it landed at the end (jumping into some files
                 # is rough): from the start, then, next time.
                 self.ctx.db.save_scan(
                     ScanRecord(
-                        program.key,
+                        record.rating_key,
                         record.file,
                         record.size,
                         record.quick_ms,
@@ -2193,12 +2366,12 @@ class Scanner:
         credits = None
         if dropouts(record):
             try:
-                credits = await credits_of(self.ctx, item)
+                credits = await (credits_from() if credits_from else credits_of(self.ctx, item))
             except Unknown as e:
                 self._another_night(record, str(e))
                 return True
         verdict = judge(record, probe, item.year, credits)
-        self._finish(program, record, resolved, verdict.result, verdict.reason)
+        self._finish(program, record, resolved, verdict.result, verdict.reason, part)
         return True
 
     def _read_failure(
@@ -2207,6 +2380,7 @@ class Scanner:
         record: ScanRecord,
         resolved: ResolvedSource,
         at: float,
+        part: tuple[int, int] | None = None,
     ) -> bool:
         """Nothing could be read at `at`: tried again another night before
         the file counts as broken there (a share can drop out)."""
@@ -2216,12 +2390,12 @@ class Scanner:
             self._another_night(record, f"couldn't be read at {fmt_offset(at)}")
             log.info(
                 "Deep scan couldn't read %s at %s; trying again another night",
-                program.item.label,
+                _file_label(program.item, part),
                 fmt_offset(at),
             )
             return True
         why = f"the file can't be read at {fmt_offset(at)} (a disk or share error)"
-        self._finish(program, record, resolved, "broken", why)
+        self._finish(program, record, resolved, "broken", why, part)
         return True
 
     def _another_night(self, record: ScanRecord, why: str) -> None:
@@ -2236,13 +2410,19 @@ class Scanner:
         resolved: ResolvedSource,
         result: str,
         reason: str,
+        part: tuple[int, int] | None = None,
     ) -> None:
+        """What a finished deep scan of a file found (`part`: which, of a
+        version in several files)."""
         record.deep, record.note = result, reason
         record.deep_ms = int(time.time() * 1000)
         self.ctx.db.save_scan(record)
         self.tonight["scanned"] += 1
         key = program.key
-        again = key in self._again
+        # (Judged anew: what took a program off the air under the old rules,
+        # see _rules_changed. That was about its first file, the only one
+        # checked before 1.30.2.)
+        again = key in self._again and (part is None or part[0] == 1)
         anew = again and self._judged_anew(key, result, reason)
         if result == "ok":
             if anew:
@@ -2256,7 +2436,7 @@ class Scanner:
                 "Deep scan found a problem in %s (%s), but you put it back on the air, so it "
                 "stays on",
                 program.item.label,
-                reason,
+                of_part(reason, part),
             )
             return
         if again:
@@ -2278,6 +2458,7 @@ class Scanner:
             found=DEEP_SCAN,
             version=program.version,
             library=program.library,
+            part=part,
         )
 
     def _forget_old(self, scans: dict[str, ScanRecord], programs: list[Program]) -> None:
@@ -2291,7 +2472,7 @@ class Scanner:
         old = [
             k
             for k, r in scans.items()
-            if k not in current and r.quick_ms < cutoff and not self.waiting(k)
+            if version_of_part(k) not in current and r.quick_ms < cutoff and not self.waiting(k)
         ]
         if old:
             self.ctx.db.forget_scans(old)
@@ -2310,9 +2491,7 @@ class Scanner:
                 for k in programs
                 if (r := scans.get(k)) is not None and r.quick_ms and now - r.quick_ms < fresh
             ),
-            "deepScanned": sum(
-                1 for k in programs if (r := scans.get(k)) is not None and r.deep_ms
-            ),
+            "deepScanned": sum(1 for k in programs if _deep_done(scans, k)),
             # Media's files, while a library is shared with the apps (how
             # many, once they're all known: see _media_everything).
             "media": (
@@ -2321,9 +2500,7 @@ class Scanner:
                     "quickChecked": sum(
                         1 for k in self.media_keys if (r := scans.get(k)) is not None and r.quick_ms
                     ),
-                    "deepScanned": sum(
-                        1 for k in self.media_keys if (r := scans.get(k)) is not None and r.deep_ms
-                    ),
+                    "deepScanned": sum(1 for k in self.media_keys if _deep_done(scans, k)),
                 }
                 if self._media_all_at is not None
                 else {"files": None, "quickChecked": None, "deepScanned": None}
@@ -2345,20 +2522,59 @@ def someone_watching(ctx: AppContext) -> bool:
     return any(b.viewers for b in list(ctx.broadcasters.values())) or bool(ctx.plays.now())
 
 
-def _unchecked(record: ScanRecord | None, item: Item) -> bool:
-    """Whether a file hasn't had its quick check: never, or not since it
-    changed (as the library says it is now)."""
-    if record is None or not record.quick_ms:
-        return True
-    return bool(item.file_path) and record.file != item.file_path
+def _deep_left(records: list[tuple[int, ScanRecord]]) -> ScanRecord | None:
+    """Of a file's records (see Scanner._records), the first whose deep
+    scan isn't done (a file whose quick check didn't pass isn't
+    deep-scanned); None when none is left."""
+    return next((r for _, r in records if r.quick == "ok" and not r.deep_ms), None)
 
 
-def _deep_due(record: ScanRecord | None, item: Item) -> bool:
-    """Whether a file may still need the deep scan: its quick check first,
-    or it passed that and hasn't been deep-scanned."""
-    if record is None or _unchecked(record, item):
-        return True
-    return record.quick == "ok" and not record.deep_ms
+def _found_deep(records: list[tuple[int, ScanRecord]]) -> tuple[str, bool] | None:
+    """What a file's deep scan found wrong, in the first of its records it
+    found broken or damaged ("Deep scan: ...", saying which of a version's
+    files: see broken.of_part), and whether an Admin put that file back on
+    the air; None if it found nothing."""
+    of = max((n for n, _ in records), default=1)
+    for n, r in records:
+        if r.deep in ("broken", "damaged"):
+            return of_part(f"Deep scan: {r.note}", (n, of) if of > 1 else None), r.kept
+    return None
+
+
+def _records_in(scans: dict[str, ScanRecord], key: str) -> list[tuple[int, ScanRecord]]:
+    """The records of a file's checks among `scans` (see Scanner._records):
+    its own, then those of a version's further files, while there are."""
+    out = []
+    while (record := scans.get(part_key(key, len(out) + 1))) is not None:
+        out.append((len(out) + 1, record))
+    return out
+
+
+def _unchecked(scans: dict[str, ScanRecord], program: Program) -> bool:
+    """Whether a program's file hasn't had its quick check: never, or not
+    since it changed (as the library says it is now); of a version in
+    several files, any of them (as the library listed them)."""
+    files = program.files or (None,)
+    for n, media in enumerate(files, 1):
+        record = scans.get(part_key(program.key, n))
+        file = program.item.file_path if n == 1 else media.file if media else None
+        if record is None or not record.quick_ms or (file and record.file != file):
+            return True
+    return False
+
+
+def _deep_due(scans: dict[str, ScanRecord], program: Program) -> bool:
+    """Whether a program's file may still need the deep scan: its quick
+    check first, or it passed that and hasn't been deep-scanned (of a
+    version in several files, any of them)."""
+    return _unchecked(scans, program) or _deep_left(_records_in(scans, program.key)) is not None
+
+
+def _deep_done(scans: dict[str, ScanRecord], key: str) -> bool:
+    """Whether the deep scan has done a program's file (all of a version's,
+    in several)."""
+    records = _records_in(scans, key)
+    return bool(records) and records[0][1].deep_ms > 0 and _deep_left(records) is None
 
 
 def _target_label(target: Target) -> str:

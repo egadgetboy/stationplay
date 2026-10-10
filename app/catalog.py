@@ -85,7 +85,16 @@ class Track:
 
 @dataclass(frozen=True)
 class Media:
-    """One version of a program's file, as its source describes it."""
+    """One version of a program's file, as its source describes it.
+
+    A version can be in several files, played one after the other as one
+    program: a movie on two discs, which Plex stacks ("cd1" and "cd2",
+    "part 1" and "part 2"). Then `parts` has each file, in order, described
+    as a file is (each with its own length, None where the source didn't
+    say, and what it holds, where the source said); the version's own
+    fields are its first file's, but for its length and size, which are all
+    of them together. A version in one file has no `parts`: it's its own
+    one file (see `files`)."""
 
     container: str
     video: str  # its picture's codec ("" for none)
@@ -95,14 +104,24 @@ class Media:
     hdr: str = ""  # its HDR: "", HDR10 or HLG (Dolby Vision's base, if any)
     dv_profile: int | None = None  # Dolby Vision's profile (0: unknown); None: none
     bitrate_kbps: int | None = None
-    parts: int = 1  # files it's split into (a movie on two discs)
-    file: str | None = None  # where the source has it
+    file: str | None = None  # where the source has it (its first file)
     part_key: str | None = None  # the source's address for it
     size: int | None = None
     duration_ms: int | None = None
     id: str = ""  # the source's own id for this version
     audio: tuple[Track, ...] = ()
     subtitles: tuple[Track, ...] = ()
+    parts: tuple[Media, ...] = ()  # its files, when it's in several
+
+    @property
+    def files(self) -> tuple[Media, ...]:
+        """Its files, in order: its parts, or itself."""
+        return self.parts or (self,)
+
+    @property
+    def joined(self) -> bool:
+        """Whether it's in several files, played as one."""
+        return len(self.parts) > 1
 
     @property
     def default_audio(self) -> Track | None:
@@ -112,6 +131,11 @@ class Media:
     def size_label(self) -> str:
         """Its picture's size as people say it: "4K", "1080p", "720p", "SD"."""
         return size_label(self.width, self.height)
+
+
+def part_words(n: int, of: int) -> str:
+    """Which of a program's files (see Media.parts): "part 2 of 3"."""
+    return f"part {n} of {of}"
 
 
 def size_label(width: int, height: int) -> str:

@@ -75,9 +75,10 @@ from .arr import NAMES as ARR_NAMES
 from .arr import Arr, ArrError, clean_url
 from .breaks import MAX_BREAKS, FillerLibrary, id_card_ms
 from .broadcaster import Broadcaster, between, corner_mark, fmt_offset, now_ms, station_banner
-from .broken import BrokenFiles, file_key
+from .broken import BrokenFiles, entry_part, file_key, part_key
 from .bumpers import MAX_UPLOAD_BYTES as MAX_BUMPER_BYTES
 from .bumpers import Bumper, BumperError, BumperLibrary
+from .catalog import Media
 from .config import Settings
 from .db import NEW_STATION, SPECIAL_SETTINGS, STATION_SETTINGS, Channel, Database, Item, User
 from .ffmpeg import (
@@ -114,7 +115,7 @@ from .markers import MarkerFinder
 from .plex import PEOPLE_FIELDS, TAG_FIELDS, PlexClient, PlexError, collection_key, genres
 from .scanner import Scanner
 from .schedule import ORDER_MODES, StationSchedule, forget_eras, prepare
-from .sources import MediaAccess, ResolvedSource, resolve_source
+from .sources import MediaAccess, ResolvedSource, locate, resolve_source
 from .text import plain
 from .updates import GUIDE_FUTURE_MS, GUIDE_PAST_MS, MARGIN_MS, Updater, compare
 
@@ -511,7 +512,7 @@ class AppContext:
         self.problems = problems.Problems(self.db)
         self.languages = languages.Languages(self.db)
         self.notify = notify.Notify(self.db)
-        self.alerts = alerts.Alerts(self.notify)
+        self.alerts = alerts.Alerts(self.notify, self.db)
         self.access.judge_watching_by(self.viewing.watches_only)
         self.updater = Updater(self)
         self.markers = MarkerFinder(self.db, self.library)
@@ -555,6 +556,10 @@ class AppContext:
 
     async def resolve_source(self, item: Item) -> ResolvedSource:
         return await resolve_source(self.settings, self.library, item, self.media_access)
+
+    async def locate(self, key: str, media: Media) -> ResolvedSource:
+        """Where one of program `key`'s files is read from (see sources.locate)."""
+        return await locate(self.settings, self.library, key, media, self.media_access)
 
     def in_media(self, entry: dict[str, Any]) -> bool:
         """Whether a file on the broken-files list is in Media: its library
@@ -2280,7 +2285,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         if mark is not None and mark.until_s is not None:
             mark = None  # shown only at the start of programs: gone by then
         elif mark is not None and mark.clock:
-            mark = replace(mark, clock_at_s=time.time())
+            mark = replace(mark, airs_at_s=time.time())
         root = ctx.settings.data_dir / "upnext"
         async with previews.turn():
             root.mkdir(parents=True, exist_ok=True)
@@ -2828,8 +2833,10 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         # Vision with no ordinary picture: it may not have been checked yet).
         file = entry.get("file") if entry.get("problem") == "unsupported" else None
         size = entry.get("fileSize")
+        # (Of a version in several files, the one it's about.)
+        part = entry_part(entry)
         ctx.db.keep_on_air(
-            key,
+            part_key(key, part[0]) if part else key,
             file if isinstance(file, str) else None,
             size if isinstance(size, int) else 0,
         )

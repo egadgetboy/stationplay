@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import logging
@@ -9,6 +10,7 @@ import os
 import re
 import shutil
 import sqlite3
+import tempfile
 import zipfile
 
 import pytest
@@ -209,6 +211,41 @@ def test_a_restore_that_fails_is_tried_once_and_the_settings_stay(tmp_path, capl
     assert not staging.exists()
 
 
+def test_a_restored_backup_brings_back_no_alerts(tmp_path):
+    """A backup's Admin alerts were about when it was made: restored, it
+    starts with none (what's still wrong is found, and said, again), and
+    none from then is ever said to be fixed."""
+    data = tmp_path / "data"
+    fp = plex()
+    with client_for(data, fp) as client:
+        ctx = client.app.state.ctx
+        client.portal.call(ctx.alerts.start, "backups", "StationPlay's backups are failing.")
+        # (Made while the alert was going, which the backup then fixes.)
+        name = client.post("/api/backups").json()["name"]
+        backup = client.get(f"/api/backups/{name}").content
+        with zipfile.ZipFile(io.BytesIO(backup)) as z, tempfile_db(z) as copy:
+            assert [r[0] for r in copy.execute("SELECT kind FROM alerts")] == ["backups"]
+        client.portal.call(ctx.alerts.start, "plex", "StationPlay can't reach Plex.")
+        assert client.post("/api/restore", content=backup).status_code == 200
+    with client_for(data, fp) as client:
+        assert client.app.state.ctx.alerts.listed() == []
+        assert client.app.state.ctx.db.kept_alerts() == []
+
+
+@contextlib.contextmanager
+def tempfile_db(z: zipfile.ZipFile):
+    """The database in a backup, opened."""
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, backups.DB_NAME)
+        with open(path, "wb") as f:
+            f.write(z.read(backups.DB_NAME))
+        conn = sqlite3.connect(path)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+
 # Before an update changes the database -------------------------------------------------
 
 
@@ -328,6 +365,7 @@ def test_what_an_update_would_change_is_found(tmp_path):
     assert db.changes_needed(path) == []
     conn = sqlite3.connect(path)
     conn.execute("DROP TABLE titles")
+    conn.execute("DROP TABLE alerts")  # (as before 1.30.3)
     conn.execute("DROP INDEX progress_by_time")
     conn.execute("CREATE INDEX views_by_start ON views (start_ms)")
     conn.execute("CREATE TABLE channel_items (channel_id INTEGER)")
@@ -335,8 +373,8 @@ def test_what_an_update_would_change_is_found(tmp_path):
     conn.commit()
     conn.close()
     assert db.changes_needed(path) == [
-        "a new index, progress_by_time", "a new table, titles", "stations' programs kept as eras",
-        "an old index dropped", "when stations were made",
+        "a new index, progress_by_time", "a new table, titles", "a new table, alerts",
+        "stations' programs kept as eras", "an old index dropped", "when stations were made",
     ]  # fmt: skip
     with pytest.raises(sqlite3.OperationalError):
         db.changes_needed(tmp_path / "not-there.db")

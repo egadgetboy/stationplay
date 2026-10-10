@@ -43,8 +43,15 @@ only once things have been right a while too, so none comes and goes:
 
 Each has an ID that stays the same while it lasts (a new one starting
 later has a new ID), its kind, a sentence an Admin can act on, when it
-started, and when it was fixed. Kept in memory: the alerts now, and those
-fixed in the last day.
+started, and when it was fixed. The alerts now, and those fixed in the last
+day, are kept in the database as they change (never at every check), so
+when StationPlay starts again they're as they were: one still going isn't
+said again, and keeps its ID; it's fixed (and said to be, once) when its
+check finds it right again, by that check's own rules, and until a check
+can tell (Plex's first, or a station playing again), it stays as it was.
+What's checked over again counts afresh: Plex's 5 checks, a station's 3
+failures. (If the database can't be written to, they go on as they are,
+and the log says so: a restart then may say them again.)
 """
 
 from __future__ import annotations
@@ -53,6 +60,7 @@ import asyncio
 import contextlib
 import logging
 import shutil
+import sqlite3
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -67,6 +75,7 @@ from .plex import PlexError
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from .db import Database
     from .main import AppContext
     from .notify import Notify
 
@@ -135,8 +144,11 @@ class _Streak:
 class Alerts:
     """The alerts now and lately, and what's found (see the module's notes)."""
 
-    def __init__(self, notify: Notify, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self, notify: Notify, db: Database, clock: Callable[[], float] = time.monotonic
+    ) -> None:
         self.notify = notify
+        self.db = db
         self.clock = clock
         self._now: dict[tuple[str, str], Alert] = {}
         self._fixed: deque[Alert] = deque(maxlen=FIXED_MOST)
@@ -144,10 +156,41 @@ class Alerts:
         self._station_fails: dict[int, deque[float]] = {}
         self._backup_fails = 0
         # The Broken files tab: what needed an Admin when it was last looked
-        # at, when the alert was last said (started), and what's come since.
-        self._files_seen: set[str] = set()
+        # at (None: not yet, since StationPlay started), when the alert was
+        # last said (started), and what's come since.
+        self._files_seen: set[str] | None = set()
         self._files_said = 0.0
         self._files_unsaid: set[str] = set()
+        self._unkept = False  # (the database couldn't be written: said once)
+        self._restore()
+
+    def _restore(self) -> None:
+        """The alerts as they were kept, when StationPlay starts (see the
+        module's notes)."""
+        try:
+            rows = self.db.kept_alerts()
+            stations = {str(c.id) for c in self.db.list_channels()}
+        except sqlite3.Error as e:
+            log.warning("Couldn't read the alerts kept from before (%s)", e)
+            return
+        for row in rows:
+            alert = Alert(*(row[k] for k in ("kind", "about", "sentence", "since_ms", "fixed_ms")))
+            if alert.kind not in KINDS:
+                continue  # (a later version's, left for it)
+            if alert.fixed_ms is not None:
+                self._fixed.append(alert)
+            elif alert.kind == STATION and alert.about not in stations:
+                # (Deleted, and said so then, though it couldn't be kept.)
+                self._keep(self.db.forget_alert, alert.kind, alert.about, alert.since_ms)
+            else:
+                self._now[(alert.kind, alert.about)] = alert
+                log.warning("Alert still going: %s", alert.sentence)
+        files = self._now.get((FILES, ""))
+        if files is not None:
+            # When it was said, by this clock; what was there then is found
+            # at the first look (see files).
+            self._files_said = self.clock() - max(0.0, (_now_ms() - files.since_ms) / 1000)
+            self._files_seen = None
 
     # What's said ----------------------------------------------------------------
 
@@ -162,13 +205,19 @@ class Alerts:
         fixed = [a for a in self._fixed if (a.fixed_ms or 0) >= since]
         return [*self.now(), *sorted(fixed, key=lambda a: a.fixed_ms or 0, reverse=True)]
 
-    def start(self, kind: str, sentence: str, about: str = "") -> None:
-        """An alert starts (or, while it lasts, says what it is now)."""
+    def start(self, kind: str, sentence: str, about: str = "", after: Alert | None = None) -> None:
+        """An alert starts (or, while it lasts, says what it is now); in
+        place of `after`, if given, which ended unsaid (with an ID of its
+        own however soon after it)."""
         found = self._now.get((kind, about))
         if found is not None:
-            found.sentence = sentence
+            if found.sentence != sentence:
+                found.sentence = sentence
+                self._keep(self._write, found)
             return
-        self._now[(kind, about)] = Alert(kind, about, sentence, _now_ms())
+        since = max(_now_ms(), after.since_ms + 1) if after else _now_ms()
+        alert = self._now[(kind, about)] = Alert(kind, about, sentence, since)
+        self._keep(self._write, alert, after)
         log.warning("Alert: %s", sentence)
         self.notify.send(sentence, kind, STARTED)
 
@@ -179,8 +228,35 @@ class Alerts:
             return
         found.fixed_ms = _now_ms()
         self._fixed.append(found)
+        self._keep(self._write, found)
         log.info("Alert fixed: %s", sentence)
         self.notify.send(sentence, kind, FIXED)
+
+    def _write(self, alert: Alert, instead_of: Alert | None = None) -> None:
+        """An alert, as it is now, to the database (see Database.keep_alert);
+        and, once one's fixed, those fixed too long ago forgotten."""
+        self.db.keep_alert(
+            alert.kind, alert.about, alert.since_ms, alert.sentence, alert.fixed_ms,
+            instead_of.since_ms if instead_of else None,
+        )  # fmt: skip
+        if alert.fixed_ms is not None:
+            self.db.forget_fixed_alerts(alert.fixed_ms - int(FIXED_KEPT_S * 1000), FIXED_MOST)
+
+    def _keep(self, write: Callable[..., None], *args: Any) -> None:
+        """Writes a change to the database. If it can't be, the alerts go on
+        as they are, and the log says so (once, till one can be again)."""
+        try:
+            write(*args)
+        except sqlite3.Error as e:
+            if not self._unkept:
+                log.warning(
+                    "Couldn't keep the alerts in the database (%s), so they may be said again "
+                    "if StationPlay restarts",
+                    e,
+                )
+            self._unkept = True
+            return
+        self._unkept = False
 
     def checked(
         self,
@@ -254,6 +330,12 @@ class Alerts:
         """What needs an Admin on the Broken files tab now (see the module's
         notes, and reports.Reports.needing): (when, which, what) for each."""
         seen = {which for _, which, _ in things}
+        going = self._now.get((FILES, ""))
+        if self._files_seen is None:
+            # (The first look since StationPlay started again: what's come
+            # since the alert was said is what's newer.)
+            said_ms = going.since_ms if going else 0
+            self._files_seen = {which for when, which, _ in things if when <= said_ms}
         # (What's come since it was said, and is still there.)
         self._files_unsaid = (self._files_unsaid | (seen - self._files_seen)) & seen
         self._files_seen = seen
@@ -266,7 +348,6 @@ class Alerts:
             f"There {'is' if n == 1 else 'are'} {n} file{'' if n == 1 else 's'} to look at on "
             f"the Broken files tab: {newest[:1].upper()}{newest[1:]}."
         )
-        going = self._now.get((FILES, ""))
         if going is not None and not (
             self._files_unsaid and self.clock() - self._files_said >= FILES_AGAIN_S
         ):
@@ -277,10 +358,7 @@ class Alerts:
             del self._now[(FILES, "")]
         self._files_said = self.clock()
         self._files_unsaid = set()
-        self.start(FILES, sentence)
-        if going is not None:
-            again = self._now[(FILES, "")]
-            again.since_ms = max(again.since_ms, going.since_ms + 1)  # (a new ID, however soon)
+        self.start(FILES, sentence, after=going)
 
     # Checking --------------------------------------------------------------------
 
