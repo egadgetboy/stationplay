@@ -194,7 +194,11 @@ async def test_the_data_folder(tmp_path, monkeypatch):
     await found.look(ctx)
     await found.look(ctx)
     [alert] = found.now()
-    assert alert.kind == "data-write" and "No such file or directory" in alert.sentence
+    assert alert.sentence == (
+        "StationPlay can't write to its data folder (No such file or directory). Check the "
+        "folder's permissions, and that its disk has room."
+    )  # (never its path: the apps show alerts)
+    assert alert.kind == "data-write" and str(tmp_path) not in alert.sentence
     ctx.settings.data_dir = tmp_path / "data"
     await found.look(ctx)
     await found.look(ctx)

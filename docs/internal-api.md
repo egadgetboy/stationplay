@@ -647,6 +647,12 @@ away, or says something StationPlay can't read, they answer 503 with
 500). What StationPlay was fetching carries on meanwhile, so asking again a
 little later often finds it ready.
 
+Nothing the apps are sent names a file or a folder (from 1.29.1): not a
+play answer, details, versions, tracks, alerts or refusals. A track whose
+title in the file is a file's name ("Northbound.S02E04.1080p.mkv") is
+listed without it. A program's own address ends in a plain name
+(`file.mkv`, `index.m3u8`).
+
 Keys are strings, and the same key always means the same show, movie or
 episode. Pictures (`poster`, `backdrop`, `thumb`) are addresses under
 `/api/internal/art`: add `&w=` with the width it will be shown at, in
