@@ -1,6 +1,9 @@
-# Builds the container image and publishes it to GitHub Container Registry
-# (ghcr.io/<you>/stationplay) whenever main changes, so TrueNAS can pull it
-# instead of building locally.
+# Builds the container image, tests it as built, and publishes it to GitHub
+# Container Registry (ghcr.io/<you>/stationplay) whenever main changes, so
+# TrueNAS can pull it instead of building locally. The tests run in the
+# image itself (the Dockerfile's test stage: the image that ships, with the
+# tests added), on the FFmpeg, Python and libraries that ship, and latest is
+# published only once they pass.
 name: image
 
 on:
@@ -10,34 +13,49 @@ on:
 
 jobs:
   test-and-publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    # (The tests take 30 to 50 minutes; building, a few more.)
+    timeout-minutes: 75
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - name: Test
+      - name: Build
         run: |
-          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
-          pip install -r requirements.txt pytest==9.1.1 pytest-asyncio==1.4.0
+          docker build --tag stationplay:latest .
+          docker build --target test --tag stationplay:test .
+          # (The tests run in the very image that's published: the test
+          # stage's layers are its, with the tests' on top.)
+          shipped=$(docker image inspect -f '{{join .RootFS.Layers " "}}' stationplay:latest)
+          tested=$(docker image inspect -f '{{join .RootFS.Layers " "}}' stationplay:test)
+          if [ "${tested#"$shipped "}" = "$tested" ]; then
+            echo "::error::The test stage isn't built on the image that's published"; exit 1
+          fi
+      # release.yml publishes a version only once this step has passed on
+      # its commit (or a later one with nothing but release notes since):
+      # keep its name.
+      - name: Test
+        timeout-minutes: 60
+        run: |
           # (What the tests ran with, on the run's page.)
-          echo "::notice::$(ffmpeg -version | head -1) at $(command -v ffmpeg); $(nproc) processors; $(python --version)"
+          docker run --rm stationplay:test sh -c \
+            'echo "::notice::$(ffmpeg -version | head -1) at $(command -v ffmpeg); $(nproc) processors; $(python --version)"'
           # (Each test that fails is named on the run's page, not only in its log.)
           set -o pipefail
-          python -m pytest -q -p no:cacheprovider -rfE 2>&1 | tee "$RUNNER_TEMP/tests.txt" || {
+          docker run --rm --init stationplay:test 2>&1 | tee "$RUNNER_TEMP/tests.txt" || {
             grep -E "^(FAILED|ERROR) " "$RUNNER_TEMP/tests.txt" | head -20 | cut -c1-1600 | sed 's/^/::error::/'
             exit 1
           }
       - uses: docker/login-action@v3
+        if: github.ref == 'refs/heads/main'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/stationplay:latest
+      - name: Publish
+        if: github.ref == 'refs/heads/main'
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stationplay:latest"
+          docker tag stationplay:latest "$image"
+          docker push "$image"

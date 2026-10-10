@@ -1042,18 +1042,21 @@ Start with the **Logs** tab: it shows the newest 200 entries. Check **Warnings**
 ```
 pip install -r requirements.txt pytest pytest-asyncio
 python -m pytest                     # all tests, including end-to-end tests with real ffmpeg (about 30 minutes)
-STATIONPLAY_SOAK=1 python -m pytest -k soak                # two long soak runs, 8 minutes each
-STATIONPLAY_SOAK=1 STATIONPLAY_SOAK_MINUTES=30 python -m pytest -k soak
+STATIONPLAY_SOAK=1 python -m pytest -k soak -o faulthandler_timeout=0              # two long soak runs, 8 minutes each
+STATIONPLAY_SOAK=1 STATIONPLAY_SOAK_MINUTES=30 python -m pytest -k soak -o faulthandler_timeout=0
 STATIONPLAY_REALWORLD=1 python -m pytest tests/test_e2e_realworld.py
+
+docker build --target test -t stationplay-test .           # all tests in the image as it ships, as GitHub runs them
+docker run --rm --init stationplay-test
 
 pip install ruff mypy
 ruff check app tests && ruff format --check app tests      # lint and formatting
 mypy app                                                    # type checks
 ```
 
-The tests need ffmpeg on the `PATH` (the HDR and real-world tests also need ffmpeg with libx265; they're skipped otherwise). `requirements.txt` is pinned for Python 3.13. The end-to-end tests run a fake Plex whose library includes a cut-short file, an unopenable file, a file with no sound and a source that stalls, and a stand-in ffmpeg (`tests/fake_gpu_ffmpeg.py`) that acts like a GPU and can be told to fail. They check that a viewer receives one continuous, clean stream that keeps pace with the clock.
+The tests need ffmpeg on the `PATH` (the HDR and real-world tests also need ffmpeg with libx265; they're skipped otherwise). A test still going after 5 minutes prints where every thread is (`faulthandler_timeout` in `pytest.ini`; with `-v`, after the test's name), so one that hangs names itself. `requirements.txt` is pinned for Python 3.13. The end-to-end tests run a fake Plex whose library includes a cut-short file, an unopenable file, a file with no sound and a source that stalls, and a stand-in ffmpeg (`tests/fake_gpu_ffmpeg.py`) that acts like a GPU and can be told to fail. They check that a viewer receives one continuous, clean stream that keeps pace with the clock.
 
-`.github/workflows/image.yml` is optional: if you keep the code on GitHub, it runs the tests and publishes an x86-64 image to GitHub's container registry.
+`.github/workflows/image.yml` is optional: if you keep the code on GitHub, it builds the image, runs the tests in it (the Dockerfile's test stage: the image that ships, on its FFmpeg and Python, with the tests added) and, once they pass, publishes it as an x86-64 image to GitHub's container registry. The tests stop after an hour. The Dockerfile pins its base image by digest (it says how to update it), so every build starts from the same Debian and Python. `.github/workflows/quality.yml` runs the plan's longer quality gates in the image every Monday, or from its **Run workflow** button: the two soak tests, 4½ hours each, and the real-world and HDR tests. It publishes nothing.
 
 **The setup's questions.** When a release adds something an Admin needs to answer (a feature that's off until they turn it on, or a new choice), it goes in the setup: a new question in `QUESTIONS` in `app/setup.py`, with its step on the page (`SETUP_PAGES` in `app/web/index.html`); or, for a question that gains a choice, its version raised by one. After the update, the setup opens once by itself with just that question.
 

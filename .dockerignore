@@ -1,8 +1,10 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-tests/
 .github/
 *.ts
 data/
-tools/
+# (tests/ and this one tool are for the Dockerfile's test stage alone: what
+# ships is app/ and requirements.txt.)
+tools/*
+!tools/openapi_spec.py
