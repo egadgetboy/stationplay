@@ -600,14 +600,13 @@ device's, or everyone's. Send what's known:
 - `library-failed`: something from the library didn't play (`title`, as
   it's shown).
 - `library-stopped`: playing from the library stopped and couldn't go on
-  (`title`).
-
-With either, from 1.30.0, send `session` (the playing's ID, from `POST
-/api/internal/play`) and `positionMs` (where in the program it happened):
-StationPlay checks that file there first, ahead of everything else it
-checks but a station's program about to air, and puts it on the Broken
-files list only if it finds what's wrong. (Without them, it checks what that device played last, where the
-app last said it was.)
+  (`title`). With either, from 1.30.0, send `session` (the playing's ID,
+  from `POST /api/internal/play`) and `positionMs` (where in the program it
+  happened): StationPlay checks that file there first, ahead of everything
+  else it checks but a station's program about to air, and puts it on the
+  Broken files list only if it finds what's wrong. Without `session`, it
+  checks what that device played last, where the app last said it was, if
+  the problem happened in the last 10 minutes (by `at`).
 - `kept-up`: playing couldn't keep up, so a smaller version played
   (`title`, or `station`).
 - `crashed`: the app closed unexpectedly last time (sent when it opens
@@ -744,16 +743,17 @@ an Admin can have them sent to a web address (ntfy, Gotify, Home
 Assistant).
 
 From 1.30.0, there's one more kind, `files`: something on the Broken files
-tab needs an Admin (a person's report, a file StationPlay found broken or
-damaged that isn't being replaced by itself, or one Sonarr or Radarr
-couldn't replace), "There are 3 files to look at on the Broken files tab:
-Tia reported No sound on Northbound S2 E4." It says how many, and the
-newest, as more come; it's fixed when nothing there needs an Admin. So an
-Admin is told at most once an hour: when new things come an hour or more
-after it was last said, it starts again with a new `id`, and the old one
-is no longer listed (it isn't fixed: don't say it was). The apps need
-nothing new for it: notify once for each `id`, as for any alert. The web
-address is told the same.
+tab needs an Admin (a person's report, a file a station or Media plays
+that StationPlay found broken or damaged and that isn't being replaced by
+itself, or one Sonarr or Radarr couldn't replace), "There are 3 files to
+look at on the Broken files tab: Tia reported No sound on Northbound S2
+E4." It says how many, and the newest, as more come; it's fixed when
+nothing there needs an Admin. So an Admin is told at most once an hour:
+once an hour has gone by since it was last said, anything new since then
+has it start again with a new `id`, and the old one is no longer listed
+(it isn't fixed: don't say it was). The apps need nothing new for it:
+notify once for each `id`, as for any alert. The web address is told the
+same.
 
 For an Admin, an app shows the alerts now, with each `sentence` as it is
 and how long it's lasted, and can say when one is fixed. Ask

@@ -242,12 +242,38 @@ def test_trouble_in_media_puts_the_file_first(tmp_path):
         [target] = ctx.scanner._targets
         assert (target.key, target.at_s) == ("300", 99.0)
         ctx.scanner._done_with(target, sc.NOTHING)
+        # One sent later (after trouble reaching StationPlay, say) may be
+        # about something else: what the device played since isn't checked
+        # for it, nor for one from before that started.
+        now = int(time.time() * 1000)
+        for at in (now - 30 * 60_000, session.started_ms - 5 * 60_000):
+            assert client.post("/api/internal/problem", json={**said, "at": at}).status_code == 200
+        assert ctx.scanner._targets == []
         # A station's problem, or a playing that's no one's, isn't one.
         client.post("/api/internal/problem", json={"kind": "station-stopped", "station": 5})
         client.post("/api/internal/problem", json={**said, "session": "not-a-session"})
         assert ctx.scanner._targets == []
         # Nothing about the file changed.
         assert ctx.broken.keys() == set()
+
+
+def test_trouble_the_apps_send_cant_crowd_out_reports(tmp_path, monkeypatch):
+    monkeypatch.setattr(sc, "TARGETS_MOST", 2)
+    client, _fp = world(tmp_path)
+    with client:
+        scanner = client.app.state.ctx.scanner
+        told: list[tuple[list[int], str]] = []
+        scanner.on_checked = lambda ids, outcome, _note: told.append((ids, outcome))
+        scanner.target("300", report=7)
+        scanner.target("301")
+        scanner.target("302", report=8)
+        assert [t.key for t in scanner._targets] == ["300", "302"]
+        scanner.target("303")  # (the newest, but no one reported it)
+        assert [t.key for t in scanner._targets] == ["300", "302"]
+        # With only reports waiting, the oldest goes, and says so.
+        scanner.target("304", report=9)
+        assert [t.key for t in scanner._targets] == ["302", "304"]
+        assert told == [([7], sc.COULDNT)]
 
 
 def a_second_version(fp: LibraryPlex) -> None:

@@ -756,9 +756,9 @@ Files that can't play properly go on the **Broken files** list, kept on the **Br
 
 The tab has three parts:
 
-- **Needs you:** people's reports (see [People's reports](#peoples-reports)), and the files StationPlay found that wait for you: broken or damaged files Sonarr or Radarr aren't replacing by themselves, and those they couldn't replace. The tab's count is how many things are here, and Admins are told through their alerts (see [Troubleshooting](#troubleshooting)).
+- **Needs you:** people's reports (see [People's reports](#peoples-reports)), and the files StationPlay found that wait for you: broken or damaged files a station or Media plays that Sonarr or Radarr aren't replacing by themselves, and those they couldn't replace. The tab's count is how many things are here, and Admins are told through their alerts (see [Troubleshooting](#troubleshooting)).
 - **Being replaced:** what Sonarr or Radarr is fetching now.
-- **Found by StationPlay:** the rest: files you're handling yourself, and unsupported files.
+- **Found by StationPlay:** the rest: files you're handling yourself, files no station or Media plays now (a missing one comes off the list by itself), and unsupported files.
 
 | Label | Meaning |
 |---|---|

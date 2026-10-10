@@ -99,6 +99,8 @@ EPISODE_OR_MOVIE = "Report a problem with an episode or a movie"
 ONE_OF_THEM = "Send the key of what you're watching, or its station, not both"
 NO_STATION = "There's no such station"
 NOTHING_ON = "Nothing's on that station right now"
+# (For an Admin, on the Broken files tab.)
+UNREACHABLE_PLEX = "StationPlay can't reach Plex right now"
 # The limits: one a day per person per program; this many a day per person.
 A_DAY = 10
 KEEP_DAYS = 90
@@ -440,22 +442,37 @@ class Reports:
         log.info("%s dismissed the reports on %s", by, named(reports[-1].program))
         return len(reports)
 
-    async def replace(self, key: str, by: str) -> str:
-        """Replace: the file reported goes on the list (off the air until its
-        new file passes), and Sonarr or Radarr replaces it, blocklisting its
-        release, now."""
+    def _to_judge(self, key: str) -> list[Report]:
+        """A program's reports waiting for an Admin's Replace or Find a
+        better copy (what StationPlay can't judge), the oldest first."""
         reports = [r for r in self._open_of(key) if r.state == WAITING and r.choice in LOOKED]
         if not reports:
-            raise HTTPException(400, "Only what StationPlay can't judge is replaced from a report")
-        newest = reports[-1]
-        app = replacing.app_for(newest.program)
+            raise HTTPException(
+                400, "Only a report of what StationPlay can't judge waits for this choice"
+            )
+        return reports
+
+    def _arr_for(self, report: Report) -> str:
+        """Sonarr or Radarr, for a report's program (see _arr), or why not
+        (400)."""
+        app = replacing.app_for(report.program)
         if not replacing.enabled(self.ctx.db, app):
             raise HTTPException(400, f"{ARR_NAMES[app]} isn't turned on")
         if replacing.what(self.ctx.db) == replacing.MISSING:
             raise HTTPException(
                 400, "Sonarr and Radarr replace only missing files now (set on this tab)"
             )
+        return ARR_NAMES[app]
+
+    async def replace(self, key: str, by: str) -> str:
+        """Replace: the file reported goes on the list (off the air until its
+        new file passes), and Sonarr or Radarr replaces it, blocklisting its
+        release, now."""
+        newest = self._to_judge(key)[-1]
+        app = self._arr_for(newest)
         entry, media = await self._version(newest)
+        # (As they are now: an Admin may have dealt with them meanwhile.)
+        reports = self._to_judge(key)
         file_key = newest.file_key
         if self.ctx.broken.entry(file_key) is None:
             said = ", ".join(dict.fromkeys(r.label for r in reports))
@@ -471,7 +488,7 @@ class Reports:
                 library=entry.library or None,
             )
         jobs.start_try_again(self.ctx, file_key)
-        note = f"{by} chose Replace: {ARR_NAMES[app]} is replacing it"
+        note = f"{by} chose Replace: {app} is replacing it"
         self.ctx.db.set_reports(
             [r.id for r in reports], REPLACING, note, int(time.time() * 1000), only=(WAITING,)
         )
@@ -481,13 +498,9 @@ class Reports:
     async def better(self, key: str, by: str) -> str:
         """Find a better copy: Sonarr or Radarr searches for an upgrade, and
         the file stays as it is."""
-        reports = [r for r in self._open_of(key) if r.state == WAITING and r.choice in LOOKED]
-        if not reports:
-            raise HTTPException(400, "Only what StationPlay can't judge has a better copy found")
+        reports = self._to_judge(key)
         newest = reports[-1]
-        if self._arr(newest.program) is None:
-            app = ARR_NAMES[replacing.app_for(newest.program)]
-            raise HTTPException(400, f"{app} doesn't replace broken or damaged files now")
+        self._arr_for(newest)
         program = {**newest.program, "ratingKey": key}
         try:
             said = await replacing.better_copy(self.ctx, program)
@@ -496,7 +509,7 @@ class Reports:
         except ArrError as e:
             raise HTTPException(503, str(e)) from None
         except LibraryError as e:
-            raise HTTPException(503, f"StationPlay can't reach Plex right now ({e})") from None
+            raise HTTPException(503, f"{UNREACHABLE_PLEX} ({e})") from None
         note = f"{by} chose Find a better copy: {said}"
         self.ctx.db.set_reports(
             [r.id for r in reports], BETTER, note, int(time.time() * 1000), only=(WAITING,)
@@ -508,7 +521,8 @@ class Reports:
         try:
             entry = await asyncio.wait_for(self.ctx.library.entry(report.key, details=True), 10)
         except (LibraryError, TimeoutError) as e:
-            raise HTTPException(503, f"StationPlay can't reach Plex right now ({e})") from None
+            why = str(e) or "it didn't answer"
+            raise HTTPException(503, f"{UNREACHABLE_PLEX} ({why})") from None
         if entry is None:
             raise HTTPException(404, "That file is no longer in Plex")
         media = next((m for m in entry.media if version_of(entry, m) == report.version), None)
@@ -624,13 +638,19 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         how = describe_how(entry, media, body.method, body.audio, body.subtitle)
         if station is not None:
             how = {"station": station}
+        if body.choice not in CHECKED:
+            state, note = WAITING, ""
+        elif media is None:
+            state, note = COULDNT, "Plex has no file for it to check"
+        else:
+            state, note = CHECKING, ""
         report = reports.add(
             Report(
                 id=0, at_ms=0, user_id=user.id if user else None, who=user.name if user else "",
                 device=_device(ctx, request), choice=body.choice, key=entry.key,
                 version=version, station=station, position_ms=at_ms, how=how,
                 program=_program(entry), facts=facts_about(body.choice, entry, media, others),
-                state=CHECKING if body.choice in CHECKED else WAITING,
+                state=state, note=note,
             ),
             address,
         )  # fmt: skip
@@ -641,7 +661,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "%s reported %s in %s%s%s (%s)",
             who, report.label, playing.title(entry), on, where, report.device,
         )  # fmt: skip
-        if body.choice in CHECKED and media is not None:
+        if state == CHECKING and media is not None:
             ctx.scanner.target(
                 entry.key,
                 version,

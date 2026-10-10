@@ -154,6 +154,21 @@ def test_what_a_check_finds_puts_the_file_on_the_list(app):
         assert (by["who"], by["label"], by["state"]) == ("Tia", "It stops before the end", "found")
 
 
+def test_a_report_of_what_has_no_file_to_check_waits_for_an_admin(app, plex):
+    plex.add_episode("206", "100", 2, 6, "Nowhere", "/tv/n/6.mkv", 44 * 60_000)
+    plex.episodes["206"]["Media"] = []
+    with TestClient(app) as admin:
+        start(admin)
+        ctx = app.state.ctx
+        tia = sign_in_app(app, TIA)
+        sent = report(TestClient(app), tia, choice="wont-play", key="206", positionMs=1000)
+        assert sent.status_code == 200
+        assert ctx.scanner._targets == []  # (nothing to check)
+        [row] = admin.get("/api/reports").json()["reports"]
+        assert (row["state"], row["needs"], row["actions"]) == ("couldn't", True, ["dismiss"])
+        assert row["notes"] == ["Plex has no file for it to check"]
+
+
 def _first_version(ctx, client, key):
     entry = client.portal.call(ctx.library.entry, key, True)
     return entry, entry.media[0]
@@ -325,6 +340,21 @@ def test_replace_and_find_a_better_copy(world, caplog):  # noqa: F811
     assert [(x["name"], x["body"]["movieIds"]) for x in r.commands] == [("MoviesSearch", [10])]
     assert not r.blocklist and not calls_like(r, "DELETE moviefile/")
     assert [row["key"] for row in c.get("/api/reports").json()["reports"]] == ["301"]
+    # Reports an Admin dealt with while Plex was being asked about the file
+    # aren't replaced after all.
+    real = ctx.reports._version
+
+    async def meanwhile(report):
+        got = await real(report)
+        ctx.reports.dismiss("301", "Bo")
+        return got
+
+    ctx.reports._version = meanwhile
+    assert c.post("/api/reports/301/replace").status_code == 404
+    assert ctx.broken.keys() == set() and not r.blocklist and not jobs._trying
+    ctx.reports._version = real
+    ctx.db.set_reports([row["id"] for row in ctx.db.reports_of("301", ("dismissed",))],
+                       "waiting", "", None)  # fmt: skip
     # Replace: off the air until its new file comes, and Radarr fetches one.
     replaced = c.post("/api/reports/301/replace")
     assert replaced.status_code == 200, replaced.text

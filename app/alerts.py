@@ -31,14 +31,15 @@ only once things have been right a while too, so none comes and goes:
               apart, found a problem that counts). Fixed when it's Up again,
               or watching away from home is turned off.
   files       Something on the Broken files tab needs an Admin (see
-              reports.py): a person's report, a file StationPlay found broken
-              or damaged that isn't being replaced by itself, or one Sonarr
-              or Radarr couldn't replace. It says how many, and the newest.
-              Fixed when nothing does. To be said at most once an hour: when
-              new things come an hour or more after it was last said, it
-              ends, unsaid, and starts again with a new ID (the apps notify
-              once for each ID; the web address is told the same); before
-              that, it only says what it is now.
+              reports.py): a person's report, a file a station or Media
+              plays that StationPlay found broken or damaged and that isn't
+              being replaced by itself, or one Sonarr or Radarr couldn't
+              replace. It says how many, and the newest. Fixed when nothing
+              does. Said at most once an hour: once an hour has gone by
+              since it was last said, anything new since then (still
+              there) has it end, unsaid, and start again with a new ID (the
+              apps notify once for each ID; the web address is told the
+              same); until then, it only says what it is now.
 
 Each has an ID that stays the same while it lasts (a new one starting
 later has a new ID), its kind, a sentence an Admin can act on, when it
@@ -143,9 +144,10 @@ class Alerts:
         self._station_fails: dict[int, deque[float]] = {}
         self._backup_fails = 0
         # The Broken files tab: what needed an Admin when it was last looked
-        # at, and when the alert was last said (started).
+        # at, when the alert was last said (started), and what's come since.
         self._files_seen: set[str] = set()
         self._files_said = 0.0
+        self._files_unsaid: set[str] = set()
 
     # What's said ----------------------------------------------------------------
 
@@ -252,7 +254,8 @@ class Alerts:
         """What needs an Admin on the Broken files tab now (see the module's
         notes, and reports.Reports.needing): (when, which, what) for each."""
         seen = {which for _, which, _ in things}
-        new = seen - self._files_seen
+        # (What's come since it was said, and is still there.)
+        self._files_unsaid = (self._files_unsaid | (seen - self._files_seen)) & seen
         self._files_seen = seen
         if not things:
             self.fix(FILES, "Nothing on the Broken files tab needs you now.")
@@ -264,17 +267,20 @@ class Alerts:
             f"the Broken files tab: {newest[:1].upper()}{newest[1:]}."
         )
         going = self._now.get((FILES, ""))
-        if going is not None and new and self.clock() - self._files_said >= FILES_AGAIN_S:
-            # (New things, an hour or more after it was said: said again, anew.)
+        if going is not None and not (
+            self._files_unsaid and self.clock() - self._files_said >= FILES_AGAIN_S
+        ):
+            self.start(FILES, sentence)  # (what it is now, unsaid)
+            return
+        if going is not None:
+            # (New things since it was said, an hour or more ago: said again, anew.)
             del self._now[(FILES, "")]
-            self._files_said = self.clock()
-            self.start(FILES, sentence)
+        self._files_said = self.clock()
+        self._files_unsaid = set()
+        self.start(FILES, sentence)
+        if going is not None:
             again = self._now[(FILES, "")]
             again.since_ms = max(again.since_ms, going.since_ms + 1)  # (a new ID, however soon)
-            return
-        if going is None:
-            self._files_said = self.clock()
-        self.start(FILES, sentence)
 
     # Checking --------------------------------------------------------------------
 

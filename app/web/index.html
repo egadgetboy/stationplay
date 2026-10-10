@@ -864,7 +864,7 @@
     </div>
     <div class="panel files" id="foundPanel" hidden>
       <div class="files-head"><h3>Found by StationPlay</h3><span class="chip plain" id="foundCount"></span></div>
-      <p class="muted small files-intro">The rest of what StationPlay found: files you’re handling yourself, and files that can’t be shown correctly on the stations.</p>
+      <p class="muted small files-intro">The rest of what StationPlay found: files you’re handling yourself, files no station or Media plays now, and files that can’t be shown correctly on the stations.</p>
       <div id="brokenPanel"></div>
     </div>
     <p class="muted small">
@@ -4943,9 +4943,9 @@ function arrButton(r) {
     toast(done);
     setTimeout(loadBroken, 3000);
   } }, label);
-  // (Waiting for you: when they replace only when you ask, or it's on no
-  // station and not in Media, which they'd leave be.)
-  if (s.state === 'left' || (!s.state && !s.asked && (got.when === 'ask' || r.section === 'needs you')))
+  // (Not begun: when they replace only when you ask, or nothing plays it,
+  // which they'd leave be.)
+  if (s.state === 'left' || (!s.state && !s.asked && (got.when === 'ask' || r.section !== 'being replaced')))
     return ask(`Replace with ${name}`, `Have ${name} replace this file`, `${name} is replacing ${what}`);
   if (s.state === 'same')
     return ask('Try another file', `${name} adds this file to its blocklist too and looks for another one`, `${name} is looking for another file for ${what}`);

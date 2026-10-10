@@ -9,7 +9,10 @@ One entry per file, whoever plays it: a station, or Media in StationPlay's
 apps. A file is known by its program's key, for the file a station plays
 (its library's first version of it), and by its key and the version's ID
 for any other version of it (see version_key): the same file is the same
-entry for the stations and for Media.
+entry for the stations and for Media. Entries for other versions are kept
+in a list of their own ("versions"), so a release before 1.30.0, which
+reads only "files" and knows a program by its key alone, never takes one
+for the program a station plays (after rolling back, say).
 """
 
 from __future__ import annotations
@@ -35,8 +38,8 @@ ABOUT = (
     "this list on its own. An entry clears when Plex has the program again under a new key, "
     "when its file is missing (or it was removed from Plex) and neither a station nor Media "
     "has it anymore, when a new file for it passes the quick check, or when it now passes "
-    "the quick check that took it off the air. An entry with a version is about that "
-    "version of the program's file alone."
+    "the quick check that took it off the air. Entries under versions are each about one "
+    "other version of a program's file (the stations play its first), in Media alone."
 )
 
 # How a problem was found: the quick check, the deep scan, opening the file
@@ -248,7 +251,12 @@ class BrokenFiles:
     # File handling -------------------------------------------------------
 
     def _write(self) -> None:
-        doc = {"about": ABOUT, "files": _sorted(self._entries.values())}
+        entries = self._entries.values()
+        doc = {
+            "about": ABOUT,
+            "files": _sorted(e for e in entries if not e.get("version")),
+            "versions": _sorted(e for e in entries if e.get("version")),
+        }
         tmp = self.path.with_suffix(".json.tmp")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
@@ -272,9 +280,15 @@ class BrokenFiles:
                 return
             try:
                 doc = json.loads(self.path.read_text(encoding="utf-8"))
-                files = doc.get("files", []) if isinstance(doc, dict) else []
+                lists = (
+                    [doc.get(name) for name in ("files", "versions")]
+                    if isinstance(doc, dict)
+                    else []
+                )
                 self._entries = {
                     file_key(f): _upgrade_entry(f)
+                    for files in lists
+                    if isinstance(files, list)
                     for f in files
                     if isinstance(f, dict) and f.get("ratingKey") is not None
                 }

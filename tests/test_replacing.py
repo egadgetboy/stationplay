@@ -366,9 +366,13 @@ def test_where_each_entry_is_on_the_tab(world):
     damaged = {"problem": "damaged", "reason": "Deep scan: x", "show": "Bonanza"}
     section = replacing.tab_section
     # By themselves (as world has it): being replaced, if a station or Media
-    # plays it; not, left to you.
+    # plays it. What nothing plays waits for no one: it's only found (and a
+    # missing one comes off the list by itself).
     assert section(db, damaged, True) == replacing.BEING_REPLACED
-    assert section(db, damaged, False) == replacing.NEEDS_YOU
+    assert section(db, damaged, False) == replacing.FOUND_ONLY
+    assert section(db, {**damaged, "reason": "Check: file not found: /x"}, False) == (
+        replacing.FOUND_ONLY
+    )
     assert section(db, {**damaged, "replace": {"state": "downloading"}}, True) == (
         replacing.BEING_REPLACED
     )
@@ -379,7 +383,11 @@ def test_where_each_entry_is_on_the_tab(world):
     # When you say so: it waits for you, until you do.
     replacing.save_when(db, replacing.ASK)
     assert section(db, damaged, True) == replacing.NEEDS_YOU
+    assert section(db, damaged, False) == replacing.FOUND_ONLY
     assert section(db, {**damaged, "replace": {"asked": 1}}, True) == replacing.BEING_REPLACED
+    # (Asked for, or tried and stopped, it's yours to see to, used or not.)
+    assert section(db, {**damaged, "replace": {"asked": 1}}, False) == (replacing.BEING_REPLACED)
+    assert section(db, {**damaged, "replace": {"state": "gave up"}}, False) == (replacing.NEEDS_YOU)
     # Without the app: it waits for you.
     replacing.save(db, "sonarr", "", None, False)
     assert section(db, {**damaged, "replace": {"asked": 1}}, True) == replacing.NEEDS_YOU

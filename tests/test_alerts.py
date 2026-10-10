@@ -286,20 +286,46 @@ def test_whats_on_the_broken_files_tab_is_said_at_most_once_an_hour():
         "There are 2 files to look at on the Broken files tab: StationPlay found Northbound S2 "
         "E5 broken."
     )
-    # Nothing new an hour later: still the same.
-    now[0] = 7200.0
-    found.files([tia, (2_000, "file:205", "StationPlay found Northbound S2 E5 broken")])
-    assert found.now()[0].id == first and len(told.said) == 1
-    # Something new, an hour or more after it was said: said again, with a
-    # new ID (the old one isn't said to be fixed).
-    sonarr = (3_000, "file:206", "Sonarr couldn't find a file of Northbound S2 E6 that plays")
-    found.files([tia, sonarr])
+    # An hour after it was said, what came since is said: again, with a new
+    # ID (the old one isn't said to be fixed).
+    five = (2_000, "file:205", "StationPlay found Northbound S2 E5 broken")
+    now[0] = 3600.0
+    found.files([tia, five])
     [alert] = found.now()
-    assert alert.id != first and alert.sentence.endswith(
-        "Sonarr couldn't find a file of Northbound S2 E6 that plays."
-    )
+    assert alert.id != first and alert.sentence.endswith("Northbound S2 E5 broken.")
     assert [s[2] for s in told.said] == ["started", "started"]
     assert [a.id for a in found.listed()] == [alert.id]
+    second = alert.id
+    # Something new that's gone again before it's said is never said.
+    sonarr = (3_000, "file:206", "Sonarr couldn't find a file of Northbound S2 E6 that plays")
+    now[0] = 4000.0
+    found.files([tia, five, sonarr])
+    now[0] = 4100.0
+    found.files([tia, five])
+    now[0] = 7200.0
+    found.files([tia, five])
+    assert found.now()[0].id == second and len(told.said) == 2
+    # Something new more than an hour after it was said: said at once.
+    now[0] = 7300.0
+    found.files([tia, five, sonarr])
+    [alert] = found.now()
+    assert alert.id not in (first, second) and alert.sentence.endswith(
+        "Sonarr couldn't find a file of Northbound S2 E6 that plays."
+    )
+    third = alert.id
+    # Something new within the hour: said once the hour's up.
+    seven = (4_000, "report:207", "Sam reported Wrong language on Northbound S2 E7")
+    now[0] = 7400.0
+    found.files([tia, five, sonarr, seven])
+    assert found.now()[0].id == third and len(told.said) == 3
+    now[0] = 7300.0 + 3600
+    found.files([tia, five, sonarr, seven])
+    [alert] = found.now()
+    assert alert.id != third and alert.sentence == (
+        "There are 4 files to look at on the Broken files tab: Sam reported Wrong language on "
+        "Northbound S2 E7."
+    )
+    assert [s[2] for s in told.said] == ["started"] * 4
     # Nothing needs an Admin: fixed.
     found.files([])
     assert found.now() == []

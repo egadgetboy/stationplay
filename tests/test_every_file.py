@@ -5,8 +5,10 @@ while anyone watches, a station or Media."""
 
 from __future__ import annotations
 
+import json
 import shutil
 import time
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,9 +17,9 @@ from fastapi.testclient import TestClient
 
 from app import jobs
 from app import scanner as sc
-from app.broken import DEEP_SCAN, version_key
+from app.broken import DEEP_SCAN, BrokenFiles, version_key
 from app.config import Settings
-from app.db import ScanRecord
+from app.db import Item, ScanRecord
 from app.main import create_app
 from app.plex import PlexClient
 
@@ -245,6 +247,28 @@ def test_one_entry_per_file_whoever_plays_it(tmp_path, clean):
         fp.episodes["300"]["Media"].pop()
         client.portal.call(jobs.look_again, ctx, jobs.ListCheck(running=True), False)
         assert ctx.broken.keys() == {"201"}
+
+
+def test_other_versions_are_listed_apart(tmp_path):
+    """A program's other versions are under "versions" in the list's file, so
+    a release before 1.30.0 (rolled back to, say), which reads only "files"
+    and knows a program by its key alone, never takes one for the file a
+    station plays. Hand edits may put an entry under either."""
+    path = tmp_path / "broken-files.json"
+    store = BrokenFiles(path)
+    first = Item(0, 0, 1000, "42", "movie", "Jaws", file_path="/m/jaws.mkv")
+    store.record(first, "Check: no sound anywhere in it", 4, problem="damaged")
+    other = replace(first, file_path="/m/jaws-4k.mkv")
+    store.record(other, "Deep scan: the picture breaks up around 3:00", None, problem="damaged",
+                 version="77", library="2")  # fmt: skip
+    doc = json.loads(path.read_text())
+    assert [(f["ratingKey"], f.get("version")) for f in doc["files"]] == [("42", None)]
+    assert [(f["ratingKey"], f["version"]) for f in doc["versions"]] == [("42", "77")]
+    assert "versions" in doc["about"]
+    # Moved by hand into "files", it's still that version's.
+    doc["files"] += doc.pop("versions")
+    path.write_text(json.dumps(doc))
+    assert BrokenFiles(path).keys() == {"42", "42:77"}
 
 
 def test_a_missing_file_media_has_stays_on_the_list(tmp_path, clean):

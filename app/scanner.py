@@ -1678,8 +1678,6 @@ class Scanner:
         if found is None:
             found = Target(key, rating_key, version, at_s, full, why, station, label=label)
             self._targets.append(found)
-            for dropped in self._targets[:-TARGETS_MOST]:  # (too many waiting: the oldest go)
-                self._done_with(dropped, COULDNT, "StationPlay had too many files to check")
         else:
             if at_s is not None and (found.at_s is None or abs(found.at_s - at_s) > STRETCH_S / 2):
                 # (Somewhere else in it: that stretch is checked, then the rest again.)
@@ -1691,6 +1689,11 @@ class Scanner:
             found.wait_until = 0.0
         if report is not None and report not in found.reports:
             found.reports.append(report)
+        if len(self._targets) > TARGETS_MOST:
+            # (Too many waiting: the oldest goes, one no one reported if there's
+            # one, so trouble the apps send can't crowd out people's reports.)
+            dropped = next((t for t in self._targets if not t.reports), self._targets[0])
+            self._done_with(dropped, COULDNT, "StationPlay had too many files to check")
         self._save_targets()
         log.info("Checking %s first: %s", _target_label(found), why)
         self._wake.set()

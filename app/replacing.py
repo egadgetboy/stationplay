@@ -235,12 +235,14 @@ def held(db, entry: dict[str, Any]) -> bool:
 
 def tab_section(db, entry: dict[str, Any], used: bool) -> str:
     """Where an entry on the list is on the Broken files tab: waiting for you
-    (a broken or damaged file Sonarr or Radarr isn't replacing by itself, for
-    you to choose Replace or see to it yourself, or one they couldn't
-    replace); being replaced (what they're fetching now, or are about to:
-    asked for, or by themselves, at the next look, for a file a station or
-    Media plays: `used`); or only found (the rest: unsupported files, and
-    those you've said to leave to you)."""
+    (a broken or damaged file a station or Media plays, `used`, that Sonarr
+    or Radarr isn't replacing by itself, for you to choose Replace or see to
+    it yourself; or one they couldn't replace); being replaced (what they're
+    fetching now, or are about to: asked for, or by themselves, at the next
+    look, for a file that's used); or only found (the rest: unsupported
+    files, those you've said to leave to you, and those nothing plays now,
+    which wait for no one: a missing one comes off the list by itself, and
+    a broken one stays so a station never takes it up again unnoticed)."""
     if entry.get("problem") not in ("broken", "damaged"):
         return FOUND_ONLY
     state = entry.get("replace") or {}
@@ -257,7 +259,7 @@ def tab_section(db, entry: dict[str, Any], used: bool) -> str:
         and (state.get("asked") or (when(db) == AUTO and used))
     ):
         return BEING_REPLACED
-    return NEEDS_YOU
+    return NEEDS_YOU if used else FOUND_ONLY
 
 
 def needs_you_said(entry: dict[str, Any], name: str) -> tuple[int, str, str]:

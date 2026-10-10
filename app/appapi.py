@@ -159,6 +159,12 @@ class LinkCode(BaseModel):
     code: str = Field(max_length=20)
 
 
+# A problem playing from the library sent without its playing's ID is about
+# what that device played last only if it happened this lately, and that
+# started before it did (as far as the device's clock and StationPlay's
+# agree).
+LATELY_MS = 10 * 60_000
+CLOCKS_APART_MS = 60_000
 # Problem reports from the apps: what goes in the Logs tab, at most.
 REPORT_MAX = 24_000
 REPORT_LINES = 400
@@ -891,8 +897,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     def check_its_file(body: Problem, request: Request) -> None:
         """Something from the library didn't play, or stopped: what it was
         (its playing, as the app says, or else what this device played
-        last) is checked there first (see scanner.trouble). That's no
-        verdict: only what the check finds puts its file on the list."""
+        last, for a problem just now) is checked there first (see
+        scanner.trouble). That's no verdict: only what the check finds puts
+        its file on the list."""
         user = access.signed_in(request)
         token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
         sign_in = access.session_hash(token) if user and token else None
@@ -901,9 +908,19 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             session = ctx.plays.find(body.session) or ctx.plays.ended(body.session)
             if session is not None and session.sign_in != sign_in:
                 session = None  # (only one's own)
-        if session is None and not body.session:
+        else:
+            # (One sent later, after trouble reaching StationPlay, may be about
+            # something other than what the device has played since.)
+            now = now_ms()
+            happened = body.at if body.at is not None else now
             client = request.client.host if request.client else ""
-            session = ctx.plays.lately(sign_in, client)
+            lately = ctx.plays.lately(sign_in, client)
+            if (
+                lately is not None
+                and now - happened <= LATELY_MS
+                and lately.started_ms <= happened + CLOCKS_APART_MS
+            ):
+                session = lately
         if session is None:
             return
         at = body.positionMs if body.positionMs is not None else session.position_ms
