@@ -59,7 +59,7 @@ def test_what_an_app_sends_is_checked():
     assert languages.changes({}, own=True) == {}
     with pytest.raises(ValueError, match="doesn't know the language “xx”"):
         languages.changes({"audio": "xx"}, own=False)
-    with pytest.raises(ValueError, match="true or false"):
+    with pytest.raises(ValueError, match="Subtitles must be on or off"):
         languages.changes({"captions": None}, own=True)
     assert languages.changes({"captions": None}, own=False) == {"captions": None}
 
