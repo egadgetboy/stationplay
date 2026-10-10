@@ -47,9 +47,9 @@ from typing import TYPE_CHECKING, Any
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
 
-from . import access, catalog, jobs, ondemand, playing, replacing, viewing
+from . import access, catalog, jobs, ondemand, playing, replacing
 from .appapi import app_label
-from .applibrary import AWAY_OFF
+from .applibrary import AWAY_OFF, must_see
 from .arr import NAMES as ARR_NAMES
 from .arr import ArrError
 from .broken import REPORTED, file_key, version_key
@@ -338,8 +338,13 @@ class Reports:
             "facts": facts,
             "notes": notes,
             "on": stations,
-            "media": bool(program.get("library"))
-            and str(program.get("library")) in self.ctx.shared.keys,
+            "media": self.ctx.in_media(
+                {
+                    "ratingKey": key,
+                    "showKey": program.get("showKey"),
+                    "library": program.get("library"),
+                }
+            ),
             "reports": [r.as_dict() for r in sorted(reports, key=lambda r: r.at_ms, reverse=True)],
         }
 
@@ -601,7 +606,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         try:
             async with asyncio.timeout(ondemand.LIBRARY_WAIT_S):
                 entry = await ctx.catalog.entry(key)
-                await _must_see(ctx, viewing_of(ctx, request), entry)
+                await must_see(ctx.catalog, ctx.viewing.viewer(access.signed_in(request)), entry)
         except ondemand.NotShared:
             raise HTTPException(404, ondemand.NOT_SHARED) from None
         except LibraryError as e:
@@ -615,7 +620,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         asked = next((m for m in entry.media if body.version and m.id == body.version), None)
         if asked is None:
             # (As it played on this device lately, or else as it plays first.)
-            sign_in = _sign_in(request)
+            sign_in = access.sign_in_of(request)
             client = request.client.host if request.client else ""
             lately = ctx.plays.lately(sign_in, client)
             same = lately is not None and lately.entry.key == entry.key
@@ -713,25 +718,6 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         return {"reports": await asyncio.to_thread(reports.rows), "said": said}
 
 
-def viewing_of(ctx: AppContext, request: Request) -> viewing.Viewer:
-    return ctx.viewing.viewer(access.signed_in(request))
-
-
-async def _must_see(ctx: AppContext, viewer: viewing.Viewer, entry: Entry) -> None:
-    """NotShared (as for what isn't shared) unless `viewer` can see `entry`:
-    an episode by its show's rating and library (see applibrary.py)."""
-    if viewer.everything:
-        return
-    show = None
-    if entry.kind == catalog.EPISODE and entry.show_key:
-        try:
-            show = await ctx.catalog.entry(entry.show_key)
-        except ondemand.NotShared:
-            show = None
-    if not viewer.sees(viewing.judge_entry(entry, show)):
-        raise ondemand.NotShared(entry.key)
-
-
 async def _library_entry(ctx: AppContext, key: str) -> Entry:
     """A station's program, as the library has it now (503 if it can't be
     asked; 404 if it's gone)."""
@@ -757,14 +743,8 @@ def _program(entry: Entry) -> dict[str, Any]:
     }
 
 
-def _sign_in(request: Request) -> str | None:
-    user = access.signed_in(request)
-    token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
-    return access.session_hash(token) if user and token else None
-
-
 def _device(ctx: AppContext, request: Request) -> str:
     """Which app on which device sent it, as its sign-in says."""
-    sign_in = _sign_in(request)
+    sign_in = access.sign_in_of(request)
     known = ctx.db.session_app(sign_in) if sign_in else None
     return known or app_label("", "")

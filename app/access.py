@@ -979,6 +979,13 @@ def signed_in(request: Request) -> User | None:
     return getattr(request.state, "user", None)
 
 
+def sign_in_of(request: Request) -> str | None:
+    """The sign-in a request was made with (its token's hash), while signing
+    in is on."""
+    token = bearer(request.scope) or request.cookies.get(COOKIE)
+    return session_hash(token) if token and signed_in(request) is not None else None
+
+
 def _for_users(path: str, method: str, paths: dict[str, tuple[str, ...]] = FOR_USERS) -> bool:
     allowed = paths.get("GET" if method == "HEAD" else method, ())
     return any(path == p or (p.endswith("/") and path.startswith(p)) for p in allowed)

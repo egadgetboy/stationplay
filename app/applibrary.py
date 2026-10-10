@@ -383,6 +383,42 @@ def stepped_down(before: ondemand.PlaySession, after: ondemand.PlaySession) -> b
     return now[0] < was[0] or (now[0] == was[0] and 0 < now[1] < was[1] * 0.85)
 
 
+# What each person can see (see viewing.py) ---------------------------------------------
+
+
+async def shows_of(cat: ondemand.Catalog, entries: list[Entry]) -> dict[str, Entry]:
+    """The shows of the episodes among `entries` (each asked about once, and
+    kept a while: see Catalog.entry)."""
+    keys = sorted({e.show_key for e in entries if e.kind == catalog.EPISODE and e.show_key})
+
+    async def one(key: str) -> Entry | None:
+        try:
+            return await cat.entry(key)
+        except NotShared:
+            return None
+
+    found = await asyncio.gather(*(one(k) for k in keys))
+    return {e.key: e for e in found if e is not None}
+
+
+async def seen_only(
+    cat: ondemand.Catalog, viewer: viewing.Viewer, entries: list[Entry]
+) -> list[Entry]:
+    """Those of `entries` that `viewer` can see: shows and movies by their
+    own rating and library, episodes by their show's."""
+    if viewer.everything or not entries:
+        return entries
+    shows = await shows_of(cat, entries)
+    return [e for e in entries if viewer.sees(viewing.judge_entry(e, shows.get(e.show_key or "")))]
+
+
+async def must_see(cat: ondemand.Catalog, viewer: viewing.Viewer, entry: Entry) -> None:
+    """NotShared (the same answer as for what isn't shared, or doesn't
+    exist) unless `viewer` can see `entry`."""
+    if not await seen_only(cat, viewer, [entry]):
+        raise NotShared(entry.key)
+
+
 def routes(app: FastAPI, ctx: AppContext) -> None:
     """The library's addresses for the apps, the play sessions' and the
     Access tab's."""
@@ -483,36 +519,6 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     def viewer_of(request: Request) -> viewing.Viewer:
         return ctx.viewing.viewer(access.signed_in(request))
 
-    async def shows_of(entries: list[Entry]) -> dict[str, Entry]:
-        """The shows of the episodes among `entries` (each asked about once,
-        and kept a while: see Catalog.entry)."""
-        keys = sorted({e.show_key for e in entries if e.kind == catalog.EPISODE and e.show_key})
-
-        async def one(key: str) -> Entry | None:
-            try:
-                return await cat.entry(key)
-            except NotShared:
-                return None
-
-        found = await asyncio.gather(*(one(k) for k in keys))
-        return {e.key: e for e in found if e is not None}
-
-    async def seen_only(viewer: viewing.Viewer, entries: list[Entry]) -> list[Entry]:
-        """Those of `entries` that `viewer` can see: shows and movies by
-        their own rating and library, episodes by their show's."""
-        if viewer.everything or not entries:
-            return entries
-        shows = await shows_of(entries)
-        return [
-            e for e in entries if viewer.sees(viewing.judge_entry(e, shows.get(e.show_key or "")))
-        ]
-
-    async def must_see(viewer: viewing.Viewer, entry: Entry) -> None:
-        """NotShared (the same answer as for what isn't shared, or doesn't
-        exist) unless `viewer` can see `entry`."""
-        if not await seen_only(viewer, [entry]):
-            raise NotShared(entry.key)
-
     def library_seen(viewer: viewing.Viewer, key: str) -> bool:
         libraries = viewer.level.libraries
         return viewer.everything or libraries is None or key in libraries
@@ -570,7 +576,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 raise NotShared(key)
             title, kind, entries = await cat.whole(key, sort, genre)
             genres = await cat.genres(key)
-            entries = await seen_only(viewer, entries)
+            entries = await seen_only(cat, viewer, entries)
         if unwatched:
             entries = unwatched_only(user_id, entries)
         return {
@@ -593,10 +599,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             going = await ondemand.continue_watching(cat, ctx.db, user_id)
             added = await cat.recently_added()
             if not viewer.everything:
-                seen = {e.key for e in await seen_only(viewer, [e for e, _ in going])}
+                seen = {e.key for e in await seen_only(cat, viewer, [e for e, _ in going])}
                 going = [(e, start) for e, start in going if e.key in seen]
                 added = [
-                    (lib, await seen_only(viewer, entries))
+                    (lib, await seen_only(cat, viewer, entries))
                     for lib, entries in added
                     if library_seen(viewer, lib["key"])
                 ]
@@ -655,7 +661,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         found: list[Entry] = []
         if ctx.media_here(access.outside(request.scope)):
             async with asking(request):
-                found = await seen_only(viewer, await cat.search(words))
+                found = await seen_only(cat, viewer, await cat.search(words))
             found = [e for e in found if library_seen(viewer, e.library)][: ondemand.SEARCH_MOST]
         return {
             "items": cards(user_id, found),
@@ -669,11 +675,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         viewer = viewer_of(request)
         async with asking(request):
             e = await cat.entry(key)
-            await must_see(viewer, e)
+            await must_see(cat, viewer, e)
             if e.kind == catalog.SHOW:
-                episodes = await seen_only(viewer, await cat.episodes(key))
+                episodes = await seen_only(cat, viewer, await cat.episodes(key))
                 upcoming = await ondemand.up_next(cat, ctx.db, user_id, key)
-                if upcoming is not None and not await seen_only(viewer, [upcoming[0]]):
+                if upcoming is not None and not await seen_only(cat, viewer, [upcoming[0]]):
                     upcoming = None
         if e.kind == catalog.SHOW:
             done = ctx.db.watched_in_shows(user_id, [key]).get(key, set())
@@ -724,7 +730,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         shared_here(request)
         async with asking(request):
             e = await cat.entry(key)
-            await must_see(viewer_of(request), e)
+            await must_see(cat, viewer_of(request), e)
         if e.kind not in languages.KINDS:
             raise HTTPException(400, "Choose languages for a show, an episode or a movie")
         return e
@@ -759,13 +765,13 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         viewer = viewer_of(request)
         async with asking(request):
             e = await cat.entry(key)
-            await must_see(viewer, e)
+            await must_see(cat, viewer, e)
             if e.kind == catalog.EPISODE and e.show_key:
                 e = await cat.entry(e.show_key)
             found: list[Entry] = []
             if e.library and library_seen(viewer, e.library) and e.genres:
                 _, _, pool = await cat.whole(e.library, "title")
-                found = ondemand.related(e, await seen_only(viewer, pool))
+                found = ondemand.related(e, await seen_only(cat, viewer, pool))
         return {"items": cards(user_id, found)}
 
     @app.get("/api/internal/items/{key}/episodes")
@@ -780,10 +786,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         viewer = viewer_of(request)
         async with asking(request):
             e = await cat.entry(key)
-            await must_see(viewer, e)
+            await must_see(cat, viewer, e)
             if e.kind != catalog.SHOW:
                 raise HTTPException(400, "That isn't a show")
-            found = await seen_only(viewer, await cat.episodes(key))
+            found = await seen_only(cat, viewer, await cat.episodes(key))
         chosen = [x for x in found if season is None or x.season == season]
         return {
             "show": key,
@@ -804,7 +810,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         async with asking(request):
             await cat.check(key)  # (shared now, even if its picture was kept from before)
             if not viewer.everything:
-                await must_see(viewer, await cat.entry(key))
+                await must_see(cat, viewer, await cat.entry(key))
         kept = ctx.app_pictures.get((key, kind, width))
         if kept is None:
             # (An episode's poster is its show's; a show's still, its poster.)
@@ -938,12 +944,6 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
         known = ctx.db.session_app(access.session_hash(token)) if token else None
         return known or app_label("", "")
-
-    def sign_in_of(request: Request, name: str) -> str | None:
-        """The sign-in a program is played with (its token's hash), if
-        signing in is on."""
-        token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
-        return access.session_hash(token) if name and token else None
 
     def said_stop(session: ondemand.PlaySession) -> None:
         """The log's line for something stopping in an app: who, what, where
@@ -1284,7 +1284,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         # one is, so devices asking at the same moment can't all get past it
         # (and not counting this device's own, which this one takes over from).
         on_gpu = ctx.gpu is not None and ctx.gpu.encoder_for_copies().is_gpu
-        mine = ctx.plays.on_device(sign_in_of(request, name), client)
+        mine = ctx.plays.on_device(access.sign_in_of(request), client)
         if method == converting.CONVERT and ctx.plays.copies(besides=mine) >= (
             CONVERTING_MOST_GPU if on_gpu else CONVERTING_MOST
         ):
@@ -1307,7 +1307,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         label = app_of(body, request)
         before = ctx.plays.before(user_id, e.key, client, STEP_S)
         again = ctx.plays.before(user_id, e.key, client) is not None
-        sign_in = sign_in_of(request, name)
+        sign_in = access.sign_in_of(request)
         one_at_a_time(sign_in, client, e)
         session = ctx.plays.start(
             user_id=user_id, user=name, sign_in=sign_in,
@@ -1404,7 +1404,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         user_id, name = person(request)
         async with asking(request):
             e = await cat.entry(body.key)
-            await must_see(viewer_of(request), e)
+            await must_see(cat, viewer_of(request), e)
         if e.kind not in (catalog.EPISODE, catalog.MOVIE):
             raise HTTPException(400, NOT_PLAYABLE)
         if not e.media:
@@ -1519,7 +1519,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(503, NO_FILE)
         before = ctx.plays.before(user_id, e.key, client, STEP_S)
         again = ctx.plays.before(user_id, e.key, client) is not None
-        sign_in = sign_in_of(request, name)
+        sign_in = access.sign_in_of(request)
         one_at_a_time(sign_in, client, e)
         session = ctx.plays.start(
             user_id=user_id,
@@ -1597,7 +1597,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             e = session.entry if session is not None else await cat.entry(body.key)
             if not cat.shared_library(e):
                 raise NotShared(e.key)
-            await must_see(viewer_of(request), e)
+            await must_see(cat, viewer_of(request), e)
         if e.kind not in (catalog.EPISODE, catalog.MOVIE):
             raise HTTPException(400, NOT_PLAYABLE)
         kept = ctx.db.progress_of(user_id, [e.key]).get(e.key)

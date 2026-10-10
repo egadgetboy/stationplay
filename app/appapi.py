@@ -900,9 +900,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         last, for a problem just now) is checked there first (see
         scanner.trouble). That's no verdict: only what the check finds puts
         its file on the list."""
-        user = access.signed_in(request)
-        token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
-        sign_in = access.session_hash(token) if user and token else None
+        sign_in = access.sign_in_of(request)
         session = None
         if body.session:
             session = ctx.plays.find(body.session) or ctx.plays.ended(body.session)
