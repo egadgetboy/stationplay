@@ -441,9 +441,7 @@ def test_the_clock_is_drawn(tmp_path, monkeypatch):
     shots = []
     for clock in (None, "24"):
         mark = (
-            ff.Watermark(clock=clock, airs_at_s=1790773919, position="top-right")
-            if clock
-            else None
+            ff.Watermark(clock=clock, airs_at_s=1790773919, position="top-right") if clock else None
         )
         chain = ff._video_filter(small(), watermark=mark)
         shot = tmp_path / f"{clock}.png"
