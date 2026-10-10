@@ -571,6 +571,13 @@ device's, or everyone's. Send what's known:
   it's shown).
 - `library-stopped`: playing from the library stopped and couldn't go on
   (`title`).
+
+With either, from 1.30.0, send `session` (the playing's ID, from `POST
+/api/internal/play`) and `positionMs` (where in the program it happened):
+StationPlay checks that file there first, ahead of everything else it
+checks, and puts it on the Broken files list only if it finds what's
+wrong. (Without them, it checks what that device played last, where the
+app last said it was.)
 - `kept-up`: playing couldn't keep up, so a smaller version played
   (`title`, or `station`).
 - `crashed`: the app closed unexpectedly last time (sent when it opens
@@ -892,6 +899,7 @@ A show's, movie's or episode's details: its card's fields, and more.
 | `versions[].size` | string or null | As `picture.size` |
 | `versions[].hdr` | string or null | As `picture.hdr` |
 | `versions[].bitrateKbps` | number or null | What it needs, in kilobits a second |
+| `versions[].problem` | string or null | What StationPlay found wrong with this version's file (from 1.30.0), so the app can offer another: `broken` (it can't play; another version plays in its place, if there's one StationPlay didn't find broken) or `damaged` (it plays, but its picture or sound breaks up in places); null when it found nothing |
 | `languages` | object | What this person chose for it (from 1.29.0: see Languages), for the player's Audio & subtitles |
 | `languages.item` | object or null | For this show (the whole show), or this episode or movie alone; null: nothing |
 | `languages.item.audio` | object or null | The sound's language; null: not chosen here |
@@ -1091,12 +1099,23 @@ the reasons). StationPlay converts at most 3 copies at once, or 6 on a GPU
 `detail` (a device's own copy, which a new one takes over from, isn't
 counted).
 
+From 1.30.0, a version StationPlay found broken (`versions[].problem` is
+`broken`: its checks found it can't play) never plays: another version of
+it does, if there's one StationPlay didn't find broken (whichever would play
+otherwise, as above), and `why` says so ("another version, as 4K can't play
+right now"), whether it plays as it is or as a copy. With none, the answer
+is 422, with the `detail` "This one can't play right now. An Admin has been
+told." (and `why`). A damaged version plays, as before. Trouble playing one
+(a copy that can't be made, or a problem the app sends: see `POST
+/api/internal/problem`) is no verdict: StationPlay checks its file there,
+and only what it finds puts it on the list.
+
 Every refusal has `detail`, a sentence to show as it is: 400 (an episode or
 a movie wasn't chosen, or the request wasn't understood), 404 (it isn't
-shared, can't be seen, or has no file), 422 (as above), 503 (Plex can't be
-reached, the file can't be read right now, a copy can't be begun, too many
-being converted, or one more device than the limits allow, with `limit` and
-`most`).
+shared, can't be seen, or has no file), 422 (as above, or every version of
+it found broken), 503 (Plex can't be reached, the file can't be read right
+now, a copy can't be begun, too many being converted, or one more device
+than the limits allow, with `limit` and `most`).
 
 A device plays one program at a time (from 1.30.0): asking for another, or
 for the same one again (another sound track, a smaller version), ends the
@@ -1148,8 +1167,8 @@ so plainly.
 | `session` | string | This playing's ID (for progress reports) |
 | `method` | string | How it plays: `direct` (the file as it is), `repackage` or `convert` (a copy; from 1.24.0) |
 | `url` | string | What the player plays (it needs no token): the file, such as `/play/<session>/file.mkv`, whose ranges are answered so the player can seek; or a copy's HLS playlist, `/play/<session>/index.m3u8`, listing the whole program from its start (a jump far ahead takes a few seconds more to start). Relative to where the app asked: a program started through the public port plays there (and at home), one started at home never plays through the public port |
-| `why` | list or null | Why a copy is made (null for `direct`) |
-| `why[]` | string | One reason, such as "its sound's format (DTS)", or "even sound for the show's episodes" (from 1.27.0) |
+| `why` | list or null | Why a copy is made (null for `direct`); and from 1.30.0, that another version plays, in place of one StationPlay found broken (for `direct` too) |
+| `why[]` | string | One reason, such as "its sound's format (DTS)", "even sound for the show's episodes" (from 1.27.0), or "another version, as 4K can't play right now" (from 1.30.0) |
 | `audioTrack` | string or null | The sound track in a copy (null for `direct`, where the player chooses among `audio`) |
 | `drawnSubtitle` | string or null | The subtitle track drawn into a copy's picture, if any |
 | `chosen` | object or null | What StationPlay chose for this person from their languages, and plays (from 1.29.0: see Languages); null when the app sent `audio` or `subtitle`, or nothing is chosen anywhere for them |
@@ -1168,6 +1187,7 @@ so plainly.
 | `versions[].size` | string or null | As in its details |
 | `versions[].hdr` | string or null | As in its details |
 | `versions[].bitrateKbps` | number or null | As in its details |
+| `versions[].problem` | string or null | As in its details |
 | `versions[].playable` | boolean | Whether this device can play it as it is |
 | `versions[].why` | list or null | Why not, as in a 422's `why` (null when it can) |
 | `versions[].why[]` | string | One reason |

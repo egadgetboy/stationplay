@@ -519,6 +519,10 @@ class Copy:
         self._cutting: set[asyncio.Task] = set()  # (every run's, until it's gone)
         self._news = asyncio.Event()  # (set and replaced whenever anything changes)
         self._lock = asyncio.Lock()
+        # Told when making it fails on the CPU (where in the file, in seconds,
+        # and why), so the file can be checked there (see scanner.Target):
+        # the failure may be the file's, or may not.
+        self.trouble: Callable[[float, str], None] | None = None
 
     @property
     def active(self) -> bool:
@@ -764,6 +768,10 @@ class Copy:
         self.failed_at = time.monotonic()
         if self.failures == 1:
             log.warning("Making a copy for a StationPlay app stopped (%s)", why)
+        if self.trouble is not None:
+            starts = self.plan.starts
+            piece = min(max(run.first, run.newest + 1), len(starts) - 1)
+            self.trouble(starts[piece] if starts else 0.0, why)
         if self.failures >= FAILURES_MOST:
             self.broken = True
             log.warning(

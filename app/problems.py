@@ -41,6 +41,9 @@ KINDS = {
     "crashed": "The app closed unexpectedly",
 }
 STATION_KINDS = ("station-failed", "station-stopped")
+# Something from the library that didn't play or stopped: its file is
+# checked there first (see appapi.py and scanner.Target).
+LIBRARY_KINDS = ("library-failed", "library-stopped")
 
 KEEP = 5000
 KEEP_DAYS = 30

@@ -1218,6 +1218,20 @@ class PlaySessions:
             if (s.sign_in == sign_in if sign_in else s.sign_in is None and s.client == client)
         ]
 
+    def lately(
+        self, sign_in: str | None, client: str, within_s: float = AGAIN_S
+    ) -> PlaySession | None:
+        """What one device (as on_device says) played last: going still, or
+        ended in the last `within_s`."""
+        now = time.monotonic()
+        found = [
+            s
+            for s in (*self._sessions.values(), *self._ended.values())
+            if (s.sign_in == sign_in if sign_in else s.sign_in is None and s.client == client)
+            and now - s.seen <= within_s
+        ]
+        return max(found, key=lambda s: s.started, default=None)
+
     def copies(self, on_gpu: bool = False, besides: list[PlaySession] | None = None) -> int:
         """Copies being converted (their pictures made) now, or asked for
         lately (`on_gpu`: those on the GPU), but for those of `besides`."""

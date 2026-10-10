@@ -38,6 +38,7 @@ from . import (
     problems,
     specials,
 )
+from . import scanner as sc
 from .broadcaster import now_ms
 from .text import plain
 
@@ -181,6 +182,10 @@ class Problem(BaseModel):
     version: str = Field(default="", max_length=APP_MAX)
     device: str = Field(default="", max_length=problems.NAME_MOST * 4)
     deviceName: str = Field(default="", max_length=APP_MAX)
+    # (From 1.30.0, for something from the library: its playing's ID, from
+    # POST /api/internal/play, and where in it the trouble was.)
+    session: str | None = Field(default=None, max_length=64)
+    positionMs: int | None = Field(default=None, ge=0, le=7 * 86_400_000)
 
 
 def report_text(text: str) -> str:
@@ -871,7 +876,32 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             )
         except problems.Refused as e:
             raise HTTPException(e.status, str(e)) from None
+        if body.kind in problems.LIBRARY_KINDS:
+            check_its_file(body, request)
         return {"ok": True}
+
+    def check_its_file(body: Problem, request: Request) -> None:
+        """Something from the library didn't play, or stopped: what it was
+        (its playing, as the app says, or else what this device played
+        last) is checked there first (see scanner.trouble). That's no
+        verdict: only what the check finds puts its file on the list."""
+        user = access.signed_in(request)
+        token = access.bearer(request.scope) or request.cookies.get(access.COOKIE)
+        sign_in = access.session_hash(token) if user and token else None
+        session = None
+        if body.session:
+            session = ctx.plays.find(body.session) or ctx.plays.ended(body.session)
+            if session is not None and session.sign_in != sign_in:
+                session = None  # (only one's own)
+        if session is None and not body.session:
+            client = request.client.host if request.client else ""
+            session = ctx.plays.lately(sign_in, client)
+        if session is None:
+            return
+        at = body.positionMs if body.positionMs is not None else session.position_ms
+        what = "didn't play" if body.kind == "library-failed" else "stopped playing"
+        why = f"{session.user or 'someone'}'s app said it {what}"
+        sc.trouble(ctx, session.entry, session.media, at / 1000 if at is not None else None, why)
 
     @app.get(
         "/api/v1/guide",

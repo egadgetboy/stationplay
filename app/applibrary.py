@@ -23,6 +23,7 @@ import hashlib
 import logging
 import time
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -45,8 +46,10 @@ from . import (
     subtitles,
     viewing,
 )
+from . import scanner as sc
 from .appapi import APP_MAX, LanguagesIn, app_label, in_sentence, slot_program
 from .broadcaster import now_ms
+from .broken import version_key
 from .catalog import Entry, Media, Track
 from .ffmpeg import Encoder, ProbeResult, Subtitles, to_sdr
 from .library import LibraryError
@@ -78,6 +81,9 @@ PAST_END_MS = 10 * 60_000
 UNREACHABLE_SAID_S = 60.0  # (the log says the library can't be reached once a minute, at most)
 NO_FILE = "StationPlay can't reach this program's file right now. Try again in a moment."
 COPY_FAILED = "StationPlay couldn't make this ready to play here. Try again, or choose another."
+# A program whose every version StationPlay found broken (see broken.py):
+# what the app is told. (The Broken files tab has it, for an Admin.)
+ON_THE_LIST = "This one can't play right now. An Admin has been told."
 KEYFRAMES_WAIT_S = 20.0  # reading a file's index, at most
 # A smaller version or copy of what a device was playing this soon after is
 # a step down in quality (said in the log), and a reason an app sent this
@@ -221,9 +227,10 @@ def details(e: Entry) -> dict:
     }
 
 
-def versions(e: Entry) -> list[dict]:
+def versions(e: Entry, problems: dict[str, str] | None = None) -> list[dict]:
     """An episode's or movie's versions, the best first (see `versions` in
-    docs/internal-api.md)."""
+    docs/internal-api.md); `problems`: what StationPlay found wrong with
+    each one's file, if anything ("broken" or "damaged", by its ID)."""
     best = ondemand.best_first(e.media)
     names = ondemand.version_labels(best)
     return [
@@ -233,18 +240,21 @@ def versions(e: Entry) -> list[dict]:
             "size": m.size_label or None,
             "hdr": ondemand.hdr_label(m),
             "bitrateKbps": m.bitrate_kbps,
+            "problem": (problems or {}).get(m.id),
         }
         for i, m in enumerate(best)
         if m.id
     ]
 
 
-def playable_versions(e: Entry, dev: ondemand.Device, max_kbps: int | None) -> list[dict]:
+def playable_versions(
+    e: Entry, dev: ondemand.Device, max_kbps: int | None, problems: dict[str, str] | None = None
+) -> list[dict]:
     """Its versions, each saying whether this device can play it as it is,
     and whether the connection keeps up with it."""
     out = []
     best = [m for m in ondemand.best_first(e.media) if m.id]
-    for v, m in zip(versions(e), best, strict=True):
+    for v, m in zip(versions(e, problems), best, strict=True):
         why = ondemand.unplayable(m, dev)
         out.append(
             {**v, "playable": not why, "why": why or None, "fits": ondemand.fits(m, max_kbps)}
@@ -681,7 +691,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             else None,
             audio=tracks(media.audio, True) if media else [],
             subtitles=tracks(media.subtitles, False) if media else [],
-            versions=versions(e),
+            versions=versions(e, on_the_list(e)),
             languages=ctx.languages.for_item(user_id, e),
         )
         return out
@@ -805,6 +815,30 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         return Response(data, media_type=content_type, headers=headers)
 
     # Playing ---------------------------------------------------------------
+
+    def found_in(e: Entry) -> list[tuple[Media, str]]:
+        """The versions of a program whose files StationPlay found broken
+        (it can't play) or damaged (it plays, but breaks up in places): see
+        broken.py. (Unsupported is the stations' alone: the apps play by
+        what each device shows.)"""
+        out = []
+        for m in e.media:
+            found = ctx.broken.entry(version_key(e.key, sc.version_of(e, m)))
+            if found is not None and found.get("problem") in ("broken", "damaged"):
+                out.append((m, str(found["problem"])))
+        return out
+
+    def on_the_list(e: Entry) -> dict[str, str]:
+        """What found_in says, by version ID."""
+        return {m.id: problem for m, problem in found_in(e) if m.id}
+
+    def trouble(session: ondemand.PlaySession, at_s: float, why: str) -> None:
+        """Making a copy failed: the file's checked there (see
+        scanner.trouble), in case it's the file's fault."""
+        who = session.user or "someone"
+        sc.trouble(
+            ctx, session.entry, session.media, at_s, f"making a copy for {who} stopped ({why})"
+        )
 
     async def source_of(e: Entry, media: Media) -> tuple[str | None, str | None]:
         """Where a version's file is read from: (its path, where StationPlay
@@ -1048,6 +1082,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         only_sound: Media | None = None,
         wanted: languages.Wanted | None = None,
         shows: frozenset[str] = frozenset(),
+        passed_over: tuple[Media, ...] = (),
     ) -> Any:
         """Playing a copy StationPlay makes (see converting.py), for a device
         that can't play the file as it is, or for subtitles drawn in, a
@@ -1061,10 +1096,13 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
         `only_sound`: a version the device plays as it is, copied only for
         even sound: its picture kept as it is, and only its sound made. None
-        (play it as it is, then) if its picture can't be kept."""
+        (play it as it is, then) if its picture can't be kept.
+        `passed_over`: versions StationPlay found broken, never made a copy
+        of."""
         user_id, name = person(request)
         away_ = access.outside(request.scope)
-        versions = [m for m in ondemand.best_first(e.media) if m.id] or list(e.media)
+        usable = [m for m in e.media if m not in passed_over]
+        versions = [m for m in ondemand.best_first(usable) if m.id] or usable
         asked = [m for m in versions if body.version and m.id == body.version]
         smaller = body.fit and body.maxKbps is not None
 
@@ -1240,6 +1278,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         )  # fmt: skip
         session.copy = converting.Copy(settings.ffmpeg_path, source, plan, folder, first=task,
                                        gpu=ctx.gpu, name=describe(e))  # fmt: skip
+        session.copy.trouble = lambda at_s, why: trouble(session, at_s, why)
         resume = ondemand.resume_at(ctx.db.progress_of(user_id, [e.key]).get(e.key))
         session.start_s = (body.startMs if body.startMs is not None else resume) / 1000
         cant = ondemand.unplayable(media, dev)
@@ -1266,7 +1305,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "durationMs": media.duration_ms or e.duration_ms,
             "bitrateKbps": plan.kbps_needed or media.bitrate_kbps,
             "version": media.id or None,
-            "versions": playable_versions(e, dev, body.maxKbps),
+            "versions": playable_versions(e, dev, body.maxKbps, on_the_list(e)),
             "whenSlow": ctx.shared.when_slow["away" if away_ else "home"],
             "markers": _markers(e),
             "audio": tracks(media.audio, True),
@@ -1281,6 +1320,39 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             ],
         }
 
+    def instead_of(
+        e: Entry,
+        broken: tuple[Media, ...],
+        body: PlayAsk,
+        dev: ondemand.Device,
+        cap: int | None,
+    ) -> str | None:
+        """Why another version plays, when the one that would have (the one
+        asked for, or else the one chosen for the device) is one StationPlay
+        found broken; None when it isn't."""
+        if not broken:
+            return None
+        best = ondemand.best_first(e.media)
+        asked = next((m for m in best if body.version and m.id == body.version), None)
+        would = asked or ondemand.choose(e, dev, None, body.maxKbps, cap)[0] or best[0]
+        if would not in broken:
+            return None
+        name = ondemand.version_labels(best)[best.index(would)]
+        log.info(
+            "%s: another version plays in StationPlay's apps, as StationPlay found the %s one "
+            "broken",
+            describe(e),
+            name,
+        )
+        return f"another version, as {name} can't play right now"
+
+    def with_instead(answer: Any, instead: str | None) -> Any:
+        """A copy's answer, its `why` saying another version plays (see
+        instead_of), if one does."""
+        if instead and isinstance(answer, dict):
+            answer["why"] = [*(answer.get("why") or []), instead]
+        return answer
+
     @app.post("/api/internal/play")
     async def play(body: PlayAsk, request: Request):
         shared_here(request)
@@ -1292,6 +1364,18 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(400, NOT_PLAYABLE)
         if not e.media:
             raise HTTPException(404, "This program has no file to play")
+        # What StationPlay found broken never plays: another version of it
+        # does, if there's one it didn't (and the answer says so).
+        broken = tuple(m for m, problem in found_in(e) if problem == "broken")
+        if len(broken) >= len(e.media):
+            log.info(
+                "A StationPlay app asked to play %s, but StationPlay found its file broken (see "
+                "the Broken files tab)",
+                describe(e),
+            )
+            why = ["StationPlay found its file broken"]
+            return JSONResponse({"detail": ON_THE_LIST, "why": why}, status_code=422)
+        usable = replace(e, media=tuple(m for m in e.media if m not in broken)) if broken else e
         dev = ondemand.device(
             body.device.containers,
             [(v.codec, v.width, v.height, v.bitDepth) for v in body.device.video],
@@ -1304,7 +1388,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         away_ = access.outside(request.scope)
         client, tag = device_of(request)
         cap = ctx.away.media_kbps if away_ else None
-        media, why = ondemand.choose(e, dev, body.version, body.maxKbps, cap)
+        instead = instead_of(e, broken, body, dev, cap)
+        media, why = ondemand.choose(usable, dev, body.version, body.maxKbps, cap)
         hls = frozenset(h.strip().lower() for h in body.device.hls)
         # The tracks this person wants (see languages.py), unless the app
         # says which itself: then exactly those, as before. A subtitle chosen
@@ -1329,9 +1414,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         # movie.
         even = ctx.shared.even_sound and e.kind == catalog.EPISODE
         if not as_it_is and "ts" in hls:
-            return await play_copy(
-                body, request, e, dev, hls, client, tag, cap, even, wanted=wanted, shows=shows
-            )
+            copied = await play_copy(
+                body, request, e, dev, hls, client, tag, cap, even, wanted=wanted, shows=shows,
+                passed_over=broken,
+            )  # fmt: skip
+            return with_instead(copied, instead)
         if media is None:
             log.info(
                 "A StationPlay app can't play %s as it is (%s)", describe(e), ondemand.and_list(why)
@@ -1353,10 +1440,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             # can't be kept as it is, the file plays as it is: even sound
             # never costs a picture made again.)
             copied = await play_copy(
-                body, request, e, dev, hls, client, tag, cap, even, media, wanted, shows
+                body, request, e, dev, hls, client, tag, cap, even, media, wanted, shows, broken
             )
             if copied is not None:
-                return copied
+                return with_instead(copied, instead)
         if (over := ctx.capacity.refusal(ctx.app_watchers(), client, away_)) is not None:
             return over_the_limit(over, body, request, e, tag)
         path = None
@@ -1407,7 +1494,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "session": session.id,
             "method": "direct",
             "url": f"{here}/file.{media.container or 'mkv'}",
-            "why": None,
+            "why": [instead] if instead else None,
             "audioTrack": None,
             "drawnSubtitle": None,
             "chosen": chosen(picked, sound, shown_for(picked, None, shows, copy=False)),
@@ -1416,7 +1503,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "durationMs": media.duration_ms or e.duration_ms,
             "bitrateKbps": media.bitrate_kbps,
             "version": media.id or None,
-            "versions": playable_versions(e, dev, body.maxKbps),
+            "versions": playable_versions(e, dev, body.maxKbps, on_the_list(e)),
             "whenSlow": ctx.shared.when_slow["away" if away_ else "home"],
             "markers": _markers(e),
             "audio": tracks(media.audio, True),
