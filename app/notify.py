@@ -31,7 +31,12 @@ import httpx
 from . import __version__
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import TypeAlias
+
     from .db import Database
+
+    Done: TypeAlias = Callable[[], None] | None  # (see Notify.send)
 
 log = logging.getLogger(__name__)
 
@@ -108,7 +113,8 @@ class Notify:
         self.on = saved.get("on") is True
         self.url = str(saved.get("url") or "")
         self.format: str = saved["format"] if saved.get("format") in FORMATS else TEXT
-        self._waiting: asyncio.Queue[tuple[str, str, str]] | None = None
+        self._waiting: asyncio.Queue[tuple[str, str, str, Done, Done]] | None = None
+        self._sending: Done = None  # (what's done if what's being sent now isn't)
         self._said_full = False
 
     @property
@@ -131,13 +137,22 @@ class Notify:
         self.on, self.url, self.format = on, url, fmt
         self.db.set_meta(META, json.dumps({"on": on, "url": url, "format": fmt}))
 
-    def send(self, message: str, kind: str, state: str) -> None:
+    def send(
+        self,
+        message: str,
+        kind: str,
+        state: str,
+        done: Callable[[], None] | None = None,
+        failed: Callable[[], None] | None = None,
+    ) -> None:
         """Sends a message in the background, if it's on (never waiting:
-        see run_forever, which sends them)."""
+        see run_forever, which sends them). `done` is called once the web
+        address takes it; `failed`, if it doesn't, or if StationPlay stops
+        before it's sent (see unsent)."""
         if not (self.on and self.url) or self._waiting is None:
             return
         try:
-            self._waiting.put_nowait((message, kind, state))
+            self._waiting.put_nowait((message, kind, state, done, failed))
             self._said_full = False
         except asyncio.QueueFull:
             if not self._said_full:
@@ -152,17 +167,36 @@ class Notify:
         runs."""
         self._waiting = asyncio.Queue(WAITING_MOST)
         while True:
-            message, kind, state = await self._waiting.get()
+            message, kind, state, done, failed = await self._waiting.get()
             if not (self.on and self.url):
                 continue
             url = self.url
+            self._sending = failed
             try:
                 sent = await self.post(url, self.format, message, kind, state)
             except Exception:
                 log.exception("Notifying %s failed", shown(url))
-                continue
-            if not sent.ok:
-                log.warning("Couldn't notify %s of an alert: %s", shown(url), sent.status)
+                sent = None
+            finally:
+                self._sending = None
+            if sent is None or not sent.ok:
+                if sent is not None:
+                    log.warning("Couldn't notify %s of an alert: %s", shown(url), sent.status)
+                if failed is not None:
+                    failed()
+            elif done is not None:
+                done()
+
+    def unsent(self) -> None:
+        """As StationPlay stops: what wasn't sent yet, being sent or still
+        waiting, is said not to have been (each one's `failed`)."""
+        left = [self._sending]
+        while self._waiting is not None and not self._waiting.empty():
+            left.append(self._waiting.get_nowait()[4])
+        self._sending = None
+        for failed in left:
+            if failed is not None:
+                failed()
 
     async def test(self, url: str, fmt: str) -> Sent:
         """Send a test: a message to `url` in `fmt`, now (the page waits

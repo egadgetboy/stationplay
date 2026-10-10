@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import shutil
 import sqlite3
@@ -100,6 +101,11 @@ BACKUP_FAILS = 2
 CLOCK_OFF_S, CLOCK_RIGHT_S = 120.0, 60.0
 # The Broken files tab: said again (with a new ID) at most this often.
 FILES_AGAIN_S = 3600.0
+# That the alerts are kept by a StationPlay running now: noted at most this
+# often. Alerts kept longer ago than ALIVE_STALE_S (StationPlay stopped that
+# long, or an older version, which doesn't keep them, ran meanwhile) aren't
+# brought back as going: anything still wrong is found, and said, afresh.
+ALIVE_META, ALIVE_EVERY_S, ALIVE_STALE_S = "alerts_alive_ms", 600.0, 2 * 24 * 3600.0
 
 
 @dataclass
@@ -112,6 +118,8 @@ class Alert:
     sentence: str
     since_ms: int
     fixed_ms: int | None = None
+    untold: str = ""  # what the web address didn't take of it: STARTED or FIXED
+    fixed_sentence: str = ""
 
     @property
     def id(self) -> str:
@@ -161,8 +169,15 @@ class Alerts:
         self._files_seen: set[str] | None = set()
         self._files_said = 0.0
         self._files_unsaid: set[str] = set()
+        self._files_kept: str = ""  # (what the database has of them)
         self._unkept = False  # (the database couldn't be written: said once)
+        # What the web address didn't take before StationPlay stopped (it
+        # didn't answer, or StationPlay stopped first): sent again at the
+        # first look, when sending is under way.
+        self._retell: list[tuple[Alert, str]] = []
+        self._alive_at: float | None = None
         self._restore()
+        self._alive()
 
     def _restore(self) -> None:
         """The alerts as they were kept, when StationPlay starts (see the
@@ -170,27 +185,68 @@ class Alerts:
         try:
             rows = self.db.kept_alerts()
             stations = {str(c.id) for c in self.db.list_channels()}
+            alive = int(self.db.get_meta(ALIVE_META) or 0)
         except sqlite3.Error as e:
             log.warning("Couldn't read the alerts kept from before (%s)", e)
             return
+        going = [r for r in rows if r["fixed_ms"] is None and r["kind"] in KINDS]
+        if going and _now_ms() - alive > ALIVE_STALE_S * 1000:
+            log.info(
+                "The alerts kept from before are from too long ago to go on with; anything still "
+                "wrong is found again"
+            )
+            self._keep(self.db.forget_going_alerts, KINDS)
+            rows = [r for r in rows if r not in going]
         for row in rows:
-            alert = Alert(*(row[k] for k in ("kind", "about", "sentence", "since_ms", "fixed_ms")))
+            kept = json.loads(row["state"]) if row["state"] else {}
+            alert = Alert(
+                *(row[k] for k in ("kind", "about", "sentence", "since_ms", "fixed_ms")),
+                untold=row["untold"], fixed_sentence=kept.get("fixed", ""),
+            )  # fmt: skip
             if alert.kind not in KINDS:
                 continue  # (a later version's, left for it)
             if alert.fixed_ms is not None:
                 self._fixed.append(alert)
+                if alert.untold == FIXED and alert.fixed_sentence:
+                    self._retell.append((alert, FIXED))
             elif alert.kind == STATION and alert.about not in stations:
                 # (Deleted, and said so then, though it couldn't be kept.)
                 self._keep(self.db.forget_alert, alert.kind, alert.about, alert.since_ms)
             else:
                 self._now[(alert.kind, alert.about)] = alert
                 log.warning("Alert still going: %s", alert.sentence)
+                if alert.untold == STARTED:
+                    self._retell.append((alert, STARTED))
+                if alert.kind == FILES and "seen" in kept:
+                    self._files_seen = set(kept["seen"])
+                    self._files_unsaid = set(kept.get("unsaid", ()))
+                    self._files_kept = row["state"]
         files = self._now.get((FILES, ""))
         if files is not None:
-            # When it was said, by this clock; what was there then is found
-            # at the first look (see files).
+            # When it was said, by this clock; what was there then (when
+            # kept from before 1.31.0, found at the first look: see files).
             self._files_said = self.clock() - max(0.0, (_now_ms() - files.since_ms) / 1000)
-            self._files_seen = None
+            if not self._files_kept:
+                self._files_seen = None
+
+    def _alive(self) -> None:
+        """Notes that the alerts are kept by a StationPlay running now (at
+        most every ALIVE_EVERY_S)."""
+        now = self.clock()
+        if self._alive_at is None or now - self._alive_at >= ALIVE_EVERY_S:
+            self._alive_at = now
+            self._keep(self.db.set_meta, ALIVE_META, str(_now_ms()))
+
+    def _untold(self, alert: Alert, state: str) -> Callable[[], None]:
+        """What's done if the web address doesn't take `state` of `alert`
+        ("" once it does: nothing's left to tell). Written only then, so
+        never at every check."""
+
+        def note() -> None:
+            alert.untold = state
+            self._keep(self.db.untold_alert, alert.kind, alert.about, alert.since_ms, state)
+
+        return note
 
     # What's said ----------------------------------------------------------------
 
@@ -219,25 +275,28 @@ class Alerts:
         alert = self._now[(kind, about)] = Alert(kind, about, sentence, since)
         self._keep(self._write, alert, after)
         log.warning("Alert: %s", sentence)
-        self.notify.send(sentence, kind, STARTED)
+        self.notify.send(sentence, kind, STARTED, failed=self._untold(alert, STARTED))
 
     def fix(self, kind: str, sentence: str, about: str = "") -> None:
         """An alert is fixed (`sentence`: saying so), if there is one."""
         found = self._now.pop((kind, about), None)
         if found is None:
             return
-        found.fixed_ms = _now_ms()
+        found.fixed_ms, found.fixed_sentence = _now_ms(), sentence
         self._fixed.append(found)
         self._keep(self._write, found)
         log.info("Alert fixed: %s", sentence)
-        self.notify.send(sentence, kind, FIXED)
+        self.notify.send(sentence, kind, FIXED, failed=self._untold(found, FIXED))
 
     def _write(self, alert: Alert, instead_of: Alert | None = None) -> None:
         """An alert, as it is now, to the database (see Database.keep_alert);
         and, once one's fixed, those fixed too long ago forgotten."""
+        # (Fixed: what's said of it so, should the web address need telling
+        # after a restart.)
+        fixed = json.dumps({"fixed": alert.fixed_sentence}) if alert.fixed_ms else None
         self.db.keep_alert(
             alert.kind, alert.about, alert.since_ms, alert.sentence, alert.fixed_ms,
-            instead_of.since_ms if instead_of else None,
+            instead_of.since_ms if instead_of else None, fixed,
         )  # fmt: skip
         if alert.fixed_ms is not None:
             self.db.forget_fixed_alerts(alert.fixed_ms - int(FIXED_KEPT_S * 1000), FIXED_MOST)
@@ -352,6 +411,7 @@ class Alerts:
             self._files_unsaid and self.clock() - self._files_said >= FILES_AGAIN_S
         ):
             self.start(FILES, sentence)  # (what it is now, unsaid)
+            self._keep_files()
             return
         if going is not None:
             # (New things since it was said, an hour or more ago: said again, anew.)
@@ -359,6 +419,18 @@ class Alerts:
         self._files_said = self.clock()
         self._files_unsaid = set()
         self.start(FILES, sentence, after=going)
+        self._keep_files()
+
+    def _keep_files(self) -> None:
+        """What the Broken files alert covers, kept with it as it changes:
+        what was there at the last look, and what's come since it was said."""
+        going = self._now.get((FILES, ""))
+        state = json.dumps(
+            {"seen": sorted(self._files_seen or ()), "unsaid": sorted(self._files_unsaid)}
+        )
+        if going is not None and state != self._files_kept:
+            self._files_kept = state
+            self._keep(self.db.alert_state, FILES, "", going.since_ms, state)
 
     # Checking --------------------------------------------------------------------
 
@@ -378,6 +450,13 @@ class Alerts:
         """Checks Plex (and the clock, by its answer), the data folder,
         whether the apps reach StationPlay from outside, and what needs an
         Admin on the Broken files tab."""
+        self._alive()
+        for alert, state in self._retell:
+            sentence = alert.sentence if state == STARTED else alert.fixed_sentence
+            self.notify.send(
+                sentence, alert.kind, state, self._untold(alert, ""), self._untold(alert, state)
+            )
+        self._retell = []
         await self._look_at_plex(ctx)
         await asyncio.to_thread(self._look_at_data, ctx.settings.data_dir)
         self._look_outside(ctx.reach.status(), ctx.away.address)

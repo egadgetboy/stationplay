@@ -285,3 +285,44 @@ async def test_on_the_air_it_steps_all_through_programs_and_across_them(tmp_path
     assert any(
         steps == [order[(start + k) % 9] for k in range(len(steps))] for start in range(9)
     ), steps
+
+
+# Found by the cold audit of 1.30.3: every corner, and the whole of what's drawn -----
+
+CORNERS = ["top-left", "top-right", "bottom-left", "bottom-right"]
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("position", CORNERS)
+def test_the_whole_logo_moves_in_every_corner(position):
+    """All four edges of the logo move by each step, wherever it sits."""
+    [plain] = drawn(None)
+    home = corner_box(drawn(Watermark(logo=LOGO, position=position, airs_at_s=0.0))[0], plain, 640)
+    for n in range(1, 9):
+        at = n * DRIFT_S + 7.5
+        box = corner_box(
+            drawn(Watermark(logo=LOGO, position=position, airs_at_s=at))[0], plain, 640
+        )
+        dx, dy = place_at(at)
+        assert box == (home[0] + dx, home[1] + dy, home[2] + dx, home[3] + dy), (position, at)
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("position", CORNERS)
+def test_the_name_and_the_clock_move_in_every_corner(monkeypatch, position):
+    """The name and the clock move by the same steps in every corner: by the
+    edges they're held to there (a clock's width changes with its digits)."""
+    monkeypatch.setenv("TZ", "UTC")
+    [plain] = drawn(None)
+    right, bottom = "right" in position, "bottom" in position
+    ten = 10 * 3600.0
+    for mark in (Watermark(text="Hits", position=position),
+                 Watermark(clock="24", position=position)):  # fmt: skip
+        found = {}
+        for n in range(9):
+            at = ten + n * DRIFT_S + 30
+            left, top, far_x, far_y = corner_box(drawn(replace(mark, airs_at_s=at))[0], plain, 640)
+            found[place_at(at)] = (far_x if right else left, far_y if bottom else top)
+        assert set(found) == set(NUDGES)
+        hx, hy = found[(0, 0)]
+        assert all((x - hx, y - hy) == place for place, (x, y) in found.items()), (mark, found)

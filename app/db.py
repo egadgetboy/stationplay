@@ -377,6 +377,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     since_ms     INTEGER NOT NULL,
     sentence     TEXT    NOT NULL,
     fixed_ms     INTEGER,                      -- NULL while it's going
+    untold       TEXT    NOT NULL DEFAULT '',  -- what the web address didn't take: started, fixed
+    state        TEXT    NOT NULL DEFAULT '',  -- the Broken files alert's: what it covers (JSON)
     PRIMARY KEY (kind, about, since_ms)
 );
 """
@@ -770,6 +772,10 @@ _ADDED_COLUMNS = (
     # trouble reaching StationPlay lasted (see problems.py).
     ("problems", "journal", "TEXT NOT NULL DEFAULT ''"),
     ("problems", "lasted_ms", "INTEGER NOT NULL DEFAULT 0"),
+    # Added in 1.31.0: what the web address didn't take of an alert, and what
+    # the Broken files alert covers (see alerts.py), kept across restarts.
+    ("alerts", "untold", "TEXT NOT NULL DEFAULT ''"),
+    ("alerts", "state", "TEXT NOT NULL DEFAULT ''"),
 )
 
 
@@ -2377,7 +2383,7 @@ class Database:
         going, the oldest first."""
         with self._lock:
             return self._conn.execute(
-                "SELECT kind, about, since_ms, sentence, fixed_ms FROM alerts "
+                "SELECT kind, about, since_ms, sentence, fixed_ms, untold, state FROM alerts "
                 "ORDER BY fixed_ms IS NULL, fixed_ms, since_ms"
             ).fetchall()
 
@@ -2389,10 +2395,12 @@ class Database:
         sentence: str,
         fixed_ms: int | None,
         instead_of_ms: int | None = None,
+        state: str | None = None,
     ) -> None:
         """Keeps an alert as it is now: going, or fixed at `fixed_ms`; in
         place of the one about the same thing since `instead_of_ms`, if
-        given (it ended, unsaid)."""
+        given (it ended, unsaid); with `state`, if given (see alert_state),
+        in the same write."""
         with self._lock, self._conn:
             if instead_of_ms is not None:
                 self._conn.execute(
@@ -2400,10 +2408,36 @@ class Database:
                     (kind, about, instead_of_ms),
                 )
             self._conn.execute(
-                "INSERT INTO alerts (kind, about, since_ms, sentence, fixed_ms) "
-                "VALUES (?, ?, ?, ?, ?) ON CONFLICT (kind, about, since_ms) "
-                "DO UPDATE SET sentence = excluded.sentence, fixed_ms = excluded.fixed_ms",
-                (kind, about, since_ms, sentence, fixed_ms),
+                "INSERT INTO alerts (kind, about, since_ms, sentence, fixed_ms, state) "
+                "VALUES (?, ?, ?, ?, ?, COALESCE(?, '')) ON CONFLICT (kind, about, since_ms) "
+                "DO UPDATE SET sentence = excluded.sentence, fixed_ms = excluded.fixed_ms, "
+                "state = COALESCE(?, alerts.state)",
+                (kind, about, since_ms, sentence, fixed_ms, state, state),
+            )
+
+    def untold_alert(self, kind: str, about: str, since_ms: int, untold: str) -> None:
+        """What the web address didn't take of an alert (started, or fixed;
+        "": nothing)."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE alerts SET untold = ? WHERE kind = ? AND about = ? AND since_ms = ?",
+                (untold, kind, about, since_ms),
+            )
+
+    def alert_state(self, kind: str, about: str, since_ms: int, state: str) -> None:
+        """What an alert covers (the Broken files alert's: see alerts.py)."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE alerts SET state = ? WHERE kind = ? AND about = ? AND since_ms = ?",
+                (state, kind, about, since_ms),
+            )
+
+    def forget_going_alerts(self, kinds: tuple[str, ...]) -> None:
+        """Forgets the alerts of these kinds kept as still going (see
+        alerts.Alerts._restore)."""
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "DELETE FROM alerts WHERE fixed_ms IS NULL AND kind = ?", [(k,) for k in kinds]
             )
 
     def forget_alert(self, kind: str, about: str, since_ms: int) -> None:

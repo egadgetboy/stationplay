@@ -702,6 +702,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         yield
         for task in background:
             task.cancel()
+        ctx.notify.unsent()  # (alerts not sent yet: sent when StationPlay is back)
         await ctx.hls_streams.stop_all("StationPlay is shutting down")
         ctx.plays.end_all()  # (and the copies being made for them)
         for b in list(ctx.broadcasters.values()):

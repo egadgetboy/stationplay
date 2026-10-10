@@ -34,13 +34,18 @@ SAM = {"name": "Sam", "password": "battery staple", "role": "user"}
 
 
 class Told:
-    """Stands in for the web address: what it was told."""
+    """Stands in for the web address: what it was told (`answers`: whether
+    it takes it, so it's been told)."""
 
-    def __init__(self) -> None:
+    def __init__(self, answers: bool = True) -> None:
         self.said: list[tuple[str, str, str]] = []
+        self.answers = answers
 
-    def send(self, message: str, kind: str, state: str) -> None:
+    def send(self, message: str, kind: str, state: str, done=None, failed=None) -> None:
         self.said.append((message, kind, state))
+        then = done if self.answers else failed
+        if then is not None:
+            then()
 
 
 class Plex:
@@ -625,7 +630,7 @@ def test_after_a_restart_the_apps_and_the_page_see_the_same_alerts(app, tmp_path
     IDs, for the apps and the page's header; none sent anywhere again; and
     the Logs tab says which are still going."""
     sent: list[tuple[str, str, str]] = []
-    monkeypatch.setattr(notify.Notify, "send", lambda self, *said: sent.append(said))
+    monkeypatch.setattr(notify.Notify, "send", lambda self, *said, **_: sent.append(said))
     with TestClient(app) as home:
         ctx = app.state.ctx
         home.portal.call(ctx.alerts.start, "backups", "StationPlay's backups are failing.")
@@ -802,3 +807,115 @@ def test_a_failing_web_address_holds_nothing_up(app, monkeypatch):
             assert home.get("/api/status").status_code == 200
             assert time.monotonic() - began < 2
         assert len(ctx.alerts.now()) == 2 * many
+
+
+# Found by the cold audit of 1.30.3 ------------------------------------------------
+
+
+async def test_an_alert_the_web_address_never_took_is_sent_after_a_restart(tmp_path, db):
+    """The web address down (or StationPlay stopped before it was sent):
+    once StationPlay is back, and the address takes it, it's told, once.
+    A fix it never took is sent the same way."""
+    plex = Plex()
+    plex.down = 0
+    ctx = checks(tmp_path, plex)
+    down = Told(answers=False)
+    before = Alerts(down, db)  # type: ignore[arg-type]
+    for _ in range(5):
+        await before.look(ctx)
+    [going] = before.now()
+    assert down.said == [(going.sentence, "plex", "started")]
+    told = Told()
+    after = Alerts(told, Database(db.path))  # type: ignore[arg-type]
+    await after.look(ctx)
+    await after.look(ctx)
+    assert told.said == [(going.sentence, "plex", "started")]
+    # Fixed, and that not taken either; then a restart.
+    plex.down = None
+    down = Told(answers=False)
+    again = Alerts(down, Database(db.path))  # type: ignore[arg-type]
+    for _ in range(2):
+        await again.look(ctx)
+    assert [s[2] for s in down.said] == ["fixed"]
+    told = Told()
+    last = Alerts(told, Database(db.path))  # type: ignore[arg-type]
+    await last.look(ctx)
+    await last.look(ctx)
+    assert told.said == [("StationPlay can reach Plex at 192.168.1.10:32400 again.", "plex", "fixed")]
+
+
+async def test_alerts_from_long_ago_arent_brought_back(tmp_path, db, monkeypatch, caplog):
+    """Alerts kept by a StationPlay that hasn't run for a while (stopped for
+    hours, or an older version running meanwhile, which doesn't keep them)
+    aren't brought back as still going, nor said to be fixed: anything
+    still wrong is found, and said, afresh."""
+    caplog.set_level(logging.INFO)
+    wall = [1_791_000_000_000]
+    monkeypatch.setattr(alerts, "_now_ms", lambda: wall[0])
+    told = Told()
+    before = Alerts(told, db)  # type: ignore[arg-type]
+    before.backup_failed()
+    before.backup_failed()
+    assert {a.kind for a in before.now()} == {"backups"}
+    wall[0] += 10 * 24 * 3600_000  # (ten days later)
+    told = Told()
+    after = Alerts(told, Database(db.path))  # type: ignore[arg-type]
+    assert after.now() == [] and "Alert still going" not in caplog.text
+    after.backup_made()
+    assert told.said == []
+
+
+def test_a_report_checked_when_the_alert_was_said_is_new_after_a_restart(db, monkeypatch):
+    """A report that came in before the Broken files alert was said, but was
+    still being checked then (so not part of it), is new after a restart:
+    said once the hour's up, as without one."""
+    wall = [1_791_000_000_000]
+    monkeypatch.setattr(alerts, "_now_ms", lambda: wall[0])
+    told = Told()
+    before = Alerts(told, db, clock=lambda: 0.0)  # type: ignore[arg-type]
+    tia = (wall[0] - 60_000, "report:204", "Tia reported No sound on Northbound S2 E4")
+    ann = (wall[0] - 30_000, "report:205", "Ann reported Wrong language on Northbound S2 E5")
+    before.files([tia])  # (Ann's still being checked)
+    [first] = before.now()
+    wall[0] += 10_000
+    told = Told()
+    clock = [0.0]
+    after = Alerts(told, Database(db.path), clock=lambda: clock[0])  # type: ignore[arg-type]
+    after.files([tia, ann])
+    assert [a.id for a in after.now()] == [first.id] and told.said == []
+    clock[0] += 3600
+    after.files([tia, ann])
+    [again] = after.now()
+    assert again.id != first.id and told.said == [(again.sentence, "files", "started")]
+
+
+async def test_what_wasnt_sent_when_stationplay_stopped_is_sent_after(tmp_path, db):
+    """StationPlay stopping while an alert waits to be sent (an update, say):
+    it's sent once StationPlay is back."""
+    sent: list[tuple] = []
+
+    async def post(url, fmt, message, kind, state, test=False):
+        sent.append((message, state))
+        return notify.Sent(0, "200 OK", True, test)
+
+    first = Notify(Database(db.path))
+    first.on, first.url = True, "https://ntfy.example.com/stationplay"
+    first._waiting = asyncio.Queue()  # (what run_forever makes; it's not running)
+    before = Alerts(first, db)  # type: ignore[arg-type]
+    before.backup_failed()
+    before.backup_failed()
+    [going] = before.now()
+    first.unsent()  # (StationPlay stops before it's sent)
+    again = Notify(Database(db.path))
+    again.on, again.url = True, first.url
+    again.post = post  # type: ignore[method-assign]
+    running = asyncio.create_task(again.run_forever())
+    await asyncio.sleep(0)
+    after = Alerts(again, Database(db.path))  # type: ignore[arg-type]
+    await after.look(checks(tmp_path))
+    for _ in range(20):
+        if sent:
+            break
+        await asyncio.sleep(0.01)
+    running.cancel()
+    assert sent == [(going.sentence, "started")]

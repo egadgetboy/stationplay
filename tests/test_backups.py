@@ -227,9 +227,15 @@ def test_a_restored_backup_brings_back_no_alerts(tmp_path):
             assert [r[0] for r in copy.execute("SELECT kind FROM alerts")] == ["backups"]
         client.portal.call(ctx.alerts.start, "plex", "StationPlay can't reach Plex.")
         assert client.post("/api/restore", content=backup).status_code == 200
+    sent: list[tuple] = []
     with client_for(data, fp) as client:
-        assert client.app.state.ctx.alerts.listed() == []
-        assert client.app.state.ctx.db.kept_alerts() == []
+        ctx = client.app.state.ctx
+        ctx.notify.send = lambda *said, **_: sent.append(said)  # type: ignore[method-assign]
+        assert ctx.alerts.listed() == []
+        assert ctx.db.kept_alerts() == []
+        client.portal.call(ctx.alerts.backup_made)  # (what fixed the backup's own alert)
+        client.portal.call(ctx.alerts.look, ctx)
+    assert sent == []  # (none from then is said to be fixed)
 
 
 @contextlib.contextmanager
