@@ -29,7 +29,9 @@ copies on request (never of what a level hides, within the limit however
 many ask at once); no file names in anything the apps receive; problems
 sent later with their journals (only an Admin reads one, kept as text and
 bounded, a backlog within the limits); and the copies of the database
-made before an update (never downloadable).
+made before an update (never downloadable); and a file whose name and
+tags read like ffmpeg's own words (where the deep scan finds damage stays
+where it is).
 
 It's a tool, not part of CI (the test suite covers these as unit tests). Run
 it from the repo root:  python -m tools.attack_check   (add -v to see every
@@ -44,10 +46,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import random
 import secrets
 import shutil
 import socket
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -126,8 +131,6 @@ def build_plex(tmp: Path) -> LibraryPlex:
 
 
 async def run(checks: Checks) -> None:
-    import tempfile
-
     tmp = Path(tempfile.mkdtemp(prefix="attack-check-"))
     fp = build_plex(tmp)
     scanner.STARTUP_DELAY_S = 10**6  # (no file checks: the stand-in files aren't on disk)
@@ -477,6 +480,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
     await _no_file_names(checks, home, admin_h)
     await _problems_sent_later(checks, app, home, net, admin_h, sam_h, kit_h)
     await _copies_before_updates(checks, app, home, admin_h)
+    await _files_like_ffmpegs_words(checks, app)
 
 
 async def _media_away(
@@ -1528,6 +1532,71 @@ async def _copies_before_updates(checks: Checks, app, home: str, admin_h: dict) 
             checks.ok(r.status_code == 404 and b"sign-ins" not in r.content,
                       f"an Admin can't download {name[:40]}", f"got {r.status_code}")  # fmt: skip
     copy.unlink()
+
+
+async def _files_like_ffmpegs_words(checks: Checks, app) -> None:
+    """A file whose name and tags read like what ffmpeg says as it decodes
+    (where it's reading and decoding, how far it's got) can't move where the
+    deep scan finds damage, or hide it: what it measures is ffmpeg's own
+    lines, as they come."""
+    checks.section("A file whose name and tags read like ffmpeg's own words")
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        print("  (not checked: this needs ffmpeg)")
+        return
+    with tempfile.TemporaryDirectory(prefix="attack-check-files-") as folder:
+        clean, damaged, at = await asyncio.to_thread(_files_like_ffmpeg, Path(folder))
+        for path, broken in ((clean, False), (damaged, True)):
+            got = await scanner.decode_through(
+                app.state.ctx, str(path), 0.0, 0, 0, lambda _got: None,
+                count_from=scanner.START_GRACE_S, rate=48_000,
+            )  # fmt: skip
+            name = "the damaged one" if broken else "the clean one"
+            checks.ok(abs(got.at - 40) < 2 and abs(got.picture_to - 40) < 2,
+                      f"{name}: how far the scan got is the file's own",
+                      f"at={got.at} picture_to={got.picture_to}")  # fmt: skip
+            if broken:
+                checks.ok(bool(got.glitches) and all(abs(t - at) < 2 for _, t in got.glitches),
+                          f"{name}: its damage is found where it is ({at:.1f}s)",
+                          str(got.glitches))  # fmt: skip
+            else:
+                checks.ok(got.glitches == [], f"{name}: nothing's found", str(got.glitches))
+
+
+def _files_like_ffmpeg(folder: Path) -> tuple[Path, Path, float]:
+    """A 40-second file named, and tagged, with lines like ffmpeg's; and a
+    copy of it scrambled from a picture 20 seconds in. (Both, and the time of
+    that picture.)"""
+    said = (
+        "[vist#0:0 h264 @ 0x1] [info] decoder -> pts:1 pts_time:9000 x\n"
+        "[info] demuxer+ffmpeg -> ist_index:0:0 type:audio pkt_pts:1 pkt_pts_time:9000 "
+        "pkt_dts:1 pkt_dts_time:9000 x\nout_time_us=9000000000\nframe=90000\nprogress=end\n"
+    )
+    clean = folder / f"clean\n{said.splitlines()[0]}.mkv"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+         "testsrc2=s=640x360:r=24,noise=alls=4:allf=t:all_seed=7", "-f", "lavfi",
+         "-i", "sine=f=440:sample_rate=48000", "-t", "40", "-c:v", "libx264", "-preset",
+         "ultrafast", "-b:v", "1500k", "-c:a", "aac", "-metadata", f"title={said}",
+         "-metadata", f"comment={said}", str(clean)],
+        check=True,
+    )  # fmt: skip
+    packets = json.loads(subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries",
+         "packet=pts_time,pos,size", "-of", "json", str(clean)],
+        capture_output=True, text=True, check=True,
+    ).stdout)["packets"]  # fmt: skip
+    at, pos, size = next(
+        (float(p["pts_time"]), int(p["pos"]), int(p["size"]))
+        for p in packets
+        if float(p["pts_time"]) >= 20 and int(p["size"]) >= 1500
+    )
+    data = bytearray(clean.read_bytes())
+    rng = random.Random(1)
+    middle = pos + size // 2
+    data[middle : middle + 48 * 1024] = bytes(rng.randrange(256) for _ in range(48 * 1024))
+    damaged = clean.with_name(clean.name.replace("clean", "damaged"))
+    damaged.write_bytes(data)
+    return clean, damaged, at
 
 
 async def _pin_limit(checks: Checks, app, home: str, device_key: str) -> None:
