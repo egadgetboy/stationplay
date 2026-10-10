@@ -1,4 +1,4 @@
-// StationPlay's page: Checking files (the Broken files tab).
+// Checking files, on the Broken files tab.
 // Checking files -------------------------------------------------------------------
 const clock = t => { const [hh, mm] = t.split(':').map(Number); return new Date(2000, 0, 1, hh, mm).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
 let scanShown = null;

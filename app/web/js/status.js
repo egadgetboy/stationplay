@@ -1,4 +1,4 @@
-// StationPlay's page: StationPlay's status, and the picture and tuners.
+// StationPlay's status, and the picture and tuners.
 // Status ---------------------------------------------------------------------
 let status = null;
 let pageVersion = null;  // (StationPlay's version when this page was loaded)

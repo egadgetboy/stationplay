@@ -1,4 +1,4 @@
-// StationPlay's page: The setup (see setup.py).
+// The setup's dialog and its steps.
 // The setup (see setup.py) -------------------------------------------------------------
 // For an Admin (or anyone, while signing in is off). When StationPlay is
 // new: every question, with checks that what's set up is working. After an

@@ -1,4 +1,4 @@
-// StationPlay's page: The station editor.
+// The station editor.
 // Editor ------------------------------------------------------------------------
 let editing = null;       // channel being edited, or null for new
 let order = 'rotate';

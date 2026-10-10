@@ -1,4 +1,4 @@
-// StationPlay's page: Stations made from Plex collections, and Smart stations.
+// Stations made from Plex collections, and Smart stations.
 // Stations from Plex collections ---------------------------------------------
 // One per collection: {ratingKey, name (numbered if others share it), kind,
 // count, smart, libraryTitle, station}.

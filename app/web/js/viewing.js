@@ -1,4 +1,4 @@
-// StationPlay's page: Viewing Levels.
+// Viewing Levels.
 // Viewing Levels ----------------------------------------------------------------------
 const levelLimited = lv => lv.movieAge != null || lv.tvAge != null || !lv.unrated || lv.libraries != null;
 const ratingName = (list, age) => age == null ? 'No limit' : (list.find(([a]) => a === age)?.[1] || `Ages ${age} and up`);

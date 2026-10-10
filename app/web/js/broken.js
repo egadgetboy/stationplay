@@ -1,4 +1,4 @@
-// StationPlay's page: Broken files, replacing files with Sonarr and Radarr, and people's reports.
+// Broken files, replacing files with Sonarr and Radarr, and people's reports.
 // Broken files -------------------------------------------------------------------
 // Everything about files: people's reports and what StationPlay found, in
 // three parts (see replacing.tab_section and reports.py on the server):

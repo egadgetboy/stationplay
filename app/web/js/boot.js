@@ -1,4 +1,4 @@
-// StationPlay's page: Starting the page: last, once everything else is defined.
+// Starting the page: loaded last, once everything else is defined.
 // Boot ---------------------------------------------------------------------------
 // Who's signed in: someone may have changed your role, or signed you out.
 const checkMe = () => {

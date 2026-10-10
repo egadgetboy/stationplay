@@ -1,4 +1,4 @@
-// StationPlay's page: The Logs tab, and problems from the apps.
+// The Logs tab, and problems sent from the apps.
 // Logs ---------------------------------------------------------------------------
 let logText = '';
 async function loadLogs(scrollToEnd = false) {

@@ -1,4 +1,4 @@
-// StationPlay's page: Shared helpers ($, h, api, toast, notice...), and the tabs.
+// The page's shared helpers ($, h, api, toast, notice...), and its tabs.
 const $ = (sel, el = document) => el.querySelector(sel);
 const h = (tag, attrs = {}, ...kids) => {
   const el = document.createElement(tag);

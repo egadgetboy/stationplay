@@ -1,4 +1,4 @@
-// StationPlay's page: Signing in, Admins and Users, and linked devices.
+// Signing in, Admins and Users, and linked devices.
 // Signing in (see access.py) ------------------------------------------------------
 // Signing in may be off (anyone using the page can do everything) or on, as
 // an Admin or a User.

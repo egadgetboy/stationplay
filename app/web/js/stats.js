@@ -1,4 +1,4 @@
-// StationPlay's page: The Stats tab.
+// The Stats tab.
 // The Stats tab ----------------------------------------------------------------------
 let statDays = 7;
 const hoursText = h_ => h_ >= 10 ? `${Math.round(h_)} hr` : h_ >= 1 ? `${h_.toFixed(1)} hr` : `${Math.round(h_ * 60)} min`;

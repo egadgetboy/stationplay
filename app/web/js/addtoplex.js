@@ -1,4 +1,4 @@
-// StationPlay's page: The tab row's fit, Appearance, and the Add to Plex tab's panels.
+// The tab row's fit, Appearance, and the Add to Plex tab's panels.
 // The Buy Me a Coffee link is never why a tab is out of sight: it's its cup
 // and words if the tabs all fit beside them, else just its cup if they fit
 // beside that, else left out if that makes them fit; when they don't fit

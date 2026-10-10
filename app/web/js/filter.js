@@ -1,4 +1,4 @@
-// StationPlay's page: Choosing a station's programs by filter, and the library's lists.
+// Choosing a station's programs by filter, and the library's lists.
 // Choosing by filter -----------------------------------------------------------
 function setPickMode(mode, start = true) {
   pressOne('pick', mode);

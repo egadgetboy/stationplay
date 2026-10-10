@@ -1,4 +1,4 @@
-// StationPlay's page: Backups, and the logo picker's buttons.
+// Backups, and the logo picker's buttons.
 // Backups ----------------------------------------------------------------------
 const fmtSize = n => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
 async function loadBackups() {

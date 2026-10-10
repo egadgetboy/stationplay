@@ -1,4 +1,4 @@
-// StationPlay's page: Logos: choosing a station's logo, and your own logos.
+// A station's logo, and your own logos.
 // Logos ------------------------------------------------------------------------
 let logo = '';              // the chosen logo's id; '' shows the station number
 let logoCatalog = null;

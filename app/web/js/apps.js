@@ -1,4 +1,4 @@
-// StationPlay's page: The Access tab's apps: stations kept from Plex users, away from home, how many can watch, and Media in the apps.
+// On the Access tab: stations kept from Plex users, the apps away from home, how many can watch at once, and Media in the apps.
 // Stations kept from some Plex users (Access tab; see limits.py) ---------------------
 let limitsShown = null;
 async function loadLimits() {

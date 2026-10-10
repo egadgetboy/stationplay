@@ -1,4 +1,4 @@
-// StationPlay's page: The Stations tab: the list of stations, and the guide.
+// The Stations tab: the list of stations, and each one's guide.
 // Channels -------------------------------------------------------------------
 let channels = [];
 async function loadChannels() {
