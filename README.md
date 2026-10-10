@@ -833,7 +833,7 @@ People can report a problem from StationPlay's apps: from a movie's or an episod
 
 | A report of | What StationPlay does |
 |---|---|
-| No picture, the picture breaking up, no sound, the sound cutting out, stopping early, or not playing | Checks the file at once, ahead of everything else it checks: around where it happened, then the quick check, then (if the report says where, and those find nothing) the deep scan. If it finds the problem, the file goes on the list, and is replaced as you have that set. If not, the report says StationPlay found nothing wrong, for you to **Dismiss**. |
+| No picture, the picture breaking up, no sound, the sound cutting out, stopping early, or not playing | Checks the file at once, ahead of everything else but a station's program about to air: around where it happened, then the quick check, then (if the report says where, and those find nothing) the deep scan. If it finds the problem, the file goes on the list, and is replaced as you have that set. If not, the report says StationPlay found nothing wrong, for you to **Dismiss**. |
 | The sound out of sync, the wrong language, the wrong episode or movie, poor picture quality, or subtitles | Waits for you, with what StationPlay can tell beside it: the file's sound languages, its length against the show's other episodes', its picture's size, its subtitles. Choose **Replace with Sonarr** (or **Radarr**: the release is blocklisted and another fetched, as for a broken file, and the program is off the air until then), **Find a better copy** (the app searches for an upgrade, keeping the file until it finds one), or **Dismiss**. |
 | Wrong title, details or artwork | Waits for you to fix it in Plex (**Fix Match**, or **Edit**, on its page there), then **Dismiss** it. |
 

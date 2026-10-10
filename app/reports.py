@@ -555,7 +555,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             if channel is None or not ctx.sees_station(user, channel.id):
                 raise HTTPException(404, NO_STATION)
             now = int(time.time() * 1000)
-            slot = ctx.station(channel.id).locate(now)
+            # (A big shuffle takes a moment to work out.)
+            slot = await asyncio.to_thread(ctx.station(channel.id).locate, now)
             if slot is None:
                 raise HTTPException(404, NOTHING_ON)
             item = slot.item

@@ -604,8 +604,8 @@ device's, or everyone's. Send what's known:
 With either, from 1.30.0, send `session` (the playing's ID, from `POST
 /api/internal/play`) and `positionMs` (where in the program it happened):
 StationPlay checks that file there first, ahead of everything else it
-checks, and puts it on the Broken files list only if it finds what's
-wrong. (Without them, it checks what that device played last, where the
+checks but a station's program about to air, and puts it on the Broken
+files list only if it finds what's wrong. (Without them, it checks what that device played last, where the
 app last said it was.)
 - `kept-up`: playing couldn't keep up, so a smaller version played
   (`title`, or `station`).

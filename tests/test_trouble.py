@@ -304,3 +304,32 @@ def test_a_damaged_file_still_plays(tmp_path):
                           found=DEEP_SCAN, library="2")  # fmt: skip
         played = client.post("/api/internal/play", json={"key": "301", "device": TV})
         assert played.status_code == 200 and played.json()["why"] is None
+
+
+def test_what_an_admin_put_back_on_the_air_stays_on(tmp_path, monkeypatch):
+    """A file you chose Retry for, after a check found something: someone's
+    trouble with it is checked, and what's found is said, but the file
+    stays on the air."""
+    client, _fp = world(tmp_path)
+    told: list[tuple[list[int], str, str]] = []
+    with client:
+        ctx = client.app.state.ctx
+        ctx.scanner.on_checked = lambda reports, outcome, note: told.append(
+            (reports, outcome, note)
+        )
+        file = str(tmp_path / "301.mkv")
+        # (As checks and rules are now: nothing's judged afresh.)
+        ctx.db.set_meta(sc.META_CHECKS, sc.CHECKS)
+        ctx.db.set_meta(sc.META_DEEP_RULES, sc.DEEP_RULES)
+        ctx.db.save_scan(ScanRecord("301", file, quick_ms=1, quick="ok", deep_ms=1,
+                                    deep="damaged", note="the sound drops out around 12:00",
+                                    kept=True))  # fmt: skip
+
+        async def fine(ctx_, item, record=None, version=""):
+            return sc.Verdict("ok"), record, sc.ResolvedSource(file, file, 1)
+
+        monkeypatch.setattr(sc, "quick_verdict", fine)
+        ctx.scanner.target("301", "", None, "Tia reported The sound cuts out", report=4)
+        client.portal.call(ctx.scanner.round)
+        assert told == [([4], sc.KEPT, "Deep scan: the sound drops out around 12:00")]
+        assert ctx.broken.keys() == set()

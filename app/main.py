@@ -1531,6 +1531,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 "fillers": {k: fillers[k] for k in ("commercials", "trailers")},
             }
         plex_state, present = await asyncio.gather(plex_status(), media_dir_present())
+        files_count = await asyncio.to_thread(ctx.reports.needing_count)
         url = base_url(request)
         return {
             "version": __version__,
@@ -1549,7 +1550,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             "brokenCount": len(ctx.broken.keys()),
             "brokenFile": str(ctx.broken.path),
             # What needs an Admin on the Broken files tab (the tab's count).
-            "filesCount": ctx.reports.needing_count(),
+            "filesCount": files_count,
             "guide": ctx.updater.as_dict(),
             "fillers": ctx.fillers.as_dict(),
             # For the header's alerts (see alerts.py): those now.

@@ -1772,6 +1772,10 @@ class Scanner:
                 self._found(target, program, record, f"Check: {verdict.reason}", verdict.result,
                             CHECK, resolved)  # fmt: skip
                 return
+            if record is not None and record.kept and record.deep in ("broken", "damaged"):
+                # (Its deep scan found something before, and you put it back on the air.)
+                self._done_with(target, KEPT, f"Deep scan: {record.note}")
+                return
             if not target.full or record is None or record.deep_ms:
                 self._done_with(target, NOTHING, _nothing_found(target))
                 return
