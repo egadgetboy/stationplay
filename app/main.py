@@ -143,7 +143,7 @@ FILTER_EXCLUDE_MAX = 20_000
 # device's setting): kept in a cookie of that browser's own.
 THEME_COOKIE = "stationplay_theme"
 THEMES = ("light", "dark")
-# What the page may load and run: its own script (by the nonce each time it's
+# What the page may load and run: its own scripts (by the nonce each time it's
 # sent), from StationPlay only, and never inside another site's page.
 PAGE_POLICY = (
     "default-src 'self'; script-src 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; "
@@ -1457,10 +1457,29 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             headers={"Cache-Control": "max-age=86400"},
         )
 
+    @app.get("/web/{name:path}")
+    async def page_file(name: str, v: str = ""):
+        """The page's own styles and scripts (access.PAGE_FILES), and nothing
+        else. Each is asked for with StationPlay's version, so a new release's
+        are never stale, and kept as long as a browser likes."""
+        if name not in access.PAGE_FILES or v != __version__:
+            raise HTTPException(404)
+        return FileResponse(
+            WEB_DIR / name,
+            media_type="text/css" if name.endswith(".css") else "text/javascript",
+            headers={"Cache-Control": "max-age=31536000, immutable"},
+        )
+
     @app.get("/", response_class=HTMLResponse)
     @app.get("/link", response_class=HTMLResponse)  # (where an app's code is entered)
     async def index(request: Request):
         page = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+        # Only the page's own scripts run (each given the nonce here, before
+        # anything else is put in the page): none that found its way in some
+        # other way (in a name, say) could.
+        nonce = secrets.token_urlsafe(18)
+        page = page.replace("<script", f'<script nonce="{nonce}"')
+        page = page.replace("__VERSION__", __version__)
         # Light or dark, as chosen in this browser (Appearance, at the foot of
         # the page); otherwise the device's own setting. Set here, so the page
         # is drawn in it from the start.
@@ -1484,10 +1503,6 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         page = page.replace("__ACCESS__", json.dumps(rules))
         page = page.replace("__PASSWORD_MIN__", str(access.PASSWORD_MIN))
         page = page.replace("__PASSWORD_MAX__", str(access.PASSWORD_MAX))
-        # Only the page's own script runs: none that found its way in some
-        # other way (in a name, say) could.
-        nonce = secrets.token_urlsafe(18)
-        page = page.replace("<script>", f'<script nonce="{nonce}">', 1)
         return HTMLResponse(
             page,
             headers={

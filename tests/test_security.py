@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import shutil
 import socket
 import subprocess
@@ -18,8 +19,9 @@ import pytest
 import uvicorn
 from fastapi.testclient import TestClient
 
-from app import access, bumpers, logos
+from app import __version__, access, bumpers, logos
 from app import main as app_main
+from app.access import PAGE_FILES
 from app.config import Settings
 from app.main import Turns, create_app
 from app.plex import PlexClient, PlexError
@@ -136,12 +138,54 @@ def test_the_page_runs_only_its_own_script(client):
     page = client.get("/")
     policy = page.headers["content-security-policy"]
     nonce = policy.split("'nonce-")[1].split("'")[0]
-    assert f'<script nonce="{nonce}">' in page.text and page.text.count("<script") == 1
+    # Its scripts: what the server fills in, then its own files, each with the nonce.
+    scripts = [f'<script nonce="{nonce}">'] + [
+        f'<script nonce="{nonce}" src="/web/{name}?v={__version__}">'
+        for name in PAGE_FILES
+        if name.endswith(".js")
+    ]
+    assert re.findall(r"<script\b[^>]*>", page.text) == scripts
+    assert page.text.count("<script") == len(scripts)
+    # (Scripts by the nonce alone: never inline ones without it, or eval.)
+    assert f"script-src 'nonce-{nonce}';" in policy
     assert "frame-ancestors 'none'" in policy and "object-src 'none'" in policy
     assert client.get("/").headers["content-security-policy"] != policy  # a new one each time
     for path in ("/", "/api/channels"):
         got = client.get(path).headers
         assert got["x-frame-options"] == "DENY" and got["x-content-type-options"] == "nosniff"
+
+
+def test_the_page_is_given_its_own_files_and_nothing_else(client):
+    v = f"?v={__version__}"
+    page = client.get("/").text
+    assert re.findall(r"<link rel=\"stylesheet\"[^>]*>", page) == [
+        f'<link rel="stylesheet" href="/web/page.css{v}">'
+    ]
+    for name in PAGE_FILES:
+        got = client.get(f"/web/{name}{v}")
+        assert got.status_code == 200, name
+        assert got.content == (app_main.WEB_DIR / name).read_bytes()
+        # Kept by the browser: a new release's are at new addresses (its version).
+        assert got.headers["cache-control"] == "max-age=31536000, immutable"
+        kind = "text/css" if name.endswith(".css") else "text/javascript"
+        assert got.headers["content-type"] == f"{kind}; charset=utf-8"
+        assert got.headers["x-content-type-options"] == "nosniff"
+        # Only at this release's address: never kept under another's.
+        for other in ("", "?v=", "?v=0.0.1", f"?v={__version__}0", "?w=" + __version__):
+            assert client.get(f"/web/{name}{other}").status_code == 404, (name, other)
+    # Nothing else: not out of its folder, not the folder's other files or
+    # app/'s, not one that isn't there, and no listing.
+    for path in (
+        "/web/../main.py", "/web/js/../../main.py", "/web/..%2fmain.py", "/web/..%2Faccess.py",
+        "/web/js/..%2f..%2fmain.py", "/web/%2e%2e/main.py", "/web/%2e%2e%2f%2e%2e%2fpyproject.toml",
+        "/web/..%2f..%2fapp%2fmain.py", "/web/..%5cmain.py", "/web/%2fetc%2fpasswd",
+        "/web//etc/passwd", "/web/%2e/js/core.js", "/web/js/core.js/", "/web/JS/core.js",
+        "/web/index.html", "/web/manifest.webmanifest", "/web/icon-192.png", "/web/main.py",
+        "/web/../logos/catalog.json", "/web/js/nope.js", "/web/nope.css", "/web/js/", "/web/js",
+        "/web/", "/web",
+    ):  # fmt: skip
+        got = client.get(path + v)
+        assert got.status_code == 404 and got.json() == {"detail": "Not Found"}, path
 
 
 async def test_previews_take_turns_and_only_a_few_wait():

@@ -13,15 +13,21 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app import __version__
+from app.access import PAGE_FILES
 from app.config import Settings
 from app.main import WEB_DIR, create_app
 from app.plex import PlexClient
 
 from .fakeplex import FakePlex
+from .helpers import page_code
 from .test_security import PAT, both_ports
 
 ICONS = {"/icon-192.png": 192, "/icon-512.png": 512, "/icon-maskable-512.png": 512}
-PAGE = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+# The page's code: index.html, and its own styles and scripts.
+PAGE = "\n".join(
+    (WEB_DIR / name).read_text(encoding="utf-8") for name in ("index.html", *PAGE_FILES)
+)
 
 
 @pytest.fixture
@@ -93,6 +99,29 @@ async def test_installing_needs_no_sign_in_at_home_or_from_the_internet(tmp_path
                     assert got.headers["x-content-type-options"] == "nosniff"
 
 
+async def test_the_pages_files_need_no_sign_in_at_home_or_from_the_internet(tmp_path):
+    wanted = [f"/web/{name}?v={__version__}" for name in PAGE_FILES]
+    others = [f"/web/index.html?v={__version__}", f"/web/..%2fmain.py?v={__version__}"]
+    async with both_ports(tmp_path) as (home, internet):
+        # From the internet before there's a user, when only the sign-in page is shown.
+        async with httpx.AsyncClient(base_url=internet) as outside:
+            for path in wanted:
+                assert (await outside.get(path)).status_code == 200, path
+            for path in others:
+                assert (await outside.get(path)).status_code == 403, path
+        async with httpx.AsyncClient(base_url=home) as inside:
+            assert (await inside.post("/api/access/users", json=PAT)).status_code == 201
+        # And with signing in on, before signing in.
+        for base in (home, internet):
+            async with httpx.AsyncClient(base_url=base) as visitor:
+                for path in wanted:
+                    got = await visitor.get(path)
+                    assert got.status_code == 200, (base, path)
+                    assert got.headers["cache-control"] == "max-age=31536000, immutable"
+                for path in others:
+                    assert (await visitor.get(path)).status_code == 401, (base, path)
+
+
 def test_the_page_says_its_an_app(client):
     page = client.get("/").text
     head = page.split("</head>")[0]
@@ -112,7 +141,7 @@ def test_the_page_says_its_an_app(client):
     ):
         assert meta in head, meta
     # No service worker: the page is always the one StationPlay serves now.
-    assert "serviceWorker" not in page
+    assert "serviceWorker" not in page_code(client)
 
 
 def test_links_to_other_sites_open_outside_the_apps_window():

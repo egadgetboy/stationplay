@@ -192,13 +192,22 @@ FOR_PLEX_UNDER = ("/stream/", "/auto/", "/art/", "/hls/")
 # the public port too, each signed-in app's at an address of its own, which
 # is what lets it in (a player can't sign in; see away.py).
 AWAY_UNDER = "/hls/k/"
+# The page's own styles and scripts (in app/web, in the order the page
+# loads them), each at /web/<file>.
+PAGE_FILES = (
+    "page.css", "js/core.js", "js/status.js", "js/setup.js", "js/addtoplex.js", "js/logs.js",
+    "js/stations.js", "js/editor.js", "js/logos.js", "js/smart.js", "js/backups.js",
+    "js/filter.js", "js/broken.js", "js/apps.js", "js/checking.js", "js/access.js",
+    "js/viewing.js", "js/stats.js", "js/boot.js",
+)  # fmt: skip
 # Open to anyone, signed in or not: the page itself (it asks you to sign
-# in), its icons and its manifest (for installing it as an app, which a
-# browser may do from the sign-in page), and signing in.
+# in), its styles and scripts, its icons and its manifest (for installing it
+# as an app, which a browser may do from the sign-in page), and signing in.
 # (And what StationPlay's apps ask first: see appapi.py.)
 PAGE = frozenset({
     "/", "/link", "/apple-touch-icon.png", "/manifest.webmanifest", "/icon-192.png",
     "/icon-512.png", "/icon-maskable-512.png", "/api/access/me", "/api/v1/server",
+    *(f"/web/{name}" for name in PAGE_FILES),
 })  # fmt: skip
 # Where StationPlay checks that its apps can reach it from outside (see
 # reach.py): open on both ports, to anyone, before there's a user, and over

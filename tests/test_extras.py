@@ -14,6 +14,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex import FakePlex
+from .helpers import page_code
 
 MIN = 60_000
 
@@ -137,7 +138,7 @@ def test_plex_gets_the_logo_and_notices_when_it_changes(client):
     assert client.get("/logos/nope.png").status_code == 404
     assert len(client.get("/api/logos").json()) >= 500
     # The page asks for logos with the library's version, so it never shows old ones.
-    page = client.get("/").text
+    page = page_code(client)
     assert "?v=${LOGO_V}" in page and f"const LOGO_V = '{v}'" in page
 
 

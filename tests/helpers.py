@@ -6,6 +6,8 @@ from typing import NamedTuple
 
 import httpx
 
+from app import __version__
+from app.access import PAGE_FILES
 from app.db import Item
 from app.schedule import EraSchedule
 
@@ -104,3 +106,12 @@ def add_again(fp: FakePlex, show_key: str, new_key: str) -> dict[str, str]:
             old["title"], part["file"], old["duration"],
         )  # fmt: skip
     return moved
+
+
+def page_code(client) -> str:
+    """StationPlay's page as it's served, and each of its own files (its
+    styles and scripts) as they're served: all of the page's code."""
+    page = client.get("/").text
+    files = [client.get(f"/web/{name}?v={__version__}") for name in PAGE_FILES]
+    assert [f.status_code for f in files] == [200] * len(PAGE_FILES)
+    return "\n".join([page, *(f.text for f in files)])

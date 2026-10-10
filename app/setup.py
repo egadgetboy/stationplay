@@ -8,7 +8,7 @@ once, with just the questions that are new or changed. What's been
 answered is kept in `meta` (META_ANSWERED: each question's version when it
 was answered). Run again from the Add to Plex tab, the setup asks
 everything, with the current answers filled in. The page asks the
-questions (web/index.html, "The setup"); this says which, and runs the
+questions (web/js/setup.js); this says which, and runs the
 checks.
 
 The checks look at Plex, the media files, video encoding, the clock and
