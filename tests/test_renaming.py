@@ -197,7 +197,8 @@ def test_the_apps_show_the_new_name_the_next_time_they_ask(app):
         key = {"StationPlay-Device": signed["deviceKey"]}
         his = bearer(signed["token"])
         assert tv.get("/api/internal/me", headers=his).json()["user"] == {
-            "name": "Sam", "role": "user", "pin": False, "canChangePassword": True
+            "name": "Sam", "role": "user", "pin": False, "canChangePassword": True,
+            "canReport": True,
         }  # fmt: skip
         rename(pat, ids(pat)["Sam"], "Samuel")
         # Who's tuning in?
@@ -205,7 +206,8 @@ def test_the_apps_show_the_new_name_the_next_time_they_ask(app):
         assert [p["name"] for p in people] == ["Pat", "Samuel"]
         # Options: who this app is signed in as.
         assert tv.get("/api/internal/me", headers=his).json()["user"] == {
-            "name": "Samuel", "role": "user", "pin": False, "canChangePassword": True
+            "name": "Samuel", "role": "user", "pin": False, "canChangePassword": True,
+            "canReport": True,
         }  # fmt: skip
         assert tv.get("/api/internal/me").status_code == 401  # (signing in is on)
         # Picking him gives a sign-in in his new name.
