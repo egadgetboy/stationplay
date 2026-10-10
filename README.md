@@ -6,7 +6,7 @@
 
 # StationPlay
 
-StationPlay turns your Plex library into always-on TV stations. Pick some shows or movies, give the station a number and a name, and it plays them around the clock like a broadcast channel. A program guide comes with it, and you can add commercials, station IDs, a corner logo, movie nights and Saturday-morning blocks if you like.
+StationPlay turns your Plex library into always-on TV stations. Pick some shows or movies, give the station a number and a name, and it plays them around the clock like a broadcast TV station. A program guide comes with it, and you can add commercials, station IDs, a corner logo, movie nights and Saturday-morning blocks if you like.
 
 Plex sees StationPlay as an HDHomeRun network tuner, so your stations show up in Plex's **Live TV** guide on every Plex app. Jellyfin, Emby, Kodi and most IPTV apps can watch them too.
 
@@ -19,7 +19,7 @@ If you find it useful, you can [buy me a coffee](https://buymeacoffee.com/egadge
 - [What you need](#what-you-need)
 - [Install](#install): [TrueNAS SCALE](#truenas-scale) · [Docker Compose (Linux, Proxmox, Raspberry Pi)](#docker-compose-linux-proxmox-raspberry-pi) · [Synology](#synology) · [Unraid](#unraid) · [Windows and macOS](#windows-and-macos) · [docker run](#docker-run)
 - [GPU encoding](#gpu-encoding) · [Updating](#updating) · [Backups](#backups) · [How StationPlay reads your files](#how-stationplay-reads-your-files) · [Security and remote access](#security-and-remote-access)
-- [Watch your stations](#watch-your-stations): Plex, Jellyfin, Emby, Kodi and other apps · [Coming soon: StationPlay's own apps](#coming-soon-stationplays-own-apps)
+- [Watch your stations](#watch-your-stations): Plex, Jellyfin, Emby, Kodi and other apps · [StationPlay's own apps](#stationplays-own-apps)
 - [Reaching StationPlay from outside your home](#reaching-stationplay-from-outside-your-home): a VPN, a reverse proxy, or a Cloudflare Tunnel
 - [First-time setup](#first-time-setup)
 - [Making stations](#making-stations)
@@ -200,7 +200,7 @@ Keep `--restart unless-stopped`: restoring a backup restarts StationPlay, and Do
 
 ### GPU encoding
 
-A GPU makes StationPlay much lighter on your server and lets more stations play at once, at 1080p too. StationPlay supports Intel and AMD graphics through VA-API (including the Quick Sync graphics built into most Intel Core CPUs) and NVIDIA graphics through NVENC. When the GPU supports a file's format, it decodes the file too. Copies converted for StationPlay's apps (see [Coming soon: StationPlay's own apps](#coming-soon-stationplays-own-apps)) are made on the GPU as well.
+A GPU makes StationPlay much lighter on your server and lets more stations play at once, at 1080p too. StationPlay supports Intel and AMD graphics through VA-API (including the Quick Sync graphics built into most Intel Core CPUs) and NVIDIA graphics through NVENC. When the GPU supports a file's format, it decodes the file too. Copies converted for StationPlay's apps (see [StationPlay's own apps](#stationplays-own-apps)) are made on the GPU as well.
 
 At startup, StationPlay test-encodes a short clip with the exact command it uses for real programs. It uses the first GPU that passes (NVIDIA first, then each Intel/AMD device). If none passes, it encodes on the CPU. The **Video encoding** line on the **Add to Plex** tab shows which is in use, and why when it's the CPU.
 
@@ -359,11 +359,11 @@ Channels DVR, TiviMate, VLC and most IPTV apps accept the playlist address, `htt
 
 **Away from home.** These addresses only work on your home network. Plex users away from home watch through Plex as usual. Other apps must be on your network, or reach it over a VPN.
 
-### Coming soon: StationPlay's own apps
+### StationPlay's own apps
 
-StationPlay's own apps are in development. They connect directly to your StationPlay server, so you can watch your stations without Plex Pass or any other app.
+**StationPlay for Android** is out, in alpha, like StationPlay itself. The apps for iPhone, iPad and Apple TV, and for Roku, are coming. They connect directly to your StationPlay server, so you can watch your stations without Plex Pass or any other app.
 
-- **Platforms.** iPhone, iPad and Apple TV; Android phones and tablets, Google TV, Android TV and Fire TV; and Roku.
+- **Platforms.** Now: Android phones and tablets, Google TV and Android TV, in StationPlay for Android. Coming: iPhone, iPad and Apple TV; Fire TV; and Roku.
 - **A guide made for every screen.** On a TV, you browse it with your remote. On a phone, you see every station at a glance and swipe through the hours. On a tablet, the selected program and a live picture sit above the guide.
 - **Changing stations.** While a station tunes in, you see its card in the same colors as its Intro Bumper. Flip up and down through your stations, enter a station number on your remote, or jump back to the last station you watched. If every tuner is in use, the app says so and lets you join a station that's already playing.
 - **Favorites.** Mark the stations you watch most, and choose to show only those in the guide.
@@ -375,7 +375,7 @@ StationPlay's own apps are in development. They connect directly to your Station
 - **Built for stability.** An Admin sets how many devices can watch at once, including how many away from home. StationPlay tests what your server and internet connection can handle and recommends limits. When a limit is reached, the app explains why and asks the viewer to try again later.
 - **Your library on demand.** Browse your shows and movies by title, genre, what's new or what you haven't watched, jump to a letter, search them, and pick up where you left off from the Resume row. Each title's page has its cast and crew and others like it. Skip an episode's intro and credits at the press of a button, and choose subtitles and audio tracks. Each device gets the best picture and sound it supports, including Dolby Vision and Dolby Atmos, and a file is repackaged or converted only when a device can't play it as it is.
 
-The server side is ready: StationPlay 1.19.0 and later include what the apps use. They read the stations and guide through [StationPlay's API](#stationplays-api), like any other client, and sign in, test connections and browse your library through addresses of their own, documented for the apps in [docs/internal-api.md](docs/internal-api.md).
+**Which StationPlay the apps need.** StationPlay 1.22.0 at least (an older one, and the app says so: "This app needs StationPlay 1.22.0 or newer."). For everything in them, the newest: 1.28.0 for passcodes, 1.29.0 for languages and Admin alerts, 1.29.1 for converted copies on request and problems with more to go on, and 1.30.0 for reporting a problem. The apps read the stations and guide through [StationPlay's API](#stationplays-api), like any other client, and sign in, test connections and browse your library through addresses of their own, documented for the apps in [docs/internal-api.md](docs/internal-api.md).
 
 **Sharing your library with the apps.** Your library stays out of the apps until an Admin chooses which libraries to share, on the **Access** tab under **Media in StationPlay's apps**. Stations, Plex, Jellyfin and other apps don't change either way. Each person who signs in has their own Resume row, resume points and watched list (while sign-in is off, everyone shares one). Programs played this way count toward the limit on devices watching at once. A title with several versions (4K and 1080p, say) is listed once, and each device plays the best version it can. If playing can't keep up for a while, even with the buffer, the app tests the connection to find out why, then offers a smaller version from where you are (or switches to it on its own, as you choose on the Access tab). A file plays as it is whenever the device can play it. If it can't, StationPlay makes a copy as it plays, which the app can seek anywhere in: repackaged, with the picture kept as it is and only the sound converted (this costs next to nothing), or converted, with the picture made again at up to 1080p in standard color (this takes a share of the server's processor, so at most 3 are converted at once, or 6 with a GPU, which converts them as it does stations and is light on the processor). A copy also draws in subtitles the device can't show itself, and makes a smaller picture when the connection can't keep up with any version. Your library plays on your home network or through a VPN, and while **StationPlay's apps away from home** is on, through the public port too (see **Media away from home**, below). The design is in [docs/on-demand.md](docs/on-demand.md).
 
@@ -468,7 +468,7 @@ The first time an Admin opens StationPlay's page, the setup asks a few questions
 4. **Who can use StationPlay:** **Anyone on my network**, or **Only people who sign in** (you become the first Admin right away; see [Who can use StationPlay](#who-can-use-stationplay)).
 5. **Who sees what:** each person's Viewing Level (see [Viewing Levels](#viewing-levels)).
 6. **Watching away from home:** whether StationPlay's own apps can watch your stations away from home, and the address they use then (see [Reaching StationPlay from outside your home](#reaching-stationplay-from-outside-your-home)).
-7. **Media in StationPlay's apps:** which libraries the apps can browse and play on demand (see [Coming soon: StationPlay's own apps](#coming-soon-stationplays-own-apps)).
+7. **Media in StationPlay's apps:** which libraries the apps can browse and play on demand (see [StationPlay's own apps](#stationplays-own-apps)).
 8. **Checking files:** when the overnight deep scan runs.
 9. **Adding StationPlay to Plex:** the steps in Plex, the addresses to enter there, and whether Plex has StationPlay yet.
 10. **All set:** what's set now, and anything that still needs a look.
@@ -549,7 +549,7 @@ Card buttons:
 
 ### One picture format per station
 
-Each station is one continuous stream, like a TV channel. Everything on it (programs, commercials, cards) is converted as it plays to the station's format: H.264 video at the station's picture size, 29.97 frames per second, in standard color (SDR), with stereo sound. That's why a 4K movie, a 1960s DVD rip and a commercial can follow one another without a glitch, in any app.
+Each station is one continuous stream, as on broadcast TV. Everything on it (programs, commercials, cards) is converted as it plays to the station's format: H.264 video at the station's picture size, 29.97 frames per second, in standard color (SDR), with stereo sound. That's why a 4K movie, a 1960s DVD rip and a commercial can follow one another without a glitch, in any app.
 
 Choose each station's **Picture** under **How it plays**. New stations use the size set on the **Add to Plex** tab.
 
@@ -621,7 +621,7 @@ Plex has to find the markers first. In Plex, go to **Settings → Library** and 
 
 ### Sound and picture shape
 
-**Sound.** TV episodes are brought to the same loudness (−24 LUFS, the US broadcast standard), so the volume doesn't jump between episodes. Movies keep their original sound, with its full range. Episodes played from your library in StationPlay's apps get the same (see **Even sound for a show's episodes** under [Coming soon: StationPlay's own apps](#coming-soon-stationplays-own-apps)).
+**Sound.** TV episodes are brought to the same loudness (−24 LUFS, the US broadcast standard), so the volume doesn't jump between episodes. Movies keep their original sound, with its full range. Episodes played from your library in StationPlay's apps get the same (see **Even sound for a show's episodes** under [StationPlay's own apps](#stationplays-own-apps)).
 
 **4:3 shows.** Each station shows 4:3 programs with **Black bars** at the sides (the original shape), **Stretch** to fill the screen, or **Zoom** (fills the screen and trims the top and bottom). Widescreen programs are never changed. Many 4:3 shows are stored as widescreen video with black bars built into the picture; with Stretch or Zoom, StationPlay detects those bars and removes them first.
 
@@ -635,13 +635,13 @@ The guide covers the next 2 days, both in Plex and in StationPlay's own **Guide*
 
 StationPlay includes nearly 1,000 original station logos, all drawn for it:
 
-- **Networks:** made-up broadcast, cable, movie and classic over-the-air channels.
+- **Networks:** made-up broadcast, cable, movie and classic over-the-air TV networks.
 - **Classic TV, TV shows, Cartoons & anime and Teens:** made-up stations in the style of each.
 - **Genres:** three designs for each of Plex's 37 genres.
 - **Themes:** decades, holidays, seasons, times of day, moods, kids and family, and on-air signs.
 - **Letters and numbers:** A–Z and 1–50, in a modern and a retro style.
 
-None copies a real channel's or show's name, symbol or lettering.
+None copies a real TV network's or show's name, symbol or lettering.
 
 A new station numbered 1 to 50 starts with its number's logo (which follows the number if you change it). Other new stations get a logo no other station is using. In the editor, **Choose…** opens the logo picker, with a search box and categories; when the station's name or filter suggests a genre, the picker opens on **Suggested** logos. **Surprise me** picks one at random. You can also show the **Station number** instead of a logo.
 

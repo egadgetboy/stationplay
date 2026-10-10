@@ -480,8 +480,11 @@ where the viewer is, as the Admin chose (`whenSlow`, kept in `meta` as
 `app_when_slow`): at home, the app stops and its main button offers it
 ("Keep watching in 1080p from 42:10"); away from home, it switches on its
 own and says so. Each can be turned the other way on the Access tab. With
-no smaller version, the app pauses, says which it is in a sentence, and
-offers Keep watching or Stop (later, a converted copy).
+no smaller version, the smaller one is a converted copy with a picture made
+to fit the connection (`fit` with `maxKbps`, from 1.24.0: see Copies),
+offered or switched to the same way. Only with no copy to be had (an app
+that doesn't take copies, or a file that can't be converted) does the app
+pause, say which it is in a sentence, and offer Keep watching or Stop.
 
 ## Versions
 
