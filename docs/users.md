@@ -1,22 +1,23 @@
-# Who sees what: users, Viewing Levels and devices (design)
+# Who sees what: people, Viewing Levels and devices (design)
 
-StationPlay already has users: an Admin adds them on the Access tab, each
-signs in with a name and password, and the apps link with a code. This adds
-what each user may **see**, and a way for a household to share one TV or
-tablet: a **Who's tuning in?** picker, with optional passcodes. All of it is
-decided on the server. The apps show only what the server sends.
+This design covers what each person may **see**, and how a household shares
+one TV or tablet. An Admin already adds people on the **Access** tab. Each
+person signs in with a name and password, and the apps link with a code.
+This design adds limits on what each person sees, and a **Who's tuning
+in?** screen with optional passcodes. The server decides everything. The
+apps show only what the server sends.
 
 ## Goals
 
-1. **Off until it's used.** A StationPlay with one user, or none, works
-   exactly as it does today. Viewing Levels, passcodes and the picker
-   appear only once there's a second user.
-2. **Nothing leaks.** What a user can't see isn't in any list, search, guide,
-   Resume row or "on now" for them: no title, no picture, no placeholder. A
-   key or address for it is refused with the same answer as one that
-   doesn't exist.
-3. **Stations are all or nothing.** A station is one stream that everyone
-   watching it shares, so it can't change for each person. A user sees a
+1. **Off until it's used.** A StationPlay with one person, or none, works
+   exactly as it always has. Viewing Levels, passcodes and Who's tuning in?
+   appear only once there's a second person.
+2. **Nothing leaks.** Anything a person can't see is missing from every
+   list, search, guide, Resume row and "on now" for them. There's no title,
+   no picture and no placeholder. A request for its key or address gets the
+   same answer as one that doesn't exist.
+3. **Stations are all or nothing.** Everyone watching a station shares one
+   stream, so a station can't change for each person. A person sees a
    station only if everything on it is within their limits, or an Admin
    allowed that station for them.
 4. **Plain rules, in order.** The first rule that applies decides, so an
@@ -26,40 +27,45 @@ decided on the server. The apps show only what the server sends.
 
 ## Phases
 
-- **Phase 1:** Viewing Levels (rating and libraries), per-user station
-  allow and block, enforced everywhere; linked devices, the picker,
-  passcodes, invite codes and "Show on"; Users can be watch-only.
-- **Phase 2:** genre, tag, title and collection rules; rating overrides;
-  per-user title exceptions; Station Audience warnings; Preview as user;
-  Why is this hidden.
-- **Phase 3:** the Manager role, Lock to user, one person linked to users
-  on several servers, and several tuner lineups for Plex.
+- **Phase 1.** Viewing Levels (rating and libraries), and stations allowed
+  or blocked for each person, enforced everywhere. Linked devices, Who's
+  tuning in?, passcodes, invite codes and "Show on." Users can be
+  watch-only.
+- **Phase 2.** Genre, tag, title and collection rules; rating overrides;
+  title exceptions for each person; Station Audience warnings; Preview as
+  user; Why is this hidden.
+- **Phase 3.** The Manager role, Lock to user, one person linked to
+  accounts on several servers, and several tuner lineups for Plex.
 
 ## Roles
 
-Admin and User stay as they are. A User can make stations up to the limit
-an Admin sets, and **None** is added to that limit: a User with None only
-watches. (Manager comes in Phase 3.)
+The Admin and User roles don't change. A User can make stations up to the
+limit an Admin sets, and this design adds **None** to that limit: a User
+with None only watches. (Manager comes in Phase 3.)
 
 ## Names
 
-From 1.27.0, an Admin can rename anyone on the Access tab, themselves and
-other Admins too, with the rules a new name has (up to 40 letters, numbers,
-spaces and `. _ - @`, and no one else's, whatever its case). Signing in
-takes the new name from then on. Everything of a person's is kept by their
-id, never their name, so it stays theirs: their sign-ins (the page's and
-the apps'), linked devices (who linked one is kept by id too, so an Admin
-given a removed person's name never has their device for their own),
-stations, Viewing Level, progress and stats (the stats and the Access tab
-show the new name, even for viewing counted after, from a play that began
-before). The access log says "<Admin> renamed <old> to <new>". The apps
-show the new name the next time they ask: Who's tuning in? lists it, and
-`GET /api/internal/me` says who an app is signed in as, for its Options.
+From 1.27.0, an Admin can rename anyone on the **Access** tab, including
+themselves and other Admins. A new name follows the usual rules: up to 40
+letters, numbers, spaces and `. _ - @`, and not someone else's name in any
+case. From then on, the person signs in with the new name.
+
+StationPlay keeps everything of a person's by their ID, never their name, so
+it all stays theirs after a rename: their sign-ins (on StationPlay's page
+and in the apps), linked devices, stations, Viewing Level, progress and
+stats. Who linked a device is kept by ID too, so an Admin given a removed
+person's name never gets that person's devices. The stats and the **Access**
+tab show the new name, even for viewing counted after the rename from a play
+that began before it.
+
+The access log shows "<Admin> renamed <old> to <new>." The apps show the new
+name the next time they ask. Who's tuning in? lists it, and
+`GET /api/internal/me` reports who an app is signed in as, for its Options.
 
 ## Viewing Levels
 
-A Viewing Level says what its users can see. Every user has one; Admins
-see everything whatever their level says.
+A Viewing Level sets what its people can see. Everyone has one. Admins see
+everything, whatever their level.
 
 | Level | Movies up to | TV up to | Unrated |
 |---|---|---|---|
@@ -68,20 +74,22 @@ see everything whatever their level says.
 | Kid | PG | TV-PG | Hidden |
 | Young Child | G | TV-G | Hidden |
 
-**Unrestricted** is always there and stays as it is. Teen, Kid and Young
-Child are made once, the first time, to start from: an Admin can rename
-them, change them (a change applies to everyone on that level at once) or
-remove them, as they can the levels they add, as many as they need, such
-as "Adults" (no R-rated movies, no unrated titles) or "Grandparents". A level also says which **libraries** its users can see:
-all of them, or the ones chosen. That's how a show that's in both "TV
-Parents" and "TV Teens" is seen only through the library a user may see.
+**Unrestricted** always exists and never changes. StationPlay creates Teen,
+Kid and Young Child once, as a starting point. An Admin can rename, change
+or remove them, like any level they add. A change applies at once to
+everyone on that level. An Admin can add as many levels as they need, such
+as "Adults" (no R-rated movies, no unrated titles) or "Grandparents."
 
-New users start on Unrestricted, so adding a user changes nothing until an
+A level also sets which **libraries** its people can see: all of them, or
+the ones chosen. So a show that's in both "TV Parents" and "TV Teens" is
+seen only through a library the person may see.
+
+New people start on Unrestricted, so adding someone changes nothing until an
 Admin chooses a level.
 
 ### Ratings as ages
 
-Every rating is read as the youngest age it suits:
+StationPlay reads every rating as the youngest age it suits:
 
 | Age | Ratings |
 |---|---|
@@ -93,263 +101,307 @@ Every rating is read as the youngest age it suits:
 | 17 | R, TV-MA |
 | 18 | NC-17 |
 
-Other countries' ratings (Plex writes them as `gb/15`, `de/12`, `au/MA15+`
-and so on) are read the same way, by the age they name. Anything else
-(`NR`, `Not Rated`, blank, an unknown code) is **unrated**. A level's limits
-are kept as ages; the page shows them as the US rating with that age.
+Other countries' ratings are read the same way, by the age they name. Plex
+writes them as `gb/15`, `de/12`, `au/MA15+` and so on. Anything else (`NR`,
+`Not Rated`, blank or an unknown code) is **unrated**. A level stores its
+limits as ages, and StationPlay's page shows each one as the US rating for
+that age.
 
-An episode is judged by its show's rating, or its own if that's stricter.
-Rating overrides (Phase 2) are StationPlay's own and never change Plex.
+An episode uses its show's rating, or its own if that's stricter. Rating
+overrides (Phase 2) belong to StationPlay and never change Plex.
 
 ## The rules, in order
 
-For a user and a show, movie or episode (Phase 1 has 1, 4, 5 and 7):
+For a person and a show, movie or episode, the first rule that applies
+decides. Phase 1 has rules 1, 4, 5 and 7.
 
 1. An Admin sees everything.
-2. A title blocked for this user is hidden. *(Phase 2)*
-3. A title allowed for this user is shown, whatever its rating, genre or
-   tags, but not if its library is hidden. *(Phase 2)*
+2. A title blocked for this person is hidden. *(Phase 2)*
+3. A title allowed for this person is shown, whatever its rating, genre or
+   tags, unless its library is hidden. *(Phase 2)*
 4. A title in a library their level doesn't include is hidden.
-5. A title rated above their level's age is hidden; an unrated one follows
-   the level.
+5. A title rated above their level's age is hidden. An unrated title follows
+   the level's setting.
 6. A blocked genre, tag or collection hides a title. *(Phase 2)*
 7. Anything else is shown.
 
-For a station: a station **allowed** for the user is shown; one **blocked**
-for them is hidden; otherwise it's shown only if every program it plays
-passes the rules above. "Every program" is what its current lineup holds,
-its specials' programs included. Station numbers don't change when some are
-hidden.
+For a station, a station **allowed** for the person is shown, and one
+**blocked** for them is hidden. Otherwise, it's shown only if every program
+it plays passes the rules above. "Every program" means everything in its
+current lineup, including its specials' programs. Station numbers don't
+change when some stations are hidden.
 
 ## What StationPlay keeps
 
-- **`titles`**: for each show and movie on a station: its key, kind,
-  rating as Plex has it, that rating's age (or none), and its library.
-  Filled in as a station's lineup is made (Plex sends these with the
-  items), and once at start-up for lineups made before this existed. An
-  episode's own rating is kept in its lineup row when Plex gives one.
-- **Each station's reach**: the oldest age and the libraries its programs
-  need, and whether any is unrated. Worked out when its lineup changes,
-  so deciding whether a user sees a station is a few comparisons.
-- **`levels`**: name, movie age, TV age, unrated shown or not, libraries
-  (all, or a list).
-- **`users`** gains: level, passcode (`pin`: a hash, or none), whether they
-  chose to have no passcode, Show on (see below), and whether they may
-  change their own password. A User may have no password: they use only the
-  pickers.
-- **`user_stations`**: a station allowed or blocked for a user.
-- **`linked_devices`**, **`device_people`** and **`invites`**: the linked
-  devices (by a hash of each one's key, with who linked each, by id and by
-  name), who's on each picker other than as Show on says (signed in there,
-  chosen by an Admin, or taken off), and each person's invite code (a
-  hash), while it lasts.
+- **`titles`.** A row for each show and movie on a station: its key, kind,
+  rating as Plex has it, that rating's age (or none) and its library.
+  StationPlay fills it in as it makes a station's lineup, since Plex sends
+  these with the items. It also fills it once at startup for lineups made
+  before this existed. An episode's own rating is kept in its lineup row
+  when Plex gives one.
+- **Each station's reach.** The oldest age and the libraries its programs
+  need, and whether any program is unrated. StationPlay works this out when
+  the lineup changes, so deciding whether someone sees a station takes only
+  a few comparisons.
+- **`levels`.** Name, movie age, TV age, whether unrated titles are shown,
+  and libraries (all, or a list).
+- **`users`.** Gains each person's level, passcode (`pin`: a hash, or
+  none), whether they chose to have no passcode, Show on (see below) and
+  whether they may change their own password. A User may have no password.
+  They use only Who's tuning in?
+- **`user_stations`.** A station allowed or blocked for a person.
+- **`linked_devices`, `device_people` and `invites`.** The linked devices,
+  each by a hash of its key, with who linked it (by ID and by name). Who's
+  on each device's Who's tuning in? apart from their Show on setting
+  (signed in there, chosen by an Admin, or taken off). Each person's invite
+  code (a hash), while it lasts.
 
-The library in the apps (browsing, search, details, pictures, playing)
-already asks Plex about each title, which sends its rating and library, so
-it's judged from what Plex sent, with no copy kept.
+Media in the apps (browsing, search, details, pictures and playing) already
+asks Plex about each title. Plex sends its rating and library, so
+StationPlay judges the title from that and keeps no copy.
 
-## Devices and the picker
+## Devices and Who's tuning in?
 
-A **device** is one install of a StationPlay app (a TV, a phone, a tablet),
-linked to the server once, with a code entered on StationPlay's page or by
-signing in. It gets a long-lived **device token**, which an Admin can see
-and revoke on the Access tab (revoked: it's signed out on its next request).
-The person using it at the moment gets a short-lived **session** for one
-user, made by picking that user.
+A **device** is one install of a StationPlay app, on a TV, phone or tablet.
+It's linked to the server once, by signing in or with a code entered on
+StationPlay's page. It gets a long-lived **device token**, which an Admin
+can see and revoke on the **Access** tab. A revoked device is signed out on
+its next request. Whoever is using the device gets a short-lived
+**session** for one person, made by picking that person.
 
-**Who's tuning in?** shows on a device's start when more than one user can
-use it. Who's on it is each user's **Show on**, and where the device is:
-**at home** (its picker is asked on the home port, which a VPN reaches too)
-or **away from home** (the public port):
+**Who's tuning in?** shows when the app starts, if more than one person can
+use the device. Who appears on it depends on each person's **Show on**
+setting and on where the device is. A device is **at home** when it asks
+for the list on the home port, which a VPN reaches too. It's **away from
+home** on the public port.
 
-- **Only devices they sign in on:** on no picker until that person signs
-  in on a device; then on that device's picker, at home and away. Unless
-  Bo has signed in on Ada's TV, he isn't on its picker, and she isn't on
-  his phone's.
-- **Every device at home:** on every linked device's picker while it's at
-  home. Away from home, only on a device they signed in on themselves, or
-  one an Admin chose for them. Suits a household.
-- **Every device, at home and away:** on every linked device's picker, at
-  home and away: a device away from home (a phone at a friend's) shows
-  their name too.
-- **Only devices you choose:** only on the devices an Admin picks, at home
-  and away, such as the Kids' Tablet, or a family iPad that travels.
+- **Only devices they sign in on.** The person appears on no device until
+  they sign in on one. Then they appear on that device, at home and away.
+  Unless Bo has signed in on Ada's TV, he isn't on its list, and she isn't
+  on his phone's.
+- **Every device at home.** The person appears on every linked device while
+  it's at home. Away from home, they appear only on a device they signed in
+  on themselves, or one an Admin chose for them. This suits a household.
+- **Every device, at home and away.** The person appears on every linked
+  device, wherever it is. A device away from home, such as a phone at a
+  friend's house, shows their name too.
+- **Only devices you choose.** The person appears only on the devices an
+  Admin picks, at home and away, such as the Kids' Tablet or a family iPad
+  that travels.
 
-New users start where **New people show on**, beside the linked devices,
-says when they're added: Only devices they sign in on, or Every device at
-home. From 1.30.1, it's Only devices they sign in on, unless an Admin
-chose otherwise before, which stays as they chose it. Someone who can't
-sign in by name (no password and no passcode) starts on Every device at
-home instead, rather than on no device at all. Changing it doesn't move
-anyone already added. **Use for everyone**, beside it, does: after a
-confirm that says how many it changes, everyone already added shows that
-way too (and anyone added later). For Only devices they sign in on,
-someone who can't sign in by name is kept as they were, and the page names
-them ("Kept as they were: Kids (no password or passcode)"); and as picking
-yourself from a picker isn't signing in on its device, the others are on a
-device they used that way again once they sign in on it (the confirm says
-so). The devices an Admin chose for someone stay chosen. The access log
-says "<Admin> set everyone to show on <choice>: <n> people changed", and
-who was kept.
+### New people show on
 
-In 1.28.0, everyone on All devices (the household's default until then,
-which everyone added before there were pickers was on too) moved to Devices
-at home, once, and so did the server's default; the access log says how
-many people moved. 1.30.1 renamed the four, in fewer words: Devices at home
-is Every device at home, All devices is Every device, at home and away,
-Selected devices is Only devices you choose, and Only where signed in is
-Only devices they sign in on. (What the API sends, `home`, `all`,
-`selected` and `signed-in`, is as it was.)
+New people start with the **New people show on** setting, next to the linked
+devices: Only devices they sign in on, or Every device at home. From 1.30.1,
+it's Only devices they sign in on, unless an Admin chose otherwise before;
+that choice stays. Someone who can't sign in by name (no password and no
+passcode) starts on Every device at home instead, rather than on no device
+at all.
 
-The picker always has **Sign in**: the person enters their name and, the
-first time on that device, their invite code or password; after that they
-switch with their passcode. Each person can **Remove me from this device**.
+Changing the setting doesn't move anyone already added. **Use for
+everyone**, next to it, does:
 
-Safety rules:
+- **A confirm first.** It shows how many people the change affects. Then
+  everyone already added shows that way too, as does anyone added later.
+- **Some people are kept.** For Only devices they sign in on, anyone who
+  can't sign in by name keeps their setting. The page names them: "Kept as
+  they were: Kids (no password or passcode)."
+- **Picking isn't signing in.** Picking yourself on Who's tuning in? doesn't
+  count as signing in on that device. So people appear again on a device
+  they used that way once they sign in on it. The confirm says so.
+- **Chosen devices stay.** The devices an Admin chose for someone stay
+  chosen.
+- **It's logged.** The access log shows "<Admin> set everyone to show on
+  <choice>: <n> people changed," and who was kept.
 
-- A user with neither a password nor a passcode (a "Kids" user, say) can be
-  **Every device at home** or **Only devices you choose** only, never
-  signed in by name, so no one can get in from anywhere by guessing a name
-  like "Kids", and no device away from home lists them unless an Admin
-  chose it. (A user with a password signs in with it, on the page or in an
-  app, as today.)
-- The first sign-in on a device takes an invite code or a password, never
-  just a passcode. An **invite code** is made by an Admin for one user,
-  works once, and expires after 7 days.
-- An Admin always needs their passcode (or password) on a picker.
-- Passcodes are 4 digits, kept as hashes. 5 wrong passcodes for a user
-  means a 15-minute wait for that user, on every device.
-- The picker exists only on a device already linked. A stranger who
-  installs an app never sees a name.
-- Away from home, picking someone a device doesn't list there is refused,
-  as for someone not on it at all.
+### Earlier names
+
+In 1.28.0, everyone on All devices moved once to Devices at home, and so did
+the server's default. All devices had been the household's default until
+then, and everyone added before Who's tuning in? existed was on it. The
+access log shows how many people moved.
+
+1.30.1 renamed the four choices. The values the API sends didn't change.
+
+| Before 1.30.1 | From 1.30.1 | API value |
+|---|---|---|
+| Devices at home | Every device at home | `home` |
+| All devices | Every device, at home and away | `all` |
+| Selected devices | Only devices you choose | `selected` |
+| Only where signed in | Only devices they sign in on | `signed-in` |
+
+### Signing in and the safety rules
+
+Who's tuning in? always has **Sign in**. The person enters their name and,
+the first time on that device, their invite code or password. After that,
+they switch with their passcode. Each person can choose **Remove me from
+this device**.
+
+- **A name alone never works.** Someone with neither a password nor a
+  passcode, such as a "Kids" account, can only be on Every device at home or
+  Only devices you choose. They never sign in by name, so no one can get in
+  from anywhere by guessing a name like "Kids." No device away from home
+  lists them unless an Admin chose it.
+- **A password still works.** Someone with a password signs in with it, on
+  StationPlay's page or in an app, as before.
+- **The first sign-in needs more.** The first sign-in on a device takes an
+  invite code or a password, never just a passcode. An Admin makes an
+  **invite code** for one person. It works once and expires after 7 days.
+- **Admins always unlock.** An Admin always needs their passcode (or
+  password) on Who's tuning in?
+- **Passcodes.** A passcode is 4 digits, stored as a hash. After 5 wrong
+  passcodes, that person waits 15 minutes, on every device.
+- **Linked devices only.** Who's tuning in? exists only on a device that's
+  already linked. A stranger who installs an app never sees a name.
+- **Away from home.** Picking someone the device doesn't list there is
+  refused, the same as picking someone who isn't on it at all.
 
 ### A passcode after the first sign-in
 
 From 1.28.0, once someone has signed in with their password or an invite
 code, later sign-ins are open, or locked with a 4-digit passcode if they
-choose. The first time they sign in on a device that
-way (in an app, by name, or with a code entered on StationPlay's page),
-the app asks them to choose a passcode, or No passcode, unless they have one
-or already said they want none. Either answer holds on every device, and
-they can change it in the app's Options. A household's adults, teens, kids
-and little kids can each have one or not.
+choose. The first time they sign in on a device that way (by name in an
+app, or with a code entered on StationPlay's page), the app asks them to
+choose a passcode or No passcode. It doesn't ask if they already have one,
+or already chose none. Either answer applies on every device, and
+they can change it in the app's Options. Everyone in a household, from
+adults and teens to kids and little kids, can choose either way.
 
-- A sign-in made with their password, an invite code or their passcode
-  says it's them, so choosing a new passcode needs nothing more. One made
-  by picking them without a passcode doesn't, as anyone at that device
-  could have: it can't set one for them, and lock them out (1.28.1). They
-  sign in with their password or an invite code to set one.
-- An Admin who has one keeps it: an Admin needs a passcode, or their
-  password on a device others use too. (An Admin with none who chooses No
-  passcode gives their password there, as before.)
-- Someone without a password keeps theirs: it's how they sign in.
-- Someone with neither (a "Kids" user) is never asked: they never sign in
-  by name, and only an Admin gives them a passcode.
-- Wrong passcodes still count after a new one is chosen. An Admin still
-  sets or removes anyone's passcode on the Access tab.
-- The access log says "<name> set a passcode" or "<name> chose no
-  passcode", and in which app.
+- **Proof it's them.** A sign-in made with their password, an invite code
+  or their passcode proves it's them, so choosing a new passcode needs
+  nothing more. Picking them without a passcode doesn't, since anyone at
+  that device could have.
+- **No lockouts by others.** From 1.28.1, a sign-in made by picking them
+  without a passcode can't set one for them and lock them out. They sign in
+  with their password or an invite code to set one.
+- **Admins keep theirs.** An Admin who has a passcode keeps it, because an
+  Admin needs a passcode, or their password on a device others use too. An
+  Admin with none who chooses No passcode gives their password there, as
+  before.
+- **Passcode-only people keep it.** Someone without a password keeps their
+  passcode, because it's how they sign in.
+- **Never asked.** Someone with neither, such as "Kids," is never asked.
+  They never sign in by name, and only an Admin gives them a passcode.
+- **Wrong tries still count.** Wrong passcodes still count after a new one
+  is chosen.
+- **Admins can still change it.** An Admin can still set or remove anyone's
+  passcode on the **Access** tab.
+- **It's logged.** The access log shows "<name> set a passcode" or "<name>
+  chose no passcode," and in which app.
 
 ### Changing your password in the apps
 
-From 1.28.0, people change their own password in the apps' Options, as on
-StationPlay's page (their name at the top), with their current one: the
-same length, the same limits on wrong ones (5 from one address in 15
-minutes, then a wait), and every other sign-in of theirs ends, as on the
-page, while the app they changed it in stays signed in. The access log says
-"<name> changed their password in <the app, on the device>".
+From 1.28.0, people can change their own password in the apps' Options, as
+on StationPlay's page (under their name at the top). They need their
+current password. The rules match the page: the same length, and the same
+limit on wrong passwords (5 from one address in 15 minutes, then a wait).
+Every other sign-in of theirs ends, as on the page, but the app they changed
+it in stays signed in. The access log shows "<name> changed their password
+in <the app, on the device>."
 
-- **Can change their own password** is an Admin's choice for each person
-  on the Access tab, beside their New password: on to start with, for
-  everyone already added too. When it's off, both the page's change and
-  the apps' are refused with a plain sentence, and `GET /api/internal/me`
-  says so (`canChangePassword: false`). An Admin can always change their
-  own.
-- Someone without a password (a passcode-only person, or "Kids") can't set
-  one this way: an Admin gives them one, or an invite code.
+- **Can change their own password.** An Admin sets this for each person on
+  the **Access** tab, next to their New password. It's on by default,
+  including for everyone already added.
+- **When it's off.** StationPlay's page and the apps both refuse the change
+  with a plain sentence, and `GET /api/internal/me` reports it
+  (`canChangePassword: false`). An Admin can always change their own.
+- **No password yet.** Someone without a password, such as a passcode-only
+  person or "Kids," can't set one this way. An Admin gives them a password
+  or an invite code.
 
 ### Reporting problems from the apps
 
-From 1.30.0, people report a problem with what they watch from the apps,
-picked from a list (see "Reporting a problem" in `docs/internal-api.md`):
-each report goes to the Broken files tab, for an Admin, saying who sent it
-and from which device, as their sign-in says.
+From 1.30.0, people can report a problem with what they're watching from
+the apps. They pick it from a list (see "Reporting a problem" in
+`docs/internal-api.md`). Each report goes to the **Broken files** tab for an
+Admin, showing who sent it and from which device, as their sign-in records.
 
-- **Can report problems** is an Admin's choice for each person, on the
-  Access tab beside Can change their own password (and on the Broken files
-  tab, beside Sonarr's and Radarr's settings): on to start with, for
-  everyone already added too. When it's off, a report is refused with a
-  plain sentence ("An Admin has turned off reporting problems for you."),
-  and `GET /api/internal/me` says so (`canReport: false`), so the app
-  doesn't offer it. An Admin can always report.
-- Only what someone may see can be reported: an episode or a movie their
-  Viewing Level hides, or a station it hides (or an Admin blocked for
-  them), is answered as though it weren't there (404).
-- One report a day about each program, and ten a day in all, for each
-  person; while signing in is off, for each address.
+- **Can report problems.** An Admin sets this for each person on the
+  **Access** tab, next to Can change their own password. It's also on the
+  **Broken files** tab, next to the Sonarr and Radarr settings. It's on by
+  default, including for everyone already added.
+- **When it's off.** A report is refused with a plain sentence: "An Admin
+  has turned off reporting problems for you." `GET /api/internal/me`
+  reports it (`canReport: false`), so the app doesn't offer it. An Admin can
+  always report.
+- **Only what they can see.** An episode or movie their Viewing Level hides,
+  or a station it hides or an Admin blocked for them, gets the answer for
+  something that isn't there (404).
+- **Limits.** Each person can send one report a day about each program, and
+  10 a day in all. While signing in is off, the limits apply to each
+  address.
 
 ## The addresses
 
-The apps' own (`docs/internal-api.md`): `"picker": true` on signing in or
-asking for a code links the device and returns its `deviceKey`;
-`GET /api/internal/picker`, `POST /api/internal/picker/choose`,
-`POST /api/internal/picker/sign-in` and `POST /api/internal/picker/remove`
-are asked with the key, in the `StationPlay-Device` header. Signing in
-answers `askPin`, `POST /api/internal/pin` sets someone's own passcode,
-`POST /api/internal/password` changes their own password (1.28.0), and
-`POST /api/internal/report-problem` sends a report (1.30.0). The
-Access tab's: `/api/access/viewing`, `/api/access/levels`,
-`/api/access/users/{id}/viewing` and `/stations`, `/api/access/devices`
-(with `PUT /api/access/devices/default` for New people show on, and
-`POST /api/access/devices/everyone`), `/api/access/users/{id}/picker` and
-`/invite`. Like everything on the Access tab, they're for Admins only, and
-a change sent from another site's page is refused.
+The apps' own addresses (`docs/internal-api.md`):
+
+- **Linking.** `"picker": true` on signing in, or on asking for a code,
+  links the device and returns its `deviceKey`.
+- **Who's tuning in?** `GET /api/internal/picker`,
+  `POST /api/internal/picker/choose`, `POST /api/internal/picker/sign-in`
+  and `POST /api/internal/picker/remove` are sent with that key, in the
+  `StationPlay-Device` header.
+- **Passcodes.** Signing in answers `askPin`, and `POST /api/internal/pin`
+  sets a person's own passcode.
+- **Passwords.** `POST /api/internal/password` changes a person's own
+  password (1.28.0).
+- **Reports.** `POST /api/internal/report-problem` sends a report (1.30.0).
+
+The **Access** tab's addresses are `/api/access/viewing`,
+`/api/access/levels`, `/api/access/users/{id}/viewing` and `/stations`,
+`/api/access/devices` (with `PUT /api/access/devices/default` for New
+people show on, and `POST /api/access/devices/everyone`),
+`/api/access/users/{id}/picker` and `/invite`. Like everything on the
+**Access** tab, they're for Admins only, and StationPlay refuses a change
+sent from another site's page.
 
 `POST /api/access/devices/everyone` (1.30.1) is Use for everyone. It takes
 `{"showOn": "signed-in"}` (Only devices they sign in on) or
-`{"showOn": "home"}` (Every device at home), and anything else is refused
-(400) with nothing changed. It sets New people show on to that, and
-everyone already added, but for who can't sign in by name, for
-`signed-in`; then answers what it did, and says so in the access log:
+`{"showOn": "home"}` (Every device at home). Anything else is refused (400),
+and nothing changes. It sets New people show on to that value, and sets
+everyone already added to it too, except, for `signed-in`, people who can't
+sign in by name. Then it answers with what it did, and records it in the
+access log:
 
 | Field | Type | What it is |
 |---|---|---|
 | `default` | string | New people show on, now |
 | `changed` | number | How many people it changed |
-| `kept` | list | The names of who it kept as they were (no password or passcode) |
+| `kept` | list | The names of the people it left unchanged (no password or passcode) |
 
 ## Streams
 
 The apps play stations from addresses that carry a key made for that
-session, checked on every request, and ended when the session ends. A key
-works only for the stations its user can see. Programs from the library
-already play from addresses made per play, checked the same way.
+session. StationPlay checks the key on every request, and ends it when the
+session ends. A key works only for the stations its person can see.
+Programs from Media already play from addresses made for each play, checked
+the same way.
 
-What Plex, Jellyfin and IPTV apps use (the tuner, its guide, its streams)
-carries no user, so limits can't apply there. The Access tab says so
-plainly. (Phase 3 may offer several tuner lineups, each with its own
+The tuner, its guide and its streams, which Plex, Jellyfin and IPTV apps
+use, carry no person, so limits can't apply there. The **Access** tab
+explains this. (Phase 3 may offer several tuner lineups, each with its own
 stations.)
 
 ## The apps
 
-- The picker on start, a passcode pad, Sign in, and Remove me from this
-  device.
-- Whatever the server sends is what's shown; nothing is filtered on the
-  device.
-- The free app's one station stays the **server's first station**, never
-  the first one a user can see; if the user can't see it, the app says so
-  and offers the unlock.
+- **What they show.** Who's tuning in? on start, a passcode pad, Sign in,
+  and Remove me from this device.
+- **No filtering on the device.** The apps show exactly what the server
+  sends.
+- **The free app's station.** The free app's one station stays the
+  **server's first station**, never the first one a person can see. If the
+  person can't see it, the app says so and offers the unlock.
 
 ## Tests that must pass
 
-- A Kid never sees a TV-MA title in any list, search, guide, Resume row or
-  "on now", and its key and stream address are refused.
-- A station with one program above a user's level is hidden from them,
+- Someone on the Kid level never sees a TV-MA title in any list, search,
+  guide, Resume row or "on now," and its key and stream address are
+  refused.
+- A station with one program above a person's level is hidden from them,
   unless an Admin allows that station for them.
 - A User can't make an Admin, or change their own level.
-- A first Admin can't be added from the internet (as today).
+- A first Admin can't be added from the internet (as before).
 - A revoked device is signed out on its next request.
-- A user with neither a password nor a passcode can't sign in by name.
-- Five wrong passcodes lock that user for 15 minutes, on every device.
-- A StationPlay with one user, or none, answers exactly as before.
+- Someone with neither a password nor a passcode can't sign in by name.
+- Five wrong passcodes lock that person out for 15 minutes, on every device.
+- A StationPlay with one person, or none, answers exactly as before.
