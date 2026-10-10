@@ -3,7 +3,8 @@
 one on its data folder, then back again, and a fresh install.
 
 1. The release before (by its git tag: the newest release tag older than
-   this checkout's version, unless --from says) is unpacked into a
+   this checkout's version, unless --from says: a tag, or a release's
+   commit, its version as its app/__init__.py has it) is unpacked into a
    temporary folder with git archive, so the repository is left as it is.
 2. It's started on a new data folder, against the tests' stand-in Plex
    served on a port of its own, and given data through its API: an Admin
@@ -14,11 +15,15 @@ one on its data folder, then back again, and a fresh install.
    which must find everything there: everyone still signed in (the page and
    the app), the User's passcode and level, the linked device, the settings
    and the station; and the database backed up first, as before-<this
-   version>-<date>.db, as the Logs tab says.
+   version>-<date>.db, as the Logs tab says. What's new works with them: a
+   problem with its journal, and (from 1.30.0) a person's report on the
+   Broken files tab, with everyone able to report to start with.
 4. It's stopped, and rolled back as the README's Rolling back says (the
    copy put back as stationplay.db, its -wal and -shm removed); the release
    before is started again, and must work with its data, signed in as
-   before.
+   before, and with the broken-files list as this one left it: a program's
+   entry as before, and an entry for another of its versions (which a
+   release before 1.30.0 doesn't know) left alone.
 5. A fresh install of this checkout: it starts, takes its first Admin, and
    makes no copy.
 
@@ -41,6 +46,7 @@ import argparse
 import asyncio
 import contextlib
 import io
+import logging
 import os
 import re
 import shutil
@@ -52,6 +58,7 @@ import tarfile
 import tempfile
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -61,6 +68,8 @@ import httpx  # noqa: E402
 import uvicorn  # noqa: E402
 
 from app import __version__  # noqa: E402
+from app.broken import DEEP_SCAN, BrokenFiles  # noqa: E402
+from app.db import Item  # noqa: E402
 from tests.fakeplex import FakePlex  # noqa: E402
 
 ADMIN = {"name": "Ada", "password": "correct horse battery"}
@@ -102,6 +111,18 @@ def free_port() -> int:
 
 def version_of(tag: str) -> tuple[int, ...]:
     return tuple(int(n) for n in re.findall(r"\d+", tag)[:3])
+
+
+def version_at(ref: str) -> str:
+    """The version a release (by its tag or commit) says it is."""
+    source = subprocess.run(
+        ["git", "show", f"{ref}:app/__init__.py"], cwd=ROOT, capture_output=True, text=True,
+        check=True,
+    ).stdout  # fmt: skip
+    found = re.search(r'__version__ = "([^"]+)"', source)
+    if found is None:
+        raise SystemExit(f"{ref} doesn't say its version")
+    return found.group(1)
 
 
 def release_before(version: str) -> str:
@@ -329,7 +350,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         old_code = work / "release"
         unpack(before_tag, old_code)
         data = work / "data"
-        before = before_tag.lstrip("v")
+        before = version_at(before_tag)
         print(f"From {before_tag} to this checkout ({__version__}), in {work}")
 
         checks.section(f"{before}: a new install, given some data")
@@ -356,7 +377,31 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                   sent.text[:200])  # fmt: skip
         problems = page.get("/api/problems").json()["problems"]
         checks.ok(any(p.get("journal") for p in problems), "its journal is kept", problems)
+        # (Signed in again: choosing someone on the device signed the app out.)
+        app = httpx.post(f"{sp.url}/api/internal/sign-in", json={**ADMIN, **APP}, timeout=30)
+        bearer = {"Authorization": f"Bearer {app.json().get('token')}"}
+        reported = httpx.post(f"{sp.url}/api/internal/report-problem", headers=bearer, timeout=30,
+                              json={"choice": "wrong-language", "station": STATION["number"]})  # fmt: skip
+        checks.ok(reported.status_code == 200, "what's new works (a person's report, from a "
+                  "station)", reported.text[:200])  # fmt: skip
+        rows = page.get("/api/reports").json()["reports"]
+        who = [(x["who"], x["label"]) for row in rows for x in row["reports"]]
+        checks.ok(who == [(ADMIN["name"], "Wrong language")], "it's on the Broken files tab", rows)
+        users = page.get("/api/access/users").json()
+        checks.ok(all(u["canReport"] for u in users), "everyone can report problems, to start "
+                  "with", [(u["name"], u.get("canReport")) for u in users])  # fmt: skip
         stopped(checks, sp, __version__)
+        # The broken-files list, as this version keeps it: the station's
+        # program, and another version of it (Media's alone).
+        logging.disable(logging.WARNING)  # (what record() says, as it would in StationPlay's log)
+        listed = BrokenFiles(data / "broken-files.json")
+        first = Item(0, 0, 22 * 60_000, "201", "episode", "Part 1", show_title="Upgrade Show",
+                     show_key="100", season=1, episode=1, file_path="/tv/u1.mkv")  # fmt: skip
+        listed.record(first, "Deep scan: the picture breaks up around 3:00", STATION["number"],
+                      problem="damaged", found=DEEP_SCAN)  # fmt: skip
+        listed.record(replace(first, file_path="/tv/u1-4k.mkv"), "Check: no sound anywhere in it",
+                      None, problem="damaged", version="2011", library="1")  # fmt: skip
+        logging.disable(logging.NOTSET)
 
         checks.section(f"Rolled back to {before}, as the README says")
         if copies:
@@ -371,6 +416,13 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         said = [p["details"] for p in page.get("/api/problems").json()["problems"]]
         checks.ok(
             said == [["before the update"]], "the database is as it was before the update", said
+        )
+        entries = page.get("/api/broken").json()
+        checks.ok(
+            [(e["ratingKey"], e.get("version"), e["reason"]) for e in entries]
+            == [("201", None, "Deep scan: the picture breaks up around 3:00")],
+            "the broken-files list: the program's entry as before, another version's left alone",
+            entries,
         )
         stopped(checks, sp, before)
 
@@ -388,6 +440,8 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         checks.ok(page.post("/api/access/sign-in", json=ADMIN).status_code == 200, "and signs in")
         made = page.post("/api/channels", json=STATION)
         checks.ok(made.status_code == 201, "a station is made", made.text[:200])
+        choices = page.get("/api/internal/report-choices").json().get("choices") or []
+        checks.ok(len(choices) == 12, "people can report problems", choices)
         checks.ok(not list(fresh.glob("backups/before-*")), "no copy is made of a new database")
         stopped(checks, sp, __version__)
     finally:

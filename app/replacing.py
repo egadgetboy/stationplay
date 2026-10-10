@@ -212,7 +212,10 @@ def missing(entry: dict[str, Any]) -> bool:
 
 def wanted(db, entry: dict[str, Any]) -> bool:
     """Whether an entry is of the kind they're to replace (see what())."""
-    chosen = what(db)
+    return _of_kind(what(db), entry)
+
+
+def _of_kind(chosen: str, entry: dict[str, Any]) -> bool:
     return chosen == BOTH or (chosen == MISSING) == missing(entry)
 
 
@@ -233,7 +236,21 @@ def held(db, entry: dict[str, Any]) -> bool:
     )
 
 
-def tab_section(db, entry: dict[str, Any], used: bool) -> str:
+@dataclass(frozen=True)
+class Setup:
+    """What tab_section goes by, read once for a whole list: the apps turned
+    on, what they replace, and when."""
+
+    on: frozenset[str]
+    what: str
+    when: str
+
+
+def setup(db) -> Setup:
+    return Setup(frozenset(a for a, s in settings(db).items() if s["on"]), what(db), when(db))
+
+
+def tab_section(now: Setup, entry: dict[str, Any], used: bool) -> str:
     """Where an entry on the list is on the Broken files tab: waiting for you
     (a broken or damaged file a station or Media plays, `used`, that Sonarr
     or Radarr isn't replacing by itself, for you to choose Replace or see to
@@ -246,17 +263,16 @@ def tab_section(db, entry: dict[str, Any], used: bool) -> str:
     if entry.get("problem") not in ("broken", "damaged"):
         return FOUND_ONLY
     state = entry.get("replace") or {}
-    now = state.get("state")
-    if now == LEFT:
+    if state.get("state") == LEFT:
         return FOUND_ONLY
-    if now in GOING:
+    if state.get("state") in GOING:
         return BEING_REPLACED
-    if now in DONE:
+    if state.get("state") in DONE:
         return NEEDS_YOU
     if (
-        enabled(db, app_for(entry))
-        and wanted(db, entry)
-        and (state.get("asked") or (when(db) == AUTO and used))
+        app_for(entry) in now.on
+        and _of_kind(now.what, entry)
+        and (state.get("asked") or (now.when == AUTO and used))
     ):
         return BEING_REPLACED
     return NEEDS_YOU if used else FOUND_ONLY
@@ -430,7 +446,7 @@ async def replace_all(ctx: AppContext, by_key: dict[str, Item], only: str | None
                 continue
             if entry.get("problem") not in ("broken", "damaged"):
                 continue
-            if chosen != BOTH and (chosen == MISSING) != missing(entry):
+            if not _of_kind(chosen, entry):
                 # Not what they replace now: left to you (anything begun is
                 # forgotten; its tries are remembered for a while).
                 if entry.get("replace"):

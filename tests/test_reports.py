@@ -124,11 +124,11 @@ def test_what_can_be_checked_is_checked_at_once(app, caplog):
         assert one["device"] == "A StationPlay app"
         # It found nothing: the report waits, saying so, for an Admin to
         # dismiss. Nothing came off the air.
-        ctx.scanner._done_with(target, sc.NOTHING, "StationPlay checked the quick check, and "
-                               "found nothing wrong")  # fmt: skip
+        ctx.scanner._done_with(target, sc.NOTHING, "StationPlay gave it the quick check, and "
+                               "found nothing wrong.")  # fmt: skip
         [row] = admin.get("/api/reports").json()["reports"]
         assert row["state"] == "nothing" and row["needs"] and row["actions"] == ["dismiss"]
-        assert row["notes"] == ["StationPlay checked the quick check, and found nothing wrong"]
+        assert row["notes"] == ["StationPlay gave it the quick check, and found nothing wrong."]
         assert ctx.broken.keys() == set()
         assert admin.get("/api/status").json()["filesCount"] == 1
         assert admin.post("/api/reports/202/dismiss").status_code == 200
@@ -166,7 +166,7 @@ def test_a_report_of_what_has_no_file_to_check_waits_for_an_admin(app, plex):
         assert ctx.scanner._targets == []  # (nothing to check)
         [row] = admin.get("/api/reports").json()["reports"]
         assert (row["state"], row["needs"], row["actions"]) == ("couldn't", True, ["dismiss"])
-        assert row["notes"] == ["Plex has no file for it to check"]
+        assert row["notes"] == ["Plex has no file for it to check."]
 
 
 def _first_version(ctx, client, key):
@@ -199,7 +199,9 @@ def test_what_a_machine_cant_judge_waits_for_an_admin(app):
         assert two["actions"] == ["replace", "better", "dismiss"] and two["arr"] is None
         # Beside each, what StationPlay can tell.
         assert two["facts"] == ["Its sound: English"]
-        assert rows["205"]["facts"] == ["It runs 22:00; the show's other episodes run about 44:00"]
+        assert rows["205"]["facts"] == [
+            "It runs 22 min; the show's other episodes run about 44 min"
+        ]
         assert rows["204"]["facts"] == ["Its picture: 1080p (1920×1080), 8 Mbps"]
         assert rows["300"]["facts"] == ["It has no subtitles"]
         details = rows["203"]
@@ -334,8 +336,10 @@ def test_replace_and_find_a_better_copy(world, caplog):  # noqa: F811
     assert c.put("/api/arr/what", json={"what": "both"}).status_code == 200
     better = c.post("/api/reports/302/better")
     assert better.status_code == 200, better.text
-    assert better.json()["note"] == (
-        "An Admin chose Find a better copy: Radarr is searching for a better copy"
+    assert better.json()["said"] == "Radarr is searching for a better copy of Alien (1979)"
+    [kept] = [row for row in ctx.db.reports_in(("better",)) if row["rating_key"] == "302"]
+    assert (
+        kept["note"] == "An Admin chose Find a better copy: Radarr is searching for a better copy"
     )
     assert [(x["name"], x["body"]["movieIds"]) for x in r.commands] == [("MoviesSearch", [10])]
     assert not r.blocklist and not calls_like(r, "DELETE moviefile/")
@@ -353,8 +357,8 @@ def test_replace_and_find_a_better_copy(world, caplog):  # noqa: F811
     assert c.post("/api/reports/301/replace").status_code == 404
     assert ctx.broken.keys() == set() and not r.blocklist and not jobs._trying
     ctx.reports._version = real
-    ctx.db.set_reports([row["id"] for row in ctx.db.reports_of("301", ("dismissed",))],
-                       "waiting", "", None)  # fmt: skip
+    ctx.db.set_reports([row["id"] for row in ctx.db.reports_in(("dismissed",))], "waiting", "",
+                       None)  # fmt: skip
     # Replace: off the air until its new file comes, and Radarr fetches one.
     replaced = c.post("/api/reports/301/replace")
     assert replaced.status_code == 200, replaced.text

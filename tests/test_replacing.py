@@ -364,33 +364,36 @@ def test_where_each_entry_is_on_the_tab(world):
     """Needs you, being replaced, or found (see replacing.tab_section)."""
     db = world.ctx.db
     damaged = {"problem": "damaged", "reason": "Deep scan: x", "show": "Bonanza"}
-    section = replacing.tab_section
+
+    def section(entry: dict, used: bool) -> str:
+        return replacing.tab_section(replacing.setup(db), entry, used)
+
     # By themselves (as world has it): being replaced, if a station or Media
     # plays it. What nothing plays waits for no one: it's only found (and a
     # missing one comes off the list by itself).
-    assert section(db, damaged, True) == replacing.BEING_REPLACED
-    assert section(db, damaged, False) == replacing.FOUND_ONLY
-    assert section(db, {**damaged, "reason": "Check: file not found: /x"}, False) == (
+    assert section(damaged, True) == replacing.BEING_REPLACED
+    assert section(damaged, False) == replacing.FOUND_ONLY
+    assert section({**damaged, "reason": "Check: file not found: /x"}, False) == (
         replacing.FOUND_ONLY
     )
-    assert section(db, {**damaged, "replace": {"state": "downloading"}}, True) == (
+    assert section({**damaged, "replace": {"state": "downloading"}}, True) == (
         replacing.BEING_REPLACED
     )
     for state in ("gave up", "can't", "same"):
-        assert section(db, {**damaged, "replace": {"state": state}}, True) == replacing.NEEDS_YOU
-    assert section(db, {**damaged, "replace": {"state": "left"}}, True) == replacing.FOUND_ONLY
-    assert section(db, {**damaged, "problem": "unsupported"}, True) == replacing.FOUND_ONLY
+        assert section({**damaged, "replace": {"state": state}}, True) == replacing.NEEDS_YOU
+    assert section({**damaged, "replace": {"state": "left"}}, True) == replacing.FOUND_ONLY
+    assert section({**damaged, "problem": "unsupported"}, True) == replacing.FOUND_ONLY
     # When you say so: it waits for you, until you do.
     replacing.save_when(db, replacing.ASK)
-    assert section(db, damaged, True) == replacing.NEEDS_YOU
-    assert section(db, damaged, False) == replacing.FOUND_ONLY
-    assert section(db, {**damaged, "replace": {"asked": 1}}, True) == replacing.BEING_REPLACED
+    assert section(damaged, True) == replacing.NEEDS_YOU
+    assert section(damaged, False) == replacing.FOUND_ONLY
+    assert section({**damaged, "replace": {"asked": 1}}, True) == replacing.BEING_REPLACED
     # (Asked for, or tried and stopped, it's yours to see to, used or not.)
-    assert section(db, {**damaged, "replace": {"asked": 1}}, False) == (replacing.BEING_REPLACED)
-    assert section(db, {**damaged, "replace": {"state": "gave up"}}, False) == (replacing.NEEDS_YOU)
+    assert section({**damaged, "replace": {"asked": 1}}, False) == replacing.BEING_REPLACED
+    assert section({**damaged, "replace": {"state": "gave up"}}, False) == replacing.NEEDS_YOU
     # Without the app: it waits for you.
     replacing.save(db, "sonarr", "", None, False)
-    assert section(db, {**damaged, "replace": {"asked": 1}}, True) == replacing.NEEDS_YOU
+    assert section({**damaged, "replace": {"asked": 1}}, True) == replacing.NEEDS_YOU
 
 
 def test_an_app_that_cant_be_reached_changes_nothing(world):

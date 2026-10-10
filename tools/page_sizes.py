@@ -63,6 +63,7 @@ THEMES = ("light", "dark")
 ADMIN = {"name": "Pat", "password": "correct horse"}
 USER = {"name": "Sam", "password": "battery staple", "role": "user", "maxStations": 3}
 KID = {"name": "Robin", "password": "", "role": "user", "pin": "2468"}
+JO = {"name": "Jo", "password": "lighthouse keeper", "role": "user"}
 
 SHOWS = [
     # (title, year, genres, content rating, studio)
@@ -222,8 +223,11 @@ def fill(sp: Running, data: Path) -> None:
     """Everything the tabs show: stations (from shows and movies, smart ones
     and from collections), people, a linked device, signed-in apps, an API
     token, StationPlay's apps away from home, stats, logs, problems from the
-    apps, broken files, a person's report, a logo and an Intro Bumper of your
-    own, a backup."""
+    apps, a logo and an Intro Bumper of your own, a backup; and on the Broken
+    files tab, people's reports (several on one program, one StationPlay
+    checked and found nothing wrong in, one it found what's wrong in), files
+    that need you, one being replaced, and the rest, with Sonarr and Radarr
+    on, which sends an Admin's alert."""
     ctx = sp.ctx
     with httpx.Client(base_url=sp.home, timeout=60) as home:
 
@@ -233,6 +237,7 @@ def fill(sp: Running, data: Path) -> None:
 
         ok(home.post("/api/access/users", json={**ADMIN, "role": "admin", "maxStations": None}))
         ok(home.post("/api/access/users", json=USER))
+        ok(home.post("/api/access/users", json=JO))
         robin = ok(home.post("/api/access/users", json=KID))
         levels = {lv["name"]: lv["id"] for lv in ok(home.get("/api/access/viewing"))["levels"]}
         ok(home.put(f"/api/access/users/{robin['id']}/viewing", json={"level": levels["Kid"]}))
@@ -274,8 +279,12 @@ def fill(sp: Running, data: Path) -> None:
         tv = {"app": "StationPlay for Android TV", "deviceName": "Living Room TV"}
         signed = ok(home.post("/api/internal/sign-in", json={**ADMIN, **tv}))
         app_token = {"Authorization": f"Bearer {signed['token']}"}
-        ok(home.post("/api/internal/sign-in", json={
+        sams = ok(home.post("/api/internal/sign-in", json={
             **USER, "app": "StationPlay for iPhone", "deviceName": "Sam’s iPhone"}))  # fmt: skip
+        sam_token = {"Authorization": f"Bearer {sams['token']}"}
+        jos = ok(home.post("/api/internal/sign-in", json={
+            **JO, "app": "StationPlay for Roku", "deviceName": "Bedroom"}))  # fmt: skip
+        jo_token = {"Authorization": f"Bearer {jos['token']}"}
         roku = {"app": "StationPlay for Roku", "version": "0.5.0",
                 "device": "Roku Ultra 4850X, Roku OS 14.0", "deviceName": "Bedroom"}  # fmt: skip
         phone = {"app": "StationPlay for Android", "version": "0.9.0",
@@ -286,9 +295,25 @@ def fill(sp: Running, data: Path) -> None:
         ok(home.post("/api/internal/problem", headers=app_token, json={
             "kind": "library-failed", "title": "Cosmic Drift", "detail": "HTTP 500", **roku}))  # fmt: skip
         ok(home.post("/api/internal/problem", headers=app_token, json={"kind": "crashed", **phone}))
-        # A person's report, waiting for an Admin on the Broken files tab.
+        # People's reports, for the Broken files tab: one waiting for an
+        # Admin; three people's on one program; and two StationPlay checks
+        # (one finds nothing wrong, the other what's wrong: see inside).
+        ok(home.put("/api/arr", json={"app": "sonarr", "url": "http://nas:8989", "key": "abc123",
+                                      "on": True}))  # fmt: skip
+        ok(home.put("/api/arr", json={"app": "radarr", "url": "http://nas:7878", "key": "abc123",
+                                      "on": True}))  # fmt: skip
         ok(home.post("/api/internal/report-problem", headers=app_token, json={
             "choice": "wrong-language", "key": "303", "positionMs": 92_000}))  # fmt: skip
+        for who, choice, at in ((sam_token, "out-of-sync", 754_000), (jo_token, "wrong-language",
+                                 1_201_000), (app_token, "poor-quality", None)):  # fmt: skip
+            ok(home.post("/api/internal/report-problem", headers=who, json={
+                "choice": choice, "key": "1026", "positionMs": at, "method": "direct",
+                "audio": "10262"}))  # fmt: skip
+        ok(home.post("/api/internal/report-problem", headers=sam_token, json={
+            "choice": "no-sound", "key": "302", "positionMs": 3_120_000}))  # fmt: skip
+        ok(home.post("/api/internal/report-problem", headers=jo_token, json={
+            "choice": "picture-breaks", "key": "1050", "positionMs": 754_000}))  # fmt: skip
+        ok(home.put(f"/api/access/users/{robin['id']}", json={"canReport": False}))
         # One sent later, with what led up to it (a long line too), and trouble
         # reaching StationPlay.
         journal = "\n".join([
@@ -366,7 +391,43 @@ def fill(sp: Running, data: Path) -> None:
                 kind="episode", title=f"Episode {n + 2}", show_title=show, season=1,
                 episode=n + 2, file_path=f"/data/tv/{show}/Season 1/{show.lower()}.s01e0{n + 2}.mkv",
             )  # fmt: skip
-            ctx.broken.record(item, reason, 4, problem=problem, file_size=1_400_000_000)
+            ctx.broken.record(item, reason, 4, problem=problem, file_size=1_400_000_000,
+                              library="1" if problem == "broken" else None)  # fmt: skip
+        # What StationPlay's checks of what people reported came to: nothing
+        # wrong in Deep Water; Kitchen Rescue's picture breaking up, found.
+        for target in list(ctx.scanner._targets):
+            if target.rating_key == "302":
+                target.ran = ["from 51:40 to 52:40", "the quick check"]
+                ctx.scanner._done_with(target, scanner.NOTHING, scanner._nothing_found(target))
+            elif target.rating_key == "1050":
+                reason = "Check from 12:14: the picture breaks up around 12:31"
+                item = Item(0, 0, 22 * 60_000, "1050", "episode", "Episode 2",
+                            show_title="Kitchen Rescue", show_key="106", season=1, episode=2,
+                            file_path="/data/tv/Kitchen Rescue/Season 1/kitchen.rescue.s01e02.mkv",
+                            library="1")  # fmt: skip
+                ctx.broken.record(item, reason, 9, problem="damaged", found="targeted check",
+                                  file_size=900_000_000)  # fmt: skip
+                ctx.scanner._done_with(target, scanner.FOUND, reason)
+        # Sonarr replacing one; and one it gave up on, for you.
+        for key, title, show, season, state in (
+            ("1013", "Episode 1", "Harbor Lights", 2, {
+                "state": "downloading", "tries": 1,
+                "note": "Sonarr is downloading Harbor.Lights.S02E01.1080p.WEB-DL"}),
+            ("1089", "Episode 1", "Fairweather Friends", 1, {
+                "state": "gave up", "tries": 3,
+                "note": "Sonarr searched 3 times in about a day but didn't find a file that "
+                "plays. Replace it yourself, or choose Try again."}),
+        ):  # fmt: skip
+            item = Item(0, 0, 22 * 60_000, key, "episode", title, show_title=show, season=season,
+                        episode=1, library="1",
+                        file_path=f"/data/tv/{show}/Season {season}/episode1.mkv")  # fmt: skip
+            ctx.broken.record(item, "Deep scan: the sound drops out around 8:12", 4,
+                              problem="damaged", found="deep scan", file_size=700_000_000)  # fmt: skip
+            entry = ctx.broken.entry(key)
+            ctx.broken.replacing(
+                {key: (entry["lastFailed"], {"app": "sonarr", "at": now, **state})}
+            )
+        ctx.alerts.files(ctx.reports.needing())
         logging.getLogger("stationplay.broadcaster").error(
             "Station 7, Mystery Hour: ffmpeg stopped unexpectedly (exit code 1) while playing "
             "lost.coast.s02e03.mkv; the next program starts instead"
@@ -690,6 +751,11 @@ def admin_views(page: Page, look: Look, only: set[str] | None) -> None:
         page.wait_for_selector("#problemList details[open] pre:not(:empty)")
         page.wait_for_timeout(300)
         look("logs-journal", full=True)
+    if wanted("alerts"):
+        page.click("#alertsPill")
+        page.wait_for_selector("#alertsDlg[open]")
+        look("alerts")
+        close_dialogs(page)
     if wanted("broken"):
         tab(page, "broken")
         page.evaluate(

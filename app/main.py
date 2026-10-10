@@ -2786,16 +2786,14 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         entries = ctx.broken.entries()
         keys = {str(e["ratingKey"]) for e in entries if not e.get("version")}
         having = jobs.stations_having(ctx, keys) if keys else {}
+        found = ctx.reports.found()
+        now = replacing.setup(ctx.db)
         out = []
         for e in entries:
             key = file_key(e)
             on = [] if e.get("version") else having.get(str(e["ratingKey"]), [])
             media = ctx.in_media(e)
-            reported = [
-                r.as_dict()
-                for r in ctx.reports.found(str(e["ratingKey"]))
-                if r.version == str(e.get("version") or "")
-            ]
+            reported = [r.as_dict() for r in found.get(key, [])]
             out.append(
                 {
                     **e,
@@ -2803,7 +2801,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                     "missing": replacing.missing(e),
                     "on": on,
                     "media": media,
-                    "section": replacing.tab_section(ctx.db, e, bool(on) or media),
+                    "section": replacing.tab_section(now, e, bool(on) or media),
                     "reports": reported,
                 }
             )

@@ -1636,7 +1636,9 @@ class Scanner:
             watching = await self._media_watching()
             rest = await self._media_everything()
         except (LibraryError, TimeoutError) as e:
-            log.info("Couldn't list Media's files for the deep scan now (%s)", e or "Plex away")
+            log.info(
+                "Couldn't list Media's files for the deep scan now (%s)", e or "Plex didn't answer"
+            )
             return []
         out: dict[str, Program] = {}
         for p in [*watching, *rest]:
@@ -1693,7 +1695,10 @@ class Scanner:
             # (Too many waiting: the oldest goes, one no one reported if there's
             # one, so trouble the apps send can't crowd out people's reports.)
             dropped = next((t for t in self._targets if not t.reports), self._targets[0])
-            self._done_with(dropped, COULDNT, "StationPlay had too many files to check")
+            self._done_with(
+                dropped, COULDNT, "StationPlay had too many files to check at once, so it let "
+                "this one go."
+            )  # fmt: skip
         self._save_targets()
         log.info("Checking %s first: %s", _target_label(found), why)
         self._wake.set()
@@ -1724,7 +1729,7 @@ class Scanner:
         TARGET_TRIES times in all."""
         target.tries += 1
         if target.tries >= TARGET_TRIES:
-            self._done_with(target, COULDNT, f"StationPlay couldn't check its file ({why})")
+            self._done_with(target, COULDNT, f"StationPlay couldn't check its file ({why}).")
             return
         target.wait_until = time.time() + min(
             SKIPPED_RETRY_MOST_S, SKIPPED_RETRY_S * 2 ** (target.tries - 1)
@@ -1819,7 +1824,7 @@ class Scanner:
         if verdict.result == "skipped":
             return False
         stretch = f"{fmt_offset(start)} to {fmt_offset(start + STRETCH_S)}"
-        target.ran.append(f"the stretch from {stretch}")
+        target.ran.append(f"from {stretch}")
         if verdict.result == "ok":
             return False
         reason = f"Check from {fmt_offset(start)}: {verdict.reason}"
@@ -2281,12 +2286,16 @@ def _target_label(target: Target) -> str:
 
 
 def _nothing_found(target: Target) -> str:
-    """What a target's check did, finding nothing: "StationPlay checked the
-    stretch from 12:11 to 13:11 and the quick check, and found nothing
-    wrong"."""
-    ran = target.ran or ["its file"]
-    done = ran[0] if len(ran) == 1 else f"{', '.join(ran[:-1])} and {ran[-1]}"
-    return f"StationPlay checked {done}, and found nothing wrong"
+    """What a target's check did, finding nothing, as its reports say it:
+    "StationPlay checked it from 12:11 to 13:11, then gave it the quick
+    check and the deep scan, and found nothing wrong."."""
+    stretches = [r for r in target.ran if r.startswith("from ")]
+    checks = [r for r in target.ran if not r.startswith("from ")]
+    did = f"checked it {' and '.join(stretches)}" if stretches else ""
+    if checks:
+        gave = f"gave it {' and '.join(checks)}"
+        did = f"{did}, then {gave}" if did else gave
+    return f"StationPlay {did or 'checked it'}, and found nothing wrong."
 
 
 def _judged_again(entry: dict) -> bool:

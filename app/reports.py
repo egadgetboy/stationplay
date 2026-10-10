@@ -211,7 +211,9 @@ def describe_how(
     or a copy, which version, which sound track and subtitles."""
     how: dict[str, Any] = {}
     if method in ("direct", "repackage", "convert"):
-        how["method"] = {"direct": "as it is", "repackage": "a copy", "convert": "a copy"}[method]
+        how["method"] = {"direct": "as it is", "repackage": "as a copy", "convert": "as a copy"}[
+            method
+        ]
     if media is not None and len(entry.media) > 1:
         best = ondemand.best_first(entry.media)
         how["version"] = ondemand.version_labels(best)[best.index(media)]
@@ -244,12 +246,11 @@ def facts_about(choice: str, entry: Entry, media: Media | None, others: list[Ent
         return [f"Its sound: {', '.join(spoken)}" if spoken else "It has no sound track"]
     if choice == "wrong-program":
         length = ondemand.length_of(entry, media)
-        said = [f"It runs {_clock(length)}"] if length else []
+        said = [f"It runs {playing.minutes(length / 1000)}"] if length else []
         runs = [e.duration_ms for e in others if e.key != entry.key and e.duration_ms]
         if runs and length:
-            said.append(
-                f"the show's other episodes run about {_clock(int(statistics.median(runs)))}"
-            )
+            usual = playing.minutes(statistics.median(runs) / 1000)
+            said.append(f"the show's other episodes run about {usual}")
         return ["; ".join(said)] if said else []
     if choice == "poor-quality":
         size = media.size_label or "its picture"
@@ -281,11 +282,16 @@ class Reports:
 
     def open(self) -> list[Report]:
         """The reports not dealt with yet, the oldest first."""
-        return [_report(r) for r in self.ctx.db.reports_open(OPEN)]
+        return [_report(r) for r in self.ctx.db.reports_in(OPEN)]
 
-    def found(self, rating_key: str) -> list[Report]:
-        """The reports whose check found what took a program's file off the air."""
-        return [_report(r) for r in self.ctx.db.reports_of(rating_key, (FOUND,))]
+    def found(self) -> dict[str, list[Report]]:
+        """The reports whose check found what put a file on the list, by its
+        file key (see broken.version_key)."""
+        out: dict[str, list[Report]] = {}
+        for row in self.ctx.db.reports_in((FOUND,)):
+            report = _report(row)
+            out.setdefault(report.file_key, []).append(report)
+        return out
 
     def rows(self) -> list[dict[str, Any]]:
         """For the Broken files tab: the reports not dealt with, a row for
@@ -328,6 +334,7 @@ class Reports:
             "needs": any(r.state in NEEDS_YOU for r in reports),
             "actions": actions,
             "arr": self._arr(program),
+            "app": ARR_NAMES[replacing.app_for(program)],
             "facts": facts,
             "notes": notes,
             "on": stations,
@@ -337,15 +344,24 @@ class Reports:
         }
 
     def _arr(self, program: dict[str, Any]) -> str | None:
+        """Sonarr or Radarr, for Replace and Find a better copy, while it may
+        (see _arr_for); None otherwise."""
+        try:
+            return self._arr_for(program)
+        except HTTPException:
+            return None
+
+    def _arr_for(self, program: dict[str, Any]) -> str:
         """Sonarr or Radarr, for Replace and Find a better copy: the one for
         a program, while it's on and replaces broken or damaged files (see
-        replacing.what); None otherwise."""
+        replacing.what); or why not (400)."""
         app = replacing.app_for(program)
-        if (
-            not replacing.enabled(self.ctx.db, app)
-            or replacing.what(self.ctx.db) == replacing.MISSING
-        ):
-            return None
+        if not replacing.enabled(self.ctx.db, app):
+            raise HTTPException(400, f"{ARR_NAMES[app]} isn't turned on")
+        if replacing.what(self.ctx.db) == replacing.MISSING:
+            raise HTTPException(
+                400, "Sonarr and Radarr replace only missing files now (set on this tab)"
+            )
         return ARR_NAMES[app]
 
     def needing(self) -> list[tuple[int, str, str]]:
@@ -363,8 +379,9 @@ class Reports:
                 )  # fmt: skip
         entries = self.ctx.broken.entries()
         used = jobs.used_by(self.ctx, entries)
+        now = replacing.setup(self.ctx.db)
         for e in entries:
-            section = replacing.tab_section(self.ctx.db, e, used.get(file_key(e), False))
+            section = replacing.tab_section(now, e, used.get(file_key(e), False))
             if section == replacing.NEEDS_YOU:
                 out.append(replacing.needs_you_said(e, named(e)))
         return out
@@ -413,9 +430,9 @@ class Reports:
         (see scanner.Target)."""
         done = outcome in (FOUND, GONE)
         if outcome == KEPT:
-            note = f"StationPlay found what's wrong ({note}), but you put it back on the air"
+            note = f"StationPlay found what's wrong ({note}), but you put it back on the air."
         elif outcome == GONE:
-            note = "It's no longer in Plex"
+            note = "It's no longer in Plex."
         now = int(time.time() * 1000)
         self.ctx.db.set_reports(ids, outcome, note, now if done else None, only=(CHECKING,))
         self.changed()
@@ -439,7 +456,12 @@ class Reports:
         now = int(time.time() * 1000)
         self.ctx.db.set_reports([r.id for r in reports], DISMISSED, f"Dismissed by {by}", now)
         self.changed()
-        log.info("%s dismissed the reports on %s", by, named(reports[-1].program))
+        log.info(
+            "%s dismissed the %s on %s",
+            by,
+            "report" if len(reports) == 1 else f"{len(reports)} reports",
+            named(reports[-1].program),
+        )
         return len(reports)
 
     def _to_judge(self, key: str) -> list[Report]:
@@ -452,30 +474,18 @@ class Reports:
             )
         return reports
 
-    def _arr_for(self, report: Report) -> str:
-        """Sonarr or Radarr, for a report's program (see _arr), or why not
-        (400)."""
-        app = replacing.app_for(report.program)
-        if not replacing.enabled(self.ctx.db, app):
-            raise HTTPException(400, f"{ARR_NAMES[app]} isn't turned on")
-        if replacing.what(self.ctx.db) == replacing.MISSING:
-            raise HTTPException(
-                400, "Sonarr and Radarr replace only missing files now (set on this tab)"
-            )
-        return ARR_NAMES[app]
-
     async def replace(self, key: str, by: str) -> str:
         """Replace: the file reported goes on the list (off the air until its
         new file passes), and Sonarr or Radarr replaces it, blocklisting its
-        release, now."""
+        release, now. What's being done, to tell the Admin."""
         newest = self._to_judge(key)[-1]
-        app = self._arr_for(newest)
+        app = self._arr_for(newest.program)
         entry, media = await self._version(newest)
         # (As they are now: an Admin may have dealt with them meanwhile.)
         reports = self._to_judge(key)
         file_key = newest.file_key
         if self.ctx.broken.entry(file_key) is None:
-            said = ", ".join(dict.fromkeys(r.label for r in reports))
+            said = "; ".join(dict.fromkeys(r.label for r in reports))
             self.ctx.broken.record(
                 item_of(entry, media),
                 f"Reported: {said}. {by} chose Replace",
@@ -488,20 +498,23 @@ class Reports:
                 library=entry.library or None,
             )
         jobs.start_try_again(self.ctx, file_key)
+        name = named(newest.program)
+        log.info("%s chose Replace for %s: %s is replacing it", by, name, app)
         note = f"{by} chose Replace: {app} is replacing it"
         self.ctx.db.set_reports(
             [r.id for r in reports], REPLACING, note, int(time.time() * 1000), only=(WAITING,)
         )
         self.changed()
-        return note
+        return f"{app} is replacing {name}"
 
     async def better(self, key: str, by: str) -> str:
         """Find a better copy: Sonarr or Radarr searches for an upgrade, and
-        the file stays as it is."""
+        the file stays as it is. What's being done, to tell the Admin."""
         reports = self._to_judge(key)
         newest = reports[-1]
-        self._arr_for(newest)
+        self._arr_for(newest.program)
         program = {**newest.program, "ratingKey": key}
+        log.info("%s chose Find a better copy for %s", by, named(newest.program))
         try:
             said = await replacing.better_copy(self.ctx, program)
         except replacing.Cant as e:
@@ -515,7 +528,7 @@ class Reports:
             [r.id for r in reports], BETTER, note, int(time.time() * 1000), only=(WAITING,)
         )
         self.changed()
-        return note
+        return f"{said} of {named(newest.program)}"
 
     async def _version(self, report: Report) -> tuple[Entry, Media]:
         try:
@@ -641,7 +654,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if body.choice not in CHECKED:
             state, note = WAITING, ""
         elif media is None:
-            state, note = COULDNT, "Plex has no file for it to check"
+            state, note = COULDNT, "Plex has no file for it to check."
         else:
             state, note = CHECKING, ""
         report = reports.add(
@@ -691,15 +704,13 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.post("/api/reports/{key}/replace")
     async def report_replace(key: str, request: Request):
-        note = await reports.replace(key, by(request))
-        log.info("%s", note)
-        return {"reports": await asyncio.to_thread(reports.rows), "note": note}
+        said = await reports.replace(key, by(request))
+        return {"reports": await asyncio.to_thread(reports.rows), "said": said}
 
     @app.post("/api/reports/{key}/better")
     async def report_better(key: str, request: Request):
-        note = await reports.better(key, by(request))
-        log.info("%s", note)
-        return {"reports": await asyncio.to_thread(reports.rows), "note": note}
+        said = await reports.better(key, by(request))
+        return {"reports": await asyncio.to_thread(reports.rows), "said": said}
 
 
 def viewing_of(ctx: AppContext, request: Request) -> viewing.Viewer:

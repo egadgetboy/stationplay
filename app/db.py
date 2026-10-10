@@ -366,7 +366,7 @@ CREATE TABLE IF NOT EXISTS reports (
     note         TEXT    NOT NULL DEFAULT '',
     done_ms      INTEGER                        -- when it was dealt with
 );
-CREATE INDEX IF NOT EXISTS reports_by_key ON reports (rating_key);
+CREATE INDEX IF NOT EXISTS reports_by_state ON reports (state);
 CREATE INDEX IF NOT EXISTS reports_by_day ON reports (day);
 """
 
@@ -2270,22 +2270,13 @@ class Database:
             self._conn.execute("DELETE FROM reports WHERE id <= ?", (made - keep,))
             return made
 
-    def reports_open(self, states: tuple[str, ...]) -> list[sqlite3.Row]:
+    def reports_in(self, states: tuple[str, ...]) -> list[sqlite3.Row]:
         """The reports in these states, the oldest first."""
         with self._lock:
             return self._conn.execute(
                 f"SELECT * FROM reports WHERE state IN ({', '.join('?' for _ in states)}) "
                 "ORDER BY id",
                 states,
-            ).fetchall()
-
-    def reports_of(self, rating_key: str, states: tuple[str, ...]) -> list[sqlite3.Row]:
-        """A program's reports in these states, the oldest first."""
-        with self._lock:
-            return self._conn.execute(
-                f"SELECT * FROM reports WHERE rating_key = ? AND state IN "
-                f"({', '.join('?' for _ in states)}) ORDER BY id",
-                (rating_key, *states),
             ).fetchall()
 
     def reports_sent(self, day: str, user_id: int | None, address: str) -> list[sqlite3.Row]:

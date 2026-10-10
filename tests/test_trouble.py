@@ -109,6 +109,24 @@ def test_a_file_someone_had_trouble_with_is_checked_where_it_happened(tmp_path, 
         assert ctx.db.get_meta(sc.META_TARGETS, "") == "[]"
 
 
+def test_what_a_check_that_found_nothing_says():
+    def said(*ran: str) -> str:
+        return sc._nothing_found(sc.Target("1", "1", ran=list(ran)))
+
+    assert said("from 0:10 to 1:10", "the quick check") == (
+        "StationPlay checked it from 0:10 to 1:10, then gave it the quick check, and found "
+        "nothing wrong."
+    )
+    assert said("from 0:10 to 1:10", "the quick check", "the deep scan") == (
+        "StationPlay checked it from 0:10 to 1:10, then gave it the quick check and the deep "
+        "scan, and found nothing wrong."
+    )
+    assert (
+        said("the quick check") == "StationPlay gave it the quick check, and found nothing wrong."
+    )
+    assert said() == "StationPlay checked it, and found nothing wrong."
+
+
 def test_what_waits_is_kept_and_checked_after_a_restart(tmp_path):
     client, _fp = world(tmp_path)
     with client:
@@ -147,7 +165,7 @@ def test_whats_wrong_only_by_the_network_changes_nothing(tmp_path, monkeypatch):
         for _ in range(sc.TARGET_TRIES):
             client.portal.call(ctx.scanner.round)
         assert told == [([3], sc.COULDNT, "StationPlay couldn't check its file (the share isn't "
-                         "responding)")]  # fmt: skip
+                         "responding).")]  # fmt: skip
         assert ctx.broken.keys() == set() and not ctx.scanner.waiting("300")
 
 

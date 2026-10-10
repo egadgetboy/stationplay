@@ -4840,7 +4840,7 @@ function reportRow(row) {
       h('span', { class: chip }, said),
       row.facts.length ? h('ul', { class: 'facts small' }, ...row.facts.map(f => h('li', {}, f))) : null,
       ...row.notes.map(n => h('div', { class: 'small', style: 'margin-top:6px' }, n)),
-      replaceable && !row.arr ? h('div', { class: 'small muted', style: 'margin-top:6px' }, 'To replace it from here, turn on Sonarr or Radarr (for broken or damaged files) under Replacing files with Sonarr and Radarr.') : null,
+      replaceable && !row.arr ? h('div', { class: 'small muted', style: 'margin-top:6px' }, `To replace it from here, turn on ${row.app} under Replacing files with Sonarr and Radarr, with Broken or damaged (or Both) chosen.`) : null,
       h('ul', { class: 'said small' }, ...row.reports.map(reportLine)),
       usedLine(row)),
     h('td', { class: 'small', 'data-label': 'Reported' }, new Date(row.at).toLocaleString()),
@@ -4851,18 +4851,18 @@ function reportRow(row) {
 function reportLine(x) {
   const how = x.how || {};
   const ways = how.station ? [`On station ${how.station}`]
-    : [how.method && `${how.method[0].toUpperCase()}${how.method.slice(1)}`, how.version, how.audio, how.subtitle && `subtitles: ${how.subtitle}`].filter(Boolean);
+    : [how.method && `Played ${how.method}`, how.version && `the ${how.version} version`, how.audio && `sound: ${how.audio}`, how.subtitle && `subtitles: ${how.subtitle}`].filter(Boolean);
   return h('li', {},
     h('div', { class: 'who' }, x.label),
-    h('div', {}, [`${x.who}, ${x.device}`, fmtClock(x.at), x.positionMs != null ? `at ${placeIn(x.positionMs)}` : ''].filter(Boolean).join(' · ')),
-    ways.length ? h('div', { class: 'how' }, ways.join(' · ')) : null);
+    h('div', {}, [x.who, x.device, fmtClock(x.at), x.positionMs != null ? `${placeIn(x.positionMs)} in` : ''].filter(Boolean).join(' · ')),
+    ways.length ? h('div', { class: 'how' }, `${ways.join(', ')}`.replace(/^./, c => c.toUpperCase())) : null);
 }
 function reportButtons(row) {
   const act = async (what, done) => {
     let got;
     try { got = await api(`/api/reports/${encodeURIComponent(row.key)}/${what}`, { method: 'POST' }); }
     catch (e) { toast(e.message, true); return; }
-    toast(got.note || done);
+    toast(got.said || done);
     loadBroken(); loadStatus();
   };
   const out = [];
