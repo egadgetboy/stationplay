@@ -484,6 +484,7 @@ input:focus, select:focus, .btn:focus-visible, .tab:focus-visible { outline: 2px
 .sel { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--pill); font-size: 13px; }
 .sel button { border: 0; background: none; cursor: pointer; color: var(--ink-3); font-size: 16px; line-height: 1; padding: 0 4px; }
 .hint { font-size: 13px; color: var(--ink-2); }
+.hint.warn-text { color: var(--warn); }
 
 /* Guide */
 .guide-list { display: grid; }

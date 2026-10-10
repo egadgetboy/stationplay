@@ -385,6 +385,7 @@ Channels DVR, TiviMate, VLC and most IPTV apps accept the playlist address, `htt
 | 1.29.0 | Languages and Admin alerts |
 | 1.29.1 | Converted copies on request, and more detail on problems |
 | 1.30.0 | Reporting a problem |
+| 1.31.0 | The server's license and device slots (the apps that use it come later) |
 
 The apps read the stations and guide through [StationPlay's API](#stationplays-api), like any other program. They sign in, test connections and browse your library through their own addresses, documented for the apps in [docs/internal-api.md](docs/internal-api.md).
 
@@ -426,9 +427,13 @@ Subtitles the device can't show are drawn into a copy. If an episode's chosen su
 StationPlay and its page are free. A license unlocks StationPlay's apps. Without one, the apps play only the server's first station, for free.
 
 - **What it unlocks.** One license is for one StationPlay server, for life. It unlocks the apps on up to 15 devices linked to that server. Devices are covered in the order they were linked. Plex, Jellyfin and other apps, and StationPlay's page, never count.
-- **Where it is.** On the **Access** tab, at the top, under **License**. An Admin installs a license there by uploading the license file or pasting the license code, then choosing **Install**. An Admin can also install one from an app. **License** lists the linked devices in order, each with **Remove**. Removing one signs it out, and the next device is covered.
-- **The server ID.** Each license is for one server ID, shown under **License** with **Copy**. Give it for support, or to move a license to another server. A backup restored onto new hardware keeps the server ID, and the license with it. A fresh install gets a new ID.
-- **Nothing locks.** StationPlay never locks anything and makes no outside calls for the license. It keeps the license and hands it to the apps, which check it themselves.
+- **Where it comes from.** An Admin buys one in StationPlay's apps, which install it on the server (buying comes with the apps' store releases).
+- **Where it is.** On the **Access** tab, at the top, under **License**. An Admin can also install one there, by uploading the license file or pasting the license code, then choosing **Install**. A new license replaces the one before. **Copy the license code** gives you a copy to keep. **License** lists the linked devices in order, each with **Remove**. Removing one signs it out, and the next device is covered.
+- **Signing in.** Devices are counted as people sign in on them, so a license needs signing in turned on. With it off, the apps play only the first station.
+- **The server ID.** Each license is for one server ID, shown under **License** with **Copy**. Give it for support, or to move a license to another server. A fresh install gets a new ID. StationPlay keeps the ID and license in its database and in `data/license.json`:
+  - Restoring a backup from this server, or rolling back an update, keeps the license, even if the backup is from before it was installed.
+  - Restoring a backup onto new hardware brings the backup's server ID and license, unless the new server has a license of its own and the backup has none: then it keeps its own.
+- **The server never locks anything.** Everything on the server works with or without a license. StationPlay makes no outside calls for it: it keeps the license and hands it to the apps, which check it themselves.
 
 ## Reaching StationPlay from outside your home
 
@@ -1305,7 +1310,7 @@ StationPlay is Copyright © 2026 egadgetboy and is licensed under the [GNU Affer
 
 - You may use, study, change and share StationPlay, including for profit.
 - If you share StationPlay, changed or not, you must include its source code or offer it, under the same license.
-- If you run a changed StationPlay that other people use over a network, you must offer them its source code too. The **Source** link at the bottom of StationPlay's page is there for this.
+- If you run a changed StationPlay that other people use over a network, you must offer them its source code too. The **Source** link at the bottom of StationPlay's page points to this project's code: point it to your changed code instead (it's in `app/web/index.html`).
 - Keep the copyright and license notices, and mark what you changed.
 - StationPlay comes with no warranty.
 

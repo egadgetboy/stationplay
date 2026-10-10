@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import io
 import json
 import random
@@ -519,9 +520,12 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
     await _copies_before_updates(checks, app, home, admin_h)
     await _files_like_ffmpegs_words(checks, app)
 
-    # 20) From 1.31.0: alerts kept across restarts, and the corner mark's drift.
+    # 21) From 1.31.0: alerts kept across restarts, and the corner mark's drift.
     await _kept_alerts(checks, app, home, admin_h)
     await asyncio.to_thread(_drift, checks)
+
+    # 22) From 1.31.0: the server's license, and the apps' device slots.
+    await _license(checks, app, home, admin_h, sam_h, kit_h)
 
 
 async def _media_away(
@@ -1838,6 +1842,81 @@ class _Told:
 
     def send(self, *said) -> None:
         self.said.append(said)
+
+
+async def _license(checks: Checks, app, home: str, admin_h: dict, sam_h: dict, kit_h: dict) -> None:
+    """The server's license: only an Admin installs or removes one, or sees
+    the page's list; what isn't a license for this server is refused
+    plainly, whatever it holds; and slots go by the order devices were
+    linked, however many link at once."""
+    checks.section("The server's license")
+    ctx = app.state.ctx
+    server = ctx.licensing.server_id
+
+    def b64(raw: bytes) -> str:
+        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+    def lic(**more) -> str:
+        payload = {"license_id": "attack", "server_id": server, "tier": "lifetime",
+                   "device_limit": 15, "issued_at": 1, "format_version": 1, **more}  # fmt: skip
+        return json.dumps({"payload": b64(json.dumps(payload).encode()),
+                           "signature": b64(b"\x02" * 64), "key": "k1"})  # fmt: skip
+
+    async with httpx.AsyncClient(base_url=home, timeout=30) as c:
+        for who, h, code in (
+            ("An outsider", {}, 401),
+            ("A User", sam_h, 403),
+            ("A Kid", kit_h, 403),
+        ):
+            for method, path in (("POST", "/api/internal/license"), ("DELETE", "/api/internal/license"),
+                                 ("PUT", "/api/access/license"), ("DELETE", "/api/access/license"),
+                                 ("GET", "/api/access/license")):  # fmt: skip
+                body = {"json": {"license": lic()}} if method in ("POST", "PUT") else {}
+                r = await c.request(method, path, headers=h, **body)
+                checks.ok(r.status_code == code, f"{who} can't {method} {path}",
+                          f"got {r.status_code}")  # fmt: skip
+        r = await c.get("/api/internal/license", headers=sam_h)
+        checks.ok(r.status_code == 200 and r.json().get("serverId") == server,
+                  "a User's app reads the license and its slot", f"got {r.status_code}")  # fmt: skip
+        odd = [
+            ("another server's", lic(server_id="00000000-0000-4000-8000-000000000000")),
+            ("one with HTML for its ID", lic(license_id="<img src=x onerror=alert(1)>")),
+            ("one nested 5,000 deep", "[" * 5000 + "]" * 5000),
+            ("a later format's", lic(format_version=9, more=[1])),
+            ("bytes that aren't text", "SPL1.//79/w"),
+            ("a code of nothing", "SPL1."),
+        ]
+        for what, text in odd:
+            r = await c.post("/api/internal/license", headers=admin_h, json={"license": text})
+            checks.ok(r.status_code == 400 and ctx.licensing.current() is None,
+                      f"{what} is refused with a sentence", f"got {r.status_code}")  # fmt: skip
+        r = await c.post("/api/internal/license", headers=admin_h, json={"license": "x" * 9000})
+        checks.ok(r.status_code in (400, 422), "one over 8 KB is refused", f"got {r.status_code}")
+        r = await c.post("/api/internal/license", headers=admin_h, json={"license": lic()})
+        checks.ok(r.status_code == 200 and ctx.licensing.current() is not None,
+                  "an Admin installs one", f"got {r.status_code}")  # fmt: skip
+
+        # Many devices linking at once: each its own slot, in the order linked.
+        async def link(n: int) -> int:
+            r = await c.post("/api/internal/sign-in", json={
+                **ADMIN, "app": "Attack", "deviceName": f"Rush {n}", "picker": True})  # fmt: skip
+            return r.status_code
+
+        codes = await asyncio.gather(*(link(n) for n in range(20)))
+        slots = ctx.licensing.slots()
+        ids = [row["id"] for _, row in slots]
+        # (Some are told to wait: sign-ins are limited. Those that link each
+        # get their own slot.)
+        checks.ok(200 in codes and set(codes) <= {200, 429}
+                  and [n for n, _ in slots] == list(range(1, len(slots) + 1)) and ids == sorted(ids),
+                  "twenty linking at once: each linked one its own slot, in the order linked",
+                  f"codes {sorted(set(codes))}")  # fmt: skip
+        for _, row in slots:
+            if row["name"].startswith("Attack on Rush"):
+                await c.delete(f"/api/access/devices/{row['id']}", headers=admin_h)
+        r = await c.delete("/api/internal/license", headers=admin_h)
+        checks.ok(r.status_code == 200 and ctx.licensing.current() is None,
+                  "and removes it", f"got {r.status_code}")  # fmt: skip
 
 
 async def _kept_alerts(checks: Checks, app, home: str, admin_h: dict) -> None:

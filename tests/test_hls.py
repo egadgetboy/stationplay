@@ -386,7 +386,7 @@ async def test_an_app_away_from_home_watches_through_the_public_port(
             auth = await sign_in()
             server = (await phone.get("/api/v1/server", headers=auth)).json()
             assert server["outside"] and server["awayAddress"] is None
-            assert server["features"] == ["hls", "speed-test", "reports", "night", "problems"]
+            assert server["features"] == ["hls", "speed-test", "reports", "night", "problems", "license"]
             # Off: from outside, nothing to play.
             assert await hls_of(auth) == "/hls/7/index.m3u8"
             assert (await phone.get("/hls/7/index.m3u8")).status_code == 404

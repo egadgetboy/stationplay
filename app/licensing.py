@@ -66,6 +66,7 @@ LICENSE_MOST = 8 * 1024  # (a license, as uploaded or pasted: a few hundred byte
 PAYLOAD_MOST = 4 * 1024
 FIELDS = ("license_id", "server_id", "tier", "device_limit", "issued_at", "format_version")
 NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
+SERVER_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 NOT_A_LICENSE = (
     "That isn't a StationPlay license. Upload the license file, or paste the whole license code."
@@ -109,25 +110,23 @@ def read(text: str, server_id: str) -> License:
             raise ValueError(NOT_A_LICENSE) from None
     try:
         file = json.loads(text)
-    except ValueError:
+        payload = json.loads(_unbase64(file["payload"], PAYLOAD_MOST))
+    except (ValueError, TypeError, KeyError, RecursionError):
         raise ValueError(NOT_A_LICENSE) from None
-    if not isinstance(file, dict) or set(file) != {"payload", "signature", "key"}:
+    if not isinstance(payload, dict):
+        raise ValueError(NOT_A_LICENSE)
+    # (Its version first: a later format may carry more than this one knows.)
+    version = payload.get("format_version")
+    if type(version) is not int or version < 1:
+        raise ValueError(NOT_A_LICENSE)
+    if version > FORMAT_VERSION:
+        raise ValueError(NEWER)
+    if set(file) != {"payload", "signature", "key"} or set(payload) != set(FIELDS):
         raise ValueError(NOT_A_LICENSE)
     if len(_unbase64(file["signature"], 128)) != 64:  # (an Ed25519 signature's size)
         raise ValueError(NOT_A_LICENSE)
     if not isinstance(file["key"], str) or not NAME.fullmatch(file["key"]):
         raise ValueError(NOT_A_LICENSE)
-    try:
-        payload = json.loads(_unbase64(file["payload"], PAYLOAD_MOST))
-    except ValueError:
-        raise ValueError(NOT_A_LICENSE) from None
-    if not isinstance(payload, dict) or set(payload) != set(FIELDS):
-        raise ValueError(NOT_A_LICENSE)
-    version = payload["format_version"]
-    if type(version) is not int or version < 1:
-        raise ValueError(NOT_A_LICENSE)
-    if version > FORMAT_VERSION:
-        raise ValueError(NEWER)
     texts = [payload[k] for k in ("license_id", "server_id", "tier")]
     numbers = [payload[k] for k in ("device_limit", "issued_at")]
     if not all(isinstance(t, str) and NAME.fullmatch(t) for t in texts):
@@ -159,30 +158,55 @@ class Licensing:
         self.db = db
         self.file = folder / KEPT_FILE
         kept = self._read_file()
-        self.server_id = db.get_meta(SERVER_ID_META)
-        if not self.server_id and kept.get("serverId"):
-            # (The database is from before it had one: rolled back to its
-            # copy from before an update, say. The file's are this server's.)
-            self.server_id = str(kept["serverId"])
-            db.set_meta(SERVER_ID_META, self.server_id)
-            if kept.get("license") and not db.get_meta(LICENSE_META):
-                db.set_meta(LICENSE_META, str(kept["license"]))
+        ours, licensed = db.get_meta(SERVER_ID_META), db.get_meta(LICENSE_META)
+        theirs, kept_license = kept.get("serverId", ""), kept.get("license", "")
+        if theirs and kept_license and not licensed and self._is_for(kept_license, theirs):
+            # (A license the database doesn't have: it was rolled back to its
+            # copy from before an update, or a backup from before the license
+            # was installed was restored. The license stays, and the ID it's
+            # for with it.)
+            ours = theirs
+            db.set_meta(SERVER_ID_META, ours)
+            db.set_meta(LICENSE_META, kept_license)
             log.info("Kept this StationPlay's server ID and license from its data folder")
-        if not self.server_id:
-            self.server_id = str(uuid.uuid4())
-            db.set_meta(SERVER_ID_META, self.server_id)
-            log.info("This StationPlay's server ID is %s", self.server_id)
+        elif not ours and theirs:
+            ours = theirs
+            db.set_meta(SERVER_ID_META, ours)
+        if not ours:
+            ours = str(uuid.uuid4())
+            db.set_meta(SERVER_ID_META, ours)
+            log.info("This StationPlay's server ID is %s", ours)
+        self.server_id = ours
         self._write_file()
 
-    def _read_file(self) -> dict[str, Any]:
+    @staticmethod
+    def _is_for(text: str, server_id: str) -> bool:
+        try:
+            read(text, server_id)
+        except ValueError:
+            return False
+        return True
+
+    def _read_file(self) -> dict[str, str]:
+        """The server's ID and license as the data folder keeps them ({} if
+        there's no such file, or it isn't one: it's then written anew)."""
         try:
             kept = json.loads(self.file.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return {}
-        except (OSError, ValueError) as e:
+        except (OSError, ValueError, RecursionError) as e:
             log.warning("Couldn't read %s (%s)", self.file.name, e)
             return {}
-        return kept if isinstance(kept, dict) else {}
+        if (
+            not isinstance(kept, dict)
+            or not isinstance(kept.get("serverId"), str)
+            or not SERVER_ID.fullmatch(kept["serverId"])
+            or not isinstance(kept.get("license"), str)
+            or len(kept["license"]) > LICENSE_MOST
+        ):
+            log.warning("%s isn't as StationPlay keeps it, so it's set aside", self.file.name)
+            return {}
+        return {"serverId": kept["serverId"], "license": kept["license"]}
 
     def _write_file(self) -> None:
         """The server's ID and license, as the database has them, to the data
@@ -225,7 +249,8 @@ class Licensing:
     def slots(self) -> list[tuple[int, Any]]:
         """The linked devices in the order they were linked, each with its
         slot (1 for the first)."""
-        rows = sorted(self.db.linked_devices(), key=lambda r: (r["created_ms"], r["id"]))
+        # (By the order they were added: never by a clock that may be off.)
+        rows = sorted(self.db.linked_devices(), key=lambda r: r["id"])
         return list(enumerate(rows, 1))
 
     def slot_of(self, device_id: int | None) -> int | None:
@@ -255,6 +280,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 "tier": found.tier,
                 "deviceLimit": found.device_limit,
                 "issuedAt": found.issued_at,
+                "code": code_of(found.file),  # (for the Admin to keep a copy)
             }
         slots = [
             {

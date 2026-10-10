@@ -648,10 +648,16 @@ async function loadLicense() {
       ? h('div', {}, h('p', { style: 'margin:0' }, h('strong', {}, 'Licensed. '), `StationPlay’s apps are unlocked on up to ${lic.deviceLimit} devices.`),
           h('p', { class: 'hint', style: 'margin:4px 0 0' }, `${inUse}${over ? `, and ${over} more not covered` : ''}. Devices are covered in the order they were linked. Removing one signs it out, and the next is covered.`))
       : h('p', { style: 'margin:0' }, h('strong', {}, 'Not licensed. '), 'StationPlay’s apps play the first station for free.'),
+    // (With signing in off, no app links, so none can be counted: the
+    // license covers none until it's on. See licensing.py.)
+    !me.required ? h('p', { class: 'hint warn-text', style: 'margin:0' }, 'Signing in is off, so StationPlay’s apps can’t be counted as devices, and they play only the first station. Turn on signing in to use a license.') : null,
     ...(lic ? [devices || h('p', { class: 'muted small', style: 'margin:0' }, 'No devices yet. A device is linked when someone signs in on it in StationPlay’s apps.'),
-      h('div', {}, removeLicense)] : []),
+      h('div', { class: 'scan-set' },
+        h('button', { type: 'button', class: 'btn', onclick: async () => { toast(await copyText(lic.code) ? 'License code copied. Keep it somewhere safe.' : lic.code); } }, 'Copy the license code'),
+        removeLicense)] : []),
     h('div', { class: 'license-install' },
-      h('strong', {}, lic ? 'Install another license' : 'Install a license'),
+      h('strong', {}, lic ? 'Replace the license' : 'Install a license'),
+      h('p', { class: 'hint', style: 'margin:0' }, lic ? 'A new license replaces this one.' : 'An Admin buys one in StationPlay’s apps, which install it here. Or install one you have.'),
       h('div', { class: 'scan-set' }, h('button', { type: 'button', class: 'btn', onclick: () => file.click() }, 'Choose the license file…'), fileName, file),
       h('div', { class: 'field' }, h('label', { for: 'licenseCode' }, 'Or paste the license code'), code),
       h('div', { class: 'scan-set' }, install, result)),

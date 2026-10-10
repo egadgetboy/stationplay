@@ -862,8 +862,10 @@ only from an app (after a purchase, or restoring one) or an Admin's upload
 on the page.
 
 - **The server's ID.** Made once, at random, when StationPlay first starts,
-  and kept in its database. A backup restored onto new hardware keeps it,
-  and the license with it. A fresh install gets a new one.
+  and kept in its database and in the data folder (`license.json`), with
+  the license. A backup restored onto new hardware keeps it, and the
+  license with it. Rolling back the database (or restoring a backup from
+  before the license) keeps the license. A fresh install gets a new ID.
 - **The license file** is JSON:
   `{"payload": "<the payload's JSON, base64url>", "signature": "<its Ed25519
   signature, base64url>", "key": "<which public key signed it>"}`. The
@@ -877,6 +879,15 @@ on the page.
   `device_limit` are covered. Unlinking one frees its slot, and each one
   after it moves up. Plex, Jellyfin and other tuner apps, StationPlay's
   page, and an app that doesn't link, never take a slot.
+- **What the apps do with it.** A license covers this device only when
+  its signature checks out with a key the app knows, its `server_id` is
+  this server's, its `license_id` isn't on the app's revoked list, and
+  `device.slot` is at most its `device_limit`. Anything else is the free
+  tier: no license, a bad one, `device: null` (not a linked device, such
+  as while signing in is off, when apps can't link), or a server that
+  doesn't answer this address (before 1.31.0: 404 or 403). `features`
+  includes `license` from 1.31.0. Keep each server's last answer, so
+  playback never waits for it.
 
 ## GET /api/internal/license
 
@@ -913,6 +924,7 @@ a license for 15 devices (license lic-0001)".
 | `license.tier` | string | Its kind, such as `lifetime` |
 | `license.deviceLimit` | number | How many devices it covers |
 | `license.issuedAt` | number | When it was issued, in seconds since 1970 (as in its payload) |
+| `license.code` | string | The license code, for the Admin to keep a copy |
 | `devices` | list | The linked devices, in the order they were linked |
 | `devices[].id` | number | The device's ID |
 | `devices[].name` | string | Its name, such as "StationPlay for Android on Tia's phone" |

@@ -84,8 +84,10 @@ def test_installing_and_removing_a_license(app):
         lic = made(server["serverId"])
         got = admin.put("/api/access/license", json={"license": json.dumps(lic)})
         assert got.status_code == 200, got.text
-        assert got.json()["license"] == {"licenseId": "lic-0001", "tier": "lifetime",
-                                         "deviceLimit": 15, "issuedAt": 1_791_000_000}  # fmt: skip
+        assert got.json()["license"] == {
+            "licenseId": "lic-0001", "tier": "lifetime", "deviceLimit": 15,
+            "issuedAt": 1_791_000_000, "code": licensing.code_of(lic),
+        }  # fmt: skip
         # A license code is the same file, on one line.
         code = licensing.code_of(lic)
         assert code.startswith("SPL1.") and "\n" not in code
@@ -287,3 +289,122 @@ def test_rolling_back_the_database_keeps_the_id_and_license(tmp_path):
         again.post("/api/access/sign-in", json=ADA)
         got = again.get("/api/access/license").json()
         assert got["serverId"] == server and got["license"]["licenseId"] == "lic-0001"
+
+
+# Found by the cold audit of 1.31.0 ------------------------------------------------
+
+
+def _backup(client: TestClient) -> bytes:
+    name = client.post("/api/backups").json()["name"]
+    return client.get(f"/api/backups/{name}").content
+
+
+def test_restoring_a_backup_from_before_the_license_keeps_it(tmp_path):
+    """A backup made before the license was installed, restored: the license
+    stays (and the copy in the data folder too)."""
+    data = tmp_path / "data"
+    with TestClient(app_for(data)) as admin:
+        admin.post("/api/access/users", json=ADA)
+        older = _backup(admin)
+        server = admin.get("/api/access/license").json()["serverId"]
+        admin.put("/api/access/license", json={"license": json.dumps(made(server))})
+        assert admin.post("/api/restore", content=older).status_code == 200
+    with TestClient(app_for(data)) as again:
+        again.post("/api/access/sign-in", json=ADA)
+        got = again.get("/api/access/license").json()
+        assert got["serverId"] == server and got["license"]["licenseId"] == "lic-0001"
+    kept = json.loads((data / licensing.KEPT_FILE).read_text())
+    assert kept["serverId"] == server and kept["license"]
+
+
+def test_a_licensed_server_keeps_its_license_restoring_an_unlicensed_backup(tmp_path):
+    """A new server with its own license brings the old one's stations over
+    from its backup (which had none): it keeps its own ID and license."""
+    with TestClient(app_for(tmp_path / "old")) as old:
+        old.post("/api/access/users", json=ADA)
+        backup = _backup(old)
+    new = tmp_path / "new"
+    with TestClient(app_for(new)) as admin:
+        admin.post("/api/access/users", json=ADA)
+        ours = admin.get("/api/access/license").json()["serverId"]
+        admin.put("/api/access/license", json={"license": json.dumps(made(ours))})
+        assert admin.post("/api/restore", content=backup).status_code == 200
+    with TestClient(app_for(new)) as again:
+        again.post("/api/access/sign-in", json=ADA)
+        got = again.get("/api/access/license").json()
+        assert got["serverId"] == ours and got["license"]["licenseId"] == "lic-0001"
+
+
+def test_slots_follow_the_order_devices_were_linked_whatever_the_clock(app, monkeypatch):
+    """A device linked while the server's clock was behind still takes the
+    next slot, never an earlier one."""
+    from app import devices
+
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        first = linked(TestClient(app), "TV")
+        real = devices._now
+        monkeypatch.setattr(devices, "_now", lambda: real() - 6 * 3600_000)
+        later = linked(TestClient(app), "Phone")
+        assert admin.get("/api/internal/license", headers=first).json()["device"]["slot"] == 1
+        assert admin.get("/api/internal/license", headers=later).json()["device"]["slot"] == 2
+
+
+def test_a_later_license_format_says_so_whatever_it_adds():
+    later = made("srv", format_version=2, features=["more"])
+    with pytest.raises(ValueError, match="newer StationPlay"):
+        licensing.read(json.dumps(later), "srv")
+    with pytest.raises(ValueError, match="newer StationPlay"):
+        licensing.read(json.dumps({**later, "chain": []}), "srv")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "[" * 4000 + "]" * 4000,
+        json.dumps(
+            {
+                "payload": b64(("[" * 1500 + "]" * 1500).encode()),
+                "signature": b64(b"\x01" * 64),
+                "key": "k",
+            }
+        ),
+    ],
+)
+def test_deeply_nested_text_is_just_not_a_license(app, text):
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        got = admin.put("/api/access/license", json={"license": text})
+        assert got.status_code == 400 and got.json()["detail"] == licensing.NOT_A_LICENSE
+
+
+@pytest.mark.parametrize(
+    "kept",
+    ['{"serverId": 5, "license": []}', '{"serverId": "../../x", "license": "y"}', "[[[", '"x"'],
+)
+def test_a_damaged_kept_file_is_set_aside(tmp_path, kept):
+    """The data folder's copy, damaged: StationPlay starts, with an ID of
+    its own, and the apps are answered."""
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / licensing.KEPT_FILE).write_text(kept)
+    with TestClient(app_for(data)) as admin:
+        admin.post("/api/access/users", json=ADA)
+        ada = linked(TestClient(admin.app), "TV")
+        got = admin.get("/api/internal/license", headers=ada)
+        assert got.status_code == 200 and len(got.json()["serverId"]) == 36
+
+
+def test_the_page_can_copy_the_installed_license_code(app):
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        server = admin.get("/api/access/license").json()["serverId"]
+        lic = made(server)
+        got = admin.put("/api/access/license", json={"license": json.dumps(lic)}).json()
+        assert got["license"]["code"] == licensing.code_of(lic)
+
+
+def test_the_apps_are_told_the_server_knows_licenses(app):
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        assert "license" in admin.get("/api/v1/server").json()["features"]
