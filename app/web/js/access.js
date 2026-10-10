@@ -292,7 +292,7 @@ function renderDevices() {
       h('td', { class: 'small', 'data-label': 'Linked' }, d.linkedBy ? `By ${d.linkedBy}, ${when(d.linkedMs)}` : when(d.linkedMs)),
       h('td', { class: 'small', 'data-label': 'Last used' }, when(d.seenMs)),
       h('td', {}, h('button', { class: 'btn danger', type: 'button', onclick: async () => {
-        if (!confirm(`Unlink ${d.name}? It’s signed out now.`)) return;
+        if (!confirm(`Unlink ${d.name}? It will be signed out.`)) return;
         try { await api(`/api/access/devices/${d.id}`, { method: 'DELETE' }); toast(`${d.name} is unlinked`); }
         catch (err) { toast(err.message, true); }
         loadAccess();
@@ -393,7 +393,7 @@ function paintUserDevices() {
         u.pin ? h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ pin: '' }, 'PIN removed') }, 'Remove PIN') : null)),
     byName ? h('div', { class: 'playback' },
       h('strong', {}, 'Invite code'),
-      h('p', { class: 'hint', style: 'margin:0' }, 'To sign in on a device without a password: it works once, within 7 days.'),
+      h('p', { class: 'hint', style: 'margin:0' }, 'To sign in on a device without a password, they choose Sign in on Who’s tuning in? and enter their name and this code. It works once, for 7 days.'),
       h('div', {}, h('button', { class: 'btn', type: 'button', onclick: async () => {
         try {
           const got = await api(`/api/access/users/${u.id}/invite`, { method: 'POST' });

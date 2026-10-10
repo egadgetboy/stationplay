@@ -320,7 +320,7 @@ const SETUP_PAGES = {
     if (!view || !people.length) {
       return { node: h('div', { class: 'playback' }, intro,
         h('p', { style: 'margin:0' }, me.required
-          ? 'Everyone who signs in now is an Admin. When you add people on the Access tab, choose a Viewing Level for each there, and the devices they’re on: on a shared TV, StationPlay’s apps ask Who’s tuning in?, and each person picks themselves.'
+          ? 'Everyone who signs in now is an Admin. When you add people on the Access tab, choose a Viewing Level for each there, and the devices they’re on. On a shared TV, StationPlay’s apps ask Who’s tuning in? The first time, each person signs in on it with their password or an invite code. After that, they pick themselves, with their PIN if they have one.'
           : 'Viewing Levels come with signing in: choose Only people who sign in under Who can use StationPlay, then add people on the Access tab.')) };
     }
     viewing = view;

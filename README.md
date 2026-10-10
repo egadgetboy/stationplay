@@ -361,9 +361,9 @@ Channels DVR, TiviMate, VLC and most IPTV apps accept the playlist address, `htt
 
 ### StationPlay's own apps
 
-**StationPlay for Android** is out, in alpha like StationPlay itself. The Apple app and the Roku app are coming. The apps connect directly to your StationPlay server, so you can watch your stations without Plex Pass or any other app.
+**StationPlay for Android** is in private testing, in alpha like StationPlay itself. It isn't in any app store yet. The Apple app and the Roku app are coming. The apps connect directly to your StationPlay server, so you can watch your stations without Plex Pass or any other app.
 
-- **Platforms.** Available now: Android phones and tablets, Google TV and Android TV, in StationPlay for Android. Coming: iPhone, iPad and Apple TV; Fire TV; and Roku.
+- **Platforms.** In private testing: Android phones and tablets, Google TV, Android TV and Fire TV, in StationPlay for Android. Coming: iPhone, iPad and Apple TV, and Roku.
 - **A guide for every screen.** On a TV, you browse it with your remote. On a phone, you see every station at a glance and swipe through the hours. On a tablet, the selected program and a live picture sit above the guide.
 - **Changing stations.** While a station tunes in, you see its card in the same colors as its Intro Bumper. Flip up and down through your stations, enter a station number on your remote, or jump back to the last station you watched. If every tuner is in use, the app says so and lets you join a station that's already playing.
 - **Favorites.** Mark the stations you watch most, and choose to show only those in the guide.
@@ -376,7 +376,7 @@ Channels DVR, TiviMate, VLC and most IPTV apps accept the playlist address, `htt
 - **Media.** Browse your shows and movies by title, genre, what's new or what you haven't watched. Jump to a letter, search, and pick up where you left off from the Resume row. Each title's page shows its cast and crew and titles like it. Skip an episode's intro and credits with one button, and choose subtitles and audio tracks.
 - **The best picture and sound.** Each device gets the best picture and sound it supports, including Dolby Vision and Dolby Atmos. A file is repackaged or converted only when a device can't play it directly.
 
-**Which StationPlay the apps need.** The apps need StationPlay 1.22.0 or newer. With an older version, the app says "This app needs StationPlay 1.22.0 or newer." For every feature, use the newest version:
+**Which StationPlay the apps need.** The apps need StationPlay 1.22.0 or newer. With an older version, the app says so: "The StationPlay at … is version …, but this app needs 1.22.0 or newer." For every feature, use the newest version:
 
 | StationPlay | What the apps gain |
 |---|---|
@@ -723,7 +723,7 @@ Plex apps load logos from StationPlay's address, so they appear on your home net
 
 A station that shows its number instead of a logo shows its name in the corner. Nothing is shown during commercials, trailers or cards. Changes apply from the next program.
 
-**Burn-in protection.** OLED and plasma TVs can be marked by a still picture left on for hours. To prevent that, the logo, name or clock moves a little every 4 minutes, as the clock's minute changes, all through every program. It steps to the next of 9 places, 4 pixels apart, all within 6 pixels of the corner you chose. Its position depends only on the time of day, so tuning in or a program resuming after a hiccup never holds it in one place. The Up Next Banner moves with it, so the banner's logo still lands exactly on it. It works the same on the GPU or the processor. There's no setting; every station does it.
+**Burn-in protection.** OLED and plasma TVs can be marked by a still picture left on for hours. To prevent that, the logo, name or clock moves a little, all through every program. Every 4 minutes, it steps to the next of 9 places. The places are 4 pixels apart, all within 6 pixels of where the station puts it. Its place depends only on the time of day. So tuning in, or a program resuming after a hiccup, never holds it in one place. The Up Next Banner moves with it, so the banner's logo still lands exactly on it. It works the same on the GPU or the processor. There's no setting. Every station does it.
 
 ### Up Next Banner
 
@@ -1114,7 +1114,7 @@ Problems are kept for 30 days. **Clear** removes them, and the log keeps its own
 
 An alert starts only once a problem persists (for Plex, five checks a minute apart), and clears only once things stay right, so alerts don't flicker on and off. Each start and fix adds a line in the **Logs** tab. Admins also see a pill in the page's header with the number of current alerts, which opens a list of them, and they see alerts in StationPlay's apps too.
 
-Alerts are kept in StationPlay's database, so a restart doesn't repeat them. An open alert stays open (the **Logs** tab notes it's still going) until its check finds it fixed. It's then reported fixed once, even if the fix happened while StationPlay was stopped. The apps' list of alerts fixed in the last day survives restarts too. A restored backup starts with no alerts, so anything still wrong is reported again.
+Alerts are kept in StationPlay's database, so a restart doesn't repeat them. An open alert stays open (the **Logs** tab notes it's still going) until its check finds it fixed. Then it's reported fixed, once. That's so even if it was fixed while StationPlay was stopped. The apps' list of alerts fixed in the last day survives restarts too. A restored backup starts with no alerts, so anything still wrong is reported again.
 
 **Notifications.** To get alerts elsewhere, open **Notify a web address** at the top of the **Logs** tab, turn it on, and enter a web address. Use an ntfy topic (**Plain text**), or a Gotify message or Home Assistant webhook address (**JSON**: `{"title": "StationPlay", "message": "...", "kind": "...", "state": "started"}`, or `"fixed"`). **Send a test** tries it right away. StationPlay waits 5 seconds for an answer, tries once more, follows no redirects, and keeps only the answer's status. Only Admins see the address, and the log names only its site.
 
