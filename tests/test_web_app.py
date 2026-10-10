@@ -152,3 +152,28 @@ def test_links_to_other_sites_open_outside_the_apps_window():
     for a in outside:
         assert re.search(r"""target[=:] ?["']_blank["']""", a), a
         assert re.search(r"""rel[=:] ?["'][^"']*\bnoopener\b""", a), a
+
+
+def test_the_access_tab_shows_the_license_and_installs_and_removes_one():
+    """The License section (see licensing.py) asks for what's installed,
+    installs a license (from its file or code) and removes it, and removes
+    a device, at the addresses the server has for them; and it says so in
+    the owner's words."""
+    assert 'id="licensePanel"' in PAGE and PAGE.index('id="licensePanel"') < PAGE.index(
+        'id="accessState"'
+    )  # (at the top of the Access tab)
+    assert "api('/api/access/license')" in PAGE
+    assert "api('/api/access/license', { method: 'PUT', body: { license: text } })" in PAGE
+    assert "api('/api/access/license', { method: 'DELETE' })" in PAGE
+    assert "api(`/api/access/devices/${d.id}`, { method: 'DELETE' })" in PAGE
+    assert "loadLicense();" in PAGE.split("if (name === 'access')", 1)[1].split("\n", 1)[0]
+    for words in (
+        "'Licensed. '), `StationPlay’s apps are unlocked on up to ${lic.deviceLimit} devices.`",
+        "`${Math.min(got.devices.length, lic.deviceLimit)} of ${lic.deviceLimit} devices in use`",
+        "'Not licensed. '), 'StationPlay’s apps play the first station for free.'",
+        "'Not covered'",
+        "'Remove license'",
+        "'Install'",
+        "'For support and transfers.'",
+    ):
+        assert words in PAGE, words

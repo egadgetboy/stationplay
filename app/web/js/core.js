@@ -112,7 +112,7 @@ function showTab(name) {
   if (name === 'logs') { loadLogs(true); loadProblems(); loadNotify(); }
   if (name === 'setup') { loadBackups(); renderPlaybackPanel(); }
   if (name === 'stats') { loadStats(); loadNow(); }
-  if (name === 'access') { loadAccess(); loadApps(); loadLimits(); loadAway(); loadAppLimits(); loadAppLibraries(); loadApiTokens(); }
+  if (name === 'access') { loadLicense(); loadAccess(); loadApps(); loadLimits(); loadAway(); loadAppLimits(); loadAppLibraries(); loadApiTokens(); }
   history.replaceState(null, '', '#' + name);
 }
 

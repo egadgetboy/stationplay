@@ -568,6 +568,13 @@ table.stats .station img.shaped { padding: 2px; }
 .arr-app { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
 .arr-app .scan-set input { flex: 1 1 220px; min-width: 0; }
 .arr-line { margin-top: 6px; }
+/* The server's license, at the top of the Access tab. */
+#licensePanel { margin-bottom: 16px; }
+.license-install { display: grid; gap: 10px; padding-top: 12px; border-top: 1px solid var(--line); }
+#licenseCode {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2);
+  color: var(--ink); font: 13px/1.4 var(--mono); resize: vertical; word-break: break-all; max-width: 560px;
+}
 .limit-user { border-top: 1px solid var(--line); padding-top: 8px; }
 .limit-user > summary { cursor: pointer; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 .limit-stations { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 4px 12px; margin: 8px 0 4px 18px; }

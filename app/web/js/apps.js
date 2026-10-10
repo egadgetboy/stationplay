@@ -1,4 +1,4 @@
-// On the Access tab: stations kept from Plex users, the apps away from home, how many can watch at once, and Media in the apps.
+// On the Access tab: the server's license, stations kept from Plex users, the apps away from home, how many can watch at once, and Media in the apps.
 // Stations kept from some Plex users (Access tab; see limits.py) ---------------------
 let limitsShown = null;
 async function loadLimits() {
@@ -573,4 +573,89 @@ async function loadApiTokens() {
     form, shown, result,
     h('label', {}, outside, ' Accept API tokens from the internet'),
     h('p', { class: 'hint', style: 'margin:0' }, 'Off by default. With it off, tokens work only on your home network, or through a VPN such as Tailscale or WireGuard (to StationPlay, a VPN is home). With it on, they also work through the public port, over HTTPS only.'));
+}
+// The server's license (Access tab; see licensing.py) --------------------------------
+// What's installed, the devices in the order they were linked (the first
+// as many as it covers are covered), installing one from its file or its
+// code, and the server's ID.
+async function loadLicense() {
+  let got;
+  try { got = await api('/api/access/license'); }
+  catch (e) { $('#licenseSum').textContent = ''; $('#licenseBody').replaceChildren(h('p', { class: 'muted', style: 'margin:0' }, e.message)); return; }
+  const lic = got.license;
+  const inUse = lic ? `${Math.min(got.devices.length, lic.deviceLimit)} of ${lic.deviceLimit} devices in use` : '';
+  const over = lic ? got.devices.filter(d => !d.covered).length : 0;
+  $('#licenseSum').textContent = lic ? `Licensed · ${inUse}` : 'Not licensed';
+  const body = $('#licenseBody');
+  const typed = $('#licenseCode')?.value || '';  // (a code being pasted stays)
+  const removeDevice = d => h('button', { class: 'btn danger', type: 'button', onclick: async () => {
+    // (A covered one's place goes to the first not covered.)
+    const next = d.covered && got.devices.some(x => !x.covered);
+    if (!confirm(`Remove ${d.name}? It will be signed out${next ? ', and the next device will be covered' : ''}.`)) return;
+    try { await api(`/api/access/devices/${d.id}`, { method: 'DELETE' }); toast(`${d.name} is removed`); }
+    catch (err) { toast(err.message, true); }
+    loadLicense();
+    loadAccess();
+  } }, 'Remove');
+  const devices = lic && got.devices.length ? h('table', { class: 'users' },
+    h('thead', {}, h('tr', {}, h('th', {}, 'Device'), h('th', {}, 'License'), h('th', {}, 'Linked'), h('th', {}, 'Last used'), h('th', {}, ''))),
+    h('tbody', {}, ...got.devices.map(d => h('tr', {},
+      h('td', {}, h('span', { class: 'muted' }, `${d.slot}. `), h('strong', {}, d.name)),
+      h('td', { class: 'small', 'data-label': 'License' }, d.covered ? 'Covered'
+        : h('span', {}, h('span', { class: 'chip warn' }, 'Not covered'), ' Plays the first station for free.')),
+      h('td', { class: 'small', 'data-label': 'Linked' }, when(d.linkedMs)),
+      h('td', { class: 'small', 'data-label': 'Last used' }, when(d.seenMs)),
+      h('td', {}, removeDevice(d)))))) : null;
+  // Installing: the license file (read here, and sent as text) or its code.
+  const result = h('span', { class: 'hint', role: 'status' });
+  const fileName = h('span', { class: 'hint' }, 'No file chosen');
+  const file = h('input', { type: 'file', id: 'licenseFile', hidden: true, onchange: () => {
+    fileName.textContent = file.files[0]?.name || 'No file chosen';
+    if (file.files[0]) code.value = '';
+    result.textContent = '';
+  } });
+  const code = h('textarea', { id: 'licenseCode', rows: 3, maxlength: 8192, spellcheck: 'false', autocomplete: 'off', placeholder: 'SPL1.…', oninput: () => {
+    if (code.value) { file.value = ''; fileName.textContent = 'No file chosen'; }
+    result.textContent = '';
+  } });
+  code.value = typed;
+  const install = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
+    result.textContent = '';
+    let text = code.value.trim();
+    const chosen = file.files[0];
+    if (chosen) {
+      // (A license file is a few hundred bytes.)
+      if (chosen.size > 8192) { result.textContent = 'That file is too big to be a StationPlay license.'; return; }
+      try { text = await chosen.text(); } catch { result.textContent = 'That file couldn’t be read. Choose it again.'; return; }
+    }
+    if (!text) { result.textContent = 'Choose the license file, or paste the license code.'; return; }
+    let now;
+    try { now = await api('/api/access/license', { method: 'PUT', body: { license: text } }); }
+    catch (e) { result.textContent = e.message; return; }
+    code.value = '';
+    toast(`License installed. StationPlay’s apps are unlocked on up to ${now.license.deviceLimit} devices.`);
+    loadLicense();
+  } }, 'Install');
+  const removeLicense = lic ? h('button', { type: 'button', class: 'btn danger', onclick: async () => {
+    if (!confirm('Remove the license? StationPlay’s apps will play only the first station, for free, until a license is installed again.')) return;
+    try { await api('/api/access/license', { method: 'DELETE' }); toast('License removed'); }
+    catch (e) { toast(e.message, true); }
+    loadLicense();
+  } }, 'Remove license') : null;
+  const serverId = h('code', { id: 'licenseServerId' }, got.serverId);
+  body.replaceChildren(
+    lic
+      ? h('div', {}, h('p', { style: 'margin:0' }, h('strong', {}, 'Licensed. '), `StationPlay’s apps are unlocked on up to ${lic.deviceLimit} devices.`),
+          h('p', { class: 'hint', style: 'margin:4px 0 0' }, `${inUse}${over ? `, and ${over} more not covered` : ''}. Devices are covered in the order they were linked. Removing one signs it out, and the next is covered.`))
+      : h('p', { style: 'margin:0' }, h('strong', {}, 'Not licensed. '), 'StationPlay’s apps play the first station for free.'),
+    ...(lic ? [devices || h('p', { class: 'muted small', style: 'margin:0' }, 'No devices yet. A device is linked when someone signs in on it in StationPlay’s apps.'),
+      h('div', {}, removeLicense)] : []),
+    h('div', { class: 'license-install' },
+      h('strong', {}, lic ? 'Install another license' : 'Install a license'),
+      h('div', { class: 'scan-set' }, h('button', { type: 'button', class: 'btn', onclick: () => file.click() }, 'Choose the license file…'), fileName, file),
+      h('div', { class: 'field' }, h('label', { for: 'licenseCode' }, 'Or paste the license code'), code),
+      h('div', { class: 'scan-set' }, install, result)),
+    h('div', { class: 'copyrow' }, h('span', { class: 'what' }, 'Server ID'), serverId,
+      h('button', { type: 'button', class: 'btn', onclick: async () => { toast(await copyText(got.serverId) ? 'Copied' : got.serverId); } }, 'Copy'),
+      h('span', { class: 'hint' }, 'For support and transfers.')));
 }

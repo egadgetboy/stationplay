@@ -2,7 +2,7 @@
 
 Starts StationPlay with stand-in data (the tests' stand-in Plex, from
 tests/fakeplex_library.py, with shows, movies and collections; and
-stations, people, a linked device, stats, logs, problems from the apps,
+stations, people, linked devices, stats, logs, problems from the apps,
 broken files and a person's report, and Admin alerts kept from before it
 last stopped), then, in Playwright's Chromium, looks at every tab and
 every dialog and panel that opens, signed in as an Admin and as a User, at
@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import colorsys
 import io
+import json
 import logging
 import socket
 import subprocess
@@ -44,7 +46,7 @@ from playwright.sync_api import Page, sync_playwright
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app import jobs, scanner, stats  # noqa: E402
+from app import jobs, licensing, scanner, stats  # noqa: E402
 from app import main as server  # noqa: E402
 from app.broadcaster import Viewer  # noqa: E402
 from app.config import Settings  # noqa: E402
@@ -243,7 +245,7 @@ def kept_from_before(data: Path) -> None:
 
 def fill(sp: Running, data: Path) -> None:
     """Everything the tabs show: stations (from shows and movies, smart ones
-    and from collections), people, a linked device, signed-in apps, an API
+    and from collections), people, linked devices, signed-in apps, an API
     token, StationPlay's apps away from home, stats, logs, problems from the
     apps, a logo and an Intro Bumper of your own, a backup; and on the Broken
     files tab, people's reports (several on one program, one StationPlay
@@ -368,6 +370,9 @@ def fill(sp: Running, data: Path) -> None:
     def inside() -> None:
         pat = next(u for u in ctx.db.users() if u.name == ADMIN["name"])
         ctx.devices.link("StationPlay for Android TV on Den", pat)
+        # (More, for the License section: past what its test license covers.)
+        for name in ("StationPlay for iPhone on Pat’s iPhone", "StationPlay for Roku on Bedroom"):
+            ctx.devices.link(name, pat)
         # Stats: viewings over the last few weeks, by Plex users and in the apps.
         now = int(time.time() * 1000)
         ids = [made[n]["id"] for n in (2, 4, 5, 7, 12)]
@@ -590,6 +595,23 @@ MEASURE = r"""
 """
 
 
+def test_license(server_id: str, devices: int) -> str:
+    """A license code for this server, as licensing.py reads it (the server
+    never checks its signature: the apps do)."""
+    payload = {"license_id": "page-sizes", "server_id": server_id, "tier": "lifetime",
+               "device_limit": devices, "issued_at": int(time.time()), "format_version": 1}  # fmt: skip
+    file = {
+        "payload": b64(json.dumps(payload).encode()),
+        "signature": b64(b"\x07" * 64),
+        "key": "k1",
+    }
+    return licensing.code_of(file)
+
+
+def b64(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
 def size_of(text: str) -> tuple[int, int]:
     w, h = text.split("x")
     return int(w), int(h)
@@ -746,6 +768,17 @@ def admin_views(page: Page, look: Look, only: set[str] | None) -> None:
         )
         page.wait_for_timeout(800)
         look("access-panels", full=True)
+        # Licensed (a test license, for 2 devices: the third isn't covered),
+        # installed from its code as an Admin would; then removed again.
+        server_id = page.evaluate("async () => (await api('/api/access/license')).serverId")
+        page.fill("#licenseCode", test_license(server_id, 2))
+        page.click("#licenseBody button:has-text('Install')")
+        page.wait_for_selector("#licenseBody table")
+        page.evaluate("() => document.querySelector('#licensePanel').scrollIntoView()")
+        look("access-license")
+        page.evaluate(
+            "async () => { await api('/api/access/license', { method: 'DELETE' }); await loadLicense(); window.scrollTo(0, 0); }"
+        )
         page.click("#viewingBody button:has-text('Add a level')")
         page.wait_for_timeout(400)
         page.evaluate(
