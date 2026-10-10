@@ -990,7 +990,7 @@ async def quick_check_item(
         log.info(
             "Quick check found a problem in %s (%s), but you put it back on the air, so it "
             "stays on",
-            item.label,
+            f"{part_words(*verdict.part)} of {item.label}" if verdict.part else item.label,
             verdict.reason,
         )
         return verdict, record
@@ -1036,8 +1036,10 @@ async def quick_verdict(
     key = version_key(item.rating_key, version)
     first = await _quick_file(ctx, item, resolved, record, key)
     files = resolved.parts
-    if not resolved.error:
-        # (Records of files it no longer has: it was in more before.)
+    if not resolved.error and resolved.known:
+        # (Records of files it no longer has: it was in more before. Only
+        # when the library said which files it has now: with Plex away, the
+        # later files' records, an Admin's Retry included, stay.)
         ctx.db.forget_scans([k for n, k in ctx.db.part_records(key) if n > len(files)])
     if len(files) < 2:
         return first[0], first[1], resolved
@@ -1052,9 +1054,16 @@ async def quick_verdict(
             ctx.db.save_quick(checked)
         found.append((verdict, checked, here))
     of = len(files)
-    for n, (verdict, _checked, here) in enumerate(found, 1):
-        if verdict.result not in ("ok", "skipped"):
-            return replace(verdict, part=(n, of)), first[1], here
+    # (The first with a problem an Admin didn't put back on the air (Retry):
+    # one kept on is about that file only, never hiding a later one's.)
+    problems = [
+        (n, verdict, here)
+        for n, (verdict, _checked, here) in enumerate(found, 1)
+        if verdict.result not in ("ok", "skipped")
+    ]
+    if problems:
+        n, verdict, here = next((p for p in problems if not p[1].kept), problems[0])
+        return replace(verdict, part=(n, of)), first[1], here
     skipped = next(
         ((n, v) for n, (v, _k, _h) in enumerate(found, 1) if v.result == "skipped"), None
     )
@@ -2031,7 +2040,7 @@ class Scanner:
         if verdict.result == "skipped":
             return False
         stretch = f"{fmt_offset(start)} to {fmt_offset(start + STRETCH_S)}"
-        target.ran.append(f"from {stretch}" + (f" of {part_words(*part)}" if part else ""))
+        target.ran.append((f"in {part_words(*part)}, " if part else "") + f"from {stretch}")
         if verdict.result == "ok":
             return False
         record = self.ctx.db.scan(part_key(target.key, n))

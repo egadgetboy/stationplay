@@ -472,6 +472,14 @@ async def look_at(
             " with its new file" if changed else " now",
         )
         return CLEARED, {}
+    if verdict.kept:
+        # (What's left is a file an Admin put back on the air: Retry.)
+        log.info(
+            "Removed %s from the Broken files list: what's left is %s, which an Admin kept on",
+            _label(entry),
+            f"part {verdict.part[0]}" if verdict.part else "its file",
+        )
+        return CLEARED, {}
     found: dict[str, Any] = {
         "reason": redact(of_part(f"Check: {verdict.reason}", verdict.part))[:500],
         "problem": verdict.result,

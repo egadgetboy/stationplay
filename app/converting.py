@@ -313,10 +313,17 @@ def command(
         keys = [t - offset for t in plan.starts[first + 1 : last]]
         end = (plan.parts[plan.part_of(first) + 1].start_s if last < len(plan.starts)
                else plan.duration_s) - offset  # fmt: skip
-        video = _converted_picture(plan, subs, keys or [end], video_index, encoder)
+        # (Of a program in several files, the pieces were planned to each
+        # file's length as the library gives it, its longest stream's: a
+        # file whose picture ends sooner, its sound running on, holds its
+        # last frame to there, so every piece planned is made and the next
+        # file's start right after. The last file, or a program in one,
+        # just ends where its picture does.)
+        span = max(end - start, 0.0) if last < len(plan.starts) else None
+        video = _converted_picture(plan, subs, keys or [end], video_index, encoder, span)
         # (Converted: its times from the program's start, whatever the file's
         # own first time, as the pieces were planned.)
-        times = ["-start_at_zero"]
+        times = ["-start_at_zero", *(["-t", f"{span:.3f}"] if span is not None else [])]
     chain = sound_chain(plan)
     # (Sound that goes through filters is made again, never copied.)
     codec = "aac" if chain and plan.audio_codec == "copy" else plan.audio_codec
@@ -359,7 +366,12 @@ def sound_chain(plan: Plan) -> str:
 
 
 def _converted_picture(
-    plan: Plan, subs: Subtitles | None, keys: list[float], video_index: int, encoder: Encoder
+    plan: Plan,
+    subs: Subtitles | None,
+    keys: list[float],
+    video_index: int,
+    encoder: Encoder,
+    span: float | None = None,
 ) -> list[str]:
     """Converting the picture: deinterlaced where needed, square pixels,
     within a 16:9 picture plan.height lines high (so a wide film at 1080p is
@@ -372,6 +384,9 @@ def _converted_picture(
     upload = ",format=nv12,hwupload" if encoder.kind == "vaapi" else ""
     widest = plan.height * 16 // 9 // 2 * 2
     steps = [
+        # (Held on its last frame for up to `span`, if the picture ends before
+        # what's planned does: see command.)
+        *([f"tpad=stop_mode=clone:stop_duration={span:.3f}"] if span is not None else []),
         "bwdif=mode=send_frame:deint=interlaced",
         "scale=w='trunc(iw*sar/2)*2':h=ih,setsar=1",
         f"scale=w='min({widest},iw)':h='min({plan.height},ih)':"

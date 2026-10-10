@@ -516,6 +516,14 @@ async def _one(
     """What's next for one entry; its replace state after."""
     arr = r.arr
     now = now_ms()
+    if (entry.get("parts") or 1) > 1:
+        # (Sonarr and Radarr keep one file for each episode or movie: one of
+        # several can't be swapped for a better copy, nor the whole of it.)
+        raise Cant(
+            f"This is in several files, and {arr.name} keeps one file for each "
+            f"{'episode' if arr.app == 'sonarr' else 'movie'}, so it can't replace it. "
+            "Replace it yourself."
+        )
     found = await _find(ctx, r, entry, state, by_key)
     tried = tries.setdefault(f"{arr.app}:{found.item}", {"tries": [], "fetched": False})
     n = len(tried.get("tries") or [])

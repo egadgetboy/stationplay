@@ -258,14 +258,19 @@ def versions(e: Entry, problems: dict[str, str] | None = None) -> list[dict]:
 
 
 def playable_versions(
-    e: Entry, dev: ondemand.Device, max_kbps: int | None, problems: dict[str, str] | None = None
+    e: Entry,
+    dev: ondemand.Device,
+    max_kbps: int | None,
+    problems: dict[str, str] | None = None,
+    joins: bool = True,
 ) -> list[dict]:
     """Its versions, each saying whether this device can play it as it is,
-    and whether the connection keeps up with it."""
+    and whether the connection keeps up with it (`joins`: whether the app
+    takes a copy that joins a version's several files)."""
     out = []
     best = [m for m in ondemand.best_first(e.media) if m.id]
     for v, m in zip(versions(e, problems), best, strict=True):
-        why = ondemand.unplayable(m, dev)
+        why = ondemand.unplayable(m, dev, joins)
         out.append(
             {**v, "playable": not why, "why": why or None, "fits": ondemand.fits(m, max_kbps)}
         )
@@ -1416,7 +1421,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "durationMs": media.duration_ms or e.duration_ms,
             "bitrateKbps": plan.kbps_needed or media.bitrate_kbps,
             "version": media.id or None,
-            "versions": playable_versions(e, dev, body.maxKbps, on_the_list(e)),
+            "versions": playable_versions(e, dev, body.maxKbps, on_the_list(e), "ts" in hls),
             "whenSlow": ctx.shared.when_slow["away" if away_ else "home"],
             "markers": _markers(e),
             "audio": tracks(media.audio, True),
@@ -1627,7 +1632,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "durationMs": media.duration_ms or e.duration_ms,
             "bitrateKbps": media.bitrate_kbps,
             "version": media.id or None,
-            "versions": playable_versions(e, dev, body.maxKbps, on_the_list(e)),
+            "versions": playable_versions(e, dev, body.maxKbps, on_the_list(e), "ts" in hls),
             "whenSlow": ctx.shared.when_slow["away" if away_ else "home"],
             "markers": _markers(e),
             "audio": tracks(media.audio, True),

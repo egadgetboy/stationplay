@@ -466,3 +466,73 @@ def test_medias_files_of_a_version_in_several_are_each_due_a_check():
     assert not sc._deep_due(scans, program) and sc._deep_done(scans, "300")
     scans["300/part2"] = ScanRecord("300/part2", "/f/new-cd2.mkv", 1, quick_ms=1, quick="ok")
     assert sc._unchecked(scans, program)  # (its second file changed)
+
+
+# Found by the cold audit of 1.30.2 ------------------------------------------------
+
+
+@needs_ffmpeg
+def test_an_admins_retry_on_a_later_file_survives_plex_being_down(tmp_path, part_files):
+    """Plex down during a quick check (its nightly update, say) forgets
+    nothing about the movie's later files: an Admin's Retry on file 2
+    still holds once Plex is back."""
+    client, fp = checked(tmp_path, part_files["cd1"], part_files["cd2-cut"])
+    with client:
+        on_a_station(client)
+        ctx = client.app.state.ctx
+        client.portal.call(ctx.scanner.round)
+        assert [(e["part"], e["parts"]) for e in ctx.broken.entries()] == [(2, 2)]
+        assert client.delete("/api/broken/300").status_code == 204
+        assert ctx.db.scan("300/part2").kept
+        item = ctx.db.all_programs(1)[0]
+        fp.down = True
+        client.portal.call(sc.quick_check_item, ctx, item, 3)
+        kept = ctx.db.scan("300/part2")
+        fp.down = False
+        client.portal.call(sc.quick_check_item, ctx, item, 3)
+        assert kept is not None and kept.kept
+        assert ctx.broken.entries() == []
+
+
+@needs_ffmpeg
+def test_a_file_put_back_on_the_air_doesnt_hide_a_later_ones_problem(tmp_path, part_files):
+    """An Admin's Retry on file 2 is about file 2 only: a cut-short file 3
+    added later still takes the movie off the air, named as file 3."""
+    third = tmp_path / "Long Movie-cd3.mkv"
+    shutil.copy(part_files["cd2-cut"], third)
+    client, fp = checked(tmp_path, part_files["cd1"], part_files["cd2-cut"])
+    with client:
+        on_a_station(client)
+        ctx = client.app.state.ctx
+        client.portal.call(ctx.scanner.round)
+        assert client.delete("/api/broken/300").status_code == 204
+        stack(fp, "300", (str(part_files["cd1"]), PART_S * 1000),
+              (str(part_files["cd2-cut"]), PART_S * 1000), (str(third), PART_S * 1000))  # fmt: skip
+        client.portal.call(sc.quick_check_item, ctx, ctx.db.all_programs(1)[0], 3)
+        assert [(e["part"], e["parts"]) for e in ctx.broken.entries()] == [(3, 3)]
+
+
+@needs_ffmpeg
+def test_a_file_put_back_on_the_air_isnt_named_when_the_list_is_checked_again(
+    tmp_path, part_files
+):
+    """File 2 kept on by an Admin, file 3 broken and then replaced: checking
+    the Broken files list again clears the movie, rather than listing it
+    again for file 2, which the Admin kept on the air."""
+    from app import jobs
+
+    third = tmp_path / "Long Movie-cd3.mkv"
+    shutil.copy(part_files["cd2-cut"], third)
+    client, fp = checked(tmp_path, part_files["cd1"], part_files["cd2-cut"])
+    with client:
+        on_a_station(client)
+        ctx = client.app.state.ctx
+        client.portal.call(ctx.scanner.round)
+        assert client.delete("/api/broken/300").status_code == 204
+        stack(fp, "300", (str(part_files["cd1"]), PART_S * 1000),
+              (str(part_files["cd2-cut"]), PART_S * 1000), (str(third), PART_S * 1000))  # fmt: skip
+        client.portal.call(sc.quick_check_item, ctx, ctx.db.all_programs(1)[0], 3)
+        assert [(e["part"], e["parts"]) for e in ctx.broken.entries()] == [(3, 3)]
+        shutil.copy(part_files["cd1"], third)  # (a good file 3 in its place)
+        client.portal.call(jobs.look_again, ctx, jobs.ListCheck(running=True), True)
+        assert [(e["reason"], e["part"]) for e in ctx.broken.entries()] == []

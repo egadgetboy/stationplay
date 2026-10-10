@@ -350,3 +350,94 @@ def test_media_plays_a_movie_in_two_files_from_inside_the_second(
         assert media_seconds(out) == pytest.approx(2 * PART_S, abs=0.3)
         assert home.post(again["leave"]).status_code == 204
     assert "joining its 2 files" in caplog.text
+
+
+# Found by the cold audit of 1.30.2 ------------------------------------------------
+
+
+def _length_ms(path: Path) -> int:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path)],
+        capture_output=True, text=True, check=True,
+    ).stdout  # fmt: skip
+    return int(float(json.loads(out)["format"]["duration"]) * 1000)
+
+
+def _streams(path: Path, base: int) -> list[dict]:
+    found = json.loads(subprocess.run(
+        ["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(path)],
+        capture_output=True, check=True, text=True,
+    ).stdout)["streams"]  # fmt: skip
+    return [
+        {"id": base + n, "streamType": 1 if s["codec_type"] == "video" else 2,
+         "codec": s["codec_name"], "width": s.get("width"), "height": s.get("height"),
+         "channels": s.get("channels"), "index": n, "default": n == 1}
+        for n, s in enumerate(found)
+    ]  # fmt: skip
+
+
+def test_a_converted_copy_carries_on_past_a_first_file_whose_sound_runs_longer(tmp_path, parts):
+    """A file whose sound runs on after its picture ends (common in old
+    disc rips): Plex gives its length as the longer of the two. A converted
+    copy joining it to the next file has every piece the plan lists,
+    rather than giving up at the join."""
+    cd1 = tmp_path / "Long Movie-cd1.mkv"
+    # (Picture 7 seconds, sound 14.)
+    ff("-f", "lavfi", "-i", "testsrc2=s=320x180:r=25:d=7", "-f", "lavfi", "-i",
+       "sine=f=440:sample_rate=48000:d=14", "-c:v", "libx264", "-preset", "ultrafast",
+       "-g", "25", "-c:a", "aac", str(cd1))  # fmt: skip
+    cd2 = parts["cd2-mpeg4"]  # (its picture's format differs: the copy is converted)
+    l1, l2 = _length_ms(cd1), _length_ms(cd2)
+    fp = LibraryPlex()
+    fp.add_section("2", "Movies", "movie")
+    fp.add_movie("300", "Long Movie", str(cd1), l1 + l2, section="2")
+    fp.more["300"] = {"Media": [{
+        "id": 3000, "container": "mkv", "videoCodec": "h264", "duration": l1 + l2,
+        "Part": [
+            {"key": "/library/parts/3001/1/file.mkv", "file": str(cd1), "container": "mkv",
+             "duration": l1, "size": cd1.stat().st_size, "Stream": _streams(cd1, 10)},
+            {"key": "/library/parts/3002/1/file.mkv", "file": str(cd2), "container": "mkv",
+             "duration": l2, "size": cd2.stat().st_size, "Stream": _streams(cd2, 20)},
+        ],
+    }]}  # fmt: skip
+    app = create_app(
+        Settings(plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "data"),
+        PlexClient("http://plex.test", "token", transport=fp.transport()),
+    )
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["2"]})
+        played = home.post(
+            "/api/internal/play", json={"key": "300", "device": PHONE, "startMs": 0}
+        )
+        assert played.status_code == 200, played.text
+        answer = played.json()
+        assert answer["method"] == "convert", answer
+        names = [ln for ln in home.get(answer["url"]).text.splitlines() if ln.startswith("piece-")]
+        here = answer["url"].rsplit("/", 1)[0]
+        got = [(name, home.get(f"{here}/{name}").status_code) for name in names]
+        assert len(got) >= 3 and all(code == 200 for _, code in got), got
+
+
+def test_an_app_that_takes_no_copies_isnt_offered_a_version_in_several_files(tmp_path, parts):
+    """An app that plays files only as they are (no `device.hls`) is told a
+    version in several files isn't playable: it plays only as a copy that
+    joins them."""
+    fp = library(parts["cd2"], parts["cd1"])
+    whole = parts["cd1"]
+    fp.more["300"]["Media"].append({
+        "id": 3100, "container": "mkv", "videoCodec": "h264", "duration": PART_S * 1000,
+        "Part": [{"key": "/library/parts/3101/1/file.mkv", "file": str(whole), "container": "mkv",
+                  "duration": PART_S * 1000, "size": whole.stat().st_size}],
+    })  # fmt: skip
+    app = create_app(
+        Settings(plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "data"),
+        PlexClient("http://plex.test", "token", transport=fp.transport()),
+    )
+    no_copies = {k: v for k, v in PHONE.items() if k != "hls"}
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["2"]})
+        played = home.post("/api/internal/play", json={"key": "300", "device": no_copies})
+        assert played.status_code == 200, played.text
+        listed = {v["id"]: v["playable"] for v in played.json()["versions"]}
+        assert played.json()["version"] == "3100"
+        assert listed == {"3000": False, "3100": True}, played.json()["versions"]

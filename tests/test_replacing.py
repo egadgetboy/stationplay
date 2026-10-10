@@ -799,3 +799,34 @@ def test_a_new_file_with_the_same_problem_in_the_same_places_wants_your_look(wor
     # Retry: it's fine, back on the air.
     assert c.delete("/api/broken/201").status_code == 204
     assert world.ctx.broken.entries() == []
+
+
+# Found by the cold audit of 1.30.2 ------------------------------------------------
+
+DUNE = "/movies/Dune (1984)"
+
+
+def _dune_in_two_files(w) -> None:
+    """Dune in two files, the second found broken."""
+    from tests.test_parts import stack
+
+    stack(w.plex, "301", (f"{DUNE}/Dune (1984)-cd1.mkv", 60 * 60_000),
+          (f"{DUNE}/Dune (1984)-cd2.mkv", 60 * 60_000))  # fmt: skip
+    w.ctx.broken.record(
+        w.item("301"), "Deep scan: the picture breaks up around 5:00", 55,
+        f"{DUNE}/Dune (1984)-cd2.mkv", 2000, problem="damaged", found=DEEP_SCAN, part=(2, 2),
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize("has", ["Dune (1984)-cd1.mkv", "Dune (1984)-cd2.mkv"])
+def test_radarr_never_replaces_part_of_a_movie_in_several_files(world, has):
+    """Radarr keeps one file for each movie, so it can't replace one of a
+    movie's several files: it's left to the Admin, said plainly, and
+    nothing is deleted or searched for."""
+    world.radarr.give_file(9, has, 1000, downloaded="Dune.1984.720p.BluRay-OLD")
+    _dune_in_two_files(world)
+    world.go()
+    state = world.entry("301").get("replace") or {}
+    assert state.get("state") == replacing.CANT, state
+    assert "several files" in state.get("note", ""), state
+    assert not calls_like(world.radarr, "DELETE") and not calls_like(world.radarr, "POST command")
