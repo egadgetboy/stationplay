@@ -353,7 +353,8 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         assert home.put("/api/app-libraries", json={"libraries": ["1", "2"]}).status_code == 200
         features = check.answer(phone.get("/api/v1/server"), "GET /api/v1/server")["features"]
         assert features == [
-            "hls", "speed-test", "reports", "night", "problems", "library", "convert", "even-sound"
+            "hls", "speed-test", "reports", "night", "problems", "library", "convert",
+            "convert-asked", "even-sound",
         ]  # fmt: skip
         libs = check.answer(
             phone.get("/api/internal/libraries", headers=sam), "GET /api/internal/libraries"
