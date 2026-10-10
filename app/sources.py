@@ -15,6 +15,8 @@ import logging
 import os
 from dataclasses import dataclass, field, replace
 
+from . import ffmpeg as ff
+from .catalog import Media
 from .config import Settings
 from .db import Item
 from .library import Library, LibraryError
@@ -31,6 +33,14 @@ class ResolvedSource:
     # True when the failure says nothing about the file itself (Plex or the
     # media share unreachable), so it must not land on the broken list.
     transient: bool = False
+    # A program in several files (a movie on two discs, see catalog.Media):
+    # each, in order, as the library has it now (this is where the first is
+    # read from: see locate for the others); () for one file.
+    parts: tuple[Media, ...] = ()
+    # Whether the library said which files the program has now (False: it
+    # couldn't be asked, or no longer has it under its key, so the file it
+    # had last plays, and it may have more than that one).
+    known: bool = True
 
 
 @dataclass
@@ -178,9 +188,10 @@ async def resolve_source(
     *,
     follow: bool = True,
 ) -> ResolvedSource:
-    """Works out where to read an item from.
+    """Works out where to read an item from (its first file, for one in
+    several: the rest are in `parts`).
 
-    Plex is asked for the item's current file first, so episodes Sonarr
+    Plex is asked for the item's current files first, so episodes Sonarr
     upgraded or renamed since the channel was built are still found. The
     file is read straight from disk when this app can see it, and streamed
     from Plex otherwise.
@@ -190,9 +201,9 @@ async def resolve_source(
     # Plex answered that it has no such item: removed, or added again under
     # another key (the station follows that at its next update from Plex).
     gone = False
-    part = None
+    files: tuple[Media, ...] = ()
     try:
-        part = await asyncio.wait_for(library.current_part(item.rating_key), PLEX_LOOKUP_S)
+        files = await asyncio.wait_for(library.current_files(item.rating_key), PLEX_LOOKUP_S)
     except (TimeoutError, LibraryError) as e:
         if isinstance(e, LibraryError) and e.status == 404:
             gone = True
@@ -205,9 +216,10 @@ async def resolve_source(
                 item.label,
                 why,
             )
-
+    part = files[0] if files else None
+    parts = files if len(files) > 1 else ()
     plex_file = (part.file if part else None) or item.file_path
-    part_key = (part.key if part else None) or item.part_key
+    part_key = (part.part_key if part else None) or item.part_key
     size = part.size if part else None
 
     if plex_reachable and part is None and not gone:
@@ -222,11 +234,14 @@ async def resolve_source(
             access.direct += 1
             if gone:
                 _say_once_its_gone(item)
-            return ResolvedSource(found.path, plex_file, size)
+            return ResolvedSource(
+                found.path, plex_file, size, parts=parts, known=plex_reachable and not gone
+            )
         if timed_out:
             return ResolvedSource(
-                None, plex_file, size, error="the media share isn't responding", transient=True
-            )
+                None, plex_file, size, error="the media share isn't responding", transient=True,
+                parts=parts,
+            )  # fmt: skip
 
     if gone:
         # Removed from Plex, or added again under a new key: Plex can say
@@ -268,7 +283,7 @@ async def resolve_source(
     )
     if stream is not None:
         access.via_plex += 1
-        return ResolvedSource(stream, plex_file, size)
+        return ResolvedSource(stream, plex_file, size, parts=parts)
 
     if not plex_reachable:
         return ResolvedSource(
@@ -278,7 +293,59 @@ async def resolve_source(
             error="Plex can't be reached, and StationPlay can't see the file directly",
             transient=True,
         )
-    return ResolvedSource(None, plex_file, size, error=f"file not found: {plex_file}")
+    return ResolvedSource(None, plex_file, size, error=f"file not found: {plex_file}", parts=parts)
+
+
+async def locate(
+    settings: Settings, library: Library, key: str, media: Media, access: MediaAccess
+) -> ResolvedSource:
+    """Where a file the library has now is read from (`media`: one version
+    of program `key`'s file, or one of its files): straight from disk when
+    StationPlay can see it, otherwise streamed from the library."""
+    if media.file:
+        found, timed_out = await find_first(local_candidates(settings, access, media.file))
+        if found:
+            learn_mapping(access, found)
+            access.direct += 1
+            return ResolvedSource(found.path, media.file, media.size)
+        if timed_out:
+            return ResolvedSource(
+                None, media.file, media.size, error="the media share isn't responding",
+                transient=True,
+            )  # fmt: skip
+    stream = (
+        library.stream_url(key, media.part_key) if media.part_key and library.configured else None
+    )
+    if stream is not None:
+        access.via_plex += 1
+        return ResolvedSource(stream, media.file, media.size)
+    return ResolvedSource(None, media.file, media.size, error=f"file not found: {media.file}")
+
+
+async def part_starts(
+    settings: Settings,
+    library: Library,
+    key: str,
+    parts: tuple[Media, ...],
+    access: MediaAccess,
+    lengths: dict[int, float] | None = None,
+) -> list[float] | None:
+    """Where each of a program's files (`parts`, in order) starts in it, in
+    seconds: after those before it, by their lengths as the library says
+    them, or as they're found to be where it doesn't say (`lengths`, by
+    each one's place, if they're known already: it's probed otherwise).
+    None if one of them can't be told now."""
+    out = [0.0]
+    for n, part in enumerate(parts[:-1]):
+        length = part.duration_ms / 1000 if part.duration_ms else (lengths or {}).get(n)
+        if length is None:
+            found = await locate(settings, library, key, part, access)
+            probe = await ff.probe(settings, found.source) if found.source else None
+            length = probe.duration_s if probe is not None and probe.ok else None
+        if not length or length <= 0:
+            return None
+        out.append(out[-1] + length)
+    return out
 
 
 # A version of a program that's gone from its library: nothing offers it
@@ -307,23 +374,6 @@ async def resolve_version(
     media = entry.version(version) if entry is not None else None
     if media is None:  # (gone; or it's the first now, and known by the program's key)
         return ResolvedSource(None, item.file_path, None, error=VERSION_GONE, transient=True)
-    if media.file:
-        found, timed_out = await find_first(local_candidates(settings, access, media.file))
-        if found:
-            learn_mapping(access, found)
-            access.direct += 1
-            return ResolvedSource(found.path, media.file, media.size)
-        if timed_out:
-            return ResolvedSource(
-                None, media.file, media.size, error="the media share isn't responding",
-                transient=True,
-            )  # fmt: skip
-    stream = (
-        library.stream_url(item.rating_key, media.part_key)
-        if media.part_key and library.configured
-        else None
-    )
-    if stream is not None:
-        access.via_plex += 1
-        return ResolvedSource(stream, media.file, media.size)
-    return ResolvedSource(None, media.file, media.size, error=f"file not found: {media.file}")
+    first = media.files[0]
+    found = await locate(settings, library, item.rating_key, first, access)
+    return replace(found, parts=media.parts if media.joined else ())

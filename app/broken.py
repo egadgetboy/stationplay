@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .catalog import part_words
 from .db import Item
 from .ffmpeg import redact
 
@@ -66,6 +67,35 @@ def version_key(rating_key: str, version: str = "") -> str:
 def file_key(entry: dict[str, Any]) -> str:
     """An entry's file key (see version_key)."""
     return version_key(str(entry["ratingKey"]), str(entry.get("version") or ""))
+
+
+def part_key(key: str, n: int) -> str:
+    """The checks' record of one file of a version in several (a movie on
+    two discs: see catalog.Media), the `n`th (from 1): its first's is the
+    version's own (`key`, a file key), each other's "1234/part2". (One
+    entry on the list stands for the version, whichever file it's about.)"""
+    return key if n <= 1 else f"{key}/part{n}"
+
+
+def version_of_part(key: str) -> str:
+    """The file key a record's key (see part_key) is about."""
+    return key.split("/part", 1)[0]
+
+
+def entry_part(entry: dict[str, Any]) -> tuple[int, int] | None:
+    """Which of its version's files an entry is about, (n, of), for a
+    version in several; None for one in one."""
+    n, of = entry.get("part"), entry.get("parts")
+    if isinstance(n, int) and isinstance(of, int) and 1 <= n <= of and of > 1:
+        return n, of
+    return None
+
+
+def of_part(reason: str, part: tuple[int, int] | None) -> str:
+    """What's wrong, saying which of the version's files it's in, for one in
+    several: "Check: the sound drops out around 12:31, in part 2 of 3" (its
+    times are that file's). As it is for one in one."""
+    return f"{reason}, in {part_words(*part)}" if part else reason
 
 
 def found_by(entry: dict[str, Any]) -> str:
@@ -138,6 +168,7 @@ class BrokenFiles:
         found: str = PLAYING,
         version: str = "",
         library: str | None = None,
+        part: tuple[int, int] | None = None,
     ) -> None:
         """Takes a program's file off the air. `problem` is "broken" (it won't
         play), "damaged" (it plays, but the picture or sound breaks up) or
@@ -145,8 +176,11 @@ class BrokenFiles:
         ff.DOLBY_VISION_ONLY); `found`, how (see FOUND_BY); `version`, the
         version's ID, for one that isn't the program's first (see
         version_key); `library`, the library it's in, if that's known (what's
-        in a library shared with the apps is in Media)."""
+        in a library shared with the apps is in Media); `part`, for a version
+        in several files, which of them it's about ((n, of): see of_part):
+        the version is off the air for it."""
         key = version_key(item.rating_key, version)
+        reason = of_part(reason, part)
         self._load(force=True)
         with self._lock:
             existing = self._entries.get(key, {})
@@ -173,6 +207,8 @@ class BrokenFiles:
             }
             if version:
                 entry["version"] = version
+            if part:
+                entry["part"], entry["parts"] = part
             # (What replacing it with Sonarr needs, for a program no station has.)
             show_key = item.show_key or existing.get("showKey")
             if show_key:
@@ -222,7 +258,11 @@ class BrokenFiles:
                     del self._entries[key]
                     taken.append(key)
                 elif key in still:
-                    self._entries[key] = {**entry, **still[key], "lastChecked": now}
+                    entry = {**entry, **still[key], "lastChecked": now}
+                    if entry_part(entry) is None:  # (about the version's one file now)
+                        entry.pop("part", None)
+                        entry.pop("parts", None)
+                    self._entries[key] = entry
             if taken or still:
                 self._write()
         return taken

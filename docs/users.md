@@ -162,22 +162,44 @@ use it. Who's on it is each user's **Show on**, and where the device is:
 **at home** (its picker is asked on the home port, which a VPN reaches too)
 or **away from home** (the public port):
 
-- **Devices at home:** on every linked device's picker while it's at home.
-  Away from home, only on a device they signed in on themselves, or one an
-  Admin chose for them. Suits a household, and is its default.
-- **All devices:** on every linked device's picker, at home and away: a
-  device away from home (a phone at a friend's) shows their name too.
-- **Selected devices:** only on the devices an Admin picks, at home and
-  away, such as the Kids' Tablet, or a family iPad that travels.
-- **Only where signed in:** on no picker until that person signs in on a
-  device; then on that device's picker, at home and away.
+- **Only devices they sign in on:** on no picker until that person signs
+  in on a device; then on that device's picker, at home and away. Unless
+  Bo has signed in on Ada's TV, he isn't on its picker, and she isn't on
+  his phone's.
+- **Every device at home:** on every linked device's picker while it's at
+  home. Away from home, only on a device they signed in on themselves, or
+  one an Admin chose for them. Suits a household.
+- **Every device, at home and away:** on every linked device's picker, at
+  home and away: a device away from home (a phone at a friend's) shows
+  their name too.
+- **Only devices you choose:** only on the devices an Admin picks, at home
+  and away, such as the Kids' Tablet, or a family iPad that travels.
 
-New users get the server's default as it is when they're added, which an
-Admin sets: Devices at home (a household) or Only where signed in (a larger
-server). Changing it doesn't move anyone already added. In 1.28.0, everyone
-on All devices (the household's default until then, which everyone added
-before there were pickers was on too) moved to Devices at home, once, and
-so did the server's default; the access log says how many people moved.
+New users start where **New people show on**, beside the linked devices,
+says when they're added: Only devices they sign in on, or Every device at
+home. From 1.30.1, it's Only devices they sign in on, unless an Admin
+chose otherwise before, which stays as they chose it. Someone who can't
+sign in by name (no password and no passcode) starts on Every device at
+home instead, rather than on no device at all. Changing it doesn't move
+anyone already added. **Use for everyone**, beside it, does: after a
+confirm that says how many it changes, everyone already added shows that
+way too (and anyone added later). For Only devices they sign in on,
+someone who can't sign in by name is kept as they were, and the page names
+them ("Kept as they were: Kids (no password or passcode)"); and as picking
+yourself from a picker isn't signing in on its device, the others are on a
+device they used that way again once they sign in on it (the confirm says
+so). The devices an Admin chose for someone stay chosen. The access log
+says "<Admin> set everyone to show on <choice>: <n> people changed", and
+who was kept.
+
+In 1.28.0, everyone on All devices (the household's default until then,
+which everyone added before there were pickers was on too) moved to Devices
+at home, once, and so did the server's default; the access log says how
+many people moved. 1.30.1 renamed the four, in fewer words: Devices at home
+is Every device at home, All devices is Every device, at home and away,
+Selected devices is Only devices you choose, and Only where signed in is
+Only devices they sign in on. (What the API sends, `home`, `all`,
+`selected` and `signed-in`, is as it was.)
 
 The picker always has **Sign in**: the person enters their name and, the
 first time on that device, their invite code or password; after that they
@@ -186,11 +208,11 @@ switch with their passcode. Each person can **Remove me from this device**.
 Safety rules:
 
 - A user with neither a password nor a passcode (a "Kids" user, say) can be
-  **Devices at home** or **Selected devices** only, never signed in by
-  name, so no one can get in from anywhere by guessing a name like "Kids",
-  and no device away from home lists them unless an Admin chose it. (A
-  user with a password signs in with it, on the page or in an app, as
-  today.)
+  **Every device at home** or **Only devices you choose** only, never
+  signed in by name, so no one can get in from anywhere by guessing a name
+  like "Kids", and no device away from home lists them unless an Admin
+  chose it. (A user with a password signs in with it, on the page or in an
+  app, as today.)
 - The first sign-in on a device takes an invite code or a password, never
   just a passcode. An **invite code** is made by an Admin for one user,
   works once, and expires after 7 days.
@@ -278,8 +300,24 @@ answers `askPin`, `POST /api/internal/pin` sets someone's own passcode,
 `POST /api/internal/password` changes their own password (1.28.0), and
 `POST /api/internal/report-problem` sends a report (1.30.0). The
 Access tab's: `/api/access/viewing`, `/api/access/levels`,
-`/api/access/users/{id}/viewing` and `/stations`, `/api/access/devices`,
-`/api/access/users/{id}/picker` and `/invite`.
+`/api/access/users/{id}/viewing` and `/stations`, `/api/access/devices`
+(with `PUT /api/access/devices/default` for New people show on, and
+`POST /api/access/devices/everyone`), `/api/access/users/{id}/picker` and
+`/invite`. Like everything on the Access tab, they're for Admins only, and
+a change sent from another site's page is refused.
+
+`POST /api/access/devices/everyone` (1.30.1) is Use for everyone. It takes
+`{"showOn": "signed-in"}` (Only devices they sign in on) or
+`{"showOn": "home"}` (Every device at home), and anything else is refused
+(400) with nothing changed. It sets New people show on to that, and
+everyone already added, but for who can't sign in by name, for
+`signed-in`; then answers what it did, and says so in the access log:
+
+| Field | Type | What it is |
+|---|---|---|
+| `default` | string | New people show on, now |
+| `changed` | number | How many people it changed |
+| `kept` | list | The names of who it kept as they were (no password or passcode) |
 
 ## Streams
 

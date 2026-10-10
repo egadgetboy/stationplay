@@ -316,12 +316,14 @@ Answers 401 for a wrong name or password, 429 while signing in waits, and
 ## GET /api/internal/picker
 
 Asked with the device's key (`StationPlay-Device`; see Linked devices). Who
-can be picked on this device, by name, where it is now (from 1.28.0): at
-home (on the home network, or through a VPN), everyone shown on the
-household's devices at home; away from home (through the public port), only
-those an Admin shows on every device, those who signed in on this device,
-and those an Admin chose it for. Ask again when the app comes back to the
-front, as the device may have moved:
+can be picked on this device, by name, where it is now (from 1.28.0): those
+who signed in on this device, those an Admin chose it for, and those an
+Admin shows on every device, at home and away; and at home (on the home
+network, or through a VPN), those shown on every device at home too. From
+1.30.1, new people show only on devices they sign in on, unless an Admin
+chose otherwise, so a device just linked may list only whoever linked it.
+Ask again when the app comes back to the front, as the device may have
+moved:
 
 | Field | Type | What it is |
 |---|---|---|
@@ -1299,10 +1301,19 @@ answer 404 from then on. So ask for the next episode when it's time to play
 it, not while another plays. A device is an app's sign-in (each app signs
 in on its own), or while signing in is off, its address.
 
-A movie Plex has in several files (stacked: "Part 1" and "Part 2") plays
-its first file, as it is or as a copy: its `durationMs` is that file's, and
-it's watched 90% of the way through it. The log says so, for an Admin to
-join the files (StationPlay can't play them one after another as one yet).
+A movie Plex has in several files (stacked: "Part 1" and "Part 2") plays as
+one program (from 1.30.2; before, its first file played): its `durationMs`
+is the whole, it's watched 90% of the way through the whole, and resume,
+progress, seeking and Up next go by the whole, as for any program. With
+`device.hls`, it plays as a copy that joins its files (`repackage`, its
+picture as it is, when every file's picture is the same and the device
+plays it; otherwise `convert`), from `startMs` as usual, and its `why`
+starts with "its 2 files, played as one". Nothing new is needed of the
+app: play it as any copy. Subtitles are drawn into the picture rather than
+listed with a `url` (a subtitle file of its own matches one of the files
+alone). Without `device.hls`, it's answered 422, with `why` ["it's in 2
+files"] and `detail`, unless another version (in one file) plays as it is.
+Nothing names its files.
 
 An Admin's limits on devices watching count programs played this way too
 (see Playing a station in `docs/api.md`), and through the public port, the
@@ -1343,7 +1354,7 @@ so plainly.
 | `method` | string | How it plays: `direct` (the file as it is), `repackage` or `convert` (a copy; from 1.24.0) |
 | `url` | string | What the player plays (it needs no token): the file, such as `/play/<session>/file.mkv`, whose ranges are answered so the player can seek; or a copy's HLS playlist, `/play/<session>/index.m3u8`, listing the whole program from its start (a jump far ahead takes a few seconds more to start). Relative to where the app asked: a program started through the public port plays there (and at home), one started at home never plays through the public port |
 | `why` | list or null | Why a copy is made (null for `direct`); and from 1.30.0, that another version plays, in place of one StationPlay found broken (for `direct` too) |
-| `why[]` | string | One reason, such as "its sound's format (DTS)", "even sound for the show's episodes" (from 1.27.0), or "another version, as 4K can't play right now" (from 1.30.0) |
+| `why[]` | string | One reason, such as "its sound's format (DTS)", "even sound for the show's episodes" (from 1.27.0), "another version, as 4K can't play right now" (from 1.30.0), or "its 2 files, played as one" (from 1.30.2) |
 | `audioTrack` | string or null | The sound track in a copy (null for `direct`, where the player chooses among `audio`) |
 | `drawnSubtitle` | string or null | The subtitle track drawn into a copy's picture, if any |
 | `chosen` | object or null | What StationPlay chose for this person from their languages, and plays (from 1.29.0: see Languages); null when the app sent `audio` or `subtitle`, or nothing is chosen anywhere for them |
@@ -1429,7 +1440,7 @@ menu: `{"key": "1234", "watched": true}` (or `false`).
   version playing, with `session`; without it, the longest version) is
   refused: "That's past the end of this program."
 - **Watched**: into an episode's closing credits, or 90% of the way
-  through what plays (for a movie in several files, its first: see
+  through what plays (for a movie in several files, all of them: see
   `POST /api/internal/play`), whichever comes first. It then starts from
   the beginning next time, and Up next moves on. Watched stays watched
   while it's watched again. Less than a minute in starts it from the

@@ -71,6 +71,8 @@ SHORTEST_LAST_S = 1.0  # a last piece shorter than this goes with the one before
 TS_OFFSET_S = 10.0
 VIDEO_PID = 0x100  # (-mpegts_start_pid: the picture is the first stream)
 TS_PACKET = 188
+# A packet that's nothing (PID 0x1FFF): what one left out is made into.
+NULL_PACKET = bytes([0x47, 0x1F, 0xFF, 0x10]) + b"\xff" * 184
 # A keyframe starts a piece when it's this close to where the piece starts
 # (a converted picture's keyframe is the first frame on or after it).
 MATCH_BEFORE_S = 0.02
@@ -124,6 +126,20 @@ class CantCopy(Exception):
 
 
 @dataclass(frozen=True)
+class Part:
+    """One of the files a copy of a program in several is made from (a movie
+    on two discs: see catalog.Media), in order: where it's read from, where
+    it starts in the program, its sound track (as ffmpeg maps it: "0:1",
+    "0:a:0?") and the subtitles drawn into its picture. Each file's pieces
+    are its own (none spans two), made by runs of their own."""
+
+    source: str
+    start_s: float
+    audio: str = "0:a:0?"
+    subtitles: Subtitles | None = None
+
+
+@dataclass(frozen=True)
 class Plan:
     """How a copy is made."""
 
@@ -143,10 +159,24 @@ class Plan:
     tone_map: str = ""  # filters making an HDR picture ordinary
     subtitles: Subtitles | None = None  # drawn into the picture
     drawn: str | None = None  # the subtitle track drawn in
+    # A program in several files: each, in order (see Part); () for one.
+    parts: tuple[Part, ...] = ()
 
     @property
     def copies_picture(self) -> bool:
         return self.method == REPACKAGE
+
+    def part_of(self, piece: int) -> int:
+        """Which of `parts` a piece is made from."""
+        at = self.starts[piece]
+        return max(i for i, part in enumerate(self.parts) if part.start_s <= at + 1e-6)
+
+    def after(self, part: int) -> int:
+        """The first piece after `parts[part]`'s (len(starts): none)."""
+        if part + 1 >= len(self.parts):
+            return len(self.starts)
+        later = self.parts[part + 1].start_s
+        return next((n for n, t in enumerate(self.starts) if t >= later - 1e-6), len(self.starts))
 
     @property
     def kbps_needed(self) -> int | None:
@@ -181,6 +211,13 @@ def pieces_every(duration_s: float) -> tuple[float, ...]:
     if len(starts) > 1 and duration_s - starts[-1] < SHORTEST_LAST_S:
         starts = starts[:-1]
     return starts
+
+
+def pieces_of(each: list[tuple[float, tuple[float, ...]]]) -> tuple[float, ...]:
+    """Where the pieces of a copy of a program in several files start: each
+    file's own (as `each` has them: where it starts in the program, and
+    where its pieces start in it), one after the other."""
+    return tuple(start + t for start, own in each for t in own)
 
 
 def lengths(starts: tuple[float, ...], duration_s: float) -> list[float]:
@@ -229,9 +266,18 @@ def piece_for(starts: tuple[float, ...], at_s: float) -> int:
 def command(
     ffmpeg: str, source: str, plan: Plan, first: int, video_index: int = 0, encoder: Encoder = CPU
 ) -> list[str]:
-    """ffmpeg making the copy from piece `first` on, as one MPEG-TS stream
-    on its output, with the program's own times (plus TS_OFFSET_S). A
-    converted picture is encoded on `encoder`."""
+    """ffmpeg making the copy from piece `first` on (of a program in several
+    files, to the end of the file that piece is in: see Part), as one
+    MPEG-TS stream on its output, with the program's own times (plus
+    TS_OFFSET_S). A converted picture is encoded on `encoder`."""
+    audio = f"0:{plan.audio.index}" if plan.audio and plan.audio.index is not None else "0:a:0?"
+    offset, subs, last = 0.0, plan.subtitles, len(plan.starts)
+    if plan.parts:
+        n = plan.part_of(first)
+        part = plan.parts[n]
+        source, offset, audio, subs, last = (
+            part.source, part.start_s, part.audio, part.subtitles, plan.after(n)
+        )  # fmt: skip
     args = [ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error"]
     if source.startswith(("http://", "https://")):
         args += [
@@ -242,7 +288,8 @@ def command(
         # (On a GPU, set up as the stations set it up: it decodes the file
         # too, where it can.)
         args += hw_input_args(encoder)
-    start = plan.starts[first] if first else 0.0
+    # (Where in the file: of a program in several, in the file this piece is in.)
+    start = plan.starts[first] - offset if first else 0.0
     if plan.copies_picture:
         # (Somewhere before the piece's keyframe: what's before it is left
         # out when the stream is cut into pieces.)
@@ -250,14 +297,9 @@ def command(
             args += ["-ss", f"{max(0.0, start - 0.5):.3f}"]
     elif start > 0:
         args += ["-ss", f"{start:.3f}"]  # (exactly: the picture's made from here)
-    if plan.subtitles is not None and plan.subtitles.image and plan.subtitles.forced_only:
-        args += [f"-forced_subs_only:s:{plan.subtitles.stream}", "1"]
+    if subs is not None and subs.image and subs.forced_only:
+        args += [f"-forced_subs_only:s:{subs.stream}", "1"]
     args += ["-i", source]
-    audio_map = (
-        ["-map", f"0:{plan.audio.index}"]
-        if plan.audio and plan.audio.index is not None
-        else ["-map", "0:a:0?"]
-    )
     if plan.copies_picture:
         video = ["-map", f"0:V:{video_index}", "-c:v", "copy"]
         if plan.picture == "h264":
@@ -266,7 +308,12 @@ def command(
             video += ["-bsf:v", "h264_mp4toannexb,dump_extra=freq=keyframe"]
         times = []
     else:
-        video = _converted_picture(plan, first, video_index, encoder)
+        # A keyframe where each piece after the first starts (the first
+        # frame is one anyway), in the file's own times.
+        keys = [t - offset for t in plan.starts[first + 1 : last]]
+        end = (plan.parts[plan.part_of(first) + 1].start_s if last < len(plan.starts)
+               else plan.duration_s) - offset  # fmt: skip
+        video = _converted_picture(plan, subs, keys or [end], video_index, encoder)
         # (Converted: its times from the program's start, whatever the file's
         # own first time, as the pieces were planned.)
         times = ["-start_at_zero"]
@@ -286,13 +333,14 @@ def command(
     if chain:
         sound = ["-af", chain, *sound]
     return [
-        *args, *video, *audio_map, *sound,
+        *args, *video, "-map", audio, *sound,
         "-sn", "-dn", "-map_metadata", "-1", "-map_chapters", "-1",
-        # The program's own times, moved on by TS_OFFSET_S, whatever ffmpeg
+        # The program's own times, moved on by TS_OFFSET_S (and of a program
+        # in several files, by where this one starts), whatever ffmpeg
         # starts from: pieces from different runs line up.
         "-copyts", *times,
         "-avoid_negative_ts", "disabled", "-muxdelay", "0", "-muxpreload", "0",
-        "-output_ts_offset", f"{TS_OFFSET_S:g}",
+        "-output_ts_offset", f"{TS_OFFSET_S + offset:g}",
         "-f", "mpegts", "-mpegts_start_pid", str(VIDEO_PID), "pipe:1",
     ]  # fmt: skip
 
@@ -310,14 +358,16 @@ def sound_chain(plan: Plan) -> str:
     )
 
 
-def _converted_picture(plan: Plan, first: int, video_index: int, encoder: Encoder) -> list[str]:
+def _converted_picture(
+    plan: Plan, subs: Subtitles | None, keys: list[float], video_index: int, encoder: Encoder
+) -> list[str]:
     """Converting the picture: deinterlaced where needed, square pixels,
     within a 16:9 picture plan.height lines high (so a wide film at 1080p is
     1920 wide, as H.264 decoders made for 1080p take, not 2592), ordinary
-    (not HDR), subtitles drawn in last, and a keyframe at the start of every
-    piece. All of that is done on the CPU with a GPU too, as for the
-    stations: the GPU only decodes the file (where it can) and encodes the
-    picture."""
+    (not HDR), subtitles (`subs`) drawn in last, and a keyframe where every
+    piece starts (`keys`, in the file's times). All of that is done on the
+    CPU with a GPU too, as for the stations: the GPU only decodes the file
+    (where it can) and encodes the picture."""
     # (VA-API: the finished picture goes up to the GPU, as the stations' does.)
     upload = ",format=nv12,hwupload" if encoder.kind == "vaapi" else ""
     widest = plan.height * 16 // 9 // 2 * 2
@@ -330,7 +380,6 @@ def _converted_picture(plan: Plan, first: int, video_index: int, encoder: Encode
         "format=yuv420p",
     ]
     chain = ",".join(steps)
-    subs = plan.subtitles
     if subs is not None and subs.image:
         # (The subtitles' own picture is the film's size: made the picture's.)
         graph = (
@@ -350,10 +399,8 @@ def _converted_picture(plan: Plan, first: int, video_index: int, encoder: Encode
             # (The frames carry the program's own times, as the subtitles do.)
             chain += f",subtitles={options}"
         video = ["-map", f"0:V:{video_index}", "-vf", chain + upload]
-    # A keyframe where each piece after the first starts (the first frame is
-    # one anyway).
-    keys = ",".join(f"{t:.3f}" for t in plan.starts[first + 1 :]) or f"{plan.duration_s:.3f}"
-    return [*video, *_encoding(encoder, plan.kbps), "-force_key_frames", keys]
+    forced = ",".join(f"{t:.3f}" for t in keys)
+    return [*video, *_encoding(encoder, plan.kbps), "-force_key_frames", forced]
 
 
 def _encoding(encoder: Encoder, kbps: int) -> list[str]:
@@ -448,17 +495,25 @@ def sound_for(
     return "aac", 2
 
 
+def _picture(media: Media) -> tuple:
+    return media.video, media.width, media.height, media.bit_depth, media.hdr, media.dv_profile
+
+
 def picture_copyable(media: Media, why_not: list[str], hls: frozenset[str]) -> bool:
     """Whether a copy can keep the picture as it is: nothing about the
-    picture keeps the device from playing it, and the copy's pieces carry
-    it (H.264, or HEVC where the device takes HEVC in MPEG-TS pieces)."""
+    picture keeps the device from playing it, the copy's pieces carry it
+    (H.264, or HEVC where the device takes HEVC in MPEG-TS pieces), and of
+    a version in several files, theirs are all alike."""
     picture_reasons = [
         w for w in why_not
         if w.startswith(("its picture", "its Dolby Vision", "its HDR", "its HLG", "its 1"))
         or "-bit picture" in w
     ]  # fmt: skip
-    if picture_reasons or media.parts > 1:
+    if picture_reasons:
         return False
+    first = media.files[0]
+    if any(_picture(f) != _picture(first) for f in media.files[1:]):
+        return False  # (a picture alike throughout: its files' differ, so it's converted)
     if media.video == "h264":
         return "ts" in hls
     if media.video == "hevc":
@@ -528,6 +583,7 @@ class Copy:
         self._rescue_at: int | None = None
         self.folder = folder or new_folder()
         self.ready: dict[int, Path] = {}  # pieces finished
+        self._ends: dict[int, Left] = {}  # (theirs: see _finished)
         self.wanted = -1  # the furthest piece asked for
         self.asked = time.monotonic()
         self.stopped = False
@@ -579,9 +635,10 @@ class Copy:
             if self.first is first:
                 self.first = None
                 ok = not first.cancelled() and first.exception() is None and first.result()
-                if not ok and self.plan.subtitles is not None:
+                if not ok and self.plan.drawn is not None:
                     # (They couldn't be had: it plays without them.)
-                    self.plan = replace(self.plan, subtitles=None, drawn=None)
+                    parts = tuple(replace(p, subtitles=None) for p in self.plan.parts)
+                    self.plan = replace(self.plan, subtitles=None, drawn=None, parts=parts)
         while not self.stopped and not self.broken:
             news = self._news
             found = self.ready.get(n)
@@ -698,12 +755,15 @@ class Copy:
         assert run.proc.stdout is not None and run.proc.stderr is not None
         errors = asyncio.create_task(_said(run.proc.stderr, run.said))
         # (On a GPU, a keyframe missing where a piece starts is a failure.)
-        cutter = Cutter(self.plan.starts, run.first, strict=run.encoder.is_gpu)
+        # (On from where the piece before its first left off, if that's made.)
+        follows = self._ends.get(run.first - 1) if run.first - 1 in self.ready else None
+        cutter = Cutter(self.plan.starts, run.first, strict=run.encoder.is_gpu, follows=follows)
         out = None
         current = -1
         failed = ""
         stalled = False
         began = time.monotonic()
+        follow: int | None = None  # (of a copy made from several files: the next one's first piece)
         try:
             while True:
                 # Ahead enough: wait (ffmpeg waits too, its output unread),
@@ -725,7 +785,7 @@ class Copy:
                     if n != current:
                         if out is not None:
                             out.close()
-                            self._finished(run, current)
+                            self._finished(run, current, cutter.ends[current])
                         current = n
                         out = (self.folder / f"piece-{n}.ts.part").open("wb")
                         out.write(cutter.header)
@@ -742,11 +802,16 @@ class Copy:
                 out.close()
                 out = None
                 if code == 0 and current >= 0:
-                    # (The end of the file: the piece being made is whole, and
-                    # if the file ended before its planned length, no more
-                    # are coming.)
-                    self._finished(run, current)
-                    self.end = min(self.end, current + 1)
+                    # (The end of the file: the piece being made is whole.
+                    # Of a copy made from several, the next file's are made
+                    # next; otherwise, if the file ended before its planned
+                    # length, no more are coming.)
+                    self._finished(run, current, cutter.left())
+                    nxt = self.plan.after(self.plan.part_of(run.first)) if self.plan.parts else None
+                    if nxt is not None and nxt < len(self.plan.starts):
+                        follow = nxt
+                    else:
+                        self.end = min(self.end, current + 1)
             if code != 0 or current < 0:
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(asyncio.shield(errors), 5.0)
@@ -768,9 +833,21 @@ class Copy:
                     run.proc.kill()
             if failed and mine and not self.stopped:
                 self._failed(run, failed, stalled)
+            elif follow is not None and mine and not self.stopped:
+                going_on = asyncio.create_task(self._go_on(run, follow))
+                self._cutting.add(going_on)
+                going_on.add_done_callback(self._cutting.discard)
             self._poke()
             with contextlib.suppress(Exception):  # (gone, not left behind)
                 await asyncio.wait_for(run.proc.wait(), 10.0)
+
+    async def _go_on(self, run: _Run, n: int) -> None:
+        """A run made the last of its file's pieces, of a copy made from
+        several: the next file's run makes them from `n` on (unless the
+        player has moved on meanwhile, starting a run of its own)."""
+        async with self._lock:
+            if self._run is run and not self.stopped and not self.broken:
+                await self._start(n)
 
     def _failed(self, run: _Run, why: str, stalled: bool = False) -> None:
         """A run failed: tried again after RETRY_S, and given up on after
@@ -801,12 +878,15 @@ class Copy:
                 why,
             )
 
-    def _finished(self, run: _Run, n: int) -> None:
+    def _finished(self, run: _Run, n: int, ends: Left) -> None:
+        """Piece `n` is made (`ends`: where it leaves off, for the piece
+        after it, made by another run, to go on from: see Cutter)."""
         part = self.folder / f"piece-{n}.ts.part"
         whole = self.folder / f"piece-{n}.ts"
         with contextlib.suppress(OSError):
             part.replace(whole)
             self.ready[n] = whole
+            self._ends[n] = ends
             run.newest = max(run.newest, n)
             self.failures = 0
             if run.encoder.is_gpu:
@@ -821,6 +901,7 @@ class Copy:
     def _tidy(self) -> None:
         """Deletes pieces well behind the player, and far ahead of it."""
         for n in [n for n in self.ready if n < self.wanted - BEHIND or n > self.wanted + 4 * AHEAD]:
+            self._ends.pop(n, None)
             path = self.ready.pop(n)
             with contextlib.suppress(OSError):
                 path.unlink()
@@ -831,6 +912,16 @@ async def _said(stream: asyncio.StreamReader, said: list[str]) -> None:
         async for line in stream:
             said.append(line.decode(errors="replace").strip())
             del said[:-20]
+
+
+@dataclass(frozen=True)
+class Left:
+    """Where a copy's piece leaves off, for another run to go on from (see
+    Cutter): its streams' last continuity counters, and its sound streams'
+    last frames' times (with TS_OFFSET_S), by PID."""
+
+    counters: dict[int, int]
+    sound: dict[int, float]
 
 
 class Cutter:
@@ -844,14 +935,39 @@ class Cutter:
     starts, with no keyframe starting the piece before it, stops the cutting
     there (`missed`: that piece), rather than the piece being left out and
     its picture going with the one before. (Without B-frames, the frames
-    come in the order they're shown.)"""
+    come in the order they're shown.)
 
-    def __init__(self, starts: tuple[float, ...], first: int, strict: bool = False) -> None:
+    `follows`: where the piece before the first left off, made by another
+    run (see Left and `ends`), to go on from, so a player reading that piece
+    then this run's sees one stream: the streams' continuity counters carry
+    on (a break would have it take the last frame before it as damaged),
+    and sound that piece has already (an encoder's lead-in, or the end of
+    one file's sound and the start of the next's, a frame apart) is left
+    out, so no moment is heard twice. As where one of a program's files
+    ends and the next begins (see Part), or where a run that stopped by
+    itself starts again."""
+
+    def __init__(
+        self,
+        starts: tuple[float, ...],
+        first: int,
+        strict: bool = False,
+        follows: Left | None = None,
+    ) -> None:
         self.starts = starts
         self.first = first
         self.strict = strict
         self.piece = -1  # the piece being written (-1: none yet)
         self.missed: int | None = None  # (strict: the piece whose keyframe didn't come)
+        self.follows = follows or Left({}, {})
+        # Each stream's last continuity counter, and each sound stream's last
+        # frame's time, as written (by PID); and as each piece ended.
+        self.counters: dict[int, int] = {}
+        self.sound: dict[int, float] = {}
+        self.ends: dict[int, Left] = {}
+        self._shift: dict[int, int] = {}  # (how much each stream's counters move on)
+        self._heard = dict(self.follows.sound)  # (sound to be left out, till it's passed)
+        self._leaving: set[int] = set()  # (sound streams whose frame now is left out)
         self._rest = b""
         self._tables: dict[int, bytes] = {}
         self._pmt = -1
@@ -863,9 +979,9 @@ class Cutter:
     def feed(self, chunk: bytes) -> list[tuple[int, bytes]]:
         if self.missed is not None:
             return []
-        data = self._rest + chunk
+        data = bytearray(self._rest + chunk)
         whole = len(data) - len(data) % TS_PACKET
-        self._rest = data[whole:]
+        self._rest = bytes(data[whole:])
         out: list[tuple[int, bytes]] = []
         run_start = 0
         end = whole
@@ -875,27 +991,68 @@ class Cutter:
             b1 = data[at + 1]
             pid = ((b1 & 0x1F) << 8) | data[at + 2]
             if (pid == 0 or pid == self._pmt) and b1 & 0x40:
-                self._tables[pid] = data[at : at + TS_PACKET]
+                self._tables[pid] = bytes(data[at : at + TS_PACKET])
                 if pid == 0:
                     self._pmt = _pmt_pid(data[at : at + TS_PACKET])
                 continue
-            if pid != VIDEO_PID or not b1 & 0x40:
-                continue
-            packet = data[at : at + TS_PACKET]
-            start = _keyframe_time(packet)
-            n = None if start is None else self._piece_starting(start - TS_OFFSET_S)
-            if n is None or n == self.piece:
-                if self.strict and (missed := self._missed(packet)) is not None:
-                    self.missed, end = missed, at
-                    break
-                continue
-            if self.piece >= 0 and at > run_start:
-                out.append((self.piece, data[run_start:at]))
-            self.piece = n
-            run_start = at
+            if pid == VIDEO_PID and b1 & 0x40:
+                packet = bytes(data[at : at + TS_PACKET])
+                start = _keyframe_time(packet)
+                n = None if start is None else self._piece_starting(start - TS_OFFSET_S)
+                if n is None or n == self.piece:
+                    if self.strict and (missed := self._missed(packet)) is not None:
+                        self.missed, end = missed, at
+                        break
+                else:
+                    if self.piece >= 0:
+                        self.ends[self.piece] = self.left()
+                        if at > run_start:
+                            out.append((self.piece, bytes(data[run_start:at])))
+                    self.piece = n
+                    run_start = at
+            if self.piece >= 0 and pid not in (0, self._pmt, 0x1FFF):
+                if pid != VIDEO_PID and self._left_out(data, at, pid):
+                    data[at : at + TS_PACKET] = NULL_PACKET
+                    continue
+                self._count(data, at, pid)
         if self.piece >= 0 and end > run_start:
-            out.append((self.piece, data[run_start:end]))
+            out.append((self.piece, bytes(data[run_start:end])))
         return out
+
+    def left(self) -> Left:
+        """Where the piece being written leaves off, so far."""
+        return Left(dict(self.counters), dict(self.sound))
+
+    def _left_out(self, data: bytearray, at: int, pid: int) -> bool:
+        """Whether a packet of sound is of a frame the piece before has
+        already (see the class's notes), by the frame's time; and a frame
+        kept, noted."""
+        if data[at + 1] & 0x40:  # (a frame starts here: its time says)
+            t = _frame_time(bytes(data[at : at + TS_PACKET]))
+            heard = self._heard.get(pid)
+            if t is not None and heard is not None and t <= heard + 0.0005:
+                self._leaving.add(pid)
+                return True
+            self._heard.pop(pid, None)
+            self._leaving.discard(pid)
+            if t is not None:
+                self.sound[pid] = t
+            return False
+        return pid in self._leaving
+
+    def _count(self, data: bytearray, at: int, pid: int) -> None:
+        """A packet of a stream kept: its continuity counter, moved on from
+        `follows` (see the class's notes), noted."""
+        flags = data[at + 3]
+        counter = flags & 0x0F
+        if pid not in self._shift:
+            before = self.follows.counters.get(pid)
+            # (One with no payload repeats the last; one with, moves on one.)
+            after = None if before is None else before + (1 if flags & 0x10 else 0)
+            self._shift[pid] = 0 if after is None else (after - counter) & 0x0F
+        counter = (counter + self._shift[pid]) & 0x0F
+        data[at + 3] = (flags & 0xF0) | counter
+        self.counters[pid] = counter
 
     def _missed(self, packet: bytes) -> int | None:
         """The next piece, if this frame (one not starting it) comes just

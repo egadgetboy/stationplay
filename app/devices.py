@@ -9,24 +9,24 @@ is using it picks themselves from its picker, and gets a sign-in on that
 device that lasts a day from when it was last used (picking again starts a
 new one, and ends whoever was signed in there before).
 
-Who's on a device's picker is each person's Show on: every device while
-it's at home (a household: its picker is asked on the home port, which a
-VPN reaches too), every device at home and away, the devices an Admin chose
-for them, or only where they've signed in (a larger server; the server's
-default for new people says which they start with). Away from home (the
-public port), a device lists only who's on every device, and who signed in
-on it or was chosen for it. The picker always has Sign in, by name: the
-first time on a device with an invite code (made by an Admin, once, for 7
-days) or a password, never just a passcode; after that, they're on that device's
-picker. Anyone can take themselves off a device's picker.
+Who's on a device's picker is each person's Show on: only devices they
+sign in on (where new people start, unless an Admin chose otherwise), every
+device at home (its picker is asked on the home port, which a VPN reaches
+too), every device at home and away, or only devices an Admin chooses. Away
+from home (the public port), a device lists only who's on every device, and
+who signed in on it or was chosen for it. The picker always has Sign in, by
+name: the first time on a device with an invite code (made by an Admin,
+once, for 7 days) or a password, never just a passcode; after that, they're
+on that device's picker. Anyone can take themselves off a device's picker.
 
 A passcode (a PIN: 4 digits, kept as a hash) is asked for when someone
 picks themselves, if they have one; an Admin without one gives their
 password. Five wrong passcodes for someone means a 15-minute wait for them,
 on every device. Someone with neither a password nor a passcode (a "Kids"
-user, say) can't sign in by name, so they're on devices at home or chosen
-ones only: no one can get in from anywhere by guessing a name, and no
-device away from home lists them unless an Admin chose it.
+user, say) can't sign in by name, so they're on every device at home or
+chosen ones only (and start on every device at home): no one can get in
+from anywhere by guessing a name, and no device away from home lists them
+unless an Admin chose it.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ from pydantic import BaseModel, Field
 from . import access
 from .access import ADMIN, Access, hash_password, password_matches
 from .db import Database, User
-from .text import plain
+from .text import and_list, plain
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -57,7 +57,7 @@ log = logging.getLogger("stationplay.devices")
 
 HOME, ALL, SELECTED, SIGNED_IN = "home", "all", "selected", "signed-in"
 SHOW_ON = (HOME, ALL, SELECTED, SIGNED_IN)
-SHOW_ON_META = "show_on_default"  # where new people are shown: HOME or SIGNED_IN
+SHOW_ON_META = "show_on_default"  # where new people are shown, if an Admin chose: HOME or SIGNED_IN
 MOVED_HOME_META = "show_on_home"  # (set once everyone on ALL was moved to HOME: 1.28)
 SIGNED_IN_HERE, CHOSEN, REMOVED = "signed-in", "chosen", "removed"
 KEY_BYTES = 32
@@ -143,8 +143,9 @@ class Devices:
             self.access.record(
                 logging.INFO,
                 f"Who's tuning in?: {moved} {'person now shows' if moved == 1 else 'people now show'} "
-                "on devices at home only; away from home, a device lists only who signed in on it "
-                "or was chosen for it. An Admin can choose All devices for anyone on the Access tab.",
+                "on every device at home; away from home, a device lists only who signed in on it "
+                "or was chosen for it. An Admin can choose Every device, at home and away, for "
+                "anyone on the Access tab.",
             )
 
     # Linking ------------------------------------------------------------------
@@ -189,21 +190,51 @@ class Devices:
 
     @property
     def default_show_on(self) -> str:
-        return SIGNED_IN if self.db.get_meta(SHOW_ON_META) == SIGNED_IN else HOME
+        """Where new people are shown: as an Admin chose, or (from 1.30.1,
+        if they never chose) only on devices they sign in on."""
+        return HOME if self.db.get_meta(SHOW_ON_META) == HOME else SIGNED_IN
 
     def set_default_show_on(self, show_on: str) -> None:
         if show_on not in (HOME, SIGNED_IN):
-            raise ValueError("Choose Devices at home or Only where they sign in")
+            raise ValueError("Choose Only devices they sign in on or Every device at home")
         self.db.set_meta(SHOW_ON_META, show_on)
 
+    def _default_for(self, user: User) -> str:
+        """Where someone new is shown: the server's default, but every device
+        at home for someone who can't sign in by name, rather than nowhere."""
+        show_on = self.default_show_on
+        return HOME if self._why_not(user, show_on) else show_on
+
+    def show_everyone_on(self, show_on: str) -> tuple[int, list[User]]:
+        """Use for everyone: everyone already added is shown this way (HOME
+        or SIGNED_IN), and so is anyone added from now on. How many changed,
+        and who was kept as they were (who can't sign in by name, for
+        SIGNED_IN). ValueError."""
+        self.set_default_show_on(show_on)
+        changing, kept = [], []
+        for user in self.db.users():
+            if self.show_on(user) == show_on:
+                continue
+            if self._why_not(user, show_on):
+                kept.append(user)
+            else:
+                changing.append(user.id)
+        self.db.set_show_on(changing, show_on)
+        return len(changing), kept
+
     def show_on(self, user: User) -> str:
-        """Where someone is shown (on devices at home, for someone added
-        before there were pickers)."""
+        """Where someone is shown (on every device at home, for someone
+        added before there were pickers)."""
         return user.show_on if user.show_on in SHOW_ON else HOME
 
     def signs_in_by_name(self, user: User) -> bool:
         """Whether someone can sign in by name: with a password or a PIN."""
         return user.has_pin or bool(self.db.password_hash(user.id))
+
+    def _why_not(self, user: User, show_on: str) -> str | None:
+        """Why someone can't be shown this way, if they can't (see
+        _needs_one)."""
+        return None if self.signs_in_by_name(user) else _needs_one(user.name, show_on)
 
     def on_picker(self, user: User, how: str | None, at_home: bool) -> bool:
         """Whether someone is on a device's picker, as they are on it (`how`:
@@ -446,23 +477,25 @@ class Devices:
             why = _needs_one(now.name, self.show_on(now))
             if why and not self.db.password_hash(user.id):
                 raise ValueError(
-                    f"{why} Choose Devices at home or Selected devices for them first."
+                    f"{why} Choose Every device at home or Only devices you choose for them first."
                 )
         self.db.set_pin(user.id, hashed)
         self._wrong.pop(user.id, None)
 
     def set_show_on(self, user: User, show_on: str, devices: list[int] | None) -> None:
-        """Where someone is shown ("default": the server's default for new
-        people, as it is now), and (for Selected devices, or away from home
-        for Devices at home) which devices. ValueError."""
+        """Where someone is shown ("default": as a new person is, now), and
+        (for Only devices you choose, or away from home for Every device at
+        home) which devices. ValueError."""
         if show_on not in (*SHOW_ON, "default"):
             raise ValueError("Choose where they're shown")
         now = self.db.user(user.id) or user
         if show_on == "default":
-            show_on = self.default_show_on
-        if not self.signs_in_by_name(now) and (why := _needs_one(now.name, show_on)):
-            raise ValueError(f"{why} Give them one, or choose Devices at home or Selected devices.")
-        self.db.set_show_on(user.id, show_on)
+            show_on = self._default_for(now)
+        if why := self._why_not(now, show_on):
+            raise ValueError(
+                f"{why} Give them one, or choose Every device at home or Only devices you choose."
+            )
+        self.db.set_show_on([user.id], show_on)
         if devices is not None:
             self.db.set_chosen_devices(user.id, devices)
 
@@ -516,15 +549,14 @@ class PickerChange(BaseModel):
 
 
 class ShowOnDefault(BaseModel):
-    showOn: str
+    showOn: str = Field(max_length=20)
 
 
 SHOW_ON_WORDS = {
-    HOME: "devices at home",
-    ALL: "all devices, away from home too",
-    SELECTED: "the devices chosen for them",
-    SIGNED_IN: "only where they sign in",
-    "default": "the server's default",
+    SIGNED_IN: "only devices they sign in on",
+    HOME: "every device at home",
+    ALL: "every device, at home and away",
+    SELECTED: "only devices an Admin chooses",
 }
 
 
@@ -582,6 +614,24 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         )
         return {"default": d.default_show_on}
 
+    @app.post("/api/access/devices/everyone")
+    async def show_everyone_on(body: ShowOnDefault, request: Request):
+        try:
+            changed, kept = d.show_everyone_on(body.showOn)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        said = (
+            f"{who(request)} set everyone to show on {SHOW_ON_WORDS[body.showOn]}: "
+            f"{changed} {'person' if changed == 1 else 'people'} changed"
+        )
+        if kept:
+            said += (
+                f", and {and_list([u.name for u in kept])} kept as they were "
+                "(no password or passcode)"
+            )
+        ctx.access.record(logging.INFO, said)
+        return {"default": d.default_show_on, "changed": changed, "kept": [u.name for u in kept]}
+
     @app.put("/api/access/users/{user_id}/picker")
     async def change_picker(user_id: int, body: PickerChange, request: Request):
         user = user_or_404(user_id)
@@ -592,10 +642,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 said.append(f"{'set' if body.pin else 'removed'} {user.name}'s passcode")
                 user = user_or_404(user_id)
             if body.showOn is not None or body.devices is not None:
-                show_on = body.showOn or d.show_on(user)
-                d.set_show_on(user, show_on, body.devices)
-                if body.showOn is not None and body.showOn != d.show_on(user):
-                    said.append(f"set {user.name} to show on {SHOW_ON_WORDS[body.showOn]}")
+                was = d.show_on(user)
+                d.set_show_on(user, body.showOn or was, body.devices)
+                now = d.show_on(user_or_404(user_id))
+                if now != was:
+                    said.append(f"set {user.name} to show on {SHOW_ON_WORDS[now]}")
                 elif body.devices is not None:
                     said.append(f"chose the devices {user.name} shows on")
         except ValueError as e:

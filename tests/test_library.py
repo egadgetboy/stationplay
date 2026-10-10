@@ -39,13 +39,13 @@ async def test_plexs_keys_go_to_plex(library):
     assert library.configured
     await library.check()
     assert [s["title"] for s in await library.libraries()] != []
-    part = await library.current_part("201")
-    assert part is not None and part.file == "/tv/Show/S01E01.mkv"
-    assert library.stream_url("201", part.key).startswith("http://plex.test/")
+    files = await library.current_files("201")
+    assert [f.file for f in files] == ["/tv/Show/S01E01.mkv"]
+    assert library.stream_url("201", files[0].part_key).startswith("http://plex.test/")
     items = await library.items_for_source({"type": "show", "ratingKey": "100"})
     assert [i.rating_key for i in items] == ["201"]
     with pytest.raises(LibraryError) as gone:
-        await library.current_part("999")
+        await library.current_files("999")
     assert gone.value.status == 404
 
 
@@ -53,7 +53,7 @@ async def test_folder_keys_are_never_sent_to_plex(library):
     """Until folder libraries arrive, a folder key is simply not found:
     never asked of Plex, never an error that looks like Plex being away."""
     for ask in (
-        library.current_part("f201"),
+        library.current_files("f201"),
         library.markers("f201"),
         library.art("f201"),
         library.poster("f201", 100, 150),

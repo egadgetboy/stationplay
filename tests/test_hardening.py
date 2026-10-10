@@ -128,8 +128,8 @@ async def test_lookups_for_programs_about_to_play_never_wait_behind_background_w
     client = PlexClient("http://plex.test", "token", transport=fp.transport())
     for _ in range(BULK_REQUESTS):
         await client._bulk.acquire()  # background work has every slot
-    part = await asyncio.wait_for(client.current_part("201"), 2)
-    assert part is not None and part.file == "/x.mkv"
+    files = await asyncio.wait_for(client.current_files("201"), 2)
+    assert [f.file for f in files] == ["/x.mkv"]
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(client.section_items("1"), 0.5)
 

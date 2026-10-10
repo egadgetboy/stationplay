@@ -496,7 +496,7 @@ class Reports:
                 f"Reported: {said}. {by} chose Replace",
                 newest.station,
                 media.file,
-                media.size,
+                media.files[0].size,
                 problem="damaged",
                 found=REPORTED,
                 version=newest.version,

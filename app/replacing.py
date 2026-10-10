@@ -53,7 +53,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from .arr import APPS, GRABBED, IMPORTED, NAMES, RADARR, SONARR, Arr, ArrError, clean_url
-from .broken import file_key
+from .broken import entry_part, file_key
+from .catalog import part_words
 from .db import Item
 from .library import LibraryError
 from .sources import REMOVED
@@ -290,10 +291,14 @@ def needs_you_said(entry: dict[str, Any], name: str) -> tuple[int, str, str]:
         SAME: f"the new file of {name} has the same problem as the old one",
     }.get(str(state.get("state")))
     if said is None:
+        # (Of a version in several files, which: "part 2 of 3".)
+        part = entry_part(entry)
+        which = f", {part_words(*part)}," if part else ""
         said = (
-            f"{name}'s file is missing"
+            f"{name}'s file{which} is missing"
             if missing(entry)
             else f"StationPlay found {name} {entry.get('problem') or 'broken'}"
+            + (f" in {part_words(*part)}" if part else "")
         )
     at = state.get("at") if state.get("state") in DONE else None
     if not isinstance(at, int):

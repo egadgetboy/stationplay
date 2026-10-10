@@ -662,7 +662,7 @@ async def play(
 
     async def prepare(item, aspect_mode):
         probe = ff.ProbeResult(ok=True, duration_s=file_s, audio_index=0)
-        return ResolvedSource("/tv/x.mkv", "/tv/x.mkv", 1), probe, None
+        return bc.Opened(ResolvedSource("/tv/x.mkv", "/tv/x.mkv", 1), probe)
 
     async def gap(gap_s, ts, stitcher, name, result):
         result.produced_s += max(0.0, gap_s)

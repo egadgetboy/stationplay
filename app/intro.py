@@ -33,7 +33,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from . import ffmpeg as ff
-from .markers import pieces
+from .markers import across, pieces
+from .sources import part_starts
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -620,10 +621,26 @@ async def find_show_audio(
         resolved = await ctx.resolve_source(item)
         if resolved.error or not resolved.source:
             return None
-        probed = await ff.probe(ctx.settings, resolved.source, timeout=SHOW_AUDIO_WAIT_S)
+        source, at_s = resolved.source, plan[0][0]
+        if resolved.parts:
+            # (A movie in several files: in the one it lands in, and only if
+            # it doesn't go on to the next before the bumper ends.)
+            starts = await part_starts(
+                ctx.settings, ctx.library, item.rating_key, resolved.parts, ctx.media_access
+            )
+            found = across(plan, starts) if starts else []
+            if len(found) != 1:
+                return None
+            n, at_s, _ = found[0]
+            if n:
+                here = await ctx.locate(item.rating_key, resolved.parts[n])
+                if here.error or not here.source:
+                    return None
+                source = here.source
+        probed = await ff.probe(ctx.settings, source, timeout=SHOW_AUDIO_WAIT_S)
         if not probed.ok or probed.audio_index is None:
             return None
-        return ShowAudio(resolved.source, plan[0][0], probed.audio_index, item.kind == "episode")
+        return ShowAudio(source, at_s, probed.audio_index, item.kind == "episode")
 
     try:
         return await asyncio.wait_for(open_it(), SHOW_AUDIO_WAIT_S)

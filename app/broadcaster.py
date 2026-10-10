@@ -38,7 +38,7 @@ import logging
 import time
 import zlib
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -46,10 +46,11 @@ from typing import TYPE_CHECKING
 from . import ffmpeg as ff
 from . import intro, playing, specials, subtitles, upnext
 from .breaks import ID_CARD
-from .broken import OPENING, PLAYING
+from .broken import OPENING, PLAYING, of_part, part_key
+from .catalog import Media, part_words
 from .config import Settings
 from .db import Channel, Item
-from .markers import pieces
+from .markers import across, pieces
 from .replacement import pick_replacement
 from .schedule import Slot, StationSchedule
 from .sources import ResolvedSource
@@ -145,6 +146,10 @@ STARTS_S = 2.0
 # A program that plays this long (or to its end) is the station working
 # (see alerts.py: a station that kept failing to start is fixed).
 PLAYED_S = 60.0
+# A program's file ending this long before its time when Plex couldn't say
+# which files it has is taken as one with more (a movie on two discs): a
+# stand-in plays the rest (see _play_program).
+MORE_FILES_S = 60.0
 # The stream running less than this far ahead of real time means this
 # server isn't converting the program as fast as it plays; that's logged.
 LOW_LEAD_S = 1.0
@@ -251,6 +256,23 @@ class Failure:
     # It couldn't be found or opened (rather than failing as it played):
     # going through the broken-files list again looks at it again.
     opening: bool = False
+    # Of a program in several files (see catalog.Media), which it's about,
+    # (n, of).
+    part: tuple[int, int] | None = None
+    # Whether carrying on from where it stopped may help (not when what's
+    # missing can't be found until the library answers again).
+    resume: bool = True
+
+
+@dataclass
+class Opened:
+    """One of a program's files, found and opened to play: where it's read
+    from, what's in it (None if it couldn't be found), and where its
+    picture is in it (see _find_picture)."""
+
+    resolved: ResolvedSource
+    probe: ff.ProbeResult | None = None
+    picture: tuple[int, int, int, int] | None = None
 
 
 @dataclass
@@ -310,7 +332,7 @@ class Broadcaster:
     # encoded (see _announce). Someone tuning in from the beginning: what
     # the log says about it, with the program it starts (see _back_to_start).
     encoder_now: ff.Encoder | None = None
-    _announced: tuple[tuple[int, str], str] | None = None
+    _announced: tuple[tuple[int, str, int], str] | None = None
     _joining: str = ""
     # When the stream last sent anything (time.monotonic()).
     _last_output: float = 0.0
@@ -745,14 +767,14 @@ class Broadcaster:
             key = (slot.start_ms, item.rating_key)
             tries = resumes.get(key, 0)
             resumes = {key: tries}
-            if tries < len(RESUME_PAUSES_S) and failure.problem == "broken":
+            if tries < len(RESUME_PAUSES_S) and failure.problem == "broken" and failure.resume:
                 # Try to carry on with the same program from where it stopped.
                 resumes[key] = tries + 1
                 log.warning(
                     "%s: %s stopped — %s. Resuming it (attempt %d of %d)",
                     self._named(),
                     item.label,
-                    failure.reason,
+                    of_part(failure.reason, failure.part),
                     tries + 1,
                     len(RESUME_PAUSES_S),
                 )
@@ -768,16 +790,7 @@ class Broadcaster:
                 count = self.ctx.stall_counts.get(item.rating_key, 0) + 1
                 self.ctx.stall_counts[item.rating_key] = count
                 transient = transient or count < 2
-            self._fail(
-                item,
-                failure.reason,
-                channel.number,
-                failure.plex_file,
-                failure.size,
-                transient,
-                failure.problem,
-                failure.opening,
-            )
+            self._fail(item, failure, channel.number, transient)
             attempts[slot.start_ms] = attempt + 1
 
     # Between programs -----------------------------------------------------
@@ -1393,66 +1406,75 @@ class Broadcaster:
             return
 
         async def read_ahead(item: Item, mode: str) -> None:
-            try:
-                resolved = await self.ctx.resolve_source(item)
-                if resolved.error or not resolved.source:
-                    return
-                probe = await ff.probe(self.settings, resolved.source)
-                if not probe.ok:
-                    return
-                chosen = await asyncio.to_thread(
-                    subtitles.for_program,
-                    self.settings.data_dir,
-                    mode,
-                    self.settings.preferred_audio_language,
-                    resolved.source,
-                    probe,
-                )
-                if isinstance(chosen, subtitles.Extraction):
-                    # (Shared: a station stopping doesn't stop it.)
-                    await asyncio.shield(subtitles.extract(self.settings, chosen))
-            except Exception as e:  # (only ever a head start)
-                log.debug("Reading ahead for %s's subtitles: %s", item.label, e)
+            resolved = await self.ctx.resolve_source(item)
+            if resolved.error or not resolved.source:
+                return
+            probe = await ff.probe(self.settings, resolved.source)
+            if probe.ok:
+                await self._read_out(mode, resolved.source, probe)
 
-        task = asyncio.create_task(read_ahead(following.item, channel.subtitles))
+        self._side(
+            read_ahead(following.item, channel.subtitles), f"{following.item.label}'s subtitles"
+        )
+
+    def _side(self, work: Awaitable[None], what: str) -> None:
+        """Runs `work` beside the stream, as a head start only: whatever goes
+        wrong with it, nothing else does (it stops with the station)."""
+
+        async def run() -> None:
+            try:
+                await work
+            except Exception as e:
+                log.debug("Reading ahead for %s: %s", what, e)
+
+        task = asyncio.create_task(run())
         self._side_tasks.add(task)
         task.add_done_callback(self._side_tasks.discard)
 
-    def _kept(self, item: Item, resolved: ResolvedSource) -> bool:
-        """Whether you put this program's file back on the air (Retry on the
-        Broken files tab) after it was taken off for something its file is."""
-        record = self.ctx.db.scan(item.rating_key)
+    async def _read_out(self, mode: str, source: str, probe: ff.ProbeResult) -> None:
+        """Reads a file's subtitles out of it for a station set to `mode`, if
+        they're text in the file (see subtitles.py). (Shared: a station
+        stopping doesn't stop it.)"""
+        chosen = await asyncio.to_thread(
+            subtitles.for_program,
+            self.settings.data_dir,
+            mode,
+            self.settings.preferred_audio_language,
+            source,
+            probe,
+        )
+        if isinstance(chosen, subtitles.Extraction):
+            await asyncio.shield(subtitles.extract(self.settings, chosen))
+
+    def _kept(self, item: Item, resolved: ResolvedSource, n: int = 1) -> bool:
+        """Whether you put this program's file (its `n`th, of several) back
+        on the air (Retry on the Broken files tab) after it was taken off
+        for something its file is."""
+        record = self.ctx.db.scan(part_key(item.rating_key, n))
         return (
             record is not None
             and record.kept
             and record.file == (resolved.plex_file or resolved.source)
         )
 
-    def _fail(
-        self,
-        item: Item,
-        reason: str,
-        channel_number: int,
-        plex_file: str | None,
-        size: int | None,
-        transient: bool = False,
-        problem: str = "broken",
-        opening: bool = False,
-    ) -> None:
+    def _fail(self, item: Item, failure: Failure, channel_number: int, transient: bool) -> None:
         """Takes an item out of rotation after it failed to play (or couldn't
-        be found or opened, `opening`)."""
+        be found or opened: see Failure)."""
         if transient:
-            log.warning("Skipping %s for now: %s", item.label, reason)
+            log.warning(
+                "Skipping %s for now: %s", item.label, of_part(failure.reason, failure.part)
+            )
             self._session_skip.add(item.rating_key)
             return
         self.ctx.broken.record(
             item,
-            reason,
+            failure.reason,
             channel_number,
-            plex_file,
-            size,
-            problem=problem,
-            found=OPENING if opening else PLAYING,
+            failure.plex_file,
+            failure.size,
+            problem=failure.problem,
+            found=OPENING if failure.opening else PLAYING,
+            part=failure.part,
         )
 
     async def _play_item(
@@ -1514,188 +1536,245 @@ class Broadcaster:
         drawing: upnext.Drawing | None,
         subtitles_mode: str = "off",
     ) -> PlayResult:
-        """_play_item's work: the program's file opened, then played in parts."""
-        # Locate and open the file, keeping the stream fed if that's slow.
-        prep = asyncio.create_task(self._prepare(item, aspect_mode))
-        filler_ts: float | None = None
-        try:
+        """_play_item's work: the program's file opened, then played in
+        stretches: one, or with intros and credits skipped, those that air,
+        each joined straight onto the last. A program in several files (a
+        movie on two discs: see catalog.Media) plays each in turn, joined on
+        the same way, the next opened while one plays."""
+        # Its files being opened (by their place: the program's first, and
+        # those of a program in several, as they're due).
+        opening: dict[int, asyncio.Task] = {
+            0: asyncio.create_task(self._prepare(item, aspect_mode))
+        }
+        total = PlayResult(0.0, completed=True)
+        # Where in the program it's got to, and how much of it is left.
+        position, left = offset_s, remaining_s
+
+        async def ready(n: int, what: str) -> Opened | None:
+            """File `n`, opened, keeping the stream fed if that's slow (a
+            spun-down drive can take 10+ seconds to wake): black till it's
+            ready, as part of the program's time. None if the slot ran out
+            meanwhile, or the station's stopping."""
+            nonlocal ts, burst, position, left, remaining_s
             while True:
                 wait_s = max(PREP_GRACE_S, self._lead_s(ts) - KEEPALIVE_MARGIN_S)
                 try:
-                    resolved, probe, picture = await asyncio.wait_for(asyncio.shield(prep), wait_s)
-                    break
+                    return await asyncio.wait_for(asyncio.shield(opening[n]), wait_s)
                 except TimeoutError:
                     pass
-                chunk = min(FILLER_CHUNK_S, remaining_s)
+                chunk = min(FILLER_CHUNK_S, left)
                 if self._stopping or chunk < MIN_PLAY_S:
-                    # Shutting down, or the slot ran out while we waited.
-                    return PlayResult(
-                        0.0, completed=not self._stopping, stopped=self._stopping, next_ts=filler_ts
-                    )
-                log.info(
-                    "Still opening %s; filling %.0fs to keep the stream going", item.label, chunk
-                )
+                    return None
+                log.info("Still opening %s; filling %.0fs to keep the stream going", what, chunk)
                 filler = await self._play_slate(chunk, ts, chunk, stitcher, channel_name, None)
                 if filler.next_ts is not None:
                     filled = filler.next_ts - ts
-                    ts = filler_ts = filler.next_ts
-                    offset_s += filled
-                    remaining_s -= filled
+                    ts = total.next_ts = filler.next_ts
+                    position += filled
+                    left -= filled
+                    if played:
+                        total.produced_s += filled
+                    else:
+                        remaining_s -= filled  # (before it starts: its time is shorter)
                 if filler.stopped:
-                    return PlayResult(0.0, completed=False, stopped=True, next_ts=filler_ts)
+                    total.stopped = True
+                    return None
                 burst = 0.0
-        finally:
-            if not prep.done():
-                prep.cancel()
 
-        if resolved.error or not resolved.source:
-            reason = resolved.error or "file not found"
-            return PlayResult(
-                0.0,
-                completed=False,
-                reason=reason,
-                next_ts=filler_ts,
-                failure=Failure(
-                    reason, resolved.plex_file, resolved.size, resolved.transient, opening=True
-                ),
-            )
-        assert probe is not None
-        if not probe.ok:
-            reason = probe.error or "can't open the file"
-            return PlayResult(
-                0.0,
-                completed=False,
-                reason=reason,
-                next_ts=filler_ts,
-                failure=Failure(
-                    reason, resolved.plex_file, resolved.size, probe.timed_out, opening=True
-                ),
-            )
-        if probe.dolby_vision_only and not self._kept(item, resolved):
-            reason = ff.dolby_vision_reason(probe)
-            return PlayResult(
-                0.0,
-                completed=False,
-                reason=reason,
-                next_ts=filler_ts,
-                failure=Failure(reason, resolved.plex_file, resolved.size, problem="unsupported"),
-            )
-        # (Not waiting for them longer than the stream's cushion allows.)
-        subs_wait = min(SUBTITLES_WAIT_S, max(1.0, self._lead_s(ts) - KEEPALIVE_MARGIN_S - 1.0))
-        subs = await self._subtitles(subtitles_mode, resolved.source, probe, subs_wait)
-
-        # The stretches of the file to play: one, or with intros and credits
-        # skipped, the parts that air, each joined straight onto the last.
-        plan = pieces(item.segments, offset_s, remaining_s)
-        gpu = self.ctx.gpu
-        encoder = gpu.encoder_for(item.rating_key in self._cpu_only) if gpu else ff.CPU
-        self._announce(item, offset_s, resolved, probe, subs, encoder)
-        # What was sent for this program altogether, across its parts.
-        total = PlayResult(0.0, completed=True, next_ts=filler_ts)
-        piece_ts = ts
-        played = False
-        aired = offset_s  # how far into the program each part starts
-        for n, (start_s, play_s) in enumerate(plan):
-            mark = _mark_from(watermark, aired - mark_from_s)
-            if mark:
-                # When this part starts airing: the clock tells the time from
-                # it, and the mark drifts by it (see ff.drift).
-                mark = replace(mark, airs_at_s=self._cursor(piece_ts) / 1000)
-            part_from_s = aired
-            aired += play_s
-            if probe.duration_s is not None:
-                available = probe.duration_s - start_s
-                if available < MIN_PLAY_S:
-                    # The file ends before this (it's a little shorter than
-                    # Plex recorded). Nothing wrong with the file; the rest
-                    # of the slot is covered below.
-                    break
-                play_s = min(play_s, available)
-            banner = None
-            if drawing is not None:
-                least, most = BANNER_WAIT_S
-                wait_s = max(least, min(most, self._lead_s(piece_ts) - KEEPALIVE_MARGIN_S))
-                banner = await drawing.for_part(part_from_s, play_s, wait_s)
-            if n:
-                burst = self._burst_at(piece_ts)
-            args = ff.program_command(
-                self.settings,
-                resolved.source,
-                start_s,
-                play_s,
-                piece_ts,
-                burst,
-                probe.audio_index,
-                channel_name,
-                encoder,
-                aspect_mode=aspect_mode,
-                source_aspect=picture[0] * probe.sar / picture[1]
-                if picture
-                else probe.display_aspect,
-                # Episodes are brought to one loudness so volume doesn't jump
-                # between them; movies keep their original sound.
-                normalize_audio=item.kind == "episode",
-                picture=picture,
-                video_index=probe.video_index,
-                watermark=mark,
-                banner=banner,
-                tone_map=ff.to_sdr(probe) if self.ctx.tone_mapping else "",
-                subtitles=subs,
-            )
-            # Don't wait for a first frame longer than the stream's cushion lasts.
-            first_frame_timeout = min(FIRST_FRAME_TIMEOUT_S, max(4.0, self._lead_s(piece_ts) - 1.0))
-            result = await self._run_ffmpeg(
-                args,
-                stitcher,
-                piece_ts,
-                first_frame_timeout=first_frame_timeout,
-                on_air=True,
-                what=f"{item.label} ({encoder.label})",
-            )
-            played = True
-            total.produced_s += result.produced_s
-            if result.next_ts is not None:
-                total.next_ts = result.next_ts
-            if result.stopped:
-                total.completed = False
-                total.stopped = True
-                return total
-
-            short = result.produced_s < play_s - SHORTFALL_TOLERANCE_S
-            whole = played_whole(start_s + result.produced_s, probe.duration_s)
-            if result.completed and short and whole:
-                break  # the file's whole; the rest of the slot is covered below
-            if result.completed and not short:
-                piece_ts = _advance(piece_ts, result)
-                continue
-
+        def failed(failure: Failure) -> PlayResult:
             total.completed = False
-            total.stalled = result.stalled
-            total.reason = result.reason
-            total.drawn_over = mark is not None or banner is not None or subs is not None
-            total.subtitled = subs is not None
-            if gpu and encoder.is_gpu and subs is None:
-                # Whatever went wrong may be the GPU's fault rather than the
-                # file's. Carry on with this same program on the CPU from
-                # where it stopped; only a failure there counts against it.
-                # (With subtitles drawn, it's first tried without them, on
-                # the GPU: see _run.) A stall may as well be the disk's (a
-                # read held up), so it never counts against the GPU.
-                gpu.gpu_failed(result.reason or "ended early", stalled=result.stalled)
-                if result.stalled:
-                    self._stalled_on_gpu.add(item.rating_key)
-                self._cpu_only.add(item.rating_key)
-                total.gpu_retry = True
-                return total
-            reason = result.reason or "ffmpeg failed"
-            if result.completed and short:
-                reason = (
-                    f"the file ended at {fmt_offset(start_s + result.produced_s)} "
-                    f"of {fmt_offset(start_s + play_s)} (it may be cut short or damaged)"
-                )
-            total.reason = reason
-            total.failure = Failure(reason, resolved.plex_file, resolved.size)
+            total.reason = of_part(failure.reason, failure.part)
+            total.failure = failure
             return total
+
+        played = False
+        try:
+            first = await ready(0, item.label)
+            if first is None:
+                total.completed = not self._stopping
+                total.stopped = self._stopping
+                return total
+            resolved = first.resolved
+            files = resolved.parts
+            of = len(files)
+            opened: dict[int, Opened] = {0: first}
+
+            async def open_file(n: int) -> Opened | Failure | None:
+                """File `n`, opened (and the reason, if it can't play)."""
+                if n not in opened:
+                    if n not in opening:
+                        opening[n] = asyncio.create_task(
+                            self._open_part(item, files[n], aspect_mode, subtitles_mode)
+                        )
+                    got = await ready(n, f"{item.label}, {part_words(n + 1, of)}")
+                    if got is None:
+                        return None
+                    opened[n] = got
+                return self._unopenable(item, opened[n], n, of) or opened[n]
+
+            if (problem := self._unopenable(item, first, 0, of)) is not None:
+                return failed(problem)
+            # Where each file starts in the program: by its length as the
+            # library says it, or as it's found to be where it doesn't.
+            starts = [0.0]
+            for n, part in enumerate(files[:-1]):
+                length = part.duration_ms / 1000 if part.duration_ms else None
+                if length is None:
+                    got = await open_file(n)
+                    if not isinstance(got, Opened):
+                        return failed(got) if got is not None else total
+                    length = got.probe.duration_s if got.probe is not None else None
+                    if not length:
+                        return failed(
+                            Failure(
+                                "StationPlay couldn't tell how long it is", got.resolved.plex_file,
+                                got.resolved.size, opening=True, part=(n + 1, of),
+                            )
+                        )  # fmt: skip
+                starts.append(starts[-1] + length)
+            gpu = self.ctx.gpu
+            encoder = gpu.encoder_for(item.rating_key in self._cpu_only) if gpu else ff.CPU
+            subs: ff.Subtitles | None = None
+            current = -1  # the file playing
+            while True:
+                plan = pieces(item.segments, position, left)
+                stretches = across(plan, starts)
+                if not stretches:
+                    break
+                n, start_s, play_s = stretches[0]
+                if play_s < MIN_PLAY_S and len(stretches) > 1:
+                    # (A moment at the end of one file: on to the next.)
+                    position, left = position + play_s, left - play_s
+                    continue
+                got = await open_file(n)
+                if got is None:
+                    if total.stopped:
+                        total.completed = False
+                        return total
+                    break  # (the slot ran out while it was opened)
+                if isinstance(got, Failure):
+                    return failed(got)
+                here, probe = got.resolved, got.probe
+                assert probe is not None and here.source is not None
+                part = (n + 1, of) if of > 1 else None
+                if probe.duration_s is not None:
+                    available = probe.duration_s - start_s
+                    if available < MIN_PLAY_S:
+                        # The file ends before this (it's a little shorter
+                        # than Plex recorded). Nothing wrong with it: on to
+                        # the next file, or the rest of the slot is covered
+                        # below.
+                        if n + 1 >= len(starts):
+                            break
+                        position, left = position + play_s, left - play_s
+                        continue
+                    play_s = min(play_s, available)
+                if n != current:
+                    # (Not waiting for them longer than the stream's cushion allows.)
+                    subs_wait = min(
+                        SUBTITLES_WAIT_S, max(1.0, self._lead_s(ts) - KEEPALIVE_MARGIN_S - 1.0)
+                    )
+                    subs = await self._subtitles(subtitles_mode, here.source, probe, subs_wait)
+                    self._announce(item, position, here, probe, subs, encoder, part)
+                    current = n
+                    if n + 1 < of and n + 1 not in opening:
+                        # (The next one, opened while this one plays.)
+                        opening[n + 1] = asyncio.create_task(
+                            self._open_part(item, files[n + 1], aspect_mode, subtitles_mode)
+                        )
+                mark = _mark_from(watermark, position - mark_from_s)
+                if mark:
+                    # When this stretch starts airing: the clock tells the
+                    # time from it, and the mark drifts by it (see ff.drift).
+                    mark = replace(mark, airs_at_s=self._cursor(ts) / 1000)
+                banner = None
+                if drawing is not None:
+                    least, most = BANNER_WAIT_S
+                    wait_s = max(least, min(most, self._lead_s(ts) - KEEPALIVE_MARGIN_S))
+                    banner = await drawing.for_part(position, play_s, wait_s)
+                if played:
+                    burst = self._burst_at(ts)
+                args = ff.program_command(
+                    self.settings,
+                    here.source,
+                    start_s,
+                    play_s,
+                    ts,
+                    burst,
+                    probe.audio_index,
+                    channel_name,
+                    encoder,
+                    aspect_mode=aspect_mode,
+                    source_aspect=got.picture[0] * probe.sar / got.picture[1]
+                    if got.picture
+                    else probe.display_aspect,
+                    # Episodes are brought to one loudness so volume doesn't jump
+                    # between them; movies keep their original sound.
+                    normalize_audio=item.kind == "episode",
+                    picture=got.picture,
+                    video_index=probe.video_index,
+                    watermark=mark,
+                    banner=banner,
+                    tone_map=ff.to_sdr(probe) if self.ctx.tone_mapping else "",
+                    subtitles=subs,
+                )
+                # Don't wait for a first frame longer than the stream's cushion lasts.
+                first_frame_timeout = min(FIRST_FRAME_TIMEOUT_S, max(4.0, self._lead_s(ts) - 1.0))
+                result = await self._run_ffmpeg(
+                    args,
+                    stitcher,
+                    ts,
+                    first_frame_timeout=first_frame_timeout,
+                    on_air=True,
+                    what=f"{item.label} ({encoder.label})",
+                )
+                played = True
+                total.produced_s += result.produced_s
+                if result.next_ts is not None:
+                    total.next_ts = result.next_ts
+                if result.stopped:
+                    total.completed = False
+                    total.stopped = True
+                    return total
+
+                short = result.produced_s < play_s - SHORTFALL_TOLERANCE_S
+                whole = played_whole(start_s + result.produced_s, probe.duration_s)
+                if result.completed and (not short or whole):
+                    ts = _advance(ts, result)
+                    position, left = position + play_s, left - play_s
+                    if short and n + 1 >= len(starts):
+                        break  # the file's whole; the rest of the slot is covered below
+                    continue
+
+                total.completed = False
+                total.stalled = result.stalled
+                total.reason = of_part(result.reason, part)
+                total.drawn_over = mark is not None or banner is not None or subs is not None
+                total.subtitled = subs is not None
+                if gpu and encoder.is_gpu and subs is None:
+                    # Whatever went wrong may be the GPU's fault rather than the
+                    # file's. Carry on with this same program on the CPU from
+                    # where it stopped; only a failure there counts against it.
+                    # (With subtitles drawn, it's first tried without them, on
+                    # the GPU: see _run.) A stall may as well be the disk's (a
+                    # read held up), so it never counts against the GPU.
+                    gpu.gpu_failed(result.reason or "ended early", stalled=result.stalled)
+                    if result.stalled:
+                        self._stalled_on_gpu.add(item.rating_key)
+                    self._cpu_only.add(item.rating_key)
+                    total.gpu_retry = True
+                    return total
+                reason = result.reason or "ffmpeg failed"
+                if result.completed and short:
+                    reason = (
+                        f"the file ended at {fmt_offset(start_s + result.produced_s)} "
+                        f"of {fmt_offset(start_s + play_s)} (it may be cut short or damaged)"
+                    )
+                return failed(Failure(reason, here.plex_file, here.size, part=part))
+        finally:
+            for task in opening.values():
+                if not task.done():
+                    task.cancel()
 
         if played and gpu and encoder.is_gpu:
             gpu.gpu_succeeded()
@@ -1704,11 +1783,47 @@ class Broadcaster:
                 gpu.cpu_rescued()
             self._cpu_only.discard(item.rating_key)
             self._stalled_on_gpu.discard(item.rating_key)
+        short_s = remaining_s - total.produced_s
+        if not resolved.known and short_s >= MORE_FILES_S:
+            # Its file ended long before its time, and Plex couldn't say then
+            # whether it has more (a movie on two discs): the rest of its
+            # time is a stand-in's, not black's.
+            return failed(
+                Failure(
+                    f"its file ended {fmt_offset(short_s)} before its time, and Plex couldn't "
+                    "say whether it has another", resolved.plex_file, resolved.size,
+                    transient=True, resume=False,
+                )
+            )  # fmt: skip
         # Finished. If the file is a little shorter than its slot, cover the
         # leftover so the next program starts on time.
-        return await self._fill_gap(
-            remaining_s - total.produced_s, ts, stitcher, channel_name, total
-        )
+        return await self._fill_gap(short_s, ts, stitcher, channel_name, total)
+
+    def _unopenable(self, item: Item, opened: Opened, n: int, of: int) -> Failure | None:
+        """Why the `n`th (from 0) of a program's files (`of`: how many it
+        has, for one in several) can't play, if it can't: it couldn't be
+        found or opened, or it's Dolby Vision with no ordinary picture inside
+        (unless you put it back on the air)."""
+        resolved, probe = opened.resolved, opened.probe
+        part = (n + 1, of) if of > 1 else None
+        if resolved.error or not resolved.source:
+            reason = resolved.error or "file not found"
+            return Failure(
+                reason, resolved.plex_file, resolved.size, resolved.transient, opening=True,
+                part=part,
+            )  # fmt: skip
+        assert probe is not None
+        if not probe.ok:
+            reason = probe.error or "can't open the file"
+            return Failure(
+                reason, resolved.plex_file, resolved.size, probe.timed_out, opening=True, part=part
+            )
+        if probe.dolby_vision_only and not self._kept(item, resolved, n + 1):
+            return Failure(
+                ff.dolby_vision_reason(probe), resolved.plex_file, resolved.size,
+                problem="unsupported", part=part,
+            )  # fmt: skip
+        return None
 
     def _announce(
         self,
@@ -1718,18 +1833,21 @@ class Broadcaster:
         probe: ff.ProbeResult,
         subs: ff.Subtitles | None,
         encoder: ff.Encoder,
+        part: tuple[int, int] | None = None,
     ) -> None:
         """Says in the log what's starting to play (once for each program,
-        and again only if it moves to the CPU): its file, its picture and
-        sound, and how the station makes it. Someone tuning in from the
-        beginning is said with it."""
+        and again only if it moves to the CPU, or on to the next of its
+        files: `part`, of one in several): its file, its picture and sound,
+        and how the station makes it. Someone tuning in from the beginning
+        is said with it."""
         self.encoder_now = encoder
         np = self.now_playing
-        key = (np.slot_start_ms if np else 0, item.rating_key)
+        key = (np.slot_start_ms if np else 0, item.rating_key, part[0] if part else 1)
         last = self._announced
         again = last is not None and last[0] == key
         if last is not None and again and last[1] == encoder.kind:
             return
+        on_to = not again and part is not None and last is not None and last[0][:2] == key[:2]
         self._announced = (key, encoder.kind)
         if self._joining and np is not None and np.replaced:
             # (Not the program the tuning in was about: another took its place.)
@@ -1737,6 +1855,8 @@ class Broadcaster:
             self._joining = ""
         if self._joining:
             what = self._joining
+        elif on_to:
+            what = f"{item.label} goes on to its next file"
         elif again:
             what = f"{item.label} carries on from {fmt_offset(offset_s)}"
         elif offset_s >= STARTS_S:
@@ -1748,6 +1868,8 @@ class Broadcaster:
         else:
             what = f"{item.label} starts"
         self._joining = ""
+        if part is not None:
+            what += f", {part_words(*part)}"
         made = [
             f"made {playing.size(self.settings.video_height)} at "
             f"{playing.mbps(self.settings.video_bitrate_kbps)} on {playing.encoder_name(encoder)}"
@@ -1786,19 +1908,33 @@ class Broadcaster:
         result.stopped = slate.stopped
         return result
 
-    async def _prepare(
-        self, item: Item, aspect_mode: str
-    ) -> tuple[ResolvedSource, ff.ProbeResult | None, tuple[int, int, int, int] | None]:
-        resolved = await self.ctx.resolve_source(item)
+    async def _prepare(self, item: Item, aspect_mode: str) -> Opened:
+        """The program's file found (with its others, for one in several:
+        see ResolvedSource.parts) and opened."""
+        return await self._open(await self.ctx.resolve_source(item), aspect_mode)
+
+    async def _open_part(
+        self, item: Item, part: Media, aspect_mode: str, subtitles_mode: str
+    ) -> Opened:
+        """One of a program's further files (see catalog.Media) found and
+        opened; its text subtitles, if it has them, read out of it
+        meanwhile, so they're ready when it plays (see _read_out)."""
+        opened = await self._open(await self.ctx.locate(item.rating_key, part), aspect_mode)
+        probe, source = opened.probe, opened.resolved.source
+        if probe is not None and probe.ok and source and subtitles_mode != "off":
+            self._side(self._read_out(subtitles_mode, source, probe), f"{item.label}'s subtitles")
+        return opened
+
+    async def _open(self, resolved: ResolvedSource, aspect_mode: str) -> Opened:
         if resolved.error or not resolved.source:
-            return resolved, None, None
+            return Opened(resolved)
         probe = await ff.probe(self.settings, resolved.source)
         picture = None
         if aspect_mode != "fit" and probe.ok and (probe.display_aspect or 0) >= ff.BOXED_MAX_ASPECT:
             # A widescreen file may still be a 4:3 show with black bars
             # baked in; zoom and stretch need to know where the picture is.
             picture = await self._find_picture(resolved.source, probe)
-        return resolved, probe, picture
+        return Opened(resolved, probe, picture)
 
     async def _find_picture(
         self, source: str, probe: ff.ProbeResult
