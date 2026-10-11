@@ -165,6 +165,29 @@ def test_the_server_has_no_license():
     assert not (WEB_DIR.parent / "licensing.py").exists()
 
 
+def test_codes_and_addresses_arent_autocorrected():
+    """What people type exactly (an app's link code, a Sonarr or Radarr
+    address) tells a phone's keyboard not to autocorrect it, capitalize it
+    or check its spelling: the owner's Android keyboard kept "correcting"
+    a link code as it was typed."""
+    link = re.search(r'<input type="text" id="linkCode"[^>]*>', PAGE).group(0)
+    for attribute in (
+        'autocorrect="off"',
+        'autocapitalize="characters"',
+        'spellcheck="false"',
+        'autocomplete="off"',
+    ):
+        assert attribute in link, attribute
+    arr = re.search(r"const url = h\('input', \{ type: 'text', value: a\.url,[^\n]*", PAGE).group(0)
+    for attribute in (
+        "autocorrect: 'off'",
+        "autocapitalize: 'off'",
+        "spellcheck: 'false'",
+        "autocomplete: 'off'",
+    ):
+        assert attribute in arr, attribute
+
+
 def test_a_stations_progress_bar_marks_its_end():
     """The bar under what's playing has an end mark like the playhead's (the
     same size), in orange, inside the bar; it turns red with a short glow

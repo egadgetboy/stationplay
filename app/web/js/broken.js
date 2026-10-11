@@ -240,7 +240,7 @@ async function loadArr() {
 function arrRow(app, a, st) {
   const meta = ARR[app];
   const on = h('input', { type: 'checkbox', checked: a.on });
-  const url = h('input', { type: 'text', value: a.url, placeholder: `http://your-nas:${meta.port}`, 'aria-label': `${meta.name} address`, autocomplete: 'off', spellcheck: 'false' });
+  const url = h('input', { type: 'text', value: a.url, placeholder: `http://your-nas:${meta.port}`, 'aria-label': `${meta.name} address`, autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: 'false' });
   const key = h('input', { type: 'password', placeholder: a.hasKey ? 'API key saved (type a new one to change it)' : 'API key', 'aria-label': `${meta.name} API key`, autocomplete: 'off' });
   const result = h('span', { class: 'hint', role: 'status' }, st && !st.ok ? `Last request failed: ${st.problem}` : '');
   const body = () => ({ app, url: url.value.trim(), key: key.value.trim() || null, on: on.checked });
