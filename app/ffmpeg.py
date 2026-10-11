@@ -1071,6 +1071,10 @@ def _video_filter(
 LOUDNESS_TARGET = "I=-24:TP=-2:LRA=11"
 
 
+# Silence, for a card or a file with no sound (made where its picture is).
+SILENCE = "anullsrc=channel_layout=stereo:sample_rate=48000"
+
+
 def _audio_filter(normalize: bool) -> str:
     """Resampling keeps audio in step with video. For TV episodes, loudness
     normalization evens out volume from one episode to the next."""
@@ -1149,26 +1153,26 @@ def program_command(
     if offset_s > 0.05:
         args += ["-ss", f"{offset_s:.3f}"]
     args += ["-i", source]
-    if audio_index is None:
-        # No audio in the file: add silence so every program has a track.
-        args += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
-    audio_map = "1:a:0" if audio_index is None else f"0:a:{audio_index}"
     graph = _video_filter(
         settings, encoder, aspect_mode, source_aspect, picture, watermark, banner, tone_map,
         subtitles, offset_s if offset_s > 0.05 else 0.0, video_index,
     )  # fmt: skip
-    if subtitles is not None and subtitles.image:
-        video = ["-filter_complex", graph, "-map", "[vout]"]
+    image_subs = subtitles is not None and subtitles.image
+    if audio_index is None:
+        # No sound in the file: silence, made in the picture's filter graph
+        # so every program has a track. (Not an input of its own: with
+        # FFmpeg 7, that held back or stalled the stream. And not evened
+        # out: silence has no loudness.)
+        if not image_subs:
+            graph = f"[0:v:{video_index}]{graph}[vout]"
+        av = ["-filter_complex", f"{graph};{SILENCE}[aout]", "-map", "[vout]", "-map", "[aout]"]
+    elif image_subs:
+        av = ["-filter_complex", graph, "-map", "[vout]", "-map", f"0:a:{audio_index}"]
+        av += ["-af", _audio_filter(normalize_audio)]
     else:
-        video = ["-map", f"0:v:{video_index}", "-vf", graph]
-    args += [
-        *video, "-map", audio_map, "-dn", "-sn",
-        "-t", f"{duration_s:.3f}",
-        # (Only the file's own sound is evened out: added silence has no
-        # loudness, and with FFmpeg 7, evening out a second input's sound
-        # holds back the whole stream until the program ends.)
-        "-af", _audio_filter(normalize_audio and audio_index is not None),
-    ]  # fmt: skip
+        av = ["-map", f"0:v:{video_index}", "-vf", graph, "-map", f"0:a:{audio_index}"]
+        av += ["-af", _audio_filter(normalize_audio)]
+    args += [*av, "-dn", "-sn", "-t", f"{duration_s:.3f}"]
     return args + output_args(settings, ts_offset_s, channel_name, encoder)
 
 
@@ -1182,12 +1186,13 @@ def _generated(
 ) -> list[str]:
     """ffmpeg arguments for a picture drawn by `graph` (a filter graph ending
     in [out0]), with silence. Made inside ffmpeg and always encoded on the
-    CPU, so it depends on neither a file nor a GPU."""
+    CPU, so it depends on neither a file nor a GPU. (The silence comes from
+    the same input as the picture, read in step with it: as an input of its
+    own, FFmpeg 7 held the card's stream back for seconds at a time.)"""
     args = [
         *common_prefix(settings), *paced(burst_s),
-        "-f", "lavfi", "-i", graph,
-        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-        "-map", "0:v:0", "-map", "1:a:0", "-t", f"{duration_s:.3f}",
+        "-f", "lavfi", "-i", f"{graph};{SILENCE}[out1]",
+        "-map", "0:v:0", "-map", "0:a:0", "-t", f"{duration_s:.3f}",
     ]  # fmt: skip
     return args + output_args(settings, ts_offset_s, channel_name)
 

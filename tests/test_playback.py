@@ -9,6 +9,7 @@ import logging
 import shutil
 import sqlite3
 import subprocess
+import time
 
 import httpx
 import pytest
@@ -306,15 +307,80 @@ def test_silence_added_for_a_file_with_no_sound_isnt_evened_out():
     under -shortest holds back the whole stream until the program ends, so
     an episode or break with no sound stalled and was taken off the air."""
 
-    def audio_filter(audio_index: int | None) -> str:
-        args = ff.program_command(
-            Settings(), "/x/film.mkv", 0.0, 12.0, 0.0, 1.0, audio_index, "Test",
-            normalize_audio=True,
+    def command(audio_index: int | None) -> str:
+        return " ".join(
+            ff.program_command(
+                Settings(), "/x/film.mkv", 0.0, 12.0, 0.0, 1.0, audio_index, "Test",
+                normalize_audio=True,
+            )
         )  # fmt: skip
-        return args[args.index("-af") + 1]
 
-    assert "loudnorm" in audio_filter(0)
-    assert "loudnorm" not in audio_filter(None)
+    assert "loudnorm" in command(0)
+    assert "loudnorm" not in command(None)
+
+
+def test_silence_is_made_with_the_picture():
+    """The silence under a card, or under a file with no sound, comes from
+    the same input or filter graph as the picture, never from an input of
+    its own. With FFmpeg 7, a second input of silence under -shortest held
+    back a card's stream for seconds at a time, or all of it, so a card or
+    a program with no sound could stall and be taken off the air."""
+    settings = Settings()
+    commands = [
+        ff.slate_command(settings, 30.0, 0.0, 0.0, "Test", "Off the air"),
+        ff.card_command(settings, 5.0, 0.0, 0.0, "Test", None, ["Up next", "A show", "An episode"]),
+        ff.program_command(settings, "/x/film.mkv", 0.0, 12.0, 0.0, 1.0, None, "Test"),
+        ff.program_command(
+            settings, "/x/film.mkv", 0.0, 12.0, 0.0, 1.0, None, "Test",
+            subtitles=ff.Subtitles(stream=0, image=True),
+        ),
+    ]  # fmt: skip
+    for args in commands:
+        assert args.count("-i") == 1, args
+        assert "anullsrc=channel_layout=stereo:sample_rate=48000" in " ".join(args)
+
+
+def pictures_sent(data: bytes) -> int:
+    """How many video frames start in a stream's bytes."""
+    count = 0
+    for pos in range(0, len(data) - 187, 188):
+        flags = data[pos + 3]
+        if data[pos] != 0x47 or not data[pos + 1] & 0x40 or not flags & 0x10:
+            continue
+        p = pos + 4 + (1 + data[pos + 4] if flags & 0x20 else 0)
+        count += data[p : p + 4] in (b"\x00\x00\x01\xe0",)
+    return count
+
+
+async def sent_in(args: list[str], seconds: float) -> bytes:
+    """What an ffmpeg sends in its first `seconds`."""
+    proc = await asyncio.create_subprocess_exec(
+        *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+    )
+    got = b""
+    until = time.monotonic() + seconds
+    try:
+        while (left := until - time.monotonic()) > 0:
+            try:
+                chunk = await asyncio.wait_for(proc.stdout.read(65536), left)
+            except TimeoutError:
+                break
+            if not chunk:
+                break
+            got += chunk
+    finally:
+        proc.kill()
+        await proc.wait()
+    return got
+
+
+@needs_ffmpeg
+async def test_a_card_streams_as_it_plays():
+    """A card played at real time (no burst: the stream's cushion is full)
+    sends its picture from the start, a second's worth every second."""
+    settings = Settings(plex_url="", plex_token="", video_width=640, video_height=360)
+    args = ff.slate_command(settings, 30.0, 0.0, 0.0, "Test", "This station is off the air.")
+    assert pictures_sent(await sent_in(args, 4.0)) >= 60
 
 
 @needs_ffmpeg
