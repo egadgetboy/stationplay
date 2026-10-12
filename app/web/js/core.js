@@ -116,6 +116,85 @@ function showTab(name) {
   history.replaceState(null, '', '#' + name);
 }
 
+// More above, more below ------------------------------------------------------
+// Something that runs on past what shows (a dialog's body, the log, the
+// page itself) has a down arrow while more of it is below what shows, and
+// an up arrow while more is above, as StationPlay's apps have them. "More"
+// is more than 1px (less is rounding, never a line of words), worked out
+// from what's laid out, so a turned tablet or a short window gets them just
+// when it needs them. Each is a chevron on a short fade into the background
+// at that edge, so a line cut by the edge fades out under it. They're only
+// drawn: clicks and taps go on to what's under them, they're never
+// focused, and screen readers pass them by.
+const MORE_SLACK = 1;
+const moreArrowsOf = (scrolled, shown, whole) =>
+  ({ above: scrolled > MORE_SLACK, below: whole - shown - scrolled > MORE_SLACK });
+const MORE_CHEVRON = up => `<svg viewBox="0 0 32 32" width="32" height="32" focusable="false"><path d="${up ? 'M8 20 16 12 24 20' : 'M8 12 16 20 24 12'}"/></svg>`;
+const moreLayer = cls => {
+  const layer = h('div', { class: `more-arrows${cls ? ' ' + cls : ''}`, 'aria-hidden': 'true' },
+    h('div', { class: 'more-up', hidden: true }), h('div', { class: 'more-down', hidden: true }));
+  layer.firstChild.innerHTML = MORE_CHEVRON(true);
+  layer.lastChild.innerHTML = MORE_CHEVRON(false);
+  return layer;
+};
+const moreShow = (layer, arrows) => {
+  if (layer.firstChild.hidden === arrows.above) layer.firstChild.hidden = !arrows.above;
+  if (layer.lastChild.hidden === arrows.below) layer.lastChild.hidden = !arrows.below;
+};
+// Once a frame at most, however many things ask.
+const moreLater = fn => {
+  let asked = false;
+  return () => { if (!asked) { asked = true; requestAnimationFrame(() => { asked = false; fn(); }); } };
+};
+const moreAdded = new WeakSet();
+// The arrows for `el`, a box that scrolls (once each: again does nothing).
+// They lie over it, beside it in its parent (made the place they're
+// measured from, if it isn't one already).
+function moreArrows(el) {
+  if (moreAdded.has(el) || !el.parentElement) return;
+  moreAdded.add(el);
+  const parent = el.parentElement;
+  if (getComputedStyle(parent).position === 'static') parent.classList.add('more-host');
+  const layer = moreLayer();
+  el.after(layer);
+  const update = moreLater(() => {
+    // (Over the part that shows: inside its border, beside its scroll bar.)
+    const r = el.getBoundingClientRect(), p = parent.getBoundingClientRect(), s = layer.style;
+    s.top = `${r.top - p.top - parent.clientTop + parent.scrollTop + el.clientTop}px`;
+    s.left = `${r.left - p.left - parent.clientLeft + parent.scrollLeft + el.clientLeft}px`;
+    s.width = `${el.clientWidth}px`;
+    s.height = `${el.clientHeight}px`;
+    const round = getComputedStyle(el);
+    s.borderRadius = ['TopLeft', 'TopRight', 'BottomRight', 'BottomLeft']
+      .map(c => `${Math.max(0, parseFloat(round[`border${c}Radius`]) - el.clientTop)}px`).join(' ');
+    moreShow(layer, moreArrowsOf(el.scrollTop, el.clientHeight, el.scrollHeight));
+  });
+  el.addEventListener('scroll', update, { passive: true });
+  el.addEventListener('load', update, true);  // (a picture in it, sized once it's loaded)
+  // Its own size, and where it is in its parent (whatever is beside it changes size).
+  const sizes = new ResizeObserver(update);
+  const watch = () => { sizes.disconnect(); sizes.observe(el); sizes.observe(parent); for (const k of parent.children) if (k !== layer) sizes.observe(k); };
+  watch();
+  // What's in it (and what's beside it) changing.
+  new MutationObserver(update).observe(el, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['open', 'hidden', 'class', 'style'] });
+  new MutationObserver(() => { watch(); update(); }).observe(parent, { childList: true });
+  update();
+}
+// The page's own, at the window's edges.
+(() => {
+  const layer = moreLayer('page');
+  document.body.append(layer);
+  const page = document.scrollingElement || document.documentElement;
+  const update = moreLater(() => moreShow(layer, moreArrowsOf(page.scrollTop, window.innerHeight, page.scrollHeight)));
+  window.addEventListener('scroll', update, { passive: true });
+  window.addEventListener('resize', update);
+  new ResizeObserver(update).observe(document.body);
+  update();
+})();
+// Every dialog's body, the log, a problem's journal (see logs.js), and the
+// station editor's lists.
+document.querySelectorAll('.dlg-body, #logList, .picker-list, .fbox, #fMatches').forEach(moreArrows);
+
 // Copying works on a plain http:// address too, where browsers don't offer
 // the clipboard API.
 async function copyText(text) {

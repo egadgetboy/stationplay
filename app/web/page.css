@@ -300,7 +300,8 @@ header.top {
 /* The setup: its steps down the side (above, on a phone or a short screen: just which step), and each step's page. */
 #setupDlg { width: min(940px, calc(100vw - 24px)); }
 .setup-grid { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 22px; align-items: start; }
-.setup-nav { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; position: sticky; top: 0; }
+/* (Kept in sight as the step scrolls, below the up arrow's fade.) */
+.setup-nav { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; position: sticky; top: 44px; }
 .setup-nav button {
   display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: 0;
   border-radius: var(--radius); padding: 7px 10px; cursor: pointer; color: var(--ink-2); font-size: 14px;
@@ -498,6 +499,24 @@ input:focus, select:focus, .btn:focus-visible, .tab:focus-visible { outline: 2px
 .toast.error { background: var(--bad); color: #fff; }
 .toast .undo { margin-left: 14px; background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
 [hidden] { display: none !important; }
+/* More above, more below (see core.js): a chevron, as StationPlay's apps
+   draw it, on a short fade into the background at that edge, over a box
+   that scrolls, or at the window's edges for the page itself. Only drawn:
+   never clicked, tapped or focused. A box that has them keeps what's
+   scrolled to with the keyboard out from under them. */
+.more-host { position: relative; }
+.more-arrows { position: absolute; z-index: 1; pointer-events: none; overflow: hidden; --more-bg: var(--panel); }
+.more-arrows.page { position: fixed; inset: 0; z-index: 5; overflow: visible; --more-bg: var(--bg); }
+pre.journal + .more-arrows { --more-bg: var(--panel-2); }
+.more-up, .more-down {
+  position: absolute; left: 0; right: 0; height: 44px; display: flex; justify-content: center;
+  color: var(--ink-2); pointer-events: none;
+}
+.more-up { top: 0; align-items: flex-start; background: linear-gradient(to bottom, var(--more-bg) 45%, transparent); }
+.more-down { bottom: 0; align-items: flex-end; background: linear-gradient(to bottom, transparent, var(--more-bg) 55%); }
+.more-arrows svg { display: block; width: 32px; height: 32px; flex: none; }
+.more-arrows path { fill: none; stroke: currentColor; stroke-width: 2.67; stroke-linecap: round; stroke-linejoin: round; }
+html, .dlg-body, .logs, .journal, .picker-list, .fbox, #fMatches { scroll-padding-block: 44px; }
 .live-list { display: grid; gap: 8px; }
 .live-list > .live { padding: 12px 14px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 

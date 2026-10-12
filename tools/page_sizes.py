@@ -14,8 +14,10 @@ on top of each other, text smaller than the page's smallest (11px), a tap
 target smaller than about 40px on a phone or tablet, or a dialog that
 doesn't fit the screen. It also checks a few things the page does, and
 says "check failed" for any that's wrong: Link an app's code getting its
-dash as it's typed, Tuner access's controls, and Alert notifications
-choosing Discord's and Slack's formats for their webhooks. It's a tool, not a test:
+dash as it's typed, Tuner access's controls, Alert notifications
+choosing Discord's and Slack's formats for their webhooks, and the arrows
+that say more is above or below (first-run setup's steps, a short dialog,
+the log, a problem's journal and the page). It's a tool, not a test:
 the tests don't run it.
 
     pip install playwright pillow       (and: python -m playwright install chromium)
@@ -715,6 +717,11 @@ def whole_page(page: Page, path: Path) -> None:
     whole-page screenshot forgets that it's a touch screen, from then on.)"""
     size = page.viewport_size
     assert size is not None
+    # (The page's own arrows, at the window's edges, aren't part of the
+    # page: without them, so the screens join up.)
+    page.evaluate(
+        "() => document.querySelector('.more-arrows.page')?.style.setProperty('display', 'none')"
+    )
     height = page.evaluate("document.documentElement.scrollHeight")
     sheet = Image.new("RGB", (size["width"], height))
     top = 0
@@ -727,6 +734,9 @@ def whole_page(page: Page, path: Path) -> None:
         if top >= height:
             break
     page.evaluate("window.scrollTo(0, 0)")
+    page.evaluate(
+        "() => document.querySelector('.more-arrows.page')?.style.removeProperty('display')"
+    )
     sheet.save(path)
 
 
@@ -970,6 +980,112 @@ def signin_answer_lost(context: Any, base: str, look: Look) -> None:
     lost.close()
 
 
+# The arrows over a box that scrolls (`sel`), or at the window's edges for
+# the page itself (no `sel`): see core.js. Whether more of it is below and
+# above what shows, worked out here on its own; whether each arrow shows;
+# where it is; and what a tap at its middle lands on.
+ARROWS = r"""
+(sel) => {
+  const page = !sel;
+  const el = page ? document.scrollingElement : document.querySelector(sel);
+  const layer = page ? document.querySelector('.more-arrows.page') : el?.nextElementSibling;
+  if (!el || !layer || !layer.matches('.more-arrows')) return null;
+  if (!page) el.scrollIntoView({ block: 'nearest' });  // (in sight, to tap)
+  const r = el.getBoundingClientRect();
+  const box = page ? { top: 0, bottom: innerHeight, left: 0, right: document.documentElement.clientWidth }
+    : { top: r.top + el.clientTop, bottom: r.top + el.clientTop + el.clientHeight, left: r.left + el.clientLeft, right: r.left + el.clientLeft + el.clientWidth };
+  const shown = page ? innerHeight : el.clientHeight;
+  const up = layer.querySelector('.more-up'), down = layer.querySelector('.more-down');
+  const arrow = a => {
+    if (!a.checkVisibility()) return null;
+    const c = a.querySelector('svg').getBoundingClientRect();
+    const x = (c.left + c.right) / 2, y = (c.top + c.bottom) / 2;
+    const hit = document.elementFromPoint(x, y);
+    return {
+      // (Its middle on its box's, and at that edge: inside it, by under half the chevron.)
+      centered: Math.abs(x - (box.left + box.right) / 2) <= 1,
+      edge: a === down ? box.bottom - c.bottom : c.top - box.top,
+      size: [Math.round(c.width), Math.round(c.height)],
+      // (Under it: what it's over, never the arrow.)
+      through: !!hit && !layer.contains(hit) && (page || el.contains(hit)),
+    };
+  };
+  return {
+    below: el.scrollHeight - shown - el.scrollTop > 1, above: el.scrollTop > 1,
+    up: arrow(up), down: arrow(down),
+    hidden: layer.getAttribute('aria-hidden'), clicks: getComputedStyle(layer).pointerEvents,
+    focusable: layer.querySelectorAll('[tabindex], a, button, input').length,
+  };
+}
+"""
+
+
+def arrows(page: Page, look: Look, what: str, sel: str | None = None) -> dict | None:
+    """Checks the arrows over `sel` (or the page's): the down arrow just
+    while more is below what shows, the up arrow just while more is above,
+    each at its edge, centered, 32px, and a tap at its middle landing on
+    what's under it; hidden from screen readers and never focused."""
+    page.wait_for_timeout(120)  # (they're kept right once a frame)
+    got = page.evaluate(ARROWS, sel)
+    if got is None:
+        look.expect(f"{what}: has its arrows", "none", "its arrows")
+        return None
+    look.expect(f"{what}: the down arrow just while more is below", bool(got["down"]), got["below"])
+    look.expect(f"{what}: the up arrow just while more is above", bool(got["up"]), got["above"])
+    for name in ("down", "up"):
+        a = got[name]
+        if not a:
+            continue
+        look.expect(f"{what}: the {name} arrow's middle on its box's", a["centered"], True)
+        look.expect(f"{what}: the {name} arrow at its edge", 0 <= a["edge"] <= 16, True)
+        look.expect(f"{what}: the {name} arrow 32px", a["size"], [32, 32])
+        look.expect(
+            f"{what}: a tap on the {name} arrow goes to what's under it", a["through"], True
+        )
+    look.expect(f"{what}: the arrows hidden from screen readers", got["hidden"], "true")
+    look.expect(f"{what}: the arrows never clicked", got["clicks"], "none")
+    look.expect(f"{what}: nothing in the arrows focused", got["focusable"], 0)
+    return got
+
+
+def scroll(page: Page, sel: str | None, to_end: bool) -> None:
+    """Scrolls `sel` (or the page) to its end, or back to its top."""
+    page.evaluate(
+        """([sel, end]) => { const el = sel ? document.querySelector(sel) : document.scrollingElement;
+                             el.scrollTop = end ? el.scrollHeight : 0; }""",
+        [sel, to_end],
+    )
+
+
+def scrolled_arrows(page: Page, look: Look, what: str, sel: str | None = None) -> bool:
+    """`sel`'s (or the page's) arrows, then scrolled to its end and back: at
+    its end, the up arrow and no down arrow. Whether it ran past what shows."""
+    got = arrows(page, look, what, sel)
+    if not got or not got["below"]:
+        return False
+    scroll(page, sel, True)
+    end = arrows(page, look, f"{what}, scrolled to its end", sel)
+    if end:
+        look.expect(
+            f"{what}, scrolled to its end: the up arrow, no down arrow",
+            (bool(end["up"]), bool(end["down"])),
+            (True, False),
+        )
+    scroll(page, sel, False)
+    return True
+
+
+def short_dialog(page: Page, look: Look) -> None:
+    """A dialog with a line of words: no arrows."""
+    page.evaluate("() => notice('Saved', h('p', {}, 'Your changes are saved.'))")
+    got = arrows(page, look, "a short dialog", "#noticeBody")
+    if got:
+        look.expect(
+            "a short dialog: no arrows", (bool(got["up"]), bool(got["down"])), (False, False)
+        )
+    close_dialogs(page)
+
+
 def signin_by_pin(page: Page, look: Look) -> None:
     """The sign-in screen's PIN form: at home, on a browser Jo signed in on
     with her password (her session's cookie gone, the browser's kept)."""
@@ -1053,12 +1169,33 @@ def admin_views(page: Page, look: Look, only: set[str] | None) -> None:
         page.wait_for_selector("#setupDlg[open] .setup-check, #setupDlg[open] .playback")
         page.wait_for_timeout(1500)
         steps = page.locator(".setup-nav button").count()
+        ran_on = []
         for n in range(steps):
             look(f"setup-{n + 1}")
+            if scrolled_arrows(page, look, f"setup step {n + 1}", "#setupBody"):
+                if not ran_on:
+                    # The first that does, partway down: both arrows.
+                    page.evaluate(
+                        "() => { const b = document.querySelector('#setupBody'); b.scrollTop = (b.scrollHeight - b.clientHeight) / 2; }"
+                    )
+                    got = arrows(page, look, f"setup step {n + 1}, partway down", "#setupBody")
+                    if got:
+                        look.expect(
+                            f"setup step {n + 1}, partway down: both arrows",
+                            (bool(got["up"]), bool(got["down"])),
+                            (True, True),
+                        )
+                    look(f"setup-{n + 1}-partway")
+                    scroll(page, "#setupBody", False)
+                ran_on.append(n + 1)
             if n < steps - 1:
                 page.click("#setupFoot .btn.primary")
                 page.wait_for_timeout(700)
+        # (On a phone, some step runs past the screen: its arrows were checked.)
+        if (page.viewport_size or {}).get("width", 0) <= 430:
+            look.expect("setup on a phone: a step that runs past the screen", bool(ran_on), True)
         close_dialogs(page)
+        short_dialog(page, look)
     if wanted("addtoplex"):
         tab(page, "setup")
         look("addtoplex", full=True)
@@ -1124,10 +1261,30 @@ def admin_views(page: Page, look: Look, only: set[str] | None) -> None:
         tab(page, "logs")
         page.wait_for_selector("#logList .logline")
         look("logs", full=True)
+        # The log: scrolled to its newest, at the bottom, so more is above.
+        got = arrows(page, look, "the log", "#logList")
+        if got:
+            look.expect("the log runs past its box", got["above"], True)
+            scroll(page, "#logList", False)
+            arrows(page, look, "the log, scrolled to its top", "#logList")
+            scroll(page, "#logList", True)
+        # The page itself: at its top, more below; at its end, more above.
+        page.evaluate("window.scrollTo(0, 0)")
+        got = arrows(page, look, "the Logs tab")
+        if got:
+            look.expect("the Logs tab runs past the screen", got["below"], True)
+        page.evaluate(
+            "() => document.querySelector('#logList').scrollIntoView({ block: 'center' })"
+        )
+        page.wait_for_timeout(150)
+        look("logs-arrows")
+        page.evaluate("window.scrollTo(0, 0)")
+        scrolled_arrows(page, look, "the Logs tab")
         page.click("#problemList details > summary")
         page.wait_for_selector("#problemList details[open] pre:not(:empty)")
         page.wait_for_timeout(300)
         look("logs-journal", full=True)
+        scrolled_arrows(page, look, "a problem's journal", "#problemList details[open] pre.journal")
         notify_addresses(page, look)
     if wanted("alerts"):
         page.click("#alertsPill")

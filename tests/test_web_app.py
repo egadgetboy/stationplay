@@ -431,3 +431,36 @@ def test_first_run_setup_says_what_plexs_terms_require():
     assert "PERSONAL_USE()" in plex_step
     # Plex's own terms are linked, beside StationPlay's privacy notice.
     assert "https://www.plex.tv/about/privacy-legal/plex-terms-of-service/" in script
+
+
+def test_more_arrows_are_only_drawn():
+    """The owner, October 12: the down arrow while more is below what shows,
+    and the up arrow while more is above (as StationPlay's apps have them),
+    on every dialog's body, the log, a problem's journal, the editor's lists
+    and the page itself. "More" is more than 1px, from what's laid out. They
+    never take a click or a tap, are never focused, and screen readers pass
+    them by. (tools/page_sizes.py checks them in a browser.)"""
+    core = (WEB_DIR / "js" / "core.js").read_text(encoding="utf-8")
+    assert "const MORE_SLACK = 1;" in core
+    assert (
+        "({ above: scrolled > MORE_SLACK, below: whole - shown - scrolled > MORE_SLACK })" in core
+    )
+    assert "'aria-hidden': 'true'" in core and 'focusable="false"' in core
+    assert "tabindex" not in core.split("// More above, more below", 1)[1].split("// Copying", 1)[0]
+    assert (
+        "document.querySelectorAll('.dlg-body, #logList, .picker-list, .fbox, #fMatches')"
+        ".forEach(moreArrows);" in core
+    )
+    assert "moreArrowsOf(el.scrollTop, el.clientHeight, el.scrollHeight)" in core
+    assert "moreArrowsOf(page.scrollTop, window.innerHeight, page.scrollHeight)" in core
+    logs = (WEB_DIR / "js" / "logs.js").read_text(encoding="utf-8")
+    assert "moreArrows(lines);" in logs
+    css = (WEB_DIR / "page.css").read_text(encoding="utf-8")
+    layer = re.search(r"\.more-arrows \{([^}]*)\}", css)
+    pieces = re.search(r"\.more-up, \.more-down \{([^}]*)\}", css)
+    assert layer and pieces
+    assert "pointer-events: none" in layer[1] and "pointer-events: none" in pieces[1]
+    # The chevron in the muted text color, on a 44px fade into the background.
+    assert "height: 44px" in pieces[1] and "color: var(--ink-2)" in pieces[1]
+    assert ".more-arrows svg { display: block; width: 32px; height: 32px;" in css
+    assert ".more-arrows.page { position: fixed;" in css and "--more-bg: var(--bg)" in css

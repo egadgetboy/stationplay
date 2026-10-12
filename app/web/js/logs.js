@@ -53,12 +53,14 @@ async function loadProblems() {
 function journalOf(id) {
   const lines = h('pre', { class: 'journal' }, 'Loading…');
   let asked = false;
-  return h('details', { class: 'more', ontoggle: async e => {
+  const more = h('details', { class: 'more', ontoggle: async e => {
     if (!e.target.open || asked) return;
     asked = true;
     try { lines.textContent = (await api(`/api/problems/${id}/journal`)).lines.join('\n'); }
     catch (err) { lines.textContent = err.message; asked = false; }
   } }, h('summary', {}, 'What led up to it'), lines);
+  moreArrows(lines);  // (its arrows while more of it is above or below: see core.js)
+  return more;
 }
 $('#problemDays').addEventListener('click', e => {
   const b = e.target.closest('button[data-days]');
