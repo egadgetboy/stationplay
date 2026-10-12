@@ -1,6 +1,9 @@
 """The Access tab's list of people (the owner, October 12): Change PIN for
 anyone with a PIN, however they set it (in an app too); and where each
-person last signed in from, under when."""
+person last signed in from, under when, as the access log says it: from
+the internet, marked so, as a visitor can send any X-Real-IP there (the
+audit of 1.34.0); and for an app linked with a code, the device's own
+address, not the browser's that entered the code."""
 
 from __future__ import annotations
 
@@ -61,20 +64,49 @@ def test_where_each_person_last_signed_in_from(app):
             "/api/internal/sign-in", json={**SAM, **PHONE}
         )
         assert person(admin, "Sam")["signedInFrom"] == "192.168.1.40"
-        # From the internet, through a proxy: the visitor's, as it saw them.
+        # From the internet, through a proxy: the visitor's, as it saw them,
+        # marked as from the internet.
         away = TestClient(app, base_url=f"https://testserver:{PUBLIC_PORT}",
                           client=("172.18.0.2", 5000))  # fmt: skip
         signed = away.post("/api/access/sign-in", json=SAM, headers={"X-Real-IP": "203.0.113.9"})
         assert signed.status_code == 200, signed.text
-        assert person(admin, "Sam")["signedInFrom"] == "203.0.113.9"
+        assert person(admin, "Sam")["signedInFrom"] == "203.0.113.9 (over the internet)"
         # A wrong password changes nothing.
         TestClient(app, client=("192.168.1.99", 5000)).post(
             "/api/access/sign-in", json={**SAM, "password": "wrong"}
         )
-        assert person(admin, "Sam")["signedInFrom"] == "203.0.113.9"
+        assert person(admin, "Sam")["signedInFrom"] == "203.0.113.9 (over the internet)"
+        # A visitor saying they're at home (X-Real-IP can be anything there):
+        # still marked as from the internet.
+        signed = away.post("/api/access/sign-in", json=SAM, headers={"X-Real-IP": "192.168.1.5"})
+        assert signed.status_code == 200, signed.text
+        assert person(admin, "Sam")["signedInFrom"] == "192.168.1.5 (over the internet)"
         # Only Admins see the list.
         sam = TestClient(app)
         assert sam.post("/api/access/sign-in", json=SAM).status_code == 200
         assert sam.get("/api/access/users").status_code == 403
         # The page shows it under when.
         assert "u.signedInFrom" in ACCESS_JS.read_text(encoding="utf-8")
+
+
+def test_an_app_linked_with_a_code_is_where_the_device_is(app):
+    """(The audit of 1.34.0: the address kept was the browser's, where the
+    code was entered.)"""
+    with TestClient(app) as admin:
+        assert admin.post("/api/access/users", json=PAT).status_code == 201
+        assert admin.post("/api/access/users", json=SAM).status_code == 201
+        browser = TestClient(app, client=("192.168.1.10", 5000))
+        assert browser.post("/api/access/sign-in", json=SAM).status_code == 200
+        assert person(admin, "Sam")["signedInFrom"] == "192.168.1.10"
+        tv = TestClient(app, client=("192.168.1.77", 5000))
+        started = tv.post("/api/internal/link", json={"app": "StationPlay for Roku",
+                                                      "deviceName": "Den Roku"}).json()  # fmt: skip
+        assert browser.post("/api/access/link", json={"code": started["code"]}).status_code == 200
+        assert person(admin, "Sam")["signedInFrom"] == "192.168.1.77"
+        # A TV away from home, asking through the public port: marked so.
+        away = TestClient(app, base_url=f"https://testserver:{PUBLIC_PORT}",
+                          client=("172.18.0.2", 5000))  # fmt: skip
+        started = away.post("/api/internal/link", headers={"X-Real-IP": "198.51.100.4"},
+                            json={"app": "StationPlay for Roku", "deviceName": "Cabin"}).json()  # fmt: skip
+        assert browser.post("/api/access/link", json={"code": started["code"]}).status_code == 200
+        assert person(admin, "Sam")["signedInFrom"] == "198.51.100.4 (over the internet)"

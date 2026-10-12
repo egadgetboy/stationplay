@@ -350,8 +350,10 @@ def a_role(role: str) -> str:
     return "an Admin" if role == ADMIN else "a User"
 
 
-# The address the request being answered came from (see address), for
-# where someone last signed in from: set by Gate for every request.
+# Where the request being answered came from, as the access log says it
+# (see where: from the internet, marked so, as a visitor can say anything
+# there), for where someone last signed in from: set by Gate for every
+# request.
 asked_from: ContextVar[str] = ContextVar("asked_from", default="")
 
 
@@ -782,16 +784,22 @@ class Access:
             del self._tries[next(iter(self._tries))]
 
     def start_session(
-        self, user: User, app: str = "", device_id: int | None = None, unlocked: bool = False
+        self,
+        user: User,
+        app: str = "",
+        device_id: int | None = None,
+        unlocked: bool = False,
+        at: str | None = None,
     ) -> str:
         """A new token for a browser (or `app`, one of StationPlay's: which,
         on what device; `device_id`: a linked device, from its picker, and
         `unlocked` when someone without a PIN was picked there: see
-        devices.py) that's signed in as `user`."""
+        devices.py) that's signed in as `user`, there (`at`, as the access
+        log says where: by default, where this request came from)."""
         token = secrets.token_urlsafe(32)
         self.db.add_session(
             _token_hash(token), user.id, _now(), SESSIONS_KEPT, app, device_id, unlocked,
-            asked_from.get(),
+            asked_from.get() if at is None else at,
         )  # fmt: skip
         return token
 
@@ -1091,7 +1099,7 @@ class Gate:
         server = scope.get("server")
         public = bool(self.public_port and server and server[1] == self.public_port)
         scope.setdefault("state", {})["outside"] = public
-        said = asked_from.set(address(scope))
+        said = asked_from.set(where(scope))
         try:
             await self._let_through(scope, receive, send, path, public)
         finally:

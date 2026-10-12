@@ -544,7 +544,7 @@ class User:
     no_pin: bool = False  # they chose to have no PIN, so they're not asked for one again
     own_password: bool = True  # they may change their own password (an Admin always may)
     can_report: bool = True  # they may report problems from the apps (see reports.py)
-    signed_in_from: str = ""  # the address they last signed in from (see access.address); "": never
+    signed_in_from: str = ""  # where they last signed in from (see access.where); "": never
 
 
 @dataclass(frozen=True)

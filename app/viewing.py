@@ -167,7 +167,7 @@ class Blocks:
         as the Admin wrote it (for saying why it's hidden)."""
         if kind == "title":
             return next((name for key, name in self.titles if key in reach.titles), "")
-        found = getattr(reach, kind, frozenset())
+        found: frozenset[str] = getattr(reach, kind, frozenset())
         return next((v for v in getattr(self, kind) if fold(v) in found), "")
 
     def as_json(self) -> dict[str, Any]:
@@ -954,11 +954,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             )
         if own is not None and own != before_own:
             hidden = hides_said(own.blocks)
-            allowed = len(own.allowed)
+            titles = len(own.allowed)
             said.append(
                 f"set what's hidden and allowed for {user.name} ("
                 + (f"hiding {hidden}" if hidden else "hiding nothing more")
-                + (f", {allowed} title{'' if allowed == 1 else 's'} allowed" if allowed else "")
+                + (f", {titles} title{'' if titles == 1 else 's'} allowed" if titles else "")
                 + ")"
             )
         if said:

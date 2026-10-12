@@ -44,7 +44,7 @@ class Pending:
     code: str
     poll_hash: str
     app: str  # which app, on what device, as it said
-    address: str  # where it asked from
+    address: str  # where it asked from (see access.address)
     expires: float
     user: User | None = None  # who linked it, once someone has
     token: str | None = None  # its sign-in, until it collects it
@@ -53,6 +53,9 @@ class Pending:
     picker: bool = False
     device_key: str | None = None
     new_key: str | None = None
+    # Where it asked from, as the access log says it (see access.where): where
+    # its sign-in is, once linked.
+    where: str = ""
 
 
 @dataclass
@@ -62,10 +65,16 @@ class Links:
     _wrong: dict[int, deque[float]] = field(default_factory=dict)  # by user id
 
     def start(
-        self, app: str, address: str, picker: bool = False, device_key: str | None = None
+        self,
+        app: str,
+        address: str,
+        picker: bool = False,
+        device_key: str | None = None,
+        where: str = "",
     ) -> tuple[str, str]:
         """A new code for an app (one with a picker, and the device key it
-        has: see devices.py), and the secret it checks back with."""
+        has: see devices.py), asking from `address` (`where`, as the access
+        log says it), and the secret it checks back with."""
         now = time.monotonic()
         self._forget_old(now)
         starts = _recent(self._starts.setdefault(address, deque()), now)
@@ -77,8 +86,9 @@ class Links:
             code = "".join(secrets.choice(ALPHABET) for _ in range(CODE_LENGTH))
         poll = secrets.token_urlsafe(32)
         self._pending[code] = Pending(
-            code, _hash(poll), app, address, now + LINK_S, picker=picker, device_key=device_key
-        )
+            code, _hash(poll), app, address, now + LINK_S, picker=picker, device_key=device_key,
+            where=where or address,
+        )  # fmt: skip
         return show(code), poll
 
     def find(self, typed: str, user: User) -> Pending:

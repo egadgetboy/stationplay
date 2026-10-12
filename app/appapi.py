@@ -386,6 +386,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 access.address(request.scope),
                 body.picker,
                 body.deviceKey,
+                where=access.where(request.scope),
             )
         except links.Refused as e:
             raise HTTPException(429, str(e)) from None
@@ -457,7 +458,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
         own = ctx.languages.change(user.id if user else 0, languages.OWN, changes)
-        said = {
+        said: dict[str, Any] = {
             "audio": languages.as_json(own.audio),
             "captions": bool(own.captions),
             "captionLanguage": languages.as_json(own.caption_language),
@@ -658,13 +659,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     @app.post("/api/access/link")
     async def link_app(body: LinkCode, request: Request):
         user, pending = linking(body.code, request)
+        # (Signed in where the device is, not where its code was entered.)
         if pending.picker:
             linked, new_key = linked_device(pending.device_key, pending.app, user)
-            ctx.links.link(
-                pending, user, ctx.access.start_session(user, linked.name, linked.id), new_key
-            )
+            token = ctx.access.start_session(user, linked.name, linked.id, at=pending.where)
+            ctx.links.link(pending, user, token, new_key)
         else:
-            ctx.links.link(pending, user, ctx.access.start_session(user, pending.app))
+            ctx.links.link(
+                pending, user, ctx.access.start_session(user, pending.app, at=pending.where)
+            )
         ctx.access.record(
             logging.INFO,
             f"{user.name} ({access.role_name(user.role)}) linked {in_sentence(pending.app)} "
