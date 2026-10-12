@@ -293,7 +293,7 @@ If your media share takes more than 8 seconds to answer, StationPlay treats it a
 **Using StationPlay's page from the internet.** StationPlay can open a second port just for its page, set with `PUBLIC_PORT`. It's 3311 in the YAML and Compose files, and it must differ from `PORT`. On that port:
 
 - **No Plex addresses.** The addresses Plex and other apps use (the tuner, guides, streams and playlist) don't exist there.
-- **Sign-in always required.** Before signing in, visitors see only the sign-in page, its icons and what a browser needs to install the page as an app (see **As an app** under [First-time setup](#first-time-setup)). Until StationPlay has its first user, the port shows only a message to add one from your home network, so no one can make themselves the first Admin from outside.
+- **Sign-in always required.** Before signing in, visitors see only the sign-in page, its icons, what a browser needs to install the page as an app (see **As an app** under [First-time setup](#first-time-setup)), StationPlay's version, its open-source notices and its privacy notice. Until StationPlay has its first user, the port shows only a message to add one from your home network (and the same notices), so no one can make themselves the first Admin from outside.
 - **Wrong passwords limited.** The limits are 5 in 15 minutes per visitor address, and 100 in 15 minutes for the internet as a whole. A browser or app that has signed in before isn't held up by the internet-wide limit.
 
 Put `PUBLIC_PORT` behind a Cloudflare Tunnel or a reverse proxy with HTTPS. [Reaching StationPlay from outside your home](#reaching-stationplay-from-outside-your-home) explains each, and the other ways in. If you don't need it, remove the `3311` port line and `PUBLIC_PORT`.
