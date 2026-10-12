@@ -15,20 +15,21 @@
 # is No, U1): the very one the image workflow tested, by digest (C7), gets
 # the tags :<version>, :<major.minor> (if it's the newest of its minor
 # versions) and :latest (if it's the newest), copied as it is, never built
-# again, and checked; SHA256SUMS gives its digest for each tag. The release
+# again, and checked; SHA256SUMS gives its digest by :<version>. The release
 # also carries the arm64 image's list of packages, and the source of every
 # GPL and LGPL package in the images, as Debian publishes it (C6:
 # tools/gpl_source.py).
 #
-# Each release is made a draft first, with all its files. Only then are the
-# image's tags copied, and the draft is published once anyone can pull the
-# image without signing in (the package must be public).
+# A release goes ahead only once anyone can pull its image without signing
+# in (the package must be public). It's made a draft first, with all its
+# files; only then are the image's tags copied, and the draft published.
 #
 # The zip and SHA256SUMS are signed (tapioca-<version>.zip.sig and
 # SHA256SUMS.sig: SSH signatures, namespace tapioca-release, by the key
 # in RELEASE_SIGNING_KEY, checked against release-signing.pub), which every
-# release needs from FIRST_SIGNED; before that, a release whose files can't
-# be signed is published without the signatures, and said. The key is on
+# release needs from FIRST_SIGNED (1.34.0, the first with an image to tie
+# to: the 1.34.0 audit); before that, a release whose files can't be signed
+# was published without the signatures, and said. The key is on
 # disk only while signing, and removed straight after, whatever happens.
 #
 # Versions before FIRST_PUBLIC are never published: tapiOca's public
@@ -79,7 +80,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FIRST_PUBLIC: "1.32.0"
           FIRST_IMAGE: "1.34.0"
-          FIRST_SIGNED: "1.35.0"
+          FIRST_SIGNED: "1.34.0"
           SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
         run: |
           set -euo pipefail
@@ -260,13 +261,22 @@ jobs:
               if [ "$version" = "$newest_minor" ]; then tags+=("$minor"); fi
               if [ "$latest" = true ]; then tags+=(latest); fi
             fi
+            # Anyone must be able to pull the image, or nothing moves: no
+            # draft, no tag (the 1.34.0 audit: :latest had moved before a
+            # private package was found). The same package as every tag.
+            if [ "${#tags[@]}" -gt 0 ] && ! skopeo inspect --no-creds --raw "docker://$pinned" > /dev/null; then
+              echo "::error::$tag isn't published: its image can't be pulled without signing in to GitHub. tapiOca's package must be public: on GitHub, open the package's settings (Packages, then tapioca-server, then Package settings), set its visibility to Public, and run this workflow again."
+              refused=1
+              continue
+            fi
             # SHA256SUMS: each file's SHA-256 (sha256sum -c --ignore-missing
-            # checks them), then the image's digest for each of its tags.
+            # checks them), then the image's digest by its own version's tag
+            # (not :latest or :<minor>, which later releases move).
             sums="$out/SHA256SUMS"
             (cd "$out" && sha256sum "${files[@]##*/}") > "$sums"
-            for t in "${tags[@]}"; do
-              printf '%s  %s\n' "${digest#sha256:}" "$image:$t" >> "$sums"
-            done
+            if [ "${#tags[@]}" -gt 0 ]; then
+              printf '%s  %s\n' "${digest#sha256:}" "$image:$version" >> "$sums"
+            fi
             files+=("$sums")
             # The zip and SHA256SUMS, signed (and the signatures checked with
             # the published key): needed from FIRST_SIGNED.
@@ -282,8 +292,7 @@ jobs:
               rm -f "$zip.sig" "$sums.sig"
             fi
             # The release, as a draft, with all its files; then the image's
-            # tags, copied as it is, each checked; then it's published, once
-            # anyone can pull the image.
+            # tags, copied as it is, each checked; then it's published.
             gh release create "$tag" --target "$commit" --draft --title "tapiOca $version" \
               --notes-file "$out/notes.md" "${files[@]}"
             if [ "${#tags[@]}" -gt 0 ]; then
@@ -295,11 +304,6 @@ jobs:
                 fi
               done
               echo "::notice::$image: ${tags[*]} on $digest"
-              if ! skopeo inspect --no-creds "docker://$image:$version" > /dev/null; then
-                echo "::error::$tag isn't published: its image can't be pulled without signing in to GitHub. tapiOca's package must be public: on GitHub, open the package's settings (Packages, then tapioca-server, then Package settings), set its visibility to Public, and run this workflow again."
-                refused=1
-                continue
-              fi
             fi
             gh release edit "$tag" --draft=false --latest="$latest"
             echo "::notice::Published $tag"

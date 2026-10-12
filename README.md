@@ -1385,7 +1385,7 @@ ssh-keygen -Y verify -f allowed_signers -I tapioca-release -n tapioca-release -s
 
 It says `Good "tapioca-release" signature` when the zip is exactly what was published. From 1.34.0 on, every release's zip and its `SHA256SUMS` are signed.
 
-`SHA256SUMS` comes with each release from 1.34.0 on, signed the same way (`SHA256SUMS.sig`). Check it as you checked the zip, with `SHA256SUMS` and `SHA256SUMS.sig` in place of the zip and its signature. Then `sha256sum -c --ignore-missing SHA256SUMS` checks the release's files you have. Its last lines give the image's digest for each tag, such as `ghcr.io/egadgetboy/tapioca-server:1.34.0`: `docker pull ghcr.io/egadgetboy/tapioca-server@sha256:<that digest>` fetches exactly that image.
+`SHA256SUMS` comes with each release from 1.34.0 on, signed the same way (`SHA256SUMS.sig`). Check it as you checked the zip, with `SHA256SUMS` and `SHA256SUMS.sig` in place of the zip and its signature. Then `sha256sum -c --ignore-missing SHA256SUMS` checks the release's files you have. Its last line gives the image's digest, as `ghcr.io/egadgetboy/tapioca-server:1.34.0` (`:latest` and `:1.34` move with later releases, so they aren't listed): `docker pull ghcr.io/egadgetboy/tapioca-server@sha256:<that digest>` fetches exactly that image.
 
 ### The logo library
 

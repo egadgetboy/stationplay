@@ -41,6 +41,8 @@ jobs:
             soak: false
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - name: Build
         run: docker build --target test --tag stationplay:test .
       - name: Test

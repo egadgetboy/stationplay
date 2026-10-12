@@ -20,7 +20,7 @@ publish as they did.
 The audit of 1.34.0: each release is made as a draft, its image's tags
 moved only then, and published once anyone can pull its image (a draft
 left from a run before is deleted first, and never counts as published);
-SHA256SUMS lists the image's digest for each tag and every file, signed
+SHA256SUMS lists every file and the image's digest by its version's tag, signed
 like the zip; a version's tests passed only when both machines' Test steps
 did (the real jq, on GitHub's answers); the signing key is on disk only
 while signing; and the job runs only in tapiOca's own repository, with
@@ -216,7 +216,7 @@ def run(tmp_path):
             "GH_TOKEN": "x",
             "FIRST_PUBLIC": "1.32.0",
             "FIRST_IMAGE": "1.34.0",
-            "FIRST_SIGNED": "1.35.0",
+            "FIRST_SIGNED": "1.34.0",
             "GITHUB_ACTOR": "egadgetboy",
             **extra,
         }
@@ -387,7 +387,7 @@ def test_from_1_34_0_the_tested_image_gets_its_tags(run):
     run.version("1.34.0")
     image_run(run, 7, version="1.32.1", image=False)
     image_run(run, 8, version="1.34.0")
-    said, status, out = run()
+    said, status, out = run(SIGNING_KEY="-----BEGIN OPENSSH PRIVATE KEY-----\nx\n")
     assert status == 0, said + out
     # That very image (by digest), copied as it is, each tag checked.
     assert skopeo(said) == [
@@ -406,8 +406,8 @@ def test_from_1_34_0_the_tested_image_gets_its_tags(run):
     assert PINNED in fetch and "--all --also /in/arm64.txt" in fetch and "--user 0" in fetch
     with tarfile.open(run.temp / "v1.34.0" / "tapioca-1.34.0-source.tar") as tar:
         assert "./ffmpeg_7.1.5-0+deb13u1.dsc" in tar.getnames()
-    # (No key yet, before 1.35.0: published unsigned, and said.)
-    assert ".zip.sig" not in made[0] and "zip isn't signed" in out
+    # Signed, from 1.34.0 (the 1.34.0 audit: SHA256SUMS ties the release to its image).
+    assert "tapioca-1.34.0.zip.sig" in made[0] and "SHA256SUMS.sig" in made[0]
     # 1.32.1, before 1.34.0, as before: no image, no source.
     old = [line for line in creates(said) if line.startswith("gh release create v1.32.1 ")]
     assert len(old) == 1 and "source.tar" not in old[0] and "arm64" not in old[0]
@@ -419,7 +419,7 @@ def test_an_older_version_never_takes_the_newer_ones_tags(run):
     (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
     image_run(run, 8, version="1.34.0")
     image_run(run, 9, version="1.34.1")
-    said, status, out = run()
+    said, status, out = run(SIGNING_KEY="-----BEGIN OPENSSH PRIVATE KEY-----\nx\n")  # (signed from 1.34.0)
     assert status == 0, said + out
     tags = [line.rsplit(":", 1)[1] for line in skopeo(said)]
     assert tags == ["1.34.0", "1.34.1", "1.34", "latest"]
@@ -456,7 +456,7 @@ def test_an_image_that_isn_t_the_tested_one_stops_it(run):
     (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
     image_run(run, 8, version="1.34.0")
     (run.assets / "manifest").write_text("something else\n")
-    said, status, out = run()
+    said, status, out = run(SIGNING_KEY="-----BEGIN OPENSSH PRIVATE KEY-----\nx\n")  # (signed from 1.34.0)
     assert status == 1 and not publishes(said)  # (its draft stays a draft)
     assert "isn't the image that was tested" in out
 
@@ -489,16 +489,16 @@ def test_a_draft_first_then_its_tags_then_its_published(run):
     run.version("1.34.0")
     (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
     image_run(run, 8, version="1.34.0")
-    said, status, out = run()
+    said, status, out = run(SIGNING_KEY="-----BEGIN OPENSSH PRIVATE KEY-----\nx\n")  # (signed from 1.34.0)
     assert status == 0, said + out
     [draft] = creates(said)
     assert draft.startswith("gh release create v1.34.0 ") and " --draft " in draft
     assert "--latest" not in draft  # (a draft can't be the latest release)
     [published] = publishes(said)
     assert published == "gh release edit v1.34.0 --draft=false --latest=true"
-    anyone = "skopeo inspect --no-creds docker://ghcr.io/egadgetboy/tapioca-server:1.34.0"
+    anyone = f"skopeo inspect --no-creds --raw docker://{PINNED}"
     assert anyone in said.splitlines()
-    assert (at(said, "gh release create") < at(said, "skopeo copy") < at(said, anyone)
+    assert (at(said, anyone) < at(said, "gh release create") < at(said, "skopeo copy")
             < at(said, "gh release edit"))  # fmt: skip
 
 
@@ -526,8 +526,12 @@ def test_an_image_only_signed_in_people_can_pull_isn_t_published(run):
     (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
     image_run(run, 8, version="1.34.0")
     (run.assets / "private").write_text("")
-    said, status, out = run()
+    said, status, out = run(SIGNING_KEY="-----BEGIN OPENSSH PRIVATE KEY-----\nx\n")
     assert status == 1 and not publishes(said)
+    # Checked before anything moves (the 1.34.0 audit: the tags had moved,
+    # :latest included, before a private package was found): no tag copied,
+    # no draft made.
+    assert not skopeo(said) and not creates(said)
     assert ("v1.34.0 isn't published: its image can't be pulled without signing in to GitHub. "
             "tapiOca's package must be public") in out  # fmt: skip
     assert not re.search(r"\b(401|403)\b", out)
@@ -546,9 +550,10 @@ def test_sha256sums_lists_the_image_for_each_tag_and_every_file_signed(run):
     lines = (folder / "SHA256SUMS").read_text().splitlines()
     for name in names:
         assert f"{hashlib.sha256((folder / name).read_bytes()).hexdigest()}  {name}" in lines
-    for tag in ("1.35.0", "1.35", "latest"):
-        assert f"{DIGEST.removeprefix('sha256:')}  ghcr.io/egadgetboy/tapioca-server:{tag}" in lines
-    assert len(lines) == len(names) + 3
+    # The image by its own version's tag only: :1.35 and :latest move with
+    # later releases, so a signed line for them would go stale (the 1.34.0 audit).
+    assert f"{DIGEST.removeprefix('sha256:')}  ghcr.io/egadgetboy/tapioca-server:1.35.0" in lines
+    assert len(lines) == len(names) + 1
     # Signed as the zip is, and both with the release.
     assert f"-n tapioca-release {folder / 'SHA256SUMS'}" in said
     [draft] = creates(said)
@@ -616,3 +621,36 @@ def test_the_job_runs_only_in_stationplay_s_repository_with_no_credentials_kept(
     # (No environment: making one changes the repository's settings, which
     # only the owner does.)
     assert not re.search(r"^\s+environment:", text, re.M)
+
+
+def test_from_1_34_0_a_release_is_never_published_unsigned(run):
+    """(The 1.34.0 audit: without the key, 1.34.0 went out unsigned, with a
+    warning only; its SHA256SUMS is what ties it to its image.)"""
+    run.version("1.34.0")
+    (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
+    image_run(run, 8, version="1.34.0")
+    said, status, out = run()
+    assert status == 1 and not publishes(said) and not skopeo(said)
+    assert "v1.34.0 isn't published: its zip and SHA256SUMS couldn't be signed" in out
+
+
+def test_the_workflow_signs_from_1_34_0():
+    text = (ROOT / ".github/workflows/release.yml").read_text()
+    assert 'FIRST_SIGNED: "1.34.0"' in text
+
+
+def test_every_file_release_yml_reads_is_one_image_yml_writes():
+    """(The 1.34.0 audit: renaming the image's reference or the arm64 list in
+    image.yml would have stopped every release, with every test passing.)"""
+    reads = set(re.findall(r'\$(?:made|out/made-\$run)/(tapioca-\$version-[\w.-]+)"', WORKFLOW.read_text()))
+    writes = set(re.findall(r'"\$RUNNER_TEMP/made/(tapioca-\$version-[\w.-]+)"', IMAGE.read_text()))
+    assert reads >= {"tapioca-$version-image.txt", "tapioca-$version-packages.txt",
+                     "tapioca-$version-packages-arm64.txt"}, reads  # fmt: skip
+    assert reads <= writes, f"release.yml reads {sorted(reads - writes)}, which image.yml never writes"
+
+
+def test_no_workflow_leaves_its_credentials_in_a_checkout():
+    for path in (ROOT / ".github" / "workflows").glob("*.yml"):
+        text = path.read_text()
+        for found in re.finditer(r"uses: actions/checkout@\S+\n((?:\s{8,}.*\n)*)", text):
+            assert "persist-credentials: false" in found.group(1), f"{path.name}: {found.group(0)}"
