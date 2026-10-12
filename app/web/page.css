@@ -659,6 +659,8 @@ table.stats .station img.shaped { padding: 2px; }
 /* Signing in */
 #signinView { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 16px; }
 .signin { width: min(380px, 100%); padding: 24px; display: grid; gap: 14px; }
+/* (Use your password, and Switch user: far enough apart for a finger.) */
+.signin .linkish + .linkish { margin-top: 6px; }
 .brand.stacked { flex-direction: column; margin: 6px 0 16px; }
 .brand.stacked .word { height: 40px; }
 .userpill { cursor: pointer; }

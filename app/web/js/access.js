@@ -53,16 +53,32 @@ function signInBy(name) {
   $('#signinByPin').hidden = !name;
   $('#signinByPassword').hidden = !!name;
   $('#signinOther').hidden = !name;
+  $('#signinSwitch').hidden = !name;
   $('#signinName').required = $('#signinPassword').required = !name;
   $('#signinPin').required = !!name;
   $('#signinPin').value = '';
   $('#signinStatus').textContent = '';
   if (name) {
     $('#signinPinLabel').textContent = `PIN for ${name}`;
+    $('#signinSwitch').textContent = `Not ${name}? Switch user`;
     $('#signinPin').focus();
   }
 }
-$('#signinOther').addEventListener('click', () => { signInBy(''); $('#signinName').focus(); });
+// Their own password instead of the PIN: their name's already there.
+$('#signinOther').addEventListener('click', () => {
+  const name = pinFor;
+  signInBy('');
+  $('#signinName').value = name;
+  $('#signinPassword').focus();
+});
+// Someone else at this browser (the owner, October 12): their name and
+// password. Once they've signed in, the PIN asked here is theirs.
+$('#signinSwitch').addEventListener('click', () => {
+  signInBy('');
+  $('#signinName').value = '';
+  $('#signinPassword').value = '';
+  $('#signinName').focus();
+});
 // Signed out after an hour without activity (see IDLE_SIGN_OUT_S in
 // access.py). Using the page (clicking, typing, scrolling or touching) tells
 // tapiOca, at most once a minute; its own polling doesn't count.

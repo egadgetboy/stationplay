@@ -1131,6 +1131,27 @@ def signin_by_pin(page: Page, look: Look) -> None:
         return
     look.expect("the PIN form's label", page.inner_text("#signinPinLabel"), f"PIN for {JO['name']}")
     look("signin-pin")
+    # Someone else at this browser (the owner, October 12: there was no way
+    # to switch to another person): their name and password, the name empty.
+    switch = "#signinSwitch"
+    shown = page.is_visible(switch)
+    look.expect("the PIN form's Switch user link", page.inner_text(switch) if shown else "not shown",
+                f"Not {JO['name']}? Switch user")  # fmt: skip
+    if not shown:
+        return
+    page.click(switch)
+    look.expect("Switch user: the name and password form",
+                (page.is_visible("#signinByPassword"), page.is_visible("#signinByPin")), (True, False))  # fmt: skip
+    look.expect("Switch user: the name, empty", page.input_value("#signinName"), "")
+    look("signin-switch")
+    # Her password instead: her name already there.
+    signin = page.url
+    page.goto(signin)
+    if until(page, "() => !document.querySelector('#signinByPin').hidden"):
+        page.click("#signinOther")
+        look.expect("Use your password: her name, already there", page.input_value("#signinName"), JO["name"])
+        look.expect("Use your password: the password's box has the focus",
+                    page.evaluate("() => document.activeElement.id"), "signinPassword")  # fmt: skip
 
 
 def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> None:
