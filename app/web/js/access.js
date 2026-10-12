@@ -36,8 +36,14 @@ function showSignIn(idle = false) {
   signInBy('');
   $('#signinName').focus();
   // At home, on a browser someone signed in on with their password: their PIN
-  // will do (see pin_sign_in in access.py).
-  api('/api/access/me').then(now => { if (now.pinFor && signedOut()) signInBy(now.pinFor); }).catch(() => {});
+  // will do (see pin_sign_in in access.py). And the notes again, from this
+  // answer, in case the page's first one never came.
+  api('/api/access/me').then(now => {
+    if (!signedOut()) return;
+    if (now.outside && !now.notSetUp) $('#signinWhere').hidden = false;
+    if (now.outside) $('#signinHome').hidden = true;
+    if (now.pinFor) signInBy(now.pinFor);
+  }).catch(() => {});
 }
 // Signing in with `pinFor`'s PIN, or ('') with a name and password.
 let pinFor = '';

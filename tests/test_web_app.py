@@ -425,3 +425,9 @@ def test_first_run_setup_says_what_plexs_terms_require():
         in script
     )
     assert script.count("PERSONAL_USE()") == 1  # (once: the Plex step)
+    # (In the Plex step itself, 1.33.1's audit asked: not just somewhere.)
+    plex_step = script[script.index("  async plex(") :]
+    plex_step = plex_step[: plex_step.index("\n  },\n")]
+    assert "PERSONAL_USE()" in plex_step
+    # Plex's own terms are linked, beside StationPlay's privacy notice.
+    assert "https://www.plex.tv/about/privacy-legal/plex-terms-of-service/" in script

@@ -59,7 +59,8 @@ const needsLook = c => c.state === 'bad' || c.state === 'warn';
 // Plex's terms, which StationPlay's own use of Plex goes by (see the README's
 // What you need, and PRIVACY.md).
 const PERSONAL_USE = () => h('div', { class: 'limit-note' }, h('strong', {}, 'Plex’s terms. '),
-  'Plex’s terms license Plex Media Server for personal use, on hardware and storage you own. StationPlay works with your Plex server, so follow them. ',
+  'Plex’s terms license Plex Media Server for personal use, on hardware and storage you own. Use StationPlay with your Plex server as those terms allow. ',
+  h('a', { href: 'https://www.plex.tv/about/privacy-legal/plex-terms-of-service/', target: '_blank', rel: 'noopener noreferrer' }, 'Plex’s terms'), ' · ',
   h('a', { href: '/privacy', target: '_blank', rel: 'noopener noreferrer' }, 'StationPlay’s privacy notice'));
 const SETUP_AGAIN = 'You can run setup again any time from the Add to Plex tab, or Setup at the foot of the page.';
 // `why`: "new" (a new StationPlay), "updated" (an update has new questions),

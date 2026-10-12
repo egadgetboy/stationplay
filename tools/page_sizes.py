@@ -924,6 +924,27 @@ def notify_discord(page: Page, look: Look) -> None:
     look("logs-notify")
 
 
+def signin_answer_lost(context: Any, base: str, look: Look) -> None:
+    """The sign-in page from the internet, its first question of who's
+    signed in lost: the PIN's note still comes, from the next answer."""
+    lost = context.new_page()
+    dropped: list[str] = []
+
+    def drop_first(route: Any) -> None:
+        if dropped:
+            route.continue_()
+        else:
+            dropped.append(route.request.url)
+            route.abort()
+
+    lost.route("**/api/access/me", drop_first)
+    lost.goto(base + "/")
+    shown = until(lost, "() => !document.querySelector('#signinWhere').hidden")
+    look.expect("the internet's PIN note, its first answer lost", (bool(dropped), shown),
+                (True, True))  # fmt: skip
+    lost.close()
+
+
 def signin_by_pin(page: Page, look: Look) -> None:
     """The sign-in screen's PIN form: at home, on a browser Jo signed in on
     with her password (her session's cookie gone, the browser's kept)."""
@@ -1209,6 +1230,14 @@ def main() -> None:
                                 signin_by_pin(page, look)
                             else:
                                 look("signin")
+                                # (From the internet: where the PIN works, never
+                                # the at-home note; and so even when the page's
+                                # first answer is lost: 1.33.1's audit.)
+                                look.expect("the internet's PIN note shows",
+                                            page.is_visible("#signinWhere"), True)  # fmt: skip
+                                look.expect("the at-home PIN note shows",
+                                            page.is_visible("#signinHome"), False)  # fmt: skip
+                                signin_answer_lost(context, base, look)
                                 page.evaluate(
                                     "() => { const n = document.querySelector('#signinNote'); n.hidden = false; n.textContent = ACCESS.idleSignedOut; }"
                                 )

@@ -314,6 +314,16 @@ def test_the_sign_in_page_says_where_the_pin_works(pat, app):
     assert me["user"] is None and me.get("outside") is True and "pinFor" not in me
 
 
+def test_from_the_internet_before_the_first_user_the_page_knows_its_the_internet(app):
+    """1.33.1's audit: before there's a user, the public port's answer said
+    nothing of where it was, so the page showed the at-home PIN note there
+    (where the PIN never works)."""
+    with TestClient(app):
+        away = TestClient(app, base_url=f"http://testserver:{PUBLIC_PORT}")
+        me = away.get("/api/access/me").json()
+        assert me["notSetUp"] and me["user"] is None and me.get("outside") is True
+
+
 def test_asking_who_is_signed_in_never_makes_a_browser_take_the_pin(pat, app):
     """The audit of 1.33.1: /api/access/me never remembers a browser or lets
     one take the PIN, at home or from the internet, with a page sign-in or

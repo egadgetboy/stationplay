@@ -1415,8 +1415,9 @@ def routes(app: FastAPI, access: Access) -> None:
             _set_cookie(response, request, token)
         if outside(request.scope) and not access.required:
             # From the internet, it's never open: until there's a user,
-            # there's only this to say.
-            return {"required": True, "user": None, "notSetUp": NOT_SET_UP}
+            # there's only this to say (and where it's said from, so the
+            # page never shows the at-home PIN note here).
+            return {"required": True, "user": None, "notSetUp": NOT_SET_UP, "outside": True}
         said: dict[str, Any] = {
             "required": access.required,
             "user": _user_json(user, access.db.stations_made()) if user else None,
