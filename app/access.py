@@ -804,6 +804,23 @@ class Access:
         user = self.db.user(user_id) if user_id is not None else None
         return user if user is not None and self.db.pin_hash(user.id) else None
 
+    def browser_is_theirs(self, user: User, token: str | None) -> str | None:
+        """A browser signed in as `user` is theirs, since they last signed
+        out there and their password last changed (either ends its sign-in):
+        as good as their password used there, so their PIN may sign them in
+        there again once the sign-in ends by itself (after an hour unused).
+        That covers browsers signed in since before 1.32.0, never with the
+        password since. Returns a new browser token, for one that has none
+        (signed in before browsers were remembered), else None."""
+        if token:
+            hashed = _token_hash(token)
+            owner = self.db.device_user(hashed)
+            if owner is not None:
+                if owner == user.id and self.db.pin_device_user(hashed) is None:
+                    self.db.device_password_used(hashed)
+                return None  # (someone else's: as it is)
+        return self.remember_device(user)
+
     def password_used_on(self, token: str | None) -> None:
         """Its person signed in on a browser they'd signed in on before, with
         their password: their PIN may sign them in there again."""
@@ -1413,6 +1430,10 @@ def routes(app: FastAPI, access: Access) -> None:
             # (The page asks every few seconds: a sign-in lasts SESSION_DAYS
             # from when it was last used.)
             _set_cookie(response, request, token)
+            if access.idle_left_ms(token) is not None:  # (a browser's own sign-in)
+                made = access.browser_is_theirs(user, request.cookies.get(DEVICE_COOKIE))
+                if made:
+                    _set_cookie(response, request, made, DEVICE_COOKIE, DEVICE_DAYS)
         if outside(request.scope) and not access.required:
             # From the internet, it's never open: until there's a user,
             # there's only this to say.
