@@ -40,8 +40,9 @@ from collections.abc import Container
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from . import specials
+from . import cliprules, specials
 from .breaks import COMMERCIALS, TRAILERS, id_card_ms, with_breaks
+from .catalog import Tags
 from .db import Channel, Era, Item
 from .library import LibraryError
 from .playing import cap
@@ -55,6 +56,7 @@ from .schedule import (
     prepare,
     station_schedule,
 )
+from .viewing import reach_of as viewing_reach_of
 
 if TYPE_CHECKING:
     from .main import AppContext
@@ -288,20 +290,34 @@ class Updater:
             items = await self.ctx.markers.trim(items, look_s)
         return items
 
-    async def ask_about_titles(self, keys: list[str]) -> dict[str, tuple[str, str]]:
-        """Shows' and movies' ratings and libraries, as Plex has them now."""
-        return {e.key: (e.content_rating, e.library) for e in await self.ctx.library.entries(keys)}
+    async def ask_about_titles(self, keys: list[str]) -> dict[str, tuple[str, str, Tags | None]]:
+        """Shows' and movies' ratings, libraries and tags, as Plex has them
+        now."""
+        return {
+            e.key: (e.content_rating, e.library, e.tags)
+            for e in await self.ctx.library.entries(keys)
+        }
 
     def with_breaks(self, channel: Channel, items: list[Item]) -> list[Item]:
         """`items` with the station's commercials or trailers, and Station
-        ID card, after each."""
+        ID card, after each: on a station someone with limits can see, only
+        clips rated at or below its highest-rated program (cliprules.py)."""
         fillers = self.ctx.fillers
+        commercials, trailers = fillers.pool(COMMERCIALS), fillers.pool(TRAILERS)
+        if channel.breaks and (commercials or trailers):
+            viewing = self.ctx.viewing
+            reach = viewing_reach_of(items, self.ctx.titles)
+            if viewing.limited_audience(channel.id, reach) or viewing.limited_audience(channel.id):
+                most = cliprules.cap(reach)
+                rated = self.ctx.clip_ratings.rated
+                commercials = [c for c in commercials if rated(COMMERCIALS, c, most)]
+                trailers = [c for c in trailers if rated(TRAILERS, c, most)]
         return with_breaks(
             items,
             channel.breaks,
             id_card_ms(channel),
-            fillers.pool(COMMERCIALS),
-            fillers.pool(TRAILERS),
+            commercials,
+            trailers,
             seed=str(channel.id),
         )
 
@@ -625,8 +641,10 @@ class Updater:
             log.info("Can't check Plex for new episodes right now (%s)", e)
             return
         fingerprint += await self._collections_fingerprint()
-        # New or removed commercials and trailers count as a change too.
+        # New or removed commercials and trailers count as a change too, as do
+        # their ratings and who might see what (which decide which play).
         fingerprint += "|" + self.ctx.fillers.signature
+        fingerprint += "|" + self.ctx.clip_ratings.signature + "|" + self.ctx.viewing.signature
         now = now_ms()
         if (
             not force

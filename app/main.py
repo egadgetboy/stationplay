@@ -46,6 +46,7 @@ from . import (
     away,
     backups,
     capacity,
+    cliprules,
     devices,
     hdhr,
     health,
@@ -512,6 +513,7 @@ class AppContext:
     updater: Updater = field(init=False)
     markers: MarkerFinder = field(init=False)
     fillers: FillerLibrary = field(init=False)
+    clip_ratings: cliprules.ClipRatings = field(init=False)  # (commercials and trailers' ratings)
     scanner: Scanner = field(init=False)
     # People's reports of problems, from the apps (see reports.py).
     reports: reports.Reports = field(init=False)
@@ -544,6 +546,11 @@ class AppContext:
         self.alerts = alerts.Alerts(self.notify, self.db)
         self.access.judge_watching_by(self.viewing.watches_only)
         self.updater = Updater(self)
+        # (Media asks for the tags of what it shows someone limited by them.)
+        self.titles.asker = self.updater.ask_about_titles
+        self.catalog.titles = self.titles
+        self.viewing.signing_in = lambda: self.access.required
+        self.clip_ratings = cliprules.ClipRatings(self.db)
         self.markers = MarkerFinder(self.db, self.library)
         self.markers.cuts = picture_cuts.CutFinder(
             self.settings, self.settings.data_dir, self.readable
@@ -819,6 +826,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     )
     access.routes(app, ctx.access)
     viewing.routes(app, ctx)  # (who sees what: Viewing Levels)
+    cliprules.routes(app, ctx)  # (and commercials and trailers' ratings)
     devices.routes(app, ctx)  # (linked devices, and their pickers)
     appapi.routes(app, ctx)  # (for StationPlay's apps)
     applibrary.routes(app, ctx)  # (your library in them)

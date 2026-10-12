@@ -30,6 +30,7 @@ from .text import and_list, plain
 if TYPE_CHECKING:
     from .db import Database
     from .library import Library
+    from .titles import Titles
 
 log = logging.getLogger(__name__)
 
@@ -253,6 +254,8 @@ class Catalog:
         self._added: dict[str, tuple[float, list[Entry]]] = {}  # (by library)
         self._turns = asyncio.Semaphore(LIBRARY_AT_ONCE)
         self._fetching: dict[tuple[str, ...], asyncio.Future] = {}
+        # The titles' tags, for limits by them (titles.Titles; set by main).
+        self.titles: Titles | None = None
 
     async def _once(self, key: tuple[str, ...], fetch: Callable[[], Awaitable[Any]]) -> Any:
         """What `fetch` fetches, fetched once however many ask for it at

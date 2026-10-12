@@ -9,6 +9,7 @@ Codec and container names are made the same whatever a source calls them
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 
 SHOW = "show"
@@ -154,6 +155,47 @@ def size_label(width: int, height: int) -> str:
     return "SD" if width or height else ""
 
 
+# How many of each kind of tag a title keeps for limits (Plex's own lists
+# are far shorter: this only guards against a runaway answer).
+TAGS_MOST = 100
+
+
+@dataclass(frozen=True)
+class Tags:
+    """What a show or movie is, beyond its rating, as limits see it (1.33.0,
+    see docs/users.md): all its genres, its tags (Plex's labels), the
+    collections it's in and its studio, as the library has them, whole (not
+    the first few that lists show)."""
+
+    genres: tuple[str, ...] = ()
+    labels: tuple[str, ...] = ()
+    collections: tuple[str, ...] = ()
+    studio: str = ""
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {"genres": self.genres, "labels": self.labels, "collections": self.collections,
+             "studio": self.studio},
+            separators=(",", ":"),
+        )  # fmt: skip
+
+    @staticmethod
+    def from_json(text: str) -> Tags | None:
+        """A title's tags as kept (None: not asked for yet, or unreadable)."""
+        if not text:
+            return None
+        try:
+            got = json.loads(text)
+            return Tags(
+                tuple(str(x) for x in got.get("genres", ()))[:TAGS_MOST],
+                tuple(str(x) for x in got.get("labels", ()))[:TAGS_MOST],
+                tuple(str(x) for x in got.get("collections", ()))[:TAGS_MOST],
+                str(got.get("studio") or ""),
+            )
+        except (TypeError, ValueError, AttributeError):
+            return None
+
+
 @dataclass(frozen=True)
 class Entry:
     """A show, movie or episode."""
@@ -176,6 +218,8 @@ class Entry:
     genres: tuple[str, ...] = ()
     content_rating: str = ""
     studio: str = ""
+    # (A show's or movie's, whole, when the library said: see Tags.)
+    tags: Tags | None = None
     has_thumb: bool = True
     has_art: bool = False
     intro: tuple[int, int] | None = None  # [start, end) in ms, when asked for

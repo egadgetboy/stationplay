@@ -1,0 +1,8 @@
+# Phrases that may hold a word the wording scan (tests/test_wording.py) flags.
+# One phrase per line, then " # " and why. A phrase excuses only its own words.
+Channels DVR  # a product's name: an app that plays the playlist (README, the page)
+Scan for channels  # Plex's own button, in its Live TV & DVR settings
+calls them channels  # says what Plex calls stations, so people find Plex's own words
+calls stations “channels”  # the same, in Add to Plex's steps (core.js)
+Settings → Library  # Plex's own settings page, where its markers are turned on
+audio channels  # sound (5.1 and stereo), not stations

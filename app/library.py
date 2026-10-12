@@ -58,7 +58,7 @@ def is_key(key: str) -> bool:
 
 
 def _not_yet(key: str) -> LibraryError:
-    return LibraryError(f"StationPlay doesn't read folder libraries yet ({key})", 404)
+    return LibraryError(f"StationPlay doesn't read your own folders yet ({key})", 404)
 
 
 class Library:

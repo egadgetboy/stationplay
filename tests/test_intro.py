@@ -659,3 +659,13 @@ async def test_the_bumper_brings_in_a_recordings_sound(tmp_path):
     # Beep 5, at 8.5 s in the show (1.2 s after 7.3 s), comes in the bumper's
     # last third, which starts at 6.7 s.
     assert 5 in _beeps(out), _beeps(out)
+
+
+def test_the_cards_say_station_never_channel():
+    """The owner's audit, October 12 (D16): "Station, never channel," on the
+    Intro Bumper and the Station ID card too."""
+    card = intro.Card(
+        "Night Reel", 12, "Late-night movies.", None, ("NOW PLAYING", "Harbor Lights", "1983")
+    )
+    drawn = " ".join(intro.stills_command(small(), card, intro.PLAIN_COLOURS, Path("/tmp/x")))
+    assert "STATION 12" in drawn and "CHANNEL" not in drawn.upper()

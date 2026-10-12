@@ -415,11 +415,34 @@ async def seen_only(
     cat: ondemand.Catalog, viewer: viewing.Viewer, entries: list[Entry]
 ) -> list[Entry]:
     """Those of `entries` that `viewer` can see: shows and movies by their
-    own rating and library, episodes by their show's."""
+    own rating and library, episodes by their show's; and by what each is
+    (its show's, for an episode), whole, when their limits go by that (Plex
+    is asked for what isn't known yet: lists carry only a few genres)."""
     if viewer.everything or not entries:
         return entries
     shows = await shows_of(cat, entries)
-    return [e for e in entries if viewer.sees(viewing.judge_entry(e, shows.get(e.show_key or "")))]
+    titles = cat.titles
+    if viewer.by_tags and titles is not None:
+        wanted = {
+            (e.show_key or "") if e.kind == catalog.EPISODE else e.key: (
+                catalog.SHOW if e.kind == catalog.EPISODE else e.kind
+            )
+            for e in entries
+        }
+        try:
+            await titles.ensure({k: kind for k, kind in wanted.items() if k})
+        except Exception as e:  # (unknown stays unknown: hidden, to be safe)
+            log.info("Can't ask Plex what titles are (%s)", e)
+
+    def tags(e: Entry) -> catalog.Tags | None:
+        if titles is None:
+            return None
+        return titles.tags((e.show_key or "") if e.kind == catalog.EPISODE else e.key)
+
+    return [
+        e for e in entries
+        if viewer.sees(viewing.judge_entry(e, shows.get(e.show_key or ""), tags(e)))
+    ]  # fmt: skip
 
 
 async def must_see(cat: ondemand.Catalog, viewer: viewing.Viewer, entry: Entry) -> None:

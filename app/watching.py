@@ -98,7 +98,10 @@ def sure_station(session: dict[str, Any], playing: Playing) -> tuple[int | None,
     numbers = channel_numbers(session)
     if cid is None:
         on = ", ".join(sorted(numbers)) or "unknown"
-        return None, f"can't tell which station it's watching ({what or 'no title'}, channel {on})"
+        return (
+            None,
+            f"can't tell which station it's watching ({what or 'no title'}, Plex's number {on})",
+        )
     number, item = playing[cid]
     if shows(session, item, strictly=True) or names(numbers, number):
         return cid, ""

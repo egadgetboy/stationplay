@@ -26,7 +26,7 @@ If you find it useful, you can [buy me a coffee](https://buymeacoffee.com/egadge
 - [How stations play](#how-stations-play)
 - [Station features](#station-features): logos, corner logo, Up Next Banner, Station ID card, commercials, Intro Bumper, subtitles, specials
 - [Keeping stations on the air](#keeping-stations-on-the-air): safeguards, the Broken files list, file checks, Sonarr and Radarr, people's reports
-- [Who can use StationPlay](#who-can-use-stationplay): [Viewing Levels](#viewing-levels) · [Linked devices and Who's tuning in?](#linked-devices-and-whos-tuning-in) · [Tuner access](#tuner-access)
+- [Who can use StationPlay](#who-can-use-stationplay): [Viewing Levels](#viewing-levels) · [Parental limits](#parental-limits-what-stationplay-enforces-and-what-it-cant) · [Linked devices and Who's tuning in?](#linked-devices-and-whos-tuning-in) · [Tuner access](#tuner-access)
 - [Stats](#stats) · [StationPlay's API](#stationplays-api) · [Settings](#settings) · [Troubleshooting](#troubleshooting) · [Development](#development)
 - [Contributing](#contributing) · [Forks and credit](#forks-and-credit) · [License](#license)
 
@@ -767,6 +767,8 @@ echo '*' > movies/trailers/.plexignore
 
 **Commercials from the right decade.** Put clips in a subfolder named for a decade (`commercials/1960s` or `commercials/60s`), and they play only after programs from that decade, by the year Plex gives each program. Trailers work the same way. Clips outside decade folders play after everything else.
 
+**Under Viewing Levels.** On a station someone with limits can see, a clip plays only if you've rated its folder, at or below the station's highest-rated program. Rate the folders on the **Access** tab (see [Viewing Levels](#viewing-levels)). On other stations, every clip plays.
+
 StationPlay looks in the folders at startup and every hour. Admins can choose **Check again** in the editor to look right away. If a folder seems to vanish (a share that isn't mounted yet), the clips already found are kept for a few hours. A clip that fails to play is left out until its file changes. It's listed on the **Broken files** tab under **Commercials and trailers that didn't play**, and a plain card fills its time.
 
 ### Intro Bumper
@@ -994,12 +996,40 @@ Each person has a **Viewing Level** that sets what they can see in StationPlay's
 
 - **Ratings.** Plex's content ratings are read as ages, for the US and other countries alike (such as `gb/15` or `de/12`). An episode counts as its show's rating, or its own if that's stricter. A title with no rating, or one StationPlay doesn't recognize, counts as unrated.
 - **Media folders.** A level can also be limited to some Media folders. That way, a show in both "TV Parents" and "TV Teens" is seen only through the Media folder a person's level includes.
-- **Stations are all or nothing.** Everyone watching a station sees the same stream. So a station is shown only if everything it plays is within the person's level. To allow or block a station for someone anyway, choose **Stations** next to their name. It also shows why each station is shown or hidden.
-- **Nothing hidden shows.** What someone can't see isn't in any list, search, guide, Resume row or "on now" for them. Its address answers as though it doesn't exist.
+- **Genres, tags, collections and studios.** A level can also hide any show or movie with a genre, tag, collection or studio you name, whatever its rating. Choose **Edit** beside a level (or **Add a level**), type a name under **Genres**, **Tags**, **Collections** or **Studios**, and choose **Add**. Plex's own names are offered as you type. Tags are what Plex calls labels. Names are matched whatever their capitals. An episode counts as its show, with its show's genres, tags, collections and studio. A title with no genre isn't caught by a genre. The levels' table shows what each one hides in **Also hides**, such as "2 genres and 1 studio".
+- **What they see.** Choose **What they see** next to someone's name (not an Admin's: Admins see everything). It shows "(3 set)" when you've chosen anything there. For someone named Kit, **What Kit sees** has three parts:
+  - **Stations:** allow or block a station for them, or leave it as their level says. It also shows why each station is shown or hidden.
+  - **Also hidden for Kit:** genres, tags, collections and studios, and shows and movies you find by typing part of a title. These are hidden for Kit, whatever their level shows.
+  - **Allowed for Kit in Media:** shows and movies their level would hide, shown to Kit anyway, whatever the rating, genre or tags. They still need to be in a Media folder the level includes. **Also hidden** wins over this.
+- **Their own ratings.** Ratings belong to a level. To give one person ratings of their own, give them a level of their own.
+- **Stations are all or nothing.** Everyone watching a station sees the same stream. So a station is shown only if everything it plays is within the person's level and isn't hidden for them. To show or hide a station for someone anyway, allow or block it under **What they see**. A show or movie allowed for someone doesn't show a station that plays it: allow the station instead.
+- **Nothing hidden shows.** What someone can't see isn't in Media, search, **More like this**, cast and crew pages, the Resume row, collections, the guide or "on now" for them. Its address answers as though it doesn't exist.
+- **Commercials and trailers.** On a station someone with limits can see, a commercial or trailer plays only if its folder is rated, and at or below the station's highest-rated program. Rate the folders under **Commercials and trailers**, below the levels (it's there once StationPlay has found clips): **Commercials**, **Trailers**, and each decade's folder, such as "Commercials from the 1960s". Commercials take TV ratings (TV-G to TV-MA), and trailers take movie ratings (G to NC-17). A decade's folder is rated as its kind is, unless you rate it. Until then, those stations skip clips that aren't rated, and a plain card fills the time if one was already chosen. An alert says how many stations skip some. On a station only people without limits can see, every clip plays. A clip never changes who can see a station.
 - **Watching only.** People on a level with limits can watch what they can see, but can't make stations, because the station editor shows your Media folders as a whole.
 - **Plex and other apps.** Plex, Jellyfin and other apps don't report who's watching, so they show every station. To keep stations from some people in Plex, see **Blocking stations for some Plex users**, below.
+- **It's logged.** The access log (**Logs**, then **Access**) records each change, such as "Ada changed the Viewing Level Kid (movies up to PG, …, hiding 2 genres and 1 studio)", "Ada set what's hidden and allowed for Kit (hiding 1 genre, 2 titles allowed)" and "Ada rated the clip folders: commercials/1960s TV-14".
 
-StationPlay learns the ratings of what's on each station as it checks Plex for updates. Until it knows a station's ratings, that station is hidden from anyone with limits.
+StationPlay learns the ratings of what's on each station as it checks Plex for updates. Until it knows a station's ratings, that station is hidden from anyone with limits. While a level or a person hides by genre or tag, StationPlay also asks Plex for each title's genres and tags in the background. Until it knows a title's, the title is hidden from anyone whose level or own choices hide by them.
+
+### Parental limits: what StationPlay enforces, and what it can't
+
+Viewing Levels are limits in StationPlay's apps and on StationPlay's page. They don't reach anything else on your TV.
+
+**What StationPlay enforces.** For someone signed in as themselves, on your StationPlay server, in StationPlay's apps and on its page:
+
+- **What they find, see and play,** as their Viewing Level and **What they see** say. Nothing hidden shows anywhere, and its address answers as though it doesn't exist.
+- **Stations, all or nothing.** A station that plays anything hidden for them is hidden, unless you allow that station for them.
+- **Commercials and trailers,** rated as above, on stations people with limits can see.
+
+**What limits don't cover:**
+
+- **Plex, Jellyfin and anything else on the tuner.** They don't say who's watching, so they show every station. See [Tuner access](#tuner-access) and [Blocking stations for some Plex users](#blocking-stations-for-some-plex-users).
+- **Devices without PINs.** On a shared device, anyone can pick anyone without a PIN on **Who's tuning in?** Give everyone without limits a PIN on devices people with limits use.
+- **Signing in as someone else.** Someone who knows another person's password can sign in as them on their own device.
+- **A rating or genre Plex has wrong, or doesn't have.** StationPlay goes by what Plex says. Unrated titles follow the level's **Unrated titles** setting.
+- **What's inside a program,** beyond its rating, genres and tags.
+
+Use your devices' own controls too, such as Apple's Screen Time or Google's Family Link.
 
 ### Linked devices and Who's tuning in?
 
@@ -1292,7 +1322,8 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/bumpers.py` | Intro Bumper videos you upload |
 | `app/backups.py` | Backups and restores, and the database copy made before an update changes it |
 | `app/access.py` | Sign-in, Admins and Users, and the access log |
-| `app/viewing.py`, `app/ratings.py`, `app/titles.py` | Viewing Levels: what each person can see, ratings read as ages, and the ratings of what's on each station |
+| `app/viewing.py`, `app/ratings.py`, `app/titles.py` | Viewing Levels: what each person can see, ratings read as ages, and the ratings, genres and tags of what's on each station |
+| `app/cliprules.py` | Commercials and trailers under Viewing Levels: each clip folder's rating |
 | `app/devices.py` | Linked devices, Who's tuning in?, PINs and invite codes |
 | `app/stats.py`, `app/watching.py` | Viewing stats, who's watching now, and matching Plex sessions to stations |
 | `app/health.py` | The server's health for the Stats tab: processor, memory, network and storage, from Linux's own files |

@@ -183,7 +183,7 @@ work on these addresses, which are for the apps' own sign-ins.
    - The Roku app shows how many there are in the guide's header, which
      opens the list.
 5. **PIN.** From 1.31.0, StationPlay's page and its sentences say "PIN"
-   (1.28.0 to 1.30.0 said "passcode"); the apps say the same. The fields
+   (1.28.0 to 1.30.0 used another word); the apps say the same. The fields
    were always `pin`.
 
 A server before 1.29.0 doesn't send `languages` (in `GET /api/internal/me`
@@ -1353,9 +1353,9 @@ With `device.hls`, a copy is also made when the app sends:
   - The picture is made H.264 at 8 bits, at most 1080p (within 1920×1080,
     or the device's own H.264 size if that's smaller), and ordinary rather
     than HDR.
-  - The sound is AAC: 5.1 where the file's has more than two channels and
-    `device.audio` lists a surround format (`ac3`, `eac3`, `dts` or
-    `truehd`), otherwise stereo.
+  - The sound is AAC: 5.1 where the file's has more than two audio
+    channels and `device.audio` lists a surround format (`ac3`, `eac3`,
+    `dts` or `truehd`), otherwise stereo.
   - Everything else asked for still applies: `startMs`, `version`, `audio`,
     `subtitle`, `night`, `fit` with `maxKbps`, and the cap away from home.
   - Its `why` starts with "a converted copy, as the app asked". It counts

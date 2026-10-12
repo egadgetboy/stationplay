@@ -435,7 +435,7 @@ every minute. The session itself ends after 4 hours unused.
   can carry it (H.264; HEVC for a player that takes HEVC in MPEG-TS pieces).
   The picture is copied, costing next to nothing. The sound is converted if
   the device can't play it (AAC, or Dolby Digital 5.1 where the device plays
-  it and the sound has more than two channels).
+  it and the sound has more than two audio channels).
 - **Keyframes from the index.** Each piece starts at one of the picture's
   keyframes, read up front from the file's own index (a Matroska file's
   Cues, an MP4's sample tables: `keyframes.py`), without reading through
@@ -490,7 +490,7 @@ the **Access** tab's Media panel (kept in `meta` as `app_even_sound`).
   sound (repackaged), for an app that takes copies (`device.hls`). Its sound
   is what the device would get anyway (`converting.sound_for`), remade
   rather than copied: Dolby Digital 5.1 where the device plays it and the
-  sound has more than two channels, otherwise AAC stereo.
+  sound has more than two audio channels, otherwise AAC stereo.
 - **The order of filters.** Even sound comes first in its filters. With
   night mode too, night mode comes after it, so its compression starts from
   the same loudness in every episode and its limiter is last.

@@ -23,7 +23,8 @@ apps show only what the server sends.
 4. **Plain rules, in order.** The first rule that applies decides, so an
    Admin can always tell why something is hidden.
 5. **Lean.** Plex stays the catalog. StationPlay keeps a title's rating and
-   Media folder only where its stations need them.
+   Media folder only where its stations need them, and its genres and tags
+   only while some level or person hides by them.
 
 ## Phases
 
@@ -31,9 +32,10 @@ apps show only what the server sends.
   or blocked for each person, enforced everywhere. Linked devices, Who's
   tuning in?, PINs, invite codes and "Show on." Users can be
   watch-only.
-- **Phase 2.** Genre, tag, title and collection rules; rating overrides;
-  title exceptions for each person; Station Audience warnings; Preview as
-  user; Why is this hidden.
+- **Phase 2.** Built in 1.33.0: genre, tag, collection, studio and title
+  rules for levels and people, and titles allowed for a person. After 1.0:
+  rating overrides, Station Audience warnings, Preview as user and Why is
+  this hidden.
 - **Phase 3.** The Manager role, Lock to user, one person linked to
   accounts on several servers, and several tuner lineups for Plex.
 
@@ -84,6 +86,13 @@ A level also sets which **Media folders** (Plex's libraries) its people can see:
 the ones chosen. So a show that's in both "TV Parents" and "TV Teens" is
 seen only through a Media folder the person may see.
 
+From 1.33.0, a level can also hide titles by **genre**, **tag** (Plex calls
+these labels), **collection** and **studio**, whatever their rating. Names
+are matched whatever their capitals. An episode counts as its show: its
+show's genres, tags, collections and studio. A title with no genre isn't
+caught by a genre. A level's ratings stay the level's: to give one person
+their own ratings, an Admin gives them a level of their own.
+
 New people start on Unrestricted, so adding someone changes nothing until an
 Admin chooses a level.
 
@@ -108,28 +117,125 @@ limits as ages, and StationPlay's page shows each one as the US rating for
 that age.
 
 An episode uses its show's rating, or its own if that's stricter. Rating
-overrides (Phase 2) belong to StationPlay and never change Plex.
+overrides (after 1.0) will belong to StationPlay and never change Plex.
+
+## What's hidden or allowed for one person
+
+From 1.33.0, an Admin can choose, for each person who isn't an Admin:
+
+- **Also hidden.** Genres, tags, collections and studios, and shows and
+  movies, hidden for that person whatever their level shows.
+- **Allowed in Media.** Shows and movies shown to that person whatever
+  their rating, genre or tags, as long as they're in a Media folder the
+  person's level includes. Hidden wins over allowed.
+
+A hidden title is hidden everywhere StationPlay shows titles to that
+person: Media, search, More like this, cast and crew pages, Continue
+Watching (the Resume row) and collections, and any station that plays it.
+
+**What StationPlay knows.** StationPlay asks Plex for each title's genres
+and tags in the background, only while some level or person hides by them.
+Until it knows a title's, the title is hidden from anyone whose level or
+own rules hide by tags, as with a rating not known yet.
+
+**On the Access tab.** Viewing Levels → **Edit** (or **Add a level**) has
+**Genres**, **Tags**, **Collections** and **Studios**: each a box to type a
+name in, with Plex's own names offered, and **Add**. The levels' table
+shows **Also hides** ("2 genres and 1 studio", or "Nothing more"). Beside
+each person, **What they see** (formerly **Stations**; "(3 set)" when
+anything is chosen) opens "What Kit sees", in three parts: **Stations**
+(allowed, blocked, or as their level says, each with why it's shown or
+hidden), **Also hidden for Kit**, and **Allowed for Kit in Media**. Shows
+and movies are found by typing part of a title.
+
+**It's logged.** The access log records each change: "Ada changed the
+Viewing Level Kid (movies up to PG, …, hiding 2 genres and 1 studio)" and
+"Ada set what's hidden and allowed for Kit (hiding 1 genre, 2 titles
+allowed)".
 
 ## The rules, in order
 
 For a person and a show, movie or episode, the first rule that applies
-decides. Phase 1 has rules 1, 4, 5 and 7.
+decides. An episode counts as its show for rules 2, 3, 6 and 7.
 
 1. An Admin sees everything.
-2. A title blocked for this person is hidden. *(Phase 2)*
+2. A title hidden for this person is hidden.
 3. A title allowed for this person is shown, whatever its rating, genre or
-   tags, unless its Media folder is hidden. *(Phase 2)*
+   tags, as long as it's in a Media folder their level includes.
 4. A title in a Media folder their level doesn't include is hidden.
 5. A title rated above their level's age is hidden. An unrated title follows
    the level's setting.
-6. A blocked genre, tag or collection hides a title. *(Phase 2)*
-7. Anything else is shown.
+6. A genre, tag, collection or studio their level hides hides the title.
+7. A genre, tag, collection or studio hidden for this person hides the
+   title.
+8. Anything else is shown.
 
 For a station, a station **allowed** for the person is shown, and one
 **blocked** for them is hidden. Otherwise, it's shown only if every program
-it plays passes the rules above. "Every program" means everything in its
-current lineup, including its specials' programs. Station numbers don't
-change when some stations are hidden.
+it plays passes rules 4 to 7. "Every program" means everything in its
+current lineup, including its specials' programs. A title allowed for the
+person doesn't make a station shown: an Admin allows the station instead.
+Station numbers don't change when some stations are hidden.
+
+Still to come *(after 1.0)*: rating overrides, Station Audience warnings,
+Preview as user, and Why is this hidden for titles. (For stations, What
+they see already says why each one is hidden.)
+
+## Commercials and trailers
+
+Commercials play after episodes, and trailers after movies, from the
+`commercials` and `trailers` folders an Admin sets up. A folder named for
+a decade, such as `commercials/1960s`, plays after programs from that
+decade.
+
+From 1.33.0, an Admin rates each clip folder under Access → Viewing Levels
+→ **Commercials and trailers** (shown when there are any clips):
+"Commercials", "Trailers", and each decade's folder ("Commercials from the
+1960s"). Commercials use TV ratings (TV-G to TV-MA), and trailers use movie
+ratings (G to NC-17). A decade's folder is rated as its kind is, unless it
+has its own rating.
+
+- **Stations people with limits can see.** A commercial or trailer plays
+  only if its folder is rated, at or below the station's highest-rated
+  program.
+- **Until a folder is rated.** Those stations skip its clips. If a clip
+  was already chosen, a plain card fills its time. An Admin alert says how
+  many stations skip some: "2 stations people with limits can see skip
+  commercials or trailers that aren't rated. Rate their folders under
+  Viewing Levels on the Access tab." The alerts list offers **Open the
+  Access tab**.
+- **Stations only people without limits can see.** Every clip plays, as
+  before.
+- **Who sees a station.** A clip never changes it.
+- **It's logged.** The access log shows "Ada rated the clip folders:
+  commercials/1960s TV-14".
+
+## Parental limits: what StationPlay enforces, and what it can't
+
+Viewing Levels are limits in StationPlay's apps and on StationPlay's page,
+and the docs say plainly what they don't cover.
+
+**Enforced.** For someone signed in as themselves, on StationPlay's own
+server, in StationPlay's apps and on its page: what they can find, see and
+play, as Viewing Levels and the rules above say; stations, all or nothing;
+and commercials and trailers, as above.
+
+**Not covered:**
+
+- **Plex, Jellyfin and anything else on the tuner.** They don't say who's
+  watching, so they show every station (see the README's Tuner access and
+  Blocking stations for some Plex users).
+- **Devices without PINs.** On a shared device, anyone can pick anyone
+  without a PIN on Who's tuning in? Everyone without limits should have a
+  PIN on devices people with limits use.
+- **Signing in as someone else,** on one's own device, with that person's
+  password.
+- **A rating or genre Plex has wrong, or doesn't have.** StationPlay goes
+  by what Plex says. Unrated titles follow the level's Unrated setting.
+- **What's inside a program,** beyond its rating, genres and tags.
+
+Use the device's own controls too: Apple's Screen Time or Google's Family
+Link.
 
 ## What StationPlay keeps
 
@@ -137,17 +243,21 @@ change when some stations are hidden.
   rating as Plex has it, that rating's age (or none) and its Media folder.
   StationPlay fills it in as it makes a station's lineup, since Plex sends
   these with the items. It also fills it once at startup for lineups made
-  before this existed. An episode's own rating is kept in its lineup row
+  before this existed. From 1.33.0, it also keeps each title's genres,
+  tags, collections and studio, asked of Plex in the background while some
+  level or person hides by them. An episode's own rating is kept in its lineup row
   when Plex gives one.
 - **Each station's reach.** The oldest age and the Media folders its programs
   need, and whether any program is unrated. StationPlay works this out when
   the lineup changes, so deciding whether someone sees a station takes only
   a few comparisons.
 - **`levels`.** Name, movie age, TV age, whether unrated titles are shown,
-  and Media folders (all, or a list).
+  Media folders (all, or a list), and (1.33.0) the genres, tags,
+  collections and studios it hides.
 - **`users`.** Gains each person's level, PIN (`pin`: a hash, or
-  none), whether they chose to have no PIN, Show on (see below) and
-  whether they may change their own password. A User may have no password.
+  none), whether they chose to have no PIN, Show on (see below),
+  whether they may change their own password, and (1.33.0) what's hidden
+  or allowed for them. A User may have no password.
   They use only Who's tuning in?
 - **`user_stations`.** A station allowed or blocked for a person.
 - **`linked_devices`, `device_people` and `invites`.** The linked devices,
@@ -158,7 +268,10 @@ change when some stations are hidden.
 
 Media in the apps (browsing, search, details, pictures and playing) already
 asks Plex about each title. Plex sends its rating and Media folder, so
-StationPlay judges the title from that and keeps no copy.
+StationPlay judges the title from that and keeps no copy. Plex's lists
+don't carry genres and tags, so from 1.33.0, while some level or person
+hides by them, StationPlay also keeps the genres and tags of the titles
+Media shows, in `titles`.
 
 ## Devices and Who's tuning in?
 
@@ -352,6 +465,7 @@ The apps' own addresses (`docs/internal-api.md`):
 
 The **Access** tab's addresses are `/api/access/viewing`,
 `/api/access/levels`, `/api/access/users/{id}/viewing` and `/stations`,
+`/api/access/clips` (the clip folders' ratings, 1.33.0),
 `/api/access/devices` (with `PUT /api/access/devices/default` for New
 people show on, and `POST /api/access/devices/everyone`),
 `/api/access/users/{id}/picker` and `/invite`. Like everything on the

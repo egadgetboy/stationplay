@@ -53,6 +53,7 @@ sys.path.insert(0, str(ROOT))
 from app import jobs, scanner, stats  # noqa: E402
 from app import main as server  # noqa: E402
 from app.access import COOKIE as SESSION_COOKIE  # noqa: E402
+from app.breaks import COMMERCIALS, TRAILERS, Clip  # noqa: E402
 from app.broadcaster import Viewer  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.db import Database, Item  # noqa: E402
@@ -288,6 +289,21 @@ def fill(sp: Running, data: Path) -> None:
         robin = ok(home.post("/api/access/users", json=KID))
         levels = {lv["name"]: lv["id"] for lv in ok(home.get("/api/access/viewing"))["levels"]}
         ok(home.put(f"/api/access/users/{robin['id']}/viewing", json={"level": levels["Kid"]}))
+        # What Kid hides by what a title is, and what's hidden or allowed for
+        # Robin (1.33.0).
+        kid = next(
+            lv for lv in ok(home.get("/api/access/viewing"))["levels"] if lv["name"] == "Kid"
+        )
+        ok(home.put(f"/api/access/levels/{kid['id']}", json={
+            "name": "Kid", "movieAge": kid["movieAge"], "tvAge": kid["tvAge"],
+            "unrated": kid["unrated"], "libraries": kid["libraries"],
+            "blocks": {"genres": ["Mystery", "Reality"], "studios": ["Fogline"]},
+        }))  # fmt: skip
+        ok(home.put(f"/api/access/users/{robin['id']}/viewing", json={"own": {
+            "blocks": {"genres": ["Action"], "collections": ["80s Favorites"],
+                       "titles": [{"key": "108", "title": "Grand Central Mysteries (1992)"}]},
+            "allowTitles": [{"key": "302", "title": "Deep Water (1975)"}],
+        }}))  # fmt: skip
         setup = ok(home.get("/api/setup"))
         ok(home.put("/api/setup", json={"answered": setup["questions"]}))
         ok(home.put("/api/app-libraries", json={"libraries": ["1", "2"]}))
@@ -478,6 +494,16 @@ def fill(sp: Running, data: Path) -> None:
                 {key: (entry["lastFailed"], {"app": "sonarr", "at": now, **state})}
             )
         ctx.alerts.files(ctx.reports.needing())
+        # Commercials and trailers, the trailers rated (and the alert for the
+        # station Robin sees, which skips the commercials, as the checks find).
+        ctx.fillers.clips = {
+            COMMERCIALS: [Clip(f"/data/commercials/{n}.mkv", 30_000, 1, 1.0) for n in range(14)]
+            + [Clip(f"/data/commercials/1980s/{n}.mkv", 30_000, 1, 1.0, decade=1980)
+               for n in range(6)],
+            TRAILERS: [Clip(f"/data/movies/trailers/{n}.mkv", 120_000, 1, 1.0) for n in range(9)],
+        }  # fmt: skip
+        ctx.clip_ratings.save({"trailers": 13})
+        ctx.alerts.clips(1)  # (Cartoon Classics, which Robin sees)
         # Who used the tuner lately.
         for address, agent, path, minutes, refused in TUNER_SEEN:
             ctx.tuner.used(address, agent, path, refused)
@@ -991,6 +1017,18 @@ def admin_views(page: Page, look: Look, only: set[str] | None) -> None:
         )
         look("access-level")
         page.click(".level-edit button:has-text('Cancel')")
+        # Kid, which hides some genres and a studio (1.33.0).
+        page.locator("#viewingBody tr", has_text="Kid").locator("button:has-text('Edit')").click()
+        page.wait_for_selector(".level-edit .sel")
+        page.evaluate(
+            "() => document.querySelector('.level-edit .name-pick').scrollIntoView({block: 'center'})"
+        )
+        look("access-level-hides")
+        page.click(".level-edit button:has-text('Cancel')")
+        page.evaluate(
+            "() => document.querySelector('.clip-ratings').scrollIntoView({block: 'center'})"
+        )
+        look("access-clips")
         row = page.locator("#userTable tr", has_text=USER["name"])
         row.locator("button:has-text('Devices')").click()
         look("access-devices")
@@ -999,9 +1037,23 @@ def admin_views(page: Page, look: Look, only: set[str] | None) -> None:
         look("access-pin")
         row.locator("button:has-text('Cancel')").click()
         page.wait_for_timeout(300)
-        row.locator("button:has-text('Stations')").click()
+        row.locator("button:has-text('What they see')").click()
         page.wait_for_selector("#userStations[open]")
         look("access-stations")
+        close_dialogs(page)
+        # Robin's: what's hidden and allowed for her, and finding a title.
+        robin = page.locator("#userTable tr", has_text=KID["name"])
+        robin.locator("button:has-text('What they see')").click()
+        page.wait_for_selector("#userStations[open] .sees-part .sel")
+        page.evaluate(
+            "() => document.querySelectorAll('#userStations .sees-part')[1].scrollIntoView({block: 'start'})"
+        )
+        look("access-sees")
+        search = page.locator("#userStations input[type=search]").last
+        search.fill("light")
+        page.wait_for_selector("#userStations .title-finds .chipbtn")
+        search.scroll_into_view_if_needed()
+        look("access-sees-find")
         close_dialogs(page)
         tuner_views(page, look)
     if wanted("stats"):

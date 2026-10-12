@@ -1261,6 +1261,7 @@ def to_entry(m: dict[str, Any], section: str = "", details: bool = False) -> Ent
         genres=tuple(genres(m)),
         content_rating=str(m.get("contentRating") or ""),
         studio=str(m.get("studio") or ""),
+        tags=tags_of(m) if kind != catalog.EPISODE else None,
         has_thumb=bool(m.get("thumb")),
         has_art=bool(m.get("art")),
         intro=intro,
@@ -1288,6 +1289,23 @@ def _roles(m: dict[str, Any]) -> tuple[tuple[str, str], ...]:
         if isinstance(r, dict) and str(r.get("tag") or "").strip()
     ]
     return tuple(out[:CAST_MOST])
+
+
+def tags_of(m: dict[str, Any]) -> catalog.Tags:
+    """A show's or movie's tags for limits, as Plex has them (whole: every
+    genre, label and collection Plex lists with it here, each once)."""
+
+    def every(field: str) -> tuple[str, ...]:
+        out: list[str] = []
+        for t in _each(m.get(field)):
+            name = str(t.get("tag") or "").strip() if isinstance(t, dict) else ""
+            if name and name not in out:
+                out.append(name)
+        return tuple(out[: catalog.TAGS_MOST])
+
+    return catalog.Tags(
+        every("Genre"), every("Label"), every("Collection"), str(m.get("studio") or "").strip()
+    )
 
 
 def _names(m: dict[str, Any], field: str) -> tuple[str, ...]:

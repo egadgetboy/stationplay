@@ -90,7 +90,8 @@ def status(state: str, short: str = "Ready") -> reach.Status:
 
 def checks(tmp_path, plex: Plex | None = None, outside: str = reach.OFF) -> SimpleNamespace:
     """What the checks look at: Plex, the data folder, the outside check,
-    and the Broken files tab (nothing on it needs an Admin)."""
+    the Broken files tab (nothing on it needs an Admin), and commercials and
+    trailers (none: see test_clips_under_limits.py)."""
     folder = tmp_path / "data"
     folder.mkdir(exist_ok=True)
     return SimpleNamespace(
@@ -99,6 +100,8 @@ def checks(tmp_path, plex: Plex | None = None, outside: str = reach.OFF) -> Simp
         reach=SimpleNamespace(status=lambda: status(outside, "Proxy error")),
         away=SimpleNamespace(address="https://tv.example.com"),
         reports=SimpleNamespace(needing=list),
+        fillers=SimpleNamespace(pool=lambda kind: []),
+        clip_ratings=SimpleNamespace(unrated=lambda kind, clips: len(clips)),
     )
 
 

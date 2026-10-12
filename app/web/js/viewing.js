@@ -1,6 +1,92 @@
 // Viewing Levels.
 // Viewing Levels ----------------------------------------------------------------------
-const levelLimited = lv => lv.movieAge != null || lv.tvAge != null || !lv.unrated || lv.libraries != null;
+// What a level or person hides by what a title is (1.33.0): genres, tags
+// (Plex's labels), collections and studios, and (for a person) titles.
+const TAG_KINDS = [['genres', 'Genres', 'genre'], ['labels', 'Tags', 'tag'], ['collections', 'Collections', 'collection'], ['studios', 'Studios', 'studio']];
+const noBlocks = () => ({ genres: [], labels: [], collections: [], studios: [], titles: [] });
+const blocksOf = b => ({ ...noBlocks(), ...structuredClone(b || {}) });
+const hidesTags = b => TAG_KINDS.some(([kind]) => (b?.[kind] || []).length);
+const hidesCount = b => [...TAG_KINDS.map(([kind]) => kind), 'titles'].reduce((n, kind) => n + (b?.[kind] || []).length, 0);
+// "2 genres and 1 title" ('' for nothing).
+function hidesSaid(b) {
+  const parts = [...TAG_KINDS.map(([kind, , noun]) => [(b?.[kind] || []).length, noun]), [(b?.titles || []).length, 'title']]
+    .filter(([n]) => n).map(([n, noun]) => plural(n, noun));
+  return parts.length < 2 ? parts.join('') : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;
+}
+const levelLimited = lv => lv.movieAge != null || lv.tvAge != null || !lv.unrated || lv.libraries != null || hidesTags(lv.blocks) || (lv.blocks?.titles || []).length > 0;
+// The names Plex has for each, offered as they're typed (fetched once; if
+// Plex can't be reached, names can still be typed).
+let tagsOffered = null;
+async function loadTagsOffered() {
+  if (tagsOffered) return tagsOffered;
+  try { tagsOffered = await api('/api/access/tags'); return tagsOffered; }
+  catch { return { genres: [], labels: [], collections: [], studios: [] }; }
+}
+let pickerCount = 0;
+// Names to hide: typed (Plex's own offered as they're typed), each shown
+// with a way to take it out again. `values` is changed in place.
+function namePicker(label, noun, values, offered) {
+  const id = `namePick${++pickerCount}`;
+  const input = h('input', { type: 'text', list: id, maxlength: 100, autocomplete: 'off', 'aria-label': label,
+    placeholder: `Type ${/^[aeiou]/.test(noun) ? 'an' : 'a'} ${noun}` });
+  const chips = h('div', { class: 'chips' });
+  const paint = () => chips.replaceChildren(...values.map(name => h('span', { class: 'sel' }, h('span', {}, name),
+    h('button', { type: 'button', 'aria-label': `Remove ${name}`, onclick: () => { values.splice(values.indexOf(name), 1); paint(); } }, '×'))));
+  const add = () => {
+    const typed = input.value.trim();
+    // (As Plex writes it, when it's one Plex has.)
+    const name = offered.find(n => n.toLowerCase() === typed.toLowerCase()) || typed;
+    if (name && !values.some(v => v.toLowerCase() === name.toLowerCase())) values.push(name);
+    input.value = '';
+    paint();
+  };
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+  paint();
+  return h('div', { class: 'name-pick' },
+    h('div', { class: 'inline-add' }, input, h('datalist', { id }, ...offered.map(n => h('option', { value: n }))),
+      h('button', { type: 'button', class: 'btn', onclick: add }, 'Add')),
+    chips);
+}
+// Every show and movie, for choosing titles (fetched once, when needed).
+let everyTitle = null;
+async function loadEveryTitle() {
+  if (everyTitle) return everyTitle;
+  const libs = (await api('/api/libraries')).filter(l => l.type === 'show' || l.type === 'movie');
+  const found = [];
+  for (const lib of libs) found.push(...await api(`/api/libraries/${lib.key}/items`));
+  everyTitle = found;
+  return found;
+}
+// Titles chosen by searching for them: `chosen` ({key, title}) is changed in place.
+function titlePicker(label, chosen) {
+  const input = h('input', { type: 'search', maxlength: 100, autocomplete: 'off', 'aria-label': label, placeholder: 'Type part of a title' });
+  const finds = h('div', { class: 'chips title-finds', 'aria-live': 'polite' });
+  const chips = h('div', { class: 'chips' });
+  const paint = () => chips.replaceChildren(...chosen.map(t => h('span', { class: 'sel' }, h('span', {}, t.title || 'A title Plex doesn’t have now'),
+    h('button', { type: 'button', 'aria-label': `Remove ${t.title}`, onclick: () => { chosen.splice(chosen.indexOf(t), 1); paint(); } }, '×'))));
+  let timer = null;
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const q = input.value.trim().toLowerCase();
+      if (q.length < 2) { finds.replaceChildren(); return; }
+      let titles;
+      try { titles = await loadEveryTitle(); }
+      catch { finds.replaceChildren(h('span', { class: 'hint' }, 'Plex can’t be reached right now. Try again in a moment.')); return; }
+      if (input.value.trim().toLowerCase() !== q) return;
+      const hits = titles.filter(t => t.title.toLowerCase().includes(q) && !chosen.some(c => c.key === t.ratingKey)).slice(0, 8);
+      finds.replaceChildren(...(hits.length ? hits.map(t => h('button', { type: 'button', class: 'chipbtn', 'aria-label': `Add ${t.title}${t.year ? ` (${t.year})` : ''}`, onclick: () => {
+        chosen.push({ key: t.ratingKey, title: `${t.title}${t.year ? ` (${t.year})` : ''}` });
+        input.value = '';
+        finds.replaceChildren();
+        paint();
+        input.focus();
+      } }, `+ ${t.title}${t.year ? ` (${t.year})` : ''} · ${t.type === 'show' ? 'Show' : 'Movie'}`)) : [h('span', { class: 'hint' }, 'No show or movie has that in its title.')]));
+    }, 200);
+  });
+  paint();
+  return h('div', { class: 'name-pick' }, input, finds, chips);
+}
 const ratingName = (list, age) => age == null ? 'No limit' : (list.find(([a]) => a === age)?.[1] || `Ages ${age} and up`);
 function levelSelect(value, attrs = {}) {
   const select = h('select', attrs, ...(viewing?.levels || []).map(lv => h('option', { value: String(lv.id) }, lv.name)));
@@ -20,13 +106,14 @@ function renderViewing() {
   const librariesText = lv => lv.libraries == null ? 'All'
     : lv.libraries.length ? lv.libraries.map(k => libraryNames.get(k) || `Media folder ${k}`).join(', ') : 'None';
   const table = h('table', { class: 'users' },
-    h('thead', {}, h('tr', {}, h('th', {}, 'Level'), h('th', {}, 'Movies up to'), h('th', {}, 'TV up to'), h('th', {}, 'Unrated'), h('th', {}, 'Media folders'), h('th', {}, 'People'), h('th', {}, ''))),
+    h('thead', {}, h('tr', {}, h('th', {}, 'Level'), h('th', {}, 'Movies up to'), h('th', {}, 'TV up to'), h('th', {}, 'Unrated'), h('th', {}, 'Media folders'), h('th', {}, 'Also hides'), h('th', {}, 'People'), h('th', {}, ''))),
     h('tbody', {}, ...viewing.levels.map(lv => h('tr', {},
       h('td', {}, h('strong', {}, lv.name)),
       h('td', { 'data-label': 'Movies up to' }, ratingName(viewing.movieRatings, lv.movieAge)),
       h('td', { 'data-label': 'TV up to' }, ratingName(viewing.tvRatings, lv.tvAge)),
       h('td', { 'data-label': 'Unrated' }, lv.unrated ? 'Shown' : 'Hidden'),
       h('td', { class: 'small', 'data-label': 'Media folders' }, librariesText(lv)),
+      h('td', { class: 'small', 'data-label': 'Also hides', title: TAG_KINDS.map(([kind, name]) => (lv.blocks?.[kind] || []).length ? `${name}: ${lv.blocks[kind].join(', ')}` : '').filter(Boolean).join('\n') || null }, hidesSaid(lv.blocks) || 'Nothing more'),
       h('td', { 'data-label': 'People' }, String(lv.users)),
       h('td', {},
         lv.builtin === 'unrestricted' ? h('span', { class: 'hint' }, 'Shows everything') : [
@@ -38,14 +125,53 @@ function renderViewing() {
           loadAccess();
         } }, 'Remove')])))));
   body.replaceChildren(
-    h('p', { style: 'margin:0' }, 'A Viewing Level says what its people can see in StationPlay’s apps and on this page: movies and shows up to a rating, whether unrated ones are shown, and which Media folders. Everyone starts on Unrestricted, which shows everything and stays as it is. Teen, Kid and Young Child are there to start from: rename them, change them or remove them, and add as many levels of your own as you need, such as “Adults” with no R-rated movies or unrated titles. Admins always see everything.'),
+    h('p', { style: 'margin:0' }, 'A Viewing Level says what its people can see in StationPlay’s apps and on this page: movies and shows up to a rating, whether unrated ones are shown, which Media folders, and any genres, tags, collections or studios it hides. Everyone starts on Unrestricted, which shows everything and stays as it is. Teen, Kid and Young Child are there to start from: rename them, change them or remove them, and add as many levels of your own as you need, such as “Adults” with no R-rated movies or unrated titles. Admins always see everything.'),
     h('div', { class: 'limit-note' }, h('strong', {}, 'How it works'),
       h('ul', {},
-        h('li', {}, h('strong', {}, 'Stations are all or nothing. '), 'Everyone watching a station sees the same stream, so a station is shown only if everything it plays is within the level. Choose Stations beside someone’s name to allow or block one for them anyway.'),
+        h('li', {}, h('strong', {}, 'Stations are all or nothing. '), 'Everyone watching a station sees the same stream, so a station is shown only if everything it plays is within the level. Choose What they see beside someone’s name to allow or block one for them anyway.'),
         h('li', {}, h('strong', {}, 'Watching only. '), 'People on a level with limits watch what they can see, but can’t make stations.'),
         h('li', {}, h('strong', {}, 'Plex and other apps. '), 'Plex, Jellyfin and other apps don’t say who’s watching, so they show every station. To keep stations from some people in Plex, use Block stations for some Plex users, below.'))),
     table,
-    h('div', {}, h('button', { class: 'btn', type: 'button', onclick: () => editLevel(null) }, 'Add a level')));
+    h('div', {}, h('button', { class: 'btn', type: 'button', onclick: () => editLevel(null) }, 'Add a level')),
+    clipRatingsBox());
+}
+// Commercials and trailers under limits (1.33.0): each folder's rating.
+let clipRatings = null;  // (from /api/access/clips, with the Access tab)
+async function loadClipRatings() {
+  try { clipRatings = await api('/api/access/clips'); } catch { clipRatings = null; }
+}
+const KIND_NAMES = { commercials: 'Commercials', trailers: 'Trailers' };
+function clipRatingsBox() {
+  const folders = (clipRatings?.folders || []).filter(f => f.clips > 0);
+  if (!folders.length) return null;
+  const result = h('span', { class: 'hint', role: 'alert' });
+  const picks = new Map();
+  const rows = folders.map(f => {
+    const list = f.kind === 'commercials' ? clipRatings.tvRatings : clipRatings.movieRatings;
+    const kindName = KIND_NAMES[f.kind];
+    const select = h('select', { 'aria-label': f.decade ? `${kindName} from the ${f.decade}s, rated` : `${kindName}, rated` },
+      h('option', { value: '' }, f.decade ? `As ${kindName.toLowerCase()} are` : 'Not rated'),
+      ...list.map(([a, n]) => h('option', { value: String(a) }, n)));
+    select.value = f.age == null ? '' : String(f.age);
+    if (f.age != null && !list.some(([a]) => a === f.age)) select.append(h('option', { value: String(f.age), selected: true }, `Ages ${f.age} and up`));
+    picks.set(f.key, select);
+    return h('tr', {},
+      h('td', {}, h('strong', {}, f.decade ? `${kindName} from the ${f.decade}s` : `${kindName}`), h('div', { class: 'hint' }, plural(f.clips, f.kind === 'commercials' ? 'commercial' : 'trailer'))),
+      h('td', { 'data-label': 'Rated' }, select));
+  });
+  const save = async () => {
+    const chosen = {};
+    for (const [key, select] of picks) chosen[key] = select.value === '' ? null : Number(select.value);
+    try { clipRatings = await api('/api/access/clips', { method: 'PUT', body: { ratings: chosen } }); }
+    catch (err) { result.textContent = err.message; return; }
+    toast('Commercial and trailer ratings saved');
+    renderViewing();
+  };
+  return h('div', { class: 'limit-note clip-ratings' },
+    h('strong', {}, 'Commercials and trailers'),
+    h('p', { style: 'margin:6px 0 0' }, 'On a station someone with limits can see, a commercial or trailer plays only if its folder is rated, and at or below the station’s highest-rated program. Until then, those stations skip it. Rate each folder for the most it holds. A decade’s folder is rated as its kind is, unless you rate it.'),
+    h('table', { class: 'users' }, h('tbody', {}, ...rows)),
+    h('div', { class: 'scan-set' }, h('button', { class: 'btn primary', type: 'button', onclick: save }, 'Save ratings'), result));
 }
 async function editLevel(lv) {
   const body = $('#viewingBody');
@@ -53,7 +179,9 @@ async function editLevel(lv) {
     try { plexLibraries = (await api('/api/libraries')).filter(l => l.type === 'show' || l.type === 'movie'); }
     catch { plexLibraries = []; }
   }
+  const offered = await loadTagsOffered();
   body.dataset.editing = '1';
+  const hidden = blocksOf(lv?.blocks);
   const name = h('input', { type: 'text', maxlength: 40, value: lv?.name || '', placeholder: 'Grandparents', autocomplete: 'off', 'aria-label': 'Name' });
   const ratingSelect = (list, age, label) => {
     const select = h('select', { 'aria-label': label }, h('option', { value: '' }, 'No limit'), ...list.map(([a, n]) => h('option', { value: String(a) }, n)));
@@ -82,6 +210,7 @@ async function editLevel(lv) {
       tvAge: tv.value === '' ? null : Number(tv.value),
       unrated: unrated.value === 'shown',
       libraries: some.checked ? boxes.filter(([, b]) => b.checked).map(([k]) => k) : null,
+      blocks: hidden,
     };
     try {
       await api(lv ? `/api/access/levels/${lv.id}` : '/api/access/levels', { method: lv ? 'PUT' : 'POST', body: chosen });
@@ -98,39 +227,56 @@ async function editLevel(lv) {
     row('TV up to', tv, 'An episode counts as its show’s rating, or its own if that’s stricter.'),
     row('Unrated titles', unrated, 'Titles with no rating in Plex.'),
     row('Media folders', h('div', {}, h('label', {}, every, ' Every Media folder'), ' ', h('label', {}, some, ' Only these:'), pick)),
+    h('p', { class: 'hint', style: 'margin:0' }, 'Also hide any show or movie with one of these, whatever its rating. A station that plays one is hidden too. Names are matched whatever their capitals.'),
+    ...TAG_KINDS.map(([kind, label, noun]) => row(label, namePicker(`${label} ${lv ? lv.name : 'this level'} hides`, noun, hidden[kind], offered[kind] || []),
+      kind === 'labels' ? 'Plex calls these labels.' : null)),
     h('div', { class: 'scan-set' },
       h('button', { class: 'btn primary', type: 'button', onclick: save }, lv ? 'Save' : 'Add'),
       h('button', { class: 'btn', type: 'button', onclick: done }, 'Cancel'),
       result)));
   name.focus();
 }
-// A person's stations: as their level says, or allowed or blocked for them.
+// What a person sees: their stations, as their level says or allowed or
+// blocked for them; and (1.33.0) what's hidden for them, and titles allowed
+// for them, whatever their level says.
 let stationsFor = null;
 async function openUserStations(u) {
-  let got;
-  try { got = await api(`/api/access/users/${u.id}/stations`); }
+  let got, offered;
+  try { [got, offered] = await Promise.all([api(`/api/access/users/${u.id}/stations`), loadTagsOffered()]); }
   catch (err) { toast(err.message, true); return; }
-  stationsFor = { user: u, picks: new Map() };
-  $('#userStationsTitle').textContent = `${u.name}’s stations`;
+  const own = viewing?.users[u.id]?.own || {};
+  stationsFor = { user: u, picks: new Map(), hidden: blocksOf(own.blocks), allowed: structuredClone(own.allowTitles || []) };
+  $('#userStationsTitle').textContent = `What ${u.name} sees`;
   $('#userStationsStatus').textContent = '';
   const said = s => s.chosen === 'allowed' ? `Allowed for ${u.name}.${s.why ? ` (${got.level} wouldn’t show it: ${s.why.toLowerCase()}.)` : ''}`
     : s.chosen === 'blocked' ? `Blocked for ${u.name}.`
     : s.levelSees ? `Shown: it’s within ${got.level}.` : `Hidden: ${s.why.charAt(0).toLowerCase()}${s.why.slice(1)}.`;
+  const part = (title, ...children) => h('section', { class: 'sees-part' }, h('h4', {}, title), ...children);
   $('#userStationsBody').replaceChildren(
-    h('p', { style: 'margin:0' }, `${u.name} is on ${got.level}. A station is shown or hidden as ${got.level} says, unless you allow or block it for ${u.name} here.`),
-    got.stations.length ? h('table', { class: 'users' },
-      h('tbody', {}, ...got.stations.map(st => {
-        const hint = h('span', { class: 'hint' }, said(st));
-        const select = h('select', { 'aria-label': `Station ${st.number}`, onchange: e => {
-          stationsFor.picks.set(st.id, e.target.value);
-          hint.textContent = said({ ...st, chosen: e.target.value });
-        } }, h('option', { value: 'level' }, `As ${got.level} says`), h('option', { value: 'allowed' }, 'Allowed'), h('option', { value: 'blocked' }, 'Blocked'));
-        select.value = st.chosen;
-        stationsFor.picks.set(st.id, st.chosen);
-        return h('tr', {},
-          h('td', {}, h('strong', {}, st.number), ` ${st.name}`),
-          h('td', {}, select, h('div', {}, hint)));
-      }))) : h('p', { class: 'muted', style: 'margin:0' }, 'There are no stations yet.'));
+    h('p', { style: 'margin:0' }, `${u.name} is on ${got.level}. They see what ${got.level} shows, but for what you choose for them here.`),
+    part('Stations',
+      h('p', { class: 'hint', style: 'margin:0' }, `A station is shown or hidden as ${got.level} says, unless you allow or block it for ${u.name}.`),
+      got.stations.length ? h('table', { class: 'users' },
+        h('tbody', {}, ...got.stations.map(st => {
+          const hint = h('span', { class: 'hint' }, said(st));
+          const select = h('select', { 'aria-label': `Station ${st.number}`, onchange: e => {
+            stationsFor.picks.set(st.id, e.target.value);
+            hint.textContent = said({ ...st, chosen: e.target.value });
+          } }, h('option', { value: 'level' }, `As ${got.level} says`), h('option', { value: 'allowed' }, 'Allowed'), h('option', { value: 'blocked' }, 'Blocked'));
+          select.value = st.chosen;
+          stationsFor.picks.set(st.id, st.chosen);
+          return h('tr', {},
+            h('td', {}, h('strong', {}, st.number), ` ${st.name}`),
+            h('td', {}, select, h('div', {}, hint)));
+        }))) : h('p', { class: 'muted', style: 'margin:0' }, 'There are no stations yet.')),
+    part(`Also hidden for ${u.name}`,
+      h('p', { class: 'hint', style: 'margin:0' }, `Hidden for ${u.name} whatever ${got.level} shows: in Media, and any station that plays one (unless you allow that station above).`),
+      ...TAG_KINDS.map(([kind, label, noun]) => h('div', { class: 'field' }, h('label', {}, label, kind === 'labels' ? h('span', { class: 'hint' }, ' — Plex calls these labels') : null),
+        namePicker(`${label} hidden for ${u.name}`, noun, stationsFor.hidden[kind], offered[kind] || []))),
+      h('div', { class: 'field' }, h('label', {}, 'Shows and movies'), titlePicker(`Shows and movies hidden for ${u.name}`, stationsFor.hidden.titles))),
+    part(`Allowed for ${u.name} in Media`,
+      h('p', { class: 'hint', style: 'margin:0' }, `Shown to ${u.name} in Media even if ${got.level} would hide them, as long as they’re in a Media folder ${got.level} shows. Hidden above wins. Stations are as chosen above.`),
+      titlePicker(`Shows and movies allowed for ${u.name}`, stationsFor.allowed)));
   $('#userStations').showModal();
 }
 const closeUserStations = () => { $('#userStations').close(); stationsFor = null; };
@@ -140,9 +286,10 @@ $('#saveUserStations').addEventListener('click', async () => {
   if (!stationsFor) return;
   const stations = {};
   for (const [id, pick] of stationsFor.picks) if (pick !== 'level') stations[id] = pick === 'allowed';
-  try { await api(`/api/access/users/${stationsFor.user.id}/viewing`, { method: 'PUT', body: { stations } }); }
+  const own = { blocks: stationsFor.hidden, allowTitles: stationsFor.allowed };
+  try { await api(`/api/access/users/${stationsFor.user.id}/viewing`, { method: 'PUT', body: { stations, own } }); }
   catch (err) { $('#userStationsStatus').textContent = err.message; return; }
-  toast(`${stationsFor.user.name}’s stations saved`);
+  toast(`What ${stationsFor.user.name} sees is saved`);
   closeUserStations();
   loadAccess();
 });

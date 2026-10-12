@@ -105,6 +105,10 @@ class FillerLibrary:
         self._looked = asyncio.Event()
         self._empty_looks = {COMMERCIALS: 0, TRAILERS: 0}
 
+    def known(self, path: str) -> Clip | None:
+        """A clip found on disk, by its path."""
+        return self._known.get(path)
+
     def pool(self, kind: str) -> list[Clip]:
         """The clips of a kind that can be used."""
         return [c for c in self.clips.get(kind, []) if not self.is_bad(c.path)]

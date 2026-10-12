@@ -636,6 +636,13 @@ table.users .pin-set input { width: 7em; }
 table.users .own-password { display: flex; gap: 6px; align-items: center; margin-top: 6px; font-size: 13px; color: var(--ink-2); cursor: pointer; }
 table.users .own-password:has(input:disabled) { cursor: default; }
 .level-edit input[type=text] { max-width: 320px; }
+.name-pick { display: grid; gap: 8px; min-width: 0; }
+.name-pick input { max-width: 320px; min-width: 0; }
+.name-pick .chips:empty { display: none; }
+.sees-part { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
+.sees-part h4 { margin: 0; font-size: 15px; }
+.clip-ratings table { margin-top: 8px; }
+.clip-ratings .scan-set { margin-top: 8px; }
 /* As cards (as on a phone) until the Access tab's widest table fits. */
 @media (max-width: 960px) {
   table.users thead { display: none; }

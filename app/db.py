@@ -781,6 +781,14 @@ _ADDED_COLUMNS = (
     # the Broken files alert covers (see alerts.py), kept across restarts.
     ("alerts", "untold", "TEXT NOT NULL DEFAULT ''"),
     ("alerts", "state", "TEXT NOT NULL DEFAULT ''"),
+    # Added in 1.33.0: limits by what a title is (see viewing.py): each
+    # show's and movie's genres, tags, collections and studio, as JSON (''
+    # until Plex is asked); what a level hides by them; and what's hidden or
+    # allowed for one person. '' is nothing, so nothing changes until an
+    # Admin chooses.
+    ("titles", "tags", "TEXT NOT NULL DEFAULT ''"),
+    ("levels", "blocks", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "blocks", "TEXT NOT NULL DEFAULT ''"),
 )
 
 
@@ -1374,15 +1382,17 @@ class Database:
         with self._lock:
             return self._conn.execute("SELECT * FROM titles").fetchall()
 
-    def save_titles(self, rows: list[tuple[str, str, str, str, int, int]]) -> None:
-        """Titles as (key, kind, rating, library, seen_ms, checked_ms), each
-        replacing what was kept for its key."""
+    def save_titles(self, rows: list[tuple]) -> None:
+        """Titles as (key, kind, rating, library, seen_ms, checked_ms, tags),
+        each replacing what was kept for its key (without tags: none)."""
+        rows = [tuple(r) if len(r) == 7 else (*r, "") for r in rows]
         with self._lock, self._conn:
             self._conn.executemany(
-                "INSERT INTO titles (key, kind, rating, library, seen_ms, checked_ms) "
-                "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET kind = excluded.kind, "
-                "rating = excluded.rating, library = excluded.library, "
-                "seen_ms = excluded.seen_ms, checked_ms = excluded.checked_ms",
+                "INSERT INTO titles (key, kind, rating, library, seen_ms, checked_ms, tags) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET "
+                "kind = excluded.kind, rating = excluded.rating, library = excluded.library, "
+                "seen_ms = excluded.seen_ms, checked_ms = excluded.checked_ms, "
+                "tags = excluded.tags",
                 rows,
             )
 
@@ -1400,13 +1410,14 @@ class Database:
         unrated: bool,
         libraries: list[str] | None,
         builtin: str = "",
+        blocks: str = "",
     ) -> int:
         """Adds a level; sqlite3.IntegrityError if there's one by that name."""
         with self._lock, self._conn:
             cur = self._conn.execute(
-                "INSERT INTO levels (name, movie_age, tv_age, unrated, libraries, builtin) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (name, movie_age, tv_age, int(unrated), _json_or_null(libraries), builtin),
+                "INSERT INTO levels (name, movie_age, tv_age, unrated, libraries, builtin, "
+                "blocks) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (name, movie_age, tv_age, int(unrated), _json_or_null(libraries), builtin, blocks),
             )
         return int(cur.lastrowid or 0)
 
@@ -1418,13 +1429,14 @@ class Database:
         tv_age: int | None,
         unrated: bool,
         libraries: list[str] | None,
+        blocks: str = "",
     ) -> None:
         """sqlite3.IntegrityError if another level has that name."""
         with self._lock, self._conn:
             self._conn.execute(
                 "UPDATE levels SET name = ?, movie_age = ?, tv_age = ?, unrated = ?, "
-                "libraries = ? WHERE id = ?",
-                (name, movie_age, tv_age, int(unrated), _json_or_null(libraries), level_id),
+                "libraries = ?, blocks = ? WHERE id = ?",
+                (name, movie_age, tv_age, int(unrated), _json_or_null(libraries), blocks, level_id),
             )
 
     def make_level_builtin(self, level_id: int, builtin: str, name: str) -> None:
@@ -1455,6 +1467,17 @@ class Database:
         for r in rows:
             out.setdefault(r["user_id"], {})[r["channel_id"]] = bool(r["allowed"])
         return out
+
+    def user_blocks(self) -> dict[int, str]:
+        """What's hidden or allowed for each person, whatever their level
+        says (as viewing.py keeps it, as JSON), for those who have any."""
+        with self._lock:
+            rows = self._conn.execute("SELECT id, blocks FROM users WHERE blocks != ''").fetchall()
+        return {r["id"]: r["blocks"] for r in rows}
+
+    def set_user_blocks(self, user_id: int, blocks: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("UPDATE users SET blocks = ? WHERE id = ?", (blocks, user_id))
 
     def set_user_stations(self, user_id: int, stations: dict[int, bool]) -> None:
         """The stations allowed or blocked for a user are `stations` (any

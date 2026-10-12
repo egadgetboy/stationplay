@@ -43,9 +43,9 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from . import cliprules, intro, playing, specials, subtitles, upnext
 from . import ffmpeg as ff
-from . import intro, playing, specials, subtitles, upnext
-from .breaks import ID_CARD
+from .breaks import COMMERCIALS, ID_CARD, TRAILERS
 from .broken import OPENING, PLAYING, of_part, part_key
 from .catalog import Media, part_words
 from .config import Settings
@@ -867,6 +867,21 @@ class Broadcaster:
         elif not result.stopped and result.next_ts is None:
             await asyncio.sleep(2)  # not even a card will play; don't spin
 
+    def _clip_allowed(self, channel: Channel, slot: Slot, path: str) -> bool:
+        """Whether a commercial or trailer may play now (cliprules.py): on a
+        station someone with limits can see, only one rated at or below its
+        highest-rated program. (Its lineup chose it before; who can see the
+        station may have changed since.)"""
+        ctx = self.ctx
+        viewing = ctx.viewing
+        if not viewing.limited_audience(channel.id):
+            return True
+        kind = COMMERCIALS if slot.item.kind == "episode" else TRAILERS
+        clip = ctx.fillers.known(path)
+        if clip is None:
+            return False
+        return ctx.clip_ratings.rated(kind, clip, cliprules.cap(viewing.reach(channel.id)))
+
     async def _play_clip(
         self,
         channel: Channel,
@@ -883,7 +898,7 @@ class Broadcaster:
         it was scheduled. If it won't play, it's left out from then on and
         a plain card covers the rest of its time."""
         fillers = self.ctx.fillers
-        if fillers.is_bad(path):
+        if fillers.is_bad(path) or not self._clip_allowed(channel, slot, path):
             return await self._play_plain_card(
                 channel, self._up_next(station, slot), remaining_s, ts, burst
             )

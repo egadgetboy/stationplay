@@ -234,7 +234,7 @@ let linked = null;  // linked devices (see devices.py on the server)
 async function loadAccess() {
   let users = [];
   try {
-    if (me.required) [users, viewing, linked] = await Promise.all([api('/api/access/users'), api('/api/access/viewing'), api('/api/access/devices')]);
+    if (me.required) [users, viewing, linked] = await Promise.all([api('/api/access/users'), api('/api/access/viewing'), api('/api/access/devices'), loadClipRatings()]);
   } catch (e) { $('#accessState').textContent = e.message; return; }
   renderViewing();
   renderDevices();
@@ -273,7 +273,7 @@ async function loadAccess() {
             catch (err) { toast(err.message, true); }
             loadAccess();
           } }), made);
-      const set = Object.keys(mine.stations).length;
+      const set = Object.keys(mine.stations).length + hidesCount(mine.own?.blocks) + (mine.own?.allowTitles || []).length;
       const levelCell = u.role === 'admin'
         ? h('td', { class: 'small', 'data-label': 'Viewing Level' }, 'Sees everything')
         : h('td', { 'data-label': 'Viewing Level' }, h('div', { class: 'inline-add' },
@@ -284,7 +284,7 @@ async function loadAccess() {
               catch (err) { toast(err.message, true); }
               loadAccess();
             } }),
-            h('button', { class: 'btn', type: 'button', onclick: () => openUserStations(u) }, set ? `Stations (${set} set)` : 'Stations')));
+            h('button', { class: 'btn', type: 'button', onclick: () => openUserStations(u) }, set ? `What they see (${set} set)` : 'What they see')));
       // Whether they may change their own password, on this page and in the
       // apps (an Admin always may).
       const admin = u.role === 'admin';

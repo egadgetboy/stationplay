@@ -269,7 +269,14 @@ function paintAlerts() {
         h('span', { class: 'icon', 'aria-hidden': 'true' }, warnIcon()),
         h('div', {}, h('p', {}, a.sentence), h('p', { class: 'when' }, `Since ${fmtClock(a.since)}, ${ago(a.since)}`),
           // (What needs you on the Broken files tab: a way there.)
-          a.kind === 'files' ? h('button', { class: 'linkish', type: 'button', onclick: () => { $('#alertsDlg').close(); showTab('broken'); } }, 'Open the Broken files tab') : null)))
+          a.kind === 'files' ? h('button', { class: 'linkish', type: 'button', onclick: () => { $('#alertsDlg').close(); showTab('broken'); } }, 'Open the Broken files tab')
+          // (Commercials or trailers to rate: the Viewing Levels panel, open.)
+          : a.kind === 'clips' ? h('button', { class: 'linkish', type: 'button', onclick: () => {
+              $('#alertsDlg').close();
+              showTab('access');
+              $('#viewingPanel').open = true;
+              $('#viewingPanel').scrollIntoView({ block: 'start' });
+            } }, 'Open the Access tab') : null)))
     : [h('p', { class: 'muted', style: 'margin:0' }, 'Nothing needs a look now. Each alert that’s fixed is in the Logs tab.')]));
 }
 $('#alertsPill').addEventListener('click', () => { paintAlerts(); $('#alertsDlg').showModal(); });

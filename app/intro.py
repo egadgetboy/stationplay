@@ -399,7 +399,7 @@ _SHADOW = ":shadowcolor=0x000000@0.35:shadowx=0:shadowy={}"
 
 
 def _label(card: Card, words: str) -> str:
-    return words + (f"  \u00b7  CHANNEL {card.number}" if card.number else "")
+    return words + (f"  \u00b7  STATION {card.number}" if card.number else "")
 
 
 def _intro_text(

@@ -40,6 +40,10 @@ only once things have been right a while too, so none comes and goes:
               there) has it end, unsaid, and start again with a new ID (the
               apps notify once for each ID; the web address is told the
               same); until then, it only says what it is now.
+  clips       Stations someone with limits can see skip commercials or
+              trailers that aren't rated (see cliprules.py): it says how
+              many stations. Fixed when none does (their folders rated, or
+              no one with limits can see them).
 
 Each has an ID that stays the same while it lasts (a new one starting
 later has a new ID), its kind, a sentence an Admin can act on, when it
@@ -84,8 +88,8 @@ log = logging.getLogger(__name__)
 
 PLEX, DATA_FULL, DATA_WRITE = "plex", "data-full", "data-write"
 STATION, BACKUPS, CLOCK, OUTSIDE = "station", "backups", "clock", "outside"
-FILES = "files"
-KINDS = (PLEX, DATA_FULL, DATA_WRITE, STATION, BACKUPS, CLOCK, OUTSIDE, FILES)
+FILES, CLIPS = "files", "clips"
+KINDS = (PLEX, DATA_FULL, DATA_WRITE, STATION, BACKUPS, CLOCK, OUTSIDE, FILES, CLIPS)
 CHECK_S = 60.0  # how often what's checked is looked at
 FIRST_S = 20.0  # the first look, after StationPlay starts
 PLEX_WAIT_S = 10.0  # the longest Plex is waited for, in a check
@@ -422,6 +426,21 @@ class Alerts:
         self.start(FILES, sentence, after=going)
         self._keep_files()
 
+    def clips(self, stations: int) -> None:
+        """How many stations skip commercials or trailers that aren't rated."""
+        if not stations:
+            self.fix(
+                CLIPS,
+                "Every station people with limits can see has its commercials and trailers rated.",
+            )
+            return
+        self.start(
+            CLIPS,
+            f"{stations} station{'' if stations == 1 else 's'} people with limits can see "
+            f"skip{'s' if stations == 1 else ''} commercials or trailers that aren't rated. "
+            "Rate their folders under Viewing Levels on the Access tab.",
+        )
+
     def _keep_files(self) -> None:
         """What the Broken files alert covers, kept with it as it changes:
         what was there at the last look, and what's come since it was said."""
@@ -462,6 +481,7 @@ class Alerts:
         await asyncio.to_thread(self._look_at_data, ctx.settings.data_dir)
         self._look_outside(ctx.reach.status(), ctx.away.address)
         self.files(await asyncio.to_thread(ctx.reports.needing))
+        self.clips(skipping_unrated(ctx))
 
     async def _look_at_plex(self, ctx: AppContext) -> None:
         plex = ctx.plex
@@ -573,3 +593,27 @@ def _size(free: int) -> str:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def skipping_unrated(ctx: AppContext) -> int:
+    """How many stations someone with limits can see would skip commercials
+    or trailers that aren't rated (those with commercials or trailers on,
+    and unrated clips of the kind they play)."""
+    from .breaks import COMMERCIALS, TRAILERS
+
+    unrated = {
+        kind: ctx.clip_ratings.unrated(kind, ctx.fillers.pool(kind))
+        for kind in (COMMERCIALS, TRAILERS)
+    }
+    if not any(unrated.values()):
+        return 0
+    n = 0
+    for channel in ctx.db.list_channels():
+        if not channel.breaks or not ctx.viewing.limited_audience(channel.id):
+            continue
+        kinds = {i.kind for i in ctx.db.latest_items(channel.id)}
+        if ("episode" in kinds and unrated[COMMERCIALS]) or (
+            "movie" in kinds and unrated[TRAILERS]
+        ):
+            n += 1
+    return n
