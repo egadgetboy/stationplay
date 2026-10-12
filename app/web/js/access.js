@@ -328,7 +328,9 @@ async function loadAccess() {
         h('td', { 'data-label': 'Role' }, role),
         levelCell,
         stations,
-        h('td', { class: 'small', 'data-label': 'Last signed in' }, u.signedInMs ? new Date(u.signedInMs).toLocaleString() : 'Never'),
+        h('td', { class: 'small', 'data-label': 'Last signed in' }, u.signedInMs ? new Date(u.signedInMs).toLocaleString() : 'Never',
+          // (Where from, as the access log has it.)
+          u.signedInMs && u.signedInFrom ? h('div', { class: 'muted', title: 'Where they last signed in from' }, u.signedInFrom) : null),
         actions);
     })));
 }

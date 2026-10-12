@@ -64,6 +64,7 @@ import secrets
 import sqlite3
 import time
 from collections import deque
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -347,6 +348,11 @@ def role_name(role: str) -> str:
 def a_role(role: str) -> str:
     """The role with its article: "an Admin" or "a User"."""
     return "an Admin" if role == ADMIN else "a User"
+
+
+# The address the request being answered came from (see address), for
+# where someone last signed in from: set by Gate for every request.
+asked_from: ContextVar[str] = ContextVar("asked_from", default="")
 
 
 def address(scope: dict) -> str:
@@ -784,8 +790,9 @@ class Access:
         devices.py) that's signed in as `user`."""
         token = secrets.token_urlsafe(32)
         self.db.add_session(
-            _token_hash(token), user.id, _now(), SESSIONS_KEPT, app, device_id, unlocked
-        )
+            _token_hash(token), user.id, _now(), SESSIONS_KEPT, app, device_id, unlocked,
+            asked_from.get(),
+        )  # fmt: skip
         return token
 
     def remember_device(self, user: User) -> str:
@@ -1084,6 +1091,16 @@ class Gate:
         server = scope.get("server")
         public = bool(self.public_port and server and server[1] == self.public_port)
         scope.setdefault("state", {})["outside"] = public
+        said = asked_from.set(address(scope))
+        try:
+            await self._let_through(scope, receive, send, path, public)
+        finally:
+            asked_from.reset(said)
+
+    async def _let_through(
+        self, scope: dict, receive: Callable[[], Awaitable[Any]], send: Callable, path: str,
+        public: bool,
+    ) -> None:  # fmt: skip
         # (Taken for the tuner's however it's written: a client tidies . and
         # .. steps away, so one sent as written, such as /./discover.json,
         # is a trick.)
@@ -1554,8 +1571,11 @@ def routes(app: FastAPI, access: Access) -> None:
 
     @app.get("/api/access/users")
     async def list_users():
+        # (With where each last signed in from: for Admins, on the Access tab.)
         made = access.db.stations_made()
-        return [_user_json(u, made) for u in access.db.users()]
+        return [
+            {**_user_json(u, made), "signedInFrom": u.signed_in_from} for u in access.db.users()
+        ]
 
     @app.post("/api/access/users", status_code=201)
     async def add_user(body: NewUser, request: Request, response: Response):
