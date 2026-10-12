@@ -261,7 +261,7 @@ def test_three_searches_in_about_a_day_then_it_is_left_to_you(world, monkeypatch
             note = world.entry("205")["replace"]["note"]
             assert "searched 2 of 3 times so far and will search again after" in note, note
     # (The last search may still bring a file, for a while.)
-    assert "StationPlay will stop trying" in world.entry("205")["replace"]["note"]
+    assert "tapiOca will stop trying" in world.entry("205")["replace"]["note"]
     clock[0] = 10**12 + 24 * H
     world.go()
     state = world.entry("205")["replace"]
@@ -288,7 +288,7 @@ def test_a_new_file_that_fails_too_is_blocklisted_in_turn(world):
     world.broken("201", "Deep scan: the picture breaks up around 1:00, 2:00 and 3:00")
     world.go()
     assert s.blocklist == ["R1"]
-    # R2 arrives, and StationPlay's check finds it broken too (as going
+    # R2 arrives, and tapiOca's check finds it broken too (as going
     # through the list does, with Plex's new file).
     s.finish(71, "R2.mkv", 2_002)
     part = world.plex.episodes["201"]["Media"][0]["Part"][0]

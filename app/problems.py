@@ -1,19 +1,19 @@
-"""Problems StationPlay's apps run into, sent by the apps themselves as they
+"""Problems tapiOca's apps run into, sent by the apps themselves as they
 happen (not a person's report, which says what the app did lately: see
 appapi.py): a station that didn't start or stopped playing, something from
 Media that didn't play or stopped, playing that couldn't keep up, the
-app closing unexpectedly, and (from 1.29.1) the app not reaching StationPlay
+app closing unexpectedly, and (from 1.29.1) the app not reaching tapiOca
 for a minute or more.
 
 Each one says which app, which version, and what kind of device (its model
 and system), so an Admin can tell from the Logs tab whether a problem is one
 device's, one kind of device's, or everyone's. The same problem from the
 same device soon after counts on the same row, and each one is said once in
-StationPlay's log, as a warning, naming the station as the log does (see
+tapiOca's log, as a warning, naming the station as the log does (see
 playing.station). Kept 30 days, the newest 5,000 at most.
 
 From 1.29.1 an app says when each happened (`at`): it keeps those it
-couldn't send (StationPlay out of reach, say) and sends them once it's back.
+couldn't send (tapiOca out of reach, say) and sends them once it's back.
 Rows go by when each happened, so the oldest go first when there are too
 many: a device sending a backlog can't push out what's newer. Each may come
 with the app's last lines before it (its journal), kept with the newest
@@ -52,7 +52,7 @@ KINDS = {
     "library-stopped": "{what} stopped playing",
     "kept-up": "{what} couldn't keep up, so a smaller version played",
     "crashed": "The app closed unexpectedly",
-    UNREACHABLE: "{what} couldn't reach StationPlay",  # ({what}: the device)
+    UNREACHABLE: "{what} couldn't reach tapiOca",  # ({what}: the device)
 }
 STATION_KINDS = ("station-failed", "station-stopped")
 # Something from the library that didn't play or stopped: its file is
@@ -86,11 +86,10 @@ LASTED_MOST_MS = 30 * 86_400_000  # (an outage longer than this isn't believed)
 # "<domain> <code>") and Roku's ("Roku error <code>"). Unknown codes say
 # nothing more.
 _CONVERTS = (
-    " StationPlay makes a converted copy when the app asks for one (StationPlay for Android "
-    "0.3.1 does)."
+    " tapiOca makes a converted copy when the app asks for one (tapiOca for Android 0.3.1 does)."
 )
 _SECURE = (
-    "A secure (HTTPS) connection to StationPlay couldn't be made. Check the certificate of the "
+    "A secure (HTTPS) connection to tapiOca couldn't be made. Check the certificate of the "
     "reverse proxy in front of it."
 )
 MEANINGS: tuple[tuple[str, str], ...] = (
@@ -114,38 +113,38 @@ MEANINGS: tuple[tuple[str, str], ...] = (
      "Playing fell too far behind the live station, usually after waiting to load on a slow "
      "connection, so the app had to jump ahead."),
     (r"ERROR_CODE_IO_NETWORK_CONNECTION_FAILED|NSURLErrorDomain -100[3459]|Roku error -1",
-     "The device lost its connection to StationPlay: its network dropped, or StationPlay "
+     "The device lost its connection to tapiOca: its network dropped, or tapiOca "
      "couldn't be reached."),
     (r"ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT|NSURLErrorDomain -1001|Roku error -2",
-     "StationPlay took too long to answer the device, often because of a slow or busy "
+     "tapiOca took too long to answer the device, often because of a slow or busy "
      "network."),
     (r"ERROR_CODE_IO_BAD_HTTP_STATUS|NSURLErrorDomain -1011|CoreMediaErrorDomain -12(938|660)",
-     "StationPlay, or a reverse proxy in front of it, answered with an error. StationPlay's "
+     "tapiOca, or a reverse proxy in front of it, answered with an error. tapiOca's "
      "log around that time may say why."),
     (r"ERROR_CODE_PARSING_CONTAINER_(MALFORMED|UNSUPPORTED)|AVFoundationErrorDomain -1182[89]",
      "The device couldn't read the file: it may be damaged, or a kind of file the device "
      "doesn't handle." + _CONVERTS),
     (r"ERROR_CODE_PARSING_MANIFEST_(MALFORMED|UNSUPPORTED)|CoreMediaErrorDomain -12642",
-     "The device couldn't read the playlist StationPlay sent it. If it keeps happening, "
-     "StationPlay's log around that time may say why."),
+     "The device couldn't read the playlist tapiOca sent it. If it keeps happening, "
+     "tapiOca's log around that time may say why."),
     (r"NSURLErrorDomain -12(00|01|02|03|04|05|06)", _SECURE),
 )  # fmt: skip
 _MEANINGS = tuple((re.compile(rf"\b(?:{pattern})\b"), said) for pattern, said in MEANINGS)
-# What an app says kept it from reaching StationPlay, and what that means.
+# What an app says kept it from reaching tapiOca, and what that means.
 TROUBLES: tuple[tuple[str, str], ...] = (
     ("No network on this device",
-     "The device itself had no network (Wi-Fi off, or no signal), so StationPlay wasn't at "
+     "The device itself had no network (Wi-Fi off, or no signal), so tapiOca wasn't at "
      "fault."),
     ("StationPlay's address couldn't be found",
-     "The device couldn't look up StationPlay's address (DNS). Check the address the app "
+     "The device couldn't look up tapiOca's address (DNS). Check the address the app "
      "uses, and your DNS or reverse proxy."),
     ("StationPlay didn't answer",
-     "Nothing answered at StationPlay's address: StationPlay, the server it's on, or the "
+     "Nothing answered at tapiOca's address: tapiOca, the server it's on, or the "
      "connection to it may have been down."),
     ("A secure connection couldn't be made", _SECURE),
     ("StationPlay answered with an error",
-     "Something answered for StationPlay with an error, often a reverse proxy while "
-     "StationPlay was stopped or starting."),
+     "Something answered for tapiOca with an error, often a reverse proxy while "
+     "tapiOca was stopped or starting."),
 )  # fmt: skip
 # How long it lasted, as an app may say it in its detail ("for 3 min 20 s").
 _LASTED = re.compile(r"\bfor (?:(\d+) hr\b)? ?(?:(\d+) min\b)? ?(?:(\d+) s\b)?")
@@ -198,7 +197,7 @@ def label(
     times: int = 1,
 ) -> str:
     """ "Station 5, Cartoon Classics, didn't start", "Northbound didn't
-    play", "Den couldn't reach StationPlay for 12 minutes · No network on
+    play", "Den couldn't reach tapiOca for 12 minutes · No network on
     this device" (for 40 minutes in all, `times` over 1)."""
     said = KINDS.get(kind, "A problem").format(what=subject(kind, number, title, name))
     if kind != UNREACHABLE:
@@ -219,14 +218,14 @@ def lasted(ms: int) -> str:
 
 
 def who_couldnt(device_name: str, device: str) -> str:
-    """The device that couldn't reach StationPlay: its own name, or else
+    """The device that couldn't reach tapiOca: its own name, or else
     its model ("Galaxy S23", from "Galaxy S23, Android 14")."""
     return device_name or device.split(",")[0].strip()
 
 
 def trouble_of(detail: str) -> str:
-    """The kind of trouble an app had reaching StationPlay, from its
-    detail: one of TROUBLES as it said it ("StationPlay answered with an
+    """The kind of trouble an app had reaching tapiOca, from its
+    detail: one of TROUBLES as it said it ("tapiOca answered with an
     error (503)"), or else its first sentence."""
     for known, _ in TROUBLES:
         if detail.startswith(known):
@@ -273,7 +272,7 @@ def cleaned_journal(text: str) -> str:
 
 
 def device_kind(app: str, version: str, device: str) -> str:
-    """ "StationPlay for Roku 0.5.0 on Roku Ultra 4850X, Roku OS 14.0"."""
+    """ "tapiOca for Roku 0.5.0 on Roku Ultra 4850X, Roku OS 14.0"."""
     who = " ".join(p for p in (app or "An app", version) if p)
     return f"{who} on {device}" if device else who
 
@@ -293,9 +292,9 @@ class Problems:
 
     def note(self, sent: Sent, user_id: int | None, away: bool, address: str) -> None:
         """Keeps a problem an app sent (from `address`). Refused if it isn't one
-        StationPlay knows, or the app has sent too many lately."""
+        tapiOca knows, or the app has sent too many lately."""
         if sent.kind not in KINDS:
-            raise Refused("That isn't a kind of problem StationPlay knows")
+            raise Refused("That isn't a kind of problem tapiOca knows")
         if sent.station is not None and not 0 < sent.station < 1_000_000:
             raise Refused("That isn't a station's number")
         unreachable = sent.kind == UNREACHABLE
@@ -305,7 +304,7 @@ class Problems:
             lasted_ms = lasted_in(detail)  # (as the app said it, if it did)
         fields: dict[str, Any] = {
             "kind": sent.kind,
-            # (Trouble reaching StationPlay is the device's, not a station's
+            # (Trouble reaching tapiOca is the device's, not a station's
             # or a title's.)
             "station": None if unreachable else sent.station,
             "title": "" if unreachable else plain(sent.title)[:NAME_MOST],
@@ -378,7 +377,7 @@ class Problems:
         what kinds of device (`only`: all on one kind)."""
         since = int(time.time() * 1000) - days * 86_400_000
         stations = {c.number: c.name for c in self.db.list_channels()}
-        # (Trouble reaching StationPlay is grouped by the device, and the
+        # (Trouble reaching tapiOca is grouped by the device, and the
         # kind of trouble.)
         groups: dict[tuple[str, int | None, str, str], list[dict[str, Any]]] = {}
         for row in self.db.problems_since(since):

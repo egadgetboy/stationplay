@@ -1,4 +1,4 @@
-"""Stations as HLS, for StationPlay's apps: real ffmpeg and a fake Plex."""
+"""Stations as HLS, for tapiOca's apps: real ffmpeg and a fake Plex."""
 
 from __future__ import annotations
 
@@ -329,7 +329,7 @@ async def test_night_mode_sound_is_made_beside_the_station(tmp_path, media, monk
 
 
 async def start_with_public_port(tmp_path, plex: FakePlex):
-    """StationPlay on its home-network port and its public one: (the home
+    """tapiOca on its home-network port and its public one: (the home
     network's address, the internet's), and the app, server and its task."""
     lan, public = (socket.create_server(("127.0.0.1", 0)) for _ in range(2))
     ports = lan.getsockname()[1], public.getsockname()[1]
@@ -454,7 +454,7 @@ async def test_an_app_away_from_home_watches_through_the_public_port(
             log = (await inside.get("/api/logs?access_log=true")).json()["text"]
             assert "Pat is watching station 7, Test TV, away from home, from 203.0.113.7" in log
             said = "\n".join(r.getMessage() for r in caplog.records)
-            who = r"Pat's StationPlay app away from home \([\w-]{6}\)"
+            who = r"Pat's tapiOca app away from home \([\w-]{6}\)"
             assert re.search(f"{who} is watching station 7, Test TV$", said, re.M), said
             assert re.search(
                 f"{who} is watching station 7, Test TV, with night mode's sound$", said, re.M

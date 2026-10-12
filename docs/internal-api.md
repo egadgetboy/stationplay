@@ -1,13 +1,13 @@
-# StationPlay's apps: their own addresses
+# tapiOca's apps: their own addresses
 
-> **Internal: for StationPlay's own apps only.** This isn't a public API. It
+> **Internal: for tapiOca's own apps only.** This isn't a public API. It
 > isn't in the OpenAPI spec, and it may change with any release. For your
-> own scripts and players, use StationPlay's API (`docs/api.md`).
+> own scripts and players, use tapiOca's API (`docs/api.md`).
 
-StationPlay's own apps (iPhone, iPad, Apple TV, Android, Google TV and
+tapiOca's own apps (iPhone, iPad, Apple TV, Android, Google TV and
 Android TV, Roku) use these addresses, under `/api/internal`, for signing in,
 connection tests and Media. For the server, its stations and their guide,
-the apps use StationPlay's API (`docs/api.md`), and they play stations as it
+the apps use tapiOca's API (`docs/api.md`), and they play stations as it
 describes.
 
 The API's rules (`docs/api.md`) apply here too. Every answer carries the
@@ -21,15 +21,15 @@ server, so this document and the server can't drift apart.
 
 ## Signing in
 
-When StationPlay has users (signing in is on), an app signs in one of two
+When tapiOca has users (signing in is on), an app signs in one of two
 ways, and gets a token to send with every request:
 
 - **With a code.** This suits TVs, and anything without a handy keyboard.
-  The app shows a code. Someone signed in on StationPlay's page enters it
+  The app shows a code. Someone signed in on tapiOca's page enters it
   at `/link`, sees which app on which device it is, and links it to their
   account. No password is typed on a remote or sent by the TV. See
   `POST /api/internal/link`.
-- **With a name and password.** This works as on StationPlay's page. See
+- **With a name and password.** This works as on tapiOca's page. See
   `POST /api/internal/sign-in`.
 
 Either way, the app then sends its token with every request:
@@ -49,11 +49,11 @@ Keystore, a Roku's own storage for the app), and never show it.
 From the internet (the public port), apps connect only over HTTPS. Anything
 under `/api/v1`, `/api/internal`, `/hls/k/` or `/play/` that didn't come
 over HTTPS is refused with 403. (The reverse proxy in front reports this
-with `X-Forwarded-Proto`.) The only exception is StationPlay's check of
+with `X-Forwarded-Proto`.) The only exception is tapiOca's check of
 itself (`GET /api/internal/reach`). On the home network, and through a VPN,
 plain HTTP is fine.
 
-Wrong passwords are limited as on StationPlay's page. After 5 wrong ones
+Wrong passwords are limited as on tapiOca's page. After 5 wrong ones
 from one address within 15 minutes, signing in from there must wait (HTTP
 429).
 
@@ -94,7 +94,7 @@ no `deviceKey`.
 From 1.28.0, three sign-in answers carry `askPin`: signing in with a
 password or an invite code (`POST /api/internal/sign-in`,
 `POST /api/internal/picker/sign-in`), or with a code entered on
-StationPlay's page (`POST /api/internal/link/check`). `askPin` says whether
+tapiOca's page (`POST /api/internal/link/check`). `askPin` says whether
 to ask this person, right then, to choose a 4-digit PIN for picking
 themselves on Who's tuning in? (The fields call it `pin`.) It's true while
 they have none and haven't chosen to have none. Offer both:
@@ -121,7 +121,7 @@ the sentence to show, so offer an Admin only a new one.
    404, they aren't on this device's list where it is now, so ask for the
    list again.
 2. **After signing in** with a password, an invite code or a code entered on
-   StationPlay's page: when `askPin` is true, ask for a PIN (typed
+   tapiOca's page: when `askPin` is true, ask for a PIN (typed
    twice) or No PIN, and send it with `POST /api/internal/pin`.
 3. **Options.** Ask `GET /api/internal/me` when Options opens. Show whether
    the person has a PIN (`user.pin`), with Change PIN and No
@@ -134,7 +134,7 @@ A server before 1.28.0 doesn't send `askPin`, `user.pin` or
 `user.canChangePassword`, and doesn't have the two new addresses. Without
 those fields, leave out what they'd offer.
 
-On the public port, only `GET /api/v1/server` (and StationPlay's check of
+On the public port, only `GET /api/v1/server` (and tapiOca's check of
 itself) answers until signing in is on. API tokens (`docs/api.md`) don't
 work on these addresses, which are for the apps' own sign-ins.
 
@@ -148,7 +148,7 @@ work on these addresses, which are for the apps' own sign-ins.
    uses (see Languages).
 2. **Playing.** Send `device.subtitles` with `POST /api/internal/play`: the
    subtitle formats the player shows itself. Don't send `audio` or
-   `subtitle` when a program starts, since StationPlay chooses from the
+   `subtitle` when a program starts, since tapiOca chooses from the
    person's languages. When `chosen` isn't null, select `chosen.audio` and
    `chosen.subtitle` in the player. (A separate subtitle file comes from
    `subtitles[].url`. One that's `drawnSubtitle` is already in the
@@ -182,7 +182,7 @@ work on these addresses, which are for the apps' own sign-ins.
      well as when they open.
    - The Roku app shows how many there are in the guide's header, which
      opens the list.
-5. **PIN.** From 1.31.0, StationPlay's page and its sentences say "PIN"
+5. **PIN.** From 1.31.0, tapiOca's page and its sentences say "PIN"
    (1.28.0 to 1.30.0 used another word); the apps say the same. The fields
    were always `pin`.
 
@@ -202,7 +202,7 @@ alerts).
    was playing (its addresses answer 404). Ask for the next episode when
    it's time to play it, not while another plays. Switching sound tracks
    or versions works as before.
-3. **Up next from StationPlay.** Show a show's `next`, and the Resume row,
+3. **Up next from tapiOca.** Show a show's `next`, and the Resume row,
    as they come (see Up next and the Resume row). Don't work out what's
    next in the app. When an episode ends and the next should play, report
    where it ended, then ask for its show's details for `next`.
@@ -232,7 +232,7 @@ alerts).
      ("You've reported this one today. Thanks.") or reporting turned off.
 
    See Reporting a problem.
-8. **What's broken doesn't play.** A version StationPlay found broken never
+8. **What's broken doesn't play.** A version tapiOca found broken never
    plays. When another version plays in its place, `why` says so (for
    `direct` too, so show it in the player's info). When every version is
    broken, the answer is 422 with the `detail` "This one can't play right
@@ -241,11 +241,11 @@ alerts).
    `damaged`). Mark a broken one, so the viewer chooses another.
 9. **Problems say what and where.** With `library-failed` and
    `library-stopped`, send the playing's `session` and `positionMs` (see
-   `POST /api/internal/problem`). StationPlay checks that file at that point
+   `POST /api/internal/problem`). tapiOca checks that file at that point
    first.
 10. **Alerts about files.** For an Admin, alerts may now be `files` (see
     Admin alerts). Notify once for each `id`, as for any other alert. If
-    the app links to StationPlay's page, offer a way to its **Broken files**
+    the app links to tapiOca's page, offer a way to its **Broken files**
     tab.
 
 A server before 1.30.0 ignores `sequence`. It answers a show's episodes all
@@ -262,17 +262,17 @@ Nothing new is required.
    home now come with `/hls/k/` addresses of its own, for `hls`, `nightHls`
    and `logo`, as they do away from home, whatever an Admin chooses under
    **Tuner access**. So switching to **Only these devices** never stops an
-   app that's signed in. A home address stops working when StationPlay
+   app that's signed in. A home address stops working when tapiOca
    restarts, as one away from home does. The apps already ask
    `GET /api/v1/stations` again when a `/hls/k/` address answers 404,
    wherever they are: keep doing that. Right after updating to 1.32.0, an
    app still has the tuner's own addresses until it next asks for its
    stations (when it starts, and every 10 minutes).
 2. **Only the apps' own addresses.** Keep using only the addresses
-   StationPlay gives the apps, never the tuner's: not `/art/`, `/stream/`,
+   tapiOca gives the apps, never the tuner's: not `/art/`, `/stream/`,
    `/hls/<number>/` asked for directly, or `xmltv.xml`. While only listed
    devices may use the tuner, those are refused to the apps' devices.
-3. **The page's PIN sign-in.** StationPlay's page now lets someone sign in
+3. **The page's PIN sign-in.** tapiOca's page now lets someone sign in
    with their PIN at home, on a browser where they've signed in with their
    password. Nothing changes for the apps.
 4. **Night mode's sound.** `nightHls`, and copies asked for with `night`,
@@ -312,7 +312,7 @@ Open to anyone. Starts signing in with a code. Send which app this is, and
 the device's own name, as the **Access** tab will list it:
 
 ```json
-{"app": "StationPlay for Roku", "deviceName": "Living Room Roku", "picker": true,
+{"app": "tapiOca for Roku", "deviceName": "Living Room Roku", "picker": true,
  "deviceKey": "..."}
 ```
 
@@ -320,7 +320,7 @@ the device's own name, as the **Access** tab will list it:
 picker, and `deviceKey` if the app already has one (see Linked devices,
 above).
 
-Show `code`, and where to enter it: StationPlay's page at `linkAt`. An app
+Show `code`, and where to enter it: tapiOca's page at `linkAt`. An app
 that knows the page's address shows it in full, such as
 `http://192.168.1.20:3310/link`. Then send `poll` to
 `POST /api/internal/link/check` every `interval` seconds, until it answers
@@ -333,7 +333,7 @@ gets the sign-in.
 | `poll` | string | The app's secret for checking back |
 | `expiresIn` | number | Seconds until the code runs out (600) |
 | `interval` | number | Seconds between checks (3) |
-| `linkAt` | string | Where on StationPlay's page the code is entered |
+| `linkAt` | string | Where on tapiOca's page the code is entered |
 
 Answers 400 when signing in is off, and 429 when one address has asked for
 too many codes recently.
@@ -359,7 +359,7 @@ Open to anyone. Send:
 
 ```json
 {"name": "Sam", "password": "...", "device": "...",
- "app": "StationPlay for iPhone", "deviceName": "Sam's iPhone"}
+ "app": "tapiOca for iPhone", "deviceName": "Sam's iPhone"}
 ```
 
 `device` is optional. It's the `device` from an earlier sign-in on this
@@ -448,7 +448,7 @@ works once.)
 ```
 
 Send `password` instead of `code`, or send `secret` for a single box where
-either is typed. StationPlay treats `secret` as an invite code if it is
+either is typed. tapiOca treats `secret` as an invite code if it is
 one, and otherwise as a password. Whoever signs in is on this device's
 picker from then on.
 
@@ -500,7 +500,7 @@ sign-in has ended.
 | `languages.captionLanguage` | object or null | The subtitles' language; null: for On, the language of the sound that plays; for Automatic, the device's |
 | `languages.captionLanguage.code` | string | Its code |
 | `languages.captionLanguage.name` | string | Its name |
-| `languages.choices` | list | Every language StationPlay knows, A to Z by name, to choose from |
+| `languages.choices` | list | Every language tapiOca knows, A to Z by name, to choose from |
 | `languages.choices[].code` | string | Its code |
 | `languages.choices[].name` | string | Its name |
 
@@ -522,7 +522,7 @@ sound's language with subtitles On, and the device's with Automatic.
 1.34.0 sends `captions` instead, true (On) or false (Off); send one or the
 other, never both. It only ever sets the languages of the person signed
 in, and anything else sent is ignored. Answers 400, with the sentence to
-show, for a language StationPlay doesn't know, for `subtitles` that isn't
+show, for a language tapiOca doesn't know, for `subtitles` that isn't
 one of the three, for `captions` that isn't true or false, and for both
 sent at once.
 
@@ -551,7 +551,7 @@ PIN doesn't prove it, since anyone at that device could have done it.
 From 1.28.1, such a sign-in can't set or remove a PIN, so sign in with
 a password or an invite code first.
 
-The access log shows "Tia set a PIN in StationPlay for Android on
+The access log shows "Tia set a PIN in tapiOca for Android on
 Tia's phone" or "Tia chose no PIN in ...".
 
 | Field | Type | What it is |
@@ -575,7 +575,7 @@ within 15 minutes still means a wait.
 ## POST /api/internal/password
 
 From 1.28.0, the person signed in changes their own password, as on
-StationPlay's page, with the app's token. Send their current password and
+tapiOca's page, with the app's token. Send their current password and
 the new one:
 
 ```json
@@ -583,10 +583,10 @@ the new one:
 ```
 
 A new password has at least 8 characters (and at most 200). As on
-StationPlay's page, every other sign-in of theirs ends (other apps,
+tapiOca's page, every other sign-in of theirs ends (other apps,
 browsers and pickers). The app's own token ends too. The app carries on
 with `token`, which it keeps in place of the old one. The access log shows
-"Sam changed their password in StationPlay for Android on Sam's phone."
+"Sam changed their password in tapiOca for Android on Sam's phone."
 
 | Field | Type | What it is |
 |---|---|---|
@@ -617,7 +617,7 @@ Ends the token it's sent with. Answers `{"ok": true}`.
 ## GET /api/internal/speed-test
 
 A connection test: data for the app to time. It shows the Admin how fast
-StationPlay reaches devices (at home, and away from home, where it's the
+tapiOca reaches devices (at home, and away from home, where it's the
 home internet's upload) and how many can watch at once. `?mb=` is how many
 megabytes to send (1 to 64; 20 if it isn't given). The data is random, so
 nothing along the way can compress it, and it has a `Content-Length`.
@@ -630,8 +630,8 @@ seconds gets 429.
 ## POST /api/internal/speed-test
 
 What the app found: `{"mbps": 48.2, "app": "...", "deviceName": "..."}`
-(`app` and `deviceName` as for signing in). StationPlay keeps it for the
-**Access** tab, with where it ran as StationPlay sees it. It recommends
+(`app` and `deviceName` as for signing in). tapiOca keeps it for the
+**Access** tab, with where it ran as tapiOca sees it. It recommends
 limits from the fastest recent tests.
 
 | Field | Type | What it is |
@@ -643,7 +643,7 @@ limits from the fastest recent tests.
 
 ## GET /api/internal/reach
 
-Not for the apps. StationPlay asks this of itself, at the address set for
+Not for the apps. tapiOca asks this of itself, at the address set for
 watching away from home, to check that apps can reach it from outside. The
 result shows on the **Access** tab and in the page's header. It's open on
 both ports, to anyone, over plain HTTP too, and before there's a user.
@@ -660,17 +660,17 @@ any other value, it answers 404 and nothing more.
 
 From 1.22.1, when `features` lists `reports`: a problem report, for
 whoever is looking into a problem. It shows what the app did recently, and
-on what device. It goes in StationPlay's log, and so on the **Logs** tab, as
+on what device. It goes in tapiOca's log, and so on the **Logs** tab, as
 a warning that starts "Report from" and the app's name (with who's signed
 in). Send:
 
 ```json
-{"text": "...", "app": "StationPlay for Android TV", "deviceName": "Den"}
+{"text": "...", "app": "tapiOca for Android TV", "deviceName": "Den"}
 ```
 
 `text` is lines of plain text: the app's and device's details, then what it
 did recently, oldest first, with any crash. Never include a token or a
-password. StationPlay keeps at most 400 lines or 24,000 characters of it,
+password. tapiOca keeps at most 400 lines or 24,000 characters of it,
 and notes how many it left out. Each address can send one report every 30
 seconds, and another gets 429. An empty one gets 400.
 
@@ -688,7 +688,7 @@ device, one kind of device or everyone. Send what's known:
 
 ```json
 {"kind": "station-stopped", "station": 5, "detail": "The picture stopped...",
- "app": "StationPlay for Roku", "version": "0.5.0",
+ "app": "tapiOca for Roku", "version": "0.5.0",
  "device": "Roku Ultra 4850X, Roku OS 14.0", "deviceName": "Den",
  "at": 1791580000000, "journal": "Tuned to station 5\nThe picture stopped at 0:42"}
 ```
@@ -705,7 +705,7 @@ device, one kind of device or everyone. Send what's known:
 - `library-stopped`: playing from Media stopped and couldn't continue
   (`title`). With either of these two, from 1.30.0, send `session` (the
   playing's ID, from `POST /api/internal/play`) and `positionMs` (where in
-  the program it happened). StationPlay checks that file at that point
+  the program it happened). tapiOca checks that file at that point
   first, ahead of everything else it checks except a station's program
   about to air. It puts the file on the **Broken files** list only if it
   finds what's wrong. Without `session`, it checks what that device played
@@ -715,19 +715,19 @@ device, one kind of device or everyone. Send what's known:
   (`title`, or `station`).
 - `crashed`: the app closed unexpectedly last time (sent when it opens
   again; `detail` is the crash's first line).
-- `unreachable` (from 1.29.1): the app couldn't reach StationPlay for a
+- `unreachable` (from 1.29.1): the app couldn't reach tapiOca for a
   minute or more, sent once it's back. `detail` says what kind of trouble.
-  It starts with one of "No network on this device", "StationPlay's address
+  It starts with one of "No network on this device", "tapiOca's address
   couldn't be found", "StationPlay didn't answer", "A secure connection
   couldn't be made" or "StationPlay answered with an error (503)". Then come
   the device's kind of network (Wi-Fi, mobile data, Ethernet; never its
   name or address) and how long it lasted. `lastedMs` says how long, in
-  milliseconds. (Without it, StationPlay reads "for 3 min 20 s" or "for 1
+  milliseconds. (Without it, tapiOca reads "for 3 min 20 s" or "for 1
   hr 5 min" from `detail`.) `at` is when it began. The **Logs** tab shows it
-  as "Den couldn't reach StationPlay for 12 minutes · No network on this
+  as "Den couldn't reach tapiOca for 12 minutes · No network on this
   device."
 
-`detail` is what the app saw, in a sentence (StationPlay keeps at most 300
+`detail` is what the app saw, in a sentence (tapiOca keeps at most 300
 characters). For a player's error, put its code first, as the player names
 it: `ERROR_CODE_DECODING_FAILED` from Media3; `AVFoundationErrorDomain -11821`
 or `NSURLErrorDomain -1009` from Apple's players, as "<domain> <code>";
@@ -739,23 +739,23 @@ Never include a token, a password or a stream's private address.
 From 1.29.1, also send:
 
 - `at`: when it happened (milliseconds since 1970). An app keeps the
-  problems it couldn't send (while StationPlay is out of reach, say) and
+  problems it couldn't send (while tapiOca is out of reach, say) and
   sends them once it's back, oldest first. One from up to 7 days ago, or up
   to 5 minutes ahead (a device's clock a little off), is kept as happening
   then. Otherwise, it's kept as happening when it arrived. The **Logs** tab
   orders problems by when each happened.
 - `journal`: the app's last lines before it, as a problem report has them,
   joined with `\n` (never a token, a password or a stream's private
-  address). StationPlay keeps its newest lines, within 8 KB (8,192 bytes in
+  address). tapiOca keeps its newest lines, within 8 KB (8,192 bytes in
   UTF-8), for the **Logs** tab's **What led up to it**. A longer one is cut,
   leaving out its oldest lines.
 
 The same problem from the same app and device within 10 minutes of the
-first counts toward the first, and is written to StationPlay's log once.
+first counts toward the first, and is written to tapiOca's log once.
 Each app on each device can send at most 30 in 10 minutes, and more get 429
 (keep them, and send them later). The 5,000 that happened most recently are
 kept, so a backlog of old ones never pushes out newer ones. A `kind`
-StationPlay doesn't know gets 400.
+tapiOca doesn't know gets 400.
 
 | Field | Type | What it is |
 |---|---|---|
@@ -773,11 +773,11 @@ picked with `POST /api/internal/report-problem`. Show the answer's `detail`
 unchanged, and a refusal's `detail` unchanged too (the limits, or reporting
 turned off).
 
-StationPlay knows who sent a report, and on what device, from the app's
+tapiOca knows who sent a report, and on what device, from the app's
 sign-in. What it does depends on the problem:
 
-- **What StationPlay can check.** No picture, the picture breaking up, no
-  sound, the sound cutting out, stopping early or not playing. StationPlay
+- **What tapiOca can check.** No picture, the picture breaking up, no
+  sound, the sound cutting out, stopping early or not playing. tapiOca
   checks the file at once, around where the problem happened first.
 - **What a machine can't judge.** This waits for an Admin on the **Broken
   files** tab.
@@ -810,7 +810,7 @@ or the player's menu), send its key:
 ```
 
 For what's on a station now (from the station's player), send its number
-instead. StationPlay knows the program, and where in it the station is.
+instead. tapiOca knows the program, and where in it the station is.
 
 ```json
 {"choice": "picture-breaks", "station": 5}
@@ -821,7 +821,7 @@ instead. StationPlay knows the program, and where in it the station is.
 That's `method` (as the play answer had it: `direct`, `repackage` or
 `convert`), `version` (the version playing), and `audio` and `subtitle`
 (the tracks' IDs; null for none). Leave out what you don't know. Without a
-`version`, StationPlay uses what that device played of it recently, or else
+`version`, tapiOca uses what that device played of it recently, or else
 its best version.
 
 The answer is `{"detail": "Thanks. An Admin will take a look."}`: show it.
@@ -842,15 +842,15 @@ Each refusal has a `detail` to show unchanged:
 
 ## Admin alerts
 
-From 1.29.0, StationPlay raises an alert for each problem an Admin can act
+From 1.29.0, tapiOca raises an alert for each problem an Admin can act
 on, once when it starts and again when it's fixed:
 
-- Plex can't be reached (or won't accept StationPlay's token).
+- Plex can't be reached (or won't accept tapiOca's token).
 - The data folder is nearly full or can't be written to.
 - A station keeps failing to start.
 - Backups are failing.
 - The clock is badly off (by Plex's).
-- The apps can't reach StationPlay from outside (the outside check).
+- The apps can't reach tapiOca from outside (the outside check).
 
 An alert is raised only once the problem has lasted for some time, such as
 3 checks in a row a minute apart, or a station failing to start 3 times in
@@ -861,7 +861,7 @@ show alerts too, and an Admin can have them sent to up to 3 web addresses
 
 From 1.30.0, there's one more kind, `files`: something on the **Broken
 files** tab needs an Admin. That's a person's report, a file a station or
-Media plays that StationPlay found broken or damaged and that isn't being
+Media plays that tapiOca found broken or damaged and that isn't being
 replaced automatically, or one Sonarr or Radarr couldn't replace. For
 example: "There are 3 files to look at on the Broken files tab: Tia
 reported No sound on Northbound S2 E4." The alert shows how many, and the
@@ -880,10 +880,10 @@ and every few minutes while it's open. On Android, also ask every 15
 minutes in the background (WorkManager), notifying once for each new `id`,
 and once when it's fixed.
 
-From 1.31.0, StationPlay keeps its alerts across a restart:
+From 1.31.0, tapiOca keeps its alerts across a restart:
 
 - **One still going** keeps its `id`. It isn't new, so don't notify again.
-- **One fixed while StationPlay was stopped** is listed as fixed, with its
+- **One fixed while tapiOca was stopped** is listed as fixed, with its
   `id`, once its check finds it.
 - **Those fixed in the last 24 hours** stay listed.
 
@@ -909,10 +909,10 @@ Anyone else gets 403. Lists the current alerts, and those fixed in the last
 ## Media
 
 When an Admin shares Media folders with the apps (on the **Access** tab, under
-**Media in StationPlay's apps**), the apps can browse them and play their
+**Media in tapiOca's apps**), the apps can browse them and play their
 shows and movies whenever the viewer likes. Until then, `features` doesn't
 list `library`, and these addresses answer 404 ("No Media folders are
-shared with StationPlay's apps").
+shared with tapiOca's apps").
 
 - **At home.** These addresses answer on the home network, or through a
   VPN, which looks like home.
@@ -929,9 +929,9 @@ home, or away).
 Anything that isn't in a shared Media folder answers 404, the same as something
 that doesn't exist (and so does anything Plex says isn't there). Every one
 of these answers within 8 seconds, however slow Plex is. When Plex is slow,
-unreachable, or sends something StationPlay can't read, they answer 503
-with "StationPlay can't reach Plex right now. Try again in a moment." (never
-a 500). What StationPlay was fetching carries on meanwhile, so asking again
+unreachable, or sends something tapiOca can't read, they answer 503
+with "tapiOca can't reach Plex right now. Try again in a moment." (never
+a 500). What tapiOca was fetching carries on meanwhile, so asking again
 a little later often finds it ready.
 
 From 1.29.1, nothing the apps receive names a file or a folder: not a play
@@ -945,13 +945,13 @@ episode. Pictures (`poster`, `backdrop`, `thumb`) are addresses under
 `/api/internal/art`. Add `&w=` with the width it will be shown at, in
 pixels, and send the app's token with them.
 
-StationPlay keeps each person's own place in what they watch: the Resume
+tapiOca keeps each person's own place in what they watch: the Resume
 row, where to resume and what they've watched. While signing in is off,
 everyone shares one.
 
 ## Languages
 
-From 1.29.0, each person has their own languages. StationPlay keeps them,
+From 1.29.0, each person has their own languages. tapiOca keeps them,
 so they follow the person to every device. (While signing in is off,
 everyone shares one set.)
 
@@ -968,13 +968,13 @@ everyone shares one set.)
 
 Languages are ISO 639-2 codes, as files carry them (`eng`, `jpn`). For the
 few with two codes, it's the one files use (`fre`, `ger`). Each comes with
-a name to show ("English," "Japanese"). StationPlay knows the languages in
+a name to show ("English," "Japanese"). tapiOca knows the languages in
 `choices` (in `GET /api/internal/me`). It also accepts two-letter codes
 (`en`, `pt-BR`) and the other three-letter ones (`fra`, `deu`) for them.
 Any other code is refused with 400 and a sentence to show.
 
 When an app plays an episode or a movie (`POST /api/internal/play`) without
-sending `audio` or `subtitle`, StationPlay chooses for whoever is signed
+sending `audio` or `subtitle`, tapiOca chooses for whoever is signed
 in. It takes each of the three from the most specific place it's chosen:
 the episode's (or movie's), else its show's, else the person's own, else
 the file's default.
@@ -998,7 +998,7 @@ the file's default.
   without it (from an app before 1.34.0) gets subtitles nobody turned on
   or off as off, exactly as before 1.34.0.
 
-The answer's `chosen` shows what StationPlay chose, and why, in a few words
+The answer's `chosen` shows what tapiOca chose, and why, in a few words
 to show ("Japanese, kept for this show by Sticky Audio"; "English
 subtitles, as the sound is Japanese"), and that's what plays. The
 app selects `chosen.audio` and `chosen.subtitle` in its player. A subtitle
@@ -1015,7 +1015,7 @@ don't use these languages yet.
 
 ## Up next and the Resume row
 
-StationPlay decides what's next in a show, the same for every app (a show's
+tapiOca decides what's next in a show, the same for every app (a show's
 `next`, and the Resume row). It works from this person's progress in the
 show's episodes, newest first. Marking an episode not watched from a menu
 says nothing about where they are, so those marks are passed over.
@@ -1035,7 +1035,7 @@ says nothing about where they are, so those marks are passed over.
 
 The Resume row has the movies they're partway through (a minute or more
 in), and each show's Up next by rule 1 or 2. It's newest first, one per
-show, up to 20. Only StationPlay keeps track of where they are (see
+show, up to 20. Only tapiOca keeps track of where they are (see
 `POST /api/internal/progress`). What they watch in Plex's own players
 doesn't count.
 
@@ -1204,7 +1204,7 @@ A show's, movie's or episode's details: its card's fields, and more.
 | `versions[].size` | string or null | As `picture.size` |
 | `versions[].hdr` | string or null | As `picture.hdr` |
 | `versions[].bitrateKbps` | number or null | What it needs, in kilobits a second |
-| `versions[].problem` | string or null | What StationPlay found wrong with this version's file (from 1.30.0), so the app can offer another: `broken` (it can't play; another version plays in its place, if there's one StationPlay didn't find broken) or `damaged` (it plays, but its picture or sound breaks up in places); null when it found nothing |
+| `versions[].problem` | string or null | What tapiOca found wrong with this version's file (from 1.30.0), so the app can offer another: `broken` (it can't play; another version plays in its place, if there's one tapiOca didn't find broken) or `damaged` (it plays, but its picture or sound breaks up in places); null when it found nothing |
 | `languages` | object | What this person chose for it (from 1.29.0: see Languages), for the player's Audio & subtitles |
 | `languages.item` | object or null | For this show (the whole show), or this episode or movie alone; null: nothing |
 | `languages.item.audio` | object or null | The sound's language; null: not chosen here |
@@ -1269,7 +1269,7 @@ optional:
 Each language is a code, or null to clear that one (then the show's choice,
 or the person's own, applies). `captions` is true, false or null. What
 isn't sent stays unchanged. Answers 400, with the sentence to show, for a
-language StationPlay doesn't know, or a key that isn't a show, an episode
+language tapiOca doesn't know, or a key that isn't a show, an episode
 or a movie (a season, say). Answers 404 for what isn't shared or can't be
 seen, as its details do.
 
@@ -1344,7 +1344,7 @@ play, as the device itself reports it (never a guess). Optionally send
             "hdr": ["hdr10", "hlg"],
             "audio": ["aac", "ac3", "eac3", "mp3", "opus", "flac"],
             "subtitles": ["srt", "ass", "vtt", "pgs"]},
- "app": "StationPlay for Android TV", "deviceName": "Den"}
+ "app": "tapiOca for Android TV", "deviceName": "Den"}
 ```
 
 `hdr` lists only what the screen shows (`hdr10`, `hlg`, `dv` for Dolby
@@ -1356,7 +1356,7 @@ Languages). Without the list, every subtitle chosen for them is drawn in.
 
 Add `"version"` (a version's `id` from its details) to play that version.
 Without it, the best version the device can play directly plays, unless the
-app sends `"maxKbps"`. That's how much its connection to StationPlay
+app sends `"maxKbps"`. That's how much its connection to tapiOca
 carries, as it measured recently (with `/api/internal/speed-test`). Then the
 best version that connection keeps up with plays (one that needs no more
 than two-thirds of it, on average). With none, the smallest the device can
@@ -1369,7 +1369,7 @@ ordinary picture beneath.) The device must also play the sound of its
 default track, or of `audio` if it's sent, or else of the one chosen for
 the person (see Languages).
 
-When it can't, StationPlay 1.24.0 and later makes a copy it can play
+When it can't, tapiOca 1.24.0 and later makes a copy it can play
 (`features` lists `convert`), for an app that says it takes one.
 `device.hls` lists what its player takes in an HLS playlist: `ts` (MPEG-TS
 pieces with H.264), `ts-hevc` (MPEG-TS pieces with HEVC) and `fmp4`
@@ -1393,7 +1393,7 @@ With `device.hls`, a copy is also made when the app sends:
   app that can't make it itself.
 - `language` (from 1.34.0): the device's own language setting, such as
   `en-US`, for Automatic subtitles, which apply only when it's sent (see
-  Languages). One StationPlay doesn't know leaves your language unknown, so
+  Languages). One tapiOca doesn't know leaves your language unknown, so
   Automatic shows only the sound's forced subtitles.
 - `convert: true` (from 1.29.1, when `features` lists `convert-asked`): a
   converted copy, whatever `device` says it plays. This is for when the
@@ -1412,7 +1412,7 @@ With `device.hls`, a copy is also made when the app sends:
     against the copies converted at once, as any converted copy does.
   - Send the problem the app ran into first (`POST /api/internal/problem`,
     kind `library-failed` or `library-stopped`, with the player's error in
-    `detail`). StationPlay's log then shows that the app asked for the copy
+    `detail`). tapiOca's log then shows that the app asked for the copy
     after that.
   - Without `device.hls` (`ts`), the answer is 422 with `detail`. A file
     that can't be converted (a Dolby Vision profile 5 picture, say) gets
@@ -1436,7 +1436,7 @@ Show the copy's `why` in the player's info. Without `device.hls`, an
 episode plays as it did before.
 
 Send `startMs` too: where the player will start (by default, where this
-person stopped). A copy's playlist says to start there, and StationPlay
+person stopped). A copy's playlist says to start there, and tapiOca
 starts making it there. `audio` (a sound track's ID) plays that track. A
 copy holds only that one, so another track means another copy. Ask again
 with it and `startMs` where the viewer is, and `POST` the old one's
@@ -1445,21 +1445,21 @@ with it and `startMs` where the viewer is, and `POST` the old one's
 If the device can't play the file directly and no copy can be made, the
 answer is 422, with `detail` (a sentence to show) and `why` (a list of the
 reasons). That happens when the app didn't send `device.hls`, or nothing it
-takes would show the file correctly. StationPlay converts at most 3 copies
+takes would show the file correctly. tapiOca converts at most 3 copies
 at once, or 6 on a GPU (repackaging costs next to nothing). One more gets
 503 with `detail`. (A device's own copy, which a new one takes over from,
 isn't counted.)
 
-From 1.30.0, a version StationPlay found broken never plays
+From 1.30.0, a version tapiOca found broken never plays
 (`versions[].problem` is `broken`: its checks found it can't play). Another
-version plays instead, if there's one StationPlay didn't find broken
+version plays instead, if there's one tapiOca didn't find broken
 (whichever would play otherwise, as above). `why` says so ("another
 version, as 4K can't play right now"), whether it plays directly or as a
 copy. With none, the answer is 422, with the `detail` "This one can't play
 right now. An Admin has been told." (and `why`). A damaged version plays,
 as before. Trouble playing a version isn't a verdict on its own. That's a
 copy that can't be made, or a problem the app sends (see
-`POST /api/internal/problem`). StationPlay checks the file at that point,
+`POST /api/internal/problem`). tapiOca checks the file at that point,
 and only what it finds puts the file on the list.
 
 Every refusal has `detail`, a sentence to show unchanged:
@@ -1535,11 +1535,11 @@ is, and otherwise offer it. With none, say so plainly.
 | `session` | string | This playing's ID (for progress reports) |
 | `method` | string | How it plays: `direct` (the file unchanged), `repackage` or `convert` (a copy; from 1.24.0) |
 | `url` | string | What the player plays (it needs no token): the file, such as `/play/<session>/file.mkv`, whose ranges are answered so the player can seek; or a copy's HLS playlist, `/play/<session>/index.m3u8`, listing the whole program from its start (a jump far ahead takes a few seconds more to start). Relative to where the app asked: a program started through the public port plays there (and at home), one started at home never plays through the public port |
-| `why` | list or null | Why a copy is made (null for `direct`); and from 1.30.0, that another version plays, in place of one StationPlay found broken (for `direct` too) |
+| `why` | list or null | Why a copy is made (null for `direct`); and from 1.30.0, that another version plays, in place of one tapiOca found broken (for `direct` too) |
 | `why[]` | string | One reason, such as "its sound's format (DTS)", "even sound for the show's episodes" (from 1.27.0), "another version, as 4K can't play right now" (from 1.30.0), or "its 2 files, played as one" (from 1.31.0) |
 | `audioTrack` | string or null | The sound track in a copy (null for `direct`, where the player chooses among `audio`) |
 | `drawnSubtitle` | string or null | The subtitle track drawn into a copy's picture, if any |
-| `chosen` | object or null | What StationPlay chose for this person from their languages, and plays (from 1.29.0: see Languages); null when the app sent `audio` or `subtitle`, or nothing is chosen anywhere for them |
+| `chosen` | object or null | What tapiOca chose for this person from their languages, and plays (from 1.29.0: see Languages); null when the app sent `audio` or `subtitle`, or nothing is chosen anywhere for them |
 | `chosen.audio` | string or null | The sound track that plays: select it in the player (a copy holds only it); null for a file without sound |
 | `chosen.audioWhy` | string | Why, in a few words to show: "Japanese, as chosen for this show", "The file's default: it has no Japanese sound" |
 | `chosen.subtitle` | string or null | The subtitle track to show: select it in the player (for a file of its own, add it from `subtitles[].url`), unless it's `drawnSubtitle`; null for none |
@@ -1591,7 +1591,7 @@ The `url` (and subtitles' `url`) stop working (404) when the app `POST`s to
 `leave`, when the same device plays something else (from 1.30.0), after 4
 hours unused, when the app's sign-in ends, when its Media folder is no longer
 shared, when watching away from home is turned off (for one started through
-the public port), and when StationPlay restarts. Choose the program again
+the public port), and when tapiOca restarts. Choose the program again
 to play it again. Through the public port, a sign-in that ends stops its
 programs at once.
 
@@ -1613,7 +1613,7 @@ when it stops, before its `leave`:
 Or mark it from a menu: `{"key": "1234", "watched": true}` (or `false`).
 
 - **`sequence`** (from 1.30.0): each report's number in its playing (1, 2,
-  3...). A report numbered no higher than one StationPlay already has for
+  3...). A report numbered no higher than one tapiOca already has for
   that playing (sent before it, but arriving after) changes nothing. It's
   answered with what's kept, so a late report never moves someone back.
   (Rewinding is a newer report, so it does.) Without `sequence`, reports
@@ -1635,7 +1635,7 @@ Or mark it from a menu: `{"key": "1234", "watched": true}` (or `false`).
   others too.
 - **How often.** Every second is fine. With `session`, Plex isn't asked
   anything for a report (one is kept even while Plex is unreachable).
-  Nothing is ever sent on to Plex. StationPlay keeps each person's place
+  Nothing is ever sent on to Plex. tapiOca keeps each person's place
   itself, and leaves Plex's own watched marks unchanged.
 
 | Field | Type | What it is |

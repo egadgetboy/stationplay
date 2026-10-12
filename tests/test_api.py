@@ -1,4 +1,4 @@
-"""StationPlay's API (/api/v1, see api.py): its tokens, what each may do and
+"""tapiOca's API (/api/v1, see api.py): its tokens, what each may do and
 from where, its OpenAPI spec (against docs/openapi-v1.json and docs/api.md),
 and the headers on addresses on their way out. (Each address, field by
 field: test_app_api.py.)"""

@@ -21,7 +21,7 @@ from .fakeplex import FakePlex
 PAT = {"name": "Pat", "password": "correct horse"}
 SAM = {"name": "Sam", "password": "battery staple", "role": "user"}
 PUBLIC_PORT = 3311
-PHONE = {"app": "StationPlay for Android", "deviceName": "Sam's phone"}
+PHONE = {"app": "tapiOca for Android", "deviceName": "Sam's phone"}
 ACCESS_JS = Path(__file__).parent.parent / "app" / "web" / "js" / "access.js"
 
 
@@ -99,7 +99,7 @@ def test_an_app_linked_with_a_code_is_where_the_device_is(app):
         assert browser.post("/api/access/sign-in", json=SAM).status_code == 200
         assert person(admin, "Sam")["signedInFrom"] == "192.168.1.10"
         tv = TestClient(app, client=("192.168.1.77", 5000))
-        started = tv.post("/api/internal/link", json={"app": "StationPlay for Roku",
+        started = tv.post("/api/internal/link", json={"app": "tapiOca for Roku",
                                                       "deviceName": "Den Roku"}).json()  # fmt: skip
         assert browser.post("/api/access/link", json={"code": started["code"]}).status_code == 200
         assert person(admin, "Sam")["signedInFrom"] == "192.168.1.77"
@@ -107,6 +107,6 @@ def test_an_app_linked_with_a_code_is_where_the_device_is(app):
         away = TestClient(app, base_url=f"https://testserver:{PUBLIC_PORT}",
                           client=("172.18.0.2", 5000))  # fmt: skip
         started = away.post("/api/internal/link", headers={"X-Real-IP": "198.51.100.4"},
-                            json={"app": "StationPlay for Roku", "deviceName": "Cabin"}).json()  # fmt: skip
+                            json={"app": "tapiOca for Roku", "deviceName": "Cabin"}).json()  # fmt: skip
         assert browser.post("/api/access/link", json={"code": started["code"]}).status_code == 200
         assert person(admin, "Sam")["signedInFrom"] == "198.51.100.4 (over the internet)"

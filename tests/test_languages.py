@@ -1,4 +1,4 @@
-"""Each person's languages in StationPlay's apps (languages.py, and through
+"""Each person's languages in tapiOca's apps (languages.py, and through
 applibrary.py): codes as files and apps give them, choosing the sound and
 captions in the order the apps are promised (the episode's or movie's, the
 show's, the person's, the file's default), forced and full subtitles,

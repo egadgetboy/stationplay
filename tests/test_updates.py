@@ -298,14 +298,14 @@ def test_stationplay_finds_its_tuner_as_plex_lists_it(tv, monkeypatch, caplog):
         return client.portal.call(ctx.updater.find_dvr)
 
     assert find() is None
-    assert f"doesn't list StationPlay's tuner ({ctx.device_id})" in caplog.text
+    assert f"doesn't list tapiOca's tuner ({ctx.device_id})" in caplog.text
     assert f"Plex lists {hdhomerun}1053C0CA at http://nas:3310 (dead)" in caplog.text
     listed.append(ours)
     assert find() == "16" and find() == "16"
-    assert caplog.text.count("Found StationPlay's tuner") == 1
+    assert caplog.text.count("Found tapiOca's tuner") == 1
     ours["Device"][0]["status"] = "dead"
     assert find() == "16"
-    assert "has StationPlay's tuner but can't reach it" in caplog.text
+    assert "has tapiOca's tuner but can't reach it" in caplog.text
     assert client.get("/api/status").json()["guide"]["canRefreshPlexGuide"] is True
 
     client.get("/xmltv.xml", headers=PLEX)
@@ -702,7 +702,7 @@ def test_bad_new_filters_are_refused(plex_library, bad):
 
 def test_a_value_with_a_comma_in_it(tmp_path):
     """Plex takes several values as a comma-separated list, so one that has a
-    comma in it is matched by StationPlay itself."""
+    comma in it is matched by tapiOca itself."""
     fp = FakePlex()
     fp.add_section("2", "Movies", "movie")
     fp.add_movie("901", "Grim", "/m/1.mkv", 90 * MIN, section="2", contentRating=["R, Violent"])

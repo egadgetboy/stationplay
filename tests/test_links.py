@@ -15,11 +15,11 @@ def test_a_code_works_once_and_runs_out(monkeypatch):
     clock = [1000.0]
     monkeypatch.setattr(links.time, "monotonic", lambda: clock[0])
     found = links.Links()
-    code, poll = found.start("StationPlay for Roku on Den Roku", "192.168.1.30")
+    code, poll = found.start("tapiOca for Roku on Den Roku", "192.168.1.30")
     assert len(code) == 9 and code[4] == "-"
     assert not set(code.replace("-", "")) & set("01IO")
     pending = found.find(code.lower(), PAT)
-    assert pending.app == "StationPlay for Roku on Den Roku"
+    assert pending.app == "tapiOca for Roku on Den Roku"
     assert found.check(poll) is pending and pending.token is None  # (waiting)
     found.link(pending, PAT, "the-token")
     with pytest.raises(LookupError):

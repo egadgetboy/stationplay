@@ -1,9 +1,9 @@
-# Publishes StationPlay's releases on GitHub, from docs/releases/: each
+# Publishes tapiOca's releases on GitHub, from docs/releases/: each
 # v<version>.md there names the commit of that version (on main) and holds
 # its notes. For each one not yet published, this makes the tag at that
 # commit and the release, with the release's files built from that commit:
-# stationplay-<version>.zip (unzipping to src), stationplay.yaml and
-# docker-compose.yml, and stationplay-<version>-packages.txt, the list of
+# tapioca-<version>.zip (unzipping to src), stationplay.yaml and
+# docker-compose.yml, and tapioca-<version>-packages.txt, the list of
 # every package in the image that was tested (tools/sbom.py, made by an
 # image workflow run that tested it; the tests' own additions aside), with
 # SHA256SUMS, the SHA-256 of each of them. A release already published is
@@ -24,14 +24,14 @@
 # image's tags copied, and the draft is published once anyone can pull the
 # image without signing in (the package must be public).
 #
-# The zip and SHA256SUMS are signed (stationplay-<version>.zip.sig and
-# SHA256SUMS.sig: SSH signatures, namespace stationplay-release, by the key
+# The zip and SHA256SUMS are signed (tapioca-<version>.zip.sig and
+# SHA256SUMS.sig: SSH signatures, namespace tapioca-release, by the key
 # in RELEASE_SIGNING_KEY, checked against release-signing.pub), which every
 # release needs from FIRST_SIGNED; before that, a release whose files can't
 # be signed is published without the signatures, and said. The key is on
 # disk only while signing, and removed straight after, whatever happens.
 #
-# Versions before FIRST_PUBLIC are never published: StationPlay's public
+# Versions before FIRST_PUBLIC are never published: tapiOca's public
 # releases here start with 1.32.0 (the repository was started afresh then).
 #
 # A version is published only once the image workflow's tests have passed
@@ -42,7 +42,7 @@
 # running waits for them, and one whose tests failed isn't published, with
 # a line on the run's page saying why.
 #
-# It runs only in StationPlay's own repository (a fork's copy does nothing),
+# It runs only in tapiOca's own repository (a fork's copy does nothing),
 # and keeps no credentials in its checkout.
 name: release
 
@@ -64,7 +64,7 @@ concurrency:
 
 jobs:
   publish:
-    if: github.repository == 'egadgetboy/stationplay'
+    if: github.repository == 'egadgetboy/tapioca-server'
     runs-on: ubuntu-24.04
     # (The images' sources are fetched from Debian for each release.)
     timeout-minutes: 120
@@ -90,7 +90,7 @@ jobs:
           key="$RUNNER_TEMP/signing-key"
           trap 'rm -f "$key"' EXIT
           allowed="$RUNNER_TEMP/allowed_signers"
-          printf 'stationplay-release namespaces="stationplay-release" %s\n' "$(cat release-signing.pub 2>/dev/null || true)" > "$allowed"
+          printf 'tapioca-release namespaces="tapioca-release" %s\n' "$(cat release-signing.pub 2>/dev/null || true)" > "$allowed"
           # Signs file $1 (as $1.sig) and checks the signature with the
           # published key; the key is on disk only meanwhile.
           sign() {
@@ -98,8 +98,8 @@ jobs:
             rm -f "$1.sig"
             if [ -n "${SIGNING_KEY:-}" ]; then
               if (umask 077; printf '%s\n' "$SIGNING_KEY" > "$key") \
-                && ssh-keygen -Y sign -q -f "$key" -n stationplay-release "$1" < /dev/null \
-                && ssh-keygen -Y verify -f "$allowed" -I stationplay-release -n stationplay-release \
+                && ssh-keygen -Y sign -q -f "$key" -n tapioca-release "$1" < /dev/null \
+                && ssh-keygen -Y verify -f "$allowed" -I tapioca-release -n tapioca-release \
                   -s "$1.sig" < "$1"; then
                 signed=0
               fi
@@ -191,7 +191,7 @@ jobs:
             # The release's files, from that commit.
             out="$RUNNER_TEMP/$tag"
             mkdir -p "$out"
-            git archive --format=zip --prefix=src/ -o "$out/stationplay-$version.zip" "$commit"
+            git archive --format=zip --prefix=src/ -o "$out/tapioca-$version.zip" "$commit"
             git show "$commit:stationplay.yaml" > "$out/stationplay.yaml"
             git show "$commit:docker-compose.yml" > "$out/docker-compose.yml"
             # The notes: everything after the commit's lines.
@@ -205,8 +205,8 @@ jobs:
             listed=""
             for run in $passed; do
               if gh run download "$run" --name packages --dir "$out/made-$run" \
-                && [ -s "$out/made-$run/stationplay-$version-packages.txt" ]; then
-                listed="$out/made-$run/stationplay-$version-packages.txt"
+                && [ -s "$out/made-$run/tapioca-$version-packages.txt" ]; then
+                listed="$out/made-$run/tapioca-$version-packages.txt"
                 break
               fi
             done
@@ -217,20 +217,20 @@ jobs:
             fi
             made=$(dirname "$listed")
             mv "$listed" "$out/"
-            files=("$out/stationplay-$version.zip" "$out/stationplay.yaml" "$out/docker-compose.yml"
-              "$out/stationplay-$version-packages.txt")
+            files=("$out/tapioca-$version.zip" "$out/stationplay.yaml" "$out/docker-compose.yml"
+              "$out/tapioca-$version-packages.txt")
             if from "$version" "$FIRST_IMAGE"; then
               # The image that run tested (both machines' images, joined),
               # by digest, and the arm64 image's list of packages.
-              pinned=$(cat "$made/stationplay-$version-image.txt" 2>/dev/null || true)
-              if ! [[ "$pinned" =~ ^ghcr\.io/[a-z0-9._-]+/stationplay@sha256:[0-9a-f]{64}$ ]] \
-                || [ ! -s "$made/stationplay-$version-packages-arm64.txt" ]; then
+              pinned=$(cat "$made/tapioca-$version-image.txt" 2>/dev/null || true)
+              if ! [[ "$pinned" =~ ^ghcr\.io/[a-z0-9._-]+/tapioca-server@sha256:[0-9a-f]{64}$ ]] \
+                || [ ! -s "$made/tapioca-$version-packages-arm64.txt" ]; then
                 echo "::error::$tag isn't published: the image run that tested it kept no image or no arm64 list of packages. Re-run that run (Re-run all jobs): publishing tries again when it finishes."
                 refused=1
                 continue
               fi
-              mv "$made/stationplay-$version-packages-arm64.txt" "$out/"
-              files+=("$out/stationplay-$version-packages-arm64.txt")
+              mv "$made/tapioca-$version-packages-arm64.txt" "$out/"
+              files+=("$out/tapioca-$version-packages-arm64.txt")
               if [ -z "$signed_in" ]; then
                 echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
                 echo "$GH_TOKEN" | skopeo login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
@@ -240,14 +240,14 @@ jobs:
               # Debian publishes it (C6), fetched in the tested image itself.
               mkdir -p "$out/source"
               if ! docker run --rm -i --user 0 --platform linux/amd64 -v "$out/source:/out" \
-                  -v "$out/stationplay-$version-packages-arm64.txt:/in/arm64.txt:ro" "$pinned" \
+                  -v "$out/tapioca-$version-packages-arm64.txt:/in/arm64.txt:ro" "$pinned" \
                   python - --all --also /in/arm64.txt < tools/gpl_source.py; then
                 echo "::error::$tag isn't published: the source of its images' GPL and LGPL packages couldn't all be fetched (the lines above say which). Run this workflow again later."
                 refused=1
                 continue
               fi
-              tar -C "$out/source" -cf "$out/stationplay-$version-source.tar" .
-              files+=("$out/stationplay-$version-source.tar")
+              tar -C "$out/source" -cf "$out/tapioca-$version-source.tar" .
+              files+=("$out/tapioca-$version-source.tar")
             fi
             # The image's tags, from FIRST_IMAGE: on that very image, by digest.
             tags=()
@@ -270,7 +270,7 @@ jobs:
             files+=("$sums")
             # The zip and SHA256SUMS, signed (and the signatures checked with
             # the published key): needed from FIRST_SIGNED.
-            zip="$out/stationplay-$version.zip"
+            zip="$out/tapioca-$version.zip"
             if sign "$zip" && sign "$sums"; then
               files+=("$zip.sig" "$sums.sig")
             elif from "$version" "$FIRST_SIGNED"; then
@@ -284,7 +284,7 @@ jobs:
             # The release, as a draft, with all its files; then the image's
             # tags, copied as it is, each checked; then it's published, once
             # anyone can pull the image.
-            gh release create "$tag" --target "$commit" --draft --title "StationPlay $version" \
+            gh release create "$tag" --target "$commit" --draft --title "tapiOca $version" \
               --notes-file "$out/notes.md" "${files[@]}"
             if [ "${#tags[@]}" -gt 0 ]; then
               for t in "${tags[@]}"; do
@@ -296,7 +296,7 @@ jobs:
               done
               echo "::notice::$image: ${tags[*]} on $digest"
               if ! skopeo inspect --no-creds "docker://$image:$version" > /dev/null; then
-                echo "::error::$tag isn't published: its image can't be pulled without signing in to GitHub. StationPlay's package must be public: on GitHub, open the package's settings (Packages, then stationplay, then Package settings), set its visibility to Public, and run this workflow again."
+                echo "::error::$tag isn't published: its image can't be pulled without signing in to GitHub. tapiOca's package must be public: on GitHub, open the package's settings (Packages, then tapioca-server, then Package settings), set its visibility to Public, and run this workflow again."
                 refused=1
                 continue
               fi

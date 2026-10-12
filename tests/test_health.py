@@ -116,7 +116,7 @@ def test_what_isnt_there_is_not_available(tmp_path):
 
 
 def test_without_a_cgroup_its_own_process_counts(tmp_path):
-    """(Not in a container: StationPlay's own use is this process's.)"""
+    """(Not in a container: tapiOca's own use is this process's.)"""
     proc, clock = tmp_path / "proc", Clock()
     machine(proc, busy=0, idle=10, rx=5, tx=5)
     write(proc, "self/status", "Name:\tpython\nVmRSS:\t  51200 kB\n")

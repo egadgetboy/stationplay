@@ -155,7 +155,7 @@ def test_a_station_plays_a_bumper_you_choose(client, tmp_path):
 
 async def test_tuning_in_plays_your_own_video(tmp_path, caplog):
     """Your video, then the show (where the schedule has got to by then);
-    and if the video has gone missing or won't play, StationPlay's own
+    and if the video has gone missing or won't play, tapiOca's own
     bumper instead."""
     plex = media(tmp_path)
     base, _app, _settings, srv, task = await start_server(
@@ -197,7 +197,7 @@ async def test_tuning_in_plays_your_own_video(tmp_path, caplog):
     assert set(seen[: n - 3]) == {"magenta"}, seen[:n]
     assert seen[n + 3] in shows
     assert "Intro Bumper video is missing" in caplog.text and "wouldn't play" in caplog.text
-    # StationPlay's own bumper (5 seconds) stands in, then the show.
+    # tapiOca's own bumper (5 seconds) stands in, then the show.
     for name in ("stand-in", "broken"):
         seen = [colour_of(*f) for f in frames(tmp_path / f"{name}.ts", "64:48:20:20")]
         n = round(5 / FRAME_S)

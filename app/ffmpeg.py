@@ -292,7 +292,7 @@ async def probe(
                 ok=False, error=f"the file took more than {timeout:.0f}s to open", timed_out=True
             )
         except asyncio.CancelledError:
-            # (Whatever asked is gone, StationPlay stopping, say: so is ffprobe.)
+            # (Whatever asked is gone, tapiOca stopping, say: so is ffprobe.)
             if proc.returncode is None:
                 with contextlib.suppress(ProcessLookupError):
                     proc.kill()
@@ -451,7 +451,7 @@ async def subtitles_problem(settings: Settings, folder: Path) -> str | None:
 
     def write() -> None:
         folder.mkdir(parents=True, exist_ok=True)
-        test.write_text("1\n00:00:00,000 --> 00:00:01,000\nStationPlay\n", encoding="utf-8")
+        test.write_text("1\n00:00:00,000 --> 00:00:01,000\ntapiOca\n", encoding="utf-8")
 
     try:
         await asyncio.to_thread(write)
@@ -654,7 +654,7 @@ def output_args(
         # ended, so the viewer's player sees one unbroken stream.
         "-output_ts_offset", f"{ts_offset_s:.6f}",
         "-f", "mpegts", "-mpegts_service_type", "digital_tv",
-        "-metadata", "service_provider=StationPlay", "-metadata", f"service_name={channel_name}",
+        "-metadata", "service_provider=tapiOca", "-metadata", f"service_name={channel_name}",
         "-pat_period", "0.2",
         "pipe:1",
     ]  # fmt: skip
@@ -755,7 +755,7 @@ _PLAIN_PATH = re.compile(r"[A-Za-z0-9_./-]+")
 
 def usable_picture(path: str | None) -> str | None:
     """`path` if it can go in a filter as it is (logo paths always can: they're
-    StationPlay's own names); None otherwise, so the name is shown instead."""
+    tapiOca's own names); None otherwise, so the name is shown instead."""
     return path if path and _PLAIN_PATH.fullmatch(path) else None
 
 
@@ -1376,7 +1376,7 @@ def card_command(
 
 
 # How wide each printable ASCII character is in DejaVu Sans (the font in
-# StationPlay's image, and the one drawtext uses), in hundredths of the font
+# tapiOca's image, and the one drawtext uses), in hundredths of the font
 # size. Anything else counts as ONE_WIDTH.
 _WIDTHS = (
     32, 40, 46, 84, 64, 95, 78, 27, 39, 39, 50, 84, 32, 36, 32, 34,

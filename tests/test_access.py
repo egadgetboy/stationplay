@@ -1,4 +1,4 @@
-"""Signing in to StationPlay's page: open until the first user is added, then
+"""Signing in to tapiOca's page: open until the first user is added, then
 Admins and Users, what each may do, and the access log."""
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def app(tmp_path):
 
 @pytest.fixture
 def pat(app):
-    """StationPlay with signing in on: Pat, its first user (an Admin), signed in."""
+    """tapiOca with signing in on: Pat, its first user (an Admin), signed in."""
     with TestClient(app) as client:
         made = client.post("/api/access/users", json={**PAT, "role": "user"})
         assert made.status_code == 201, made.text
@@ -46,7 +46,7 @@ def pat(app):
 
 
 def browser(app) -> TestClient:
-    """Another browser, on StationPlay as it's running (not started again)."""
+    """Another browser, on tapiOca as it's running (not started again)."""
     return TestClient(app)
 
 
@@ -185,7 +185,7 @@ def test_a_new_password_signs_out_everywhere_else(pat, app):
 
 def test_changing_your_password_in_an_app(pat, app):
     pat.post("/api/access/users", json={**SAM, "role": "user"})
-    phone = {"app": "StationPlay for Android", "deviceName": "Sam’s phone"}
+    phone = {"app": "tapiOca for Android", "deviceName": "Sam’s phone"}
     signed = browser(app).post("/api/internal/sign-in", json={**SAM, **phone}).json()
     tablet = browser(app).post("/api/internal/sign-in", json={**SAM, "app": "On a tablet"})
     page = browser(app)
@@ -220,9 +220,9 @@ def test_changing_your_password_in_an_app(pat, app):
     new_one = {**SAM, "password": "a new one!"}
     assert browser(app).post("/api/access/sign-in", json=new_one).is_success
     apps = [a["app"] for a in pat.get("/api/access/apps").json() if a["user"] == "Sam"]
-    assert apps == ["StationPlay for Android on Sam’s phone"]
+    assert apps == ["tapiOca for Android on Sam’s phone"]
     log = pat.get("/api/logs?access_log=true").json()["text"]
-    assert "Sam changed their password in StationPlay for Android on Sam’s phone" in log
+    assert "Sam changed their password in tapiOca for Android on Sam’s phone" in log
 
     # An Admin turns it off for Sam: refused in the app and on the page.
     sam_id = next(u["id"] for u in pat.get("/api/access/users").json() if u["name"] == "Sam")
@@ -266,7 +266,7 @@ def test_no_password_to_change_and_the_limit_on_wrong_ones(pat, app):
     pat.post("/api/access/users", json={**SAM, "role": "user"})
     tv = browser(app)
     key = tv.post(
-        "/api/internal/sign-in", json={**PAT, "app": "StationPlay for Roku", "picker": True}
+        "/api/internal/sign-in", json={**PAT, "app": "tapiOca for Roku", "picker": True}
     ).json()["deviceKey"]
     picked = tv.post(
         "/api/internal/picker/choose", json={"id": kids["id"]},
@@ -313,7 +313,7 @@ def test_locked_out_the_reset_file_opens_it_again(pat, app, tmp_path):
 
 
 def test_its_decided_again_once_the_body_has_arrived(app):
-    # A request that starts while StationPlay is open and finishes once
+    # A request that starts while tapiOca is open and finishes once
     # signing in is on doesn't get in.
     with TestClient(app):
         ctx = app.state.ctx
@@ -373,7 +373,7 @@ CLOUDFLARE_EDGE, CLOUDFLARE_EDGE_6 = "172.70.42.9", "2a06:98c0:3600::103"
 
 
 def coming(headers: dict[str, str] | list[tuple[str, str]], *, public: bool = True) -> dict:
-    """A request as it reaches StationPlay from the proxy, with these headers:
+    """A request as it reaches tapiOca from the proxy, with these headers:
     on the public port, or the home port."""
     pairs = headers.items() if isinstance(headers, dict) else headers
     return {
@@ -383,7 +383,7 @@ def coming(headers: dict[str, str] | list[tuple[str, str]], *, public: bool = Tr
 
 
 VISITORS = [
-    # (what reaches StationPlay, the visitor's address)
+    # (what reaches tapiOca, the visitor's address)
     # NPMplus (and Nginx Proxy Manager) say who in X-Real-IP and X-Forwarded-For.
     ({"X-Real-IP": "203.0.113.5", "X-Forwarded-For": "203.0.113.5",
       "X-Forwarded-Proto": "https"}, "203.0.113.5"),
@@ -401,7 +401,7 @@ VISITORS = [
     ({"CF-Connecting-IP": "203.0.113.5", "X-Forwarded-For": f"198.51.100.7, {CLOUDFLARE_EDGE}"},
      "203.0.113.5"),
     ({"CF-Connecting-IP": "2001:db8::5", "X-Real-IP": CLOUDFLARE_EDGE_6}, "2001:db8::5"),
-    # A Cloudflare Tunnel straight to StationPlay.
+    # A Cloudflare Tunnel straight to tapiOca.
     ({"CF-Connecting-IP": "203.0.113.5", "CF-Visitor": '{"scheme":"https"}'}, "203.0.113.5"),
     ({"CF-Connecting-IP": "203.0.113.5", "X-Forwarded-For": "203.0.113.5"}, "203.0.113.5"),
     # IPv6, and IPv4 in IPv6's form.
@@ -574,7 +574,7 @@ def test_two_stations_at_once_cant_both_take_the_last_place(pat, app):
                 for n in (31, 32)
             ))  # fmt: skip
 
-    # (Run where StationPlay runs.)
+    # (Run where tapiOca runs.)
     got = pat.portal.call(both)
     assert sorted(r.status_code for r in got) == [201, 403]
 
@@ -606,7 +606,7 @@ IDLE_LINE = "Pat was signed out after an hour without activity"
 
 @pytest.fixture
 def clock(monkeypatch):
-    """StationPlay's clock for sign-ins, as a test moves it on: [now, in ms]."""
+    """tapiOca's clock for sign-ins, as a test moves it on: [now, in ms]."""
     now = [access._now()]
     monkeypatch.setattr(access, "_now", lambda: now[0])
     return now
@@ -676,7 +676,7 @@ def test_using_the_page_keeps_a_browser_signed_in(clock, pat, app):
 
 
 def test_apps_stay_signed_in_however_long_theyre_unused(clock, pat, app):
-    signed = browser(app).post("/api/internal/sign-in", json={**PAT, "app": "StationPlay for Roku"})
+    signed = browser(app).post("/api/internal/sign-in", json={**PAT, "app": "tapiOca for Roku"})
     the_app = {"Authorization": f"Bearer {signed.json()['token']}"}
     made = pat.post("/api/api-tokens", json={"name": "Script", "scope": "viewer", "days": None})
     script = {"Authorization": f"Bearer {made.json()['token']}"}

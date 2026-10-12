@@ -18,7 +18,7 @@ from app.plex import PlexClient
 from .fakeplex import FakePlex
 
 ADA = {"name": "Ada", "password": "correct horse"}
-TV = {"app": "StationPlay for Roku", "deviceName": "Living Room Roku", "picker": True}
+TV = {"app": "tapiOca for Roku", "deviceName": "Living Room Roku", "picker": True}
 PUBLIC_PORT = 8443
 
 
@@ -32,7 +32,7 @@ def app(tmp_path):
 
 
 def two_ports(tmp_path):
-    """StationPlay with a public port, as a reverse proxy reaches it from
+    """tapiOca with a public port, as a reverse proxy reaches it from
     the internet."""
     settings = Settings(
         plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "data",
@@ -107,7 +107,7 @@ def test_a_household_tv(app):
         assert people(tv, key) == ["Ada", "Kids"]
         listed = admin.get("/api/access/devices").json()["devices"]
         assert [(x["name"], x["linkedBy"], x["people"]) for x in listed] == [
-            ("StationPlay for Roku on Living Room Roku", "Ada", ["Ada", "Kids"])
+            ("tapiOca for Roku on Living Room Roku", "Ada", ["Ada", "Kids"])
         ]
         # Signing in again with the key: the same device.
         again = tv.post("/api/internal/sign-in", json={**ADA, **TV, "deviceKey": key}).json()
@@ -178,7 +178,7 @@ def test_a_household_tv(app):
         assert tv.get("/api/internal/picker", headers=device(key)).status_code == 401
         assert tv.get("/api/v1/stations", headers=bearer(ada.json()["token"])).status_code == 401
         log = admin.get("/api/logs?access_log=true").json()["text"]
-        assert "Ada unlinked StationPlay for Roku on Living Room Roku" in log
+        assert "Ada unlinked tapiOca for Roku on Living Room Roku" in log
         assert "Too many wrong PINs for Tia: they wait 15 minutes" in log
 
 
@@ -374,7 +374,7 @@ def test_an_app_without_a_picker_signs_in_as_before(app):
         admin.post("/api/access/users", json=ADA)
         phone = TestClient(app)
         signed = phone.post(
-            "/api/internal/sign-in", json={**ADA, "app": "StationPlay for Android"}
+            "/api/internal/sign-in", json={**ADA, "app": "tapiOca for Android"}
         ).json()
         assert signed["deviceKey"] is None and signed["token"]
         assert admin.get("/api/access/devices").json()["devices"] == []
@@ -518,7 +518,7 @@ def test_new_people_show_only_on_devices_they_sign_in_on(tmp_path):
         tv = home.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]
         phone = home.post(
             "/api/internal/sign-in",
-            json={"name": "Bo", "password": "bo password", "app": "StationPlay for Android",
+            json={"name": "Bo", "password": "bo password", "app": "tapiOca for Android",
                   "deviceName": "Bo's Pixel", "picker": True},
         ).json()["deviceKey"]  # fmt: skip
         assert (people(home, tv), people(away, tv)) == (["Ada"], ["Ada"])
@@ -572,7 +572,7 @@ def test_use_for_everyone(tmp_path):
 
         before = shown()
         # Only the two choices New people show on has, and only an Admin, from
-        # StationPlay's own page; anything else changes nothing.
+        # tapiOca's own page; anything else changes nothing.
         for bad in ({"showOn": "all"}, {"showOn": "selected"}, {"showOn": "default"},
                     {"showOn": "nowhere"}, {"showOn": ""}, {"showOn": "home" * 10}, {}):  # fmt: skip
             refused = admin.post("/api/access/devices/everyone", json=bad)
@@ -696,8 +696,8 @@ def test_a_passcode_right_after_the_first_sign_in(app):
         assert picked.status_code == 200
         hers = bearer(picked.json()["token"])
         log = admin.get("/api/logs?access_log=true").json()["text"]
-        assert "Tia set a PIN in StationPlay for Roku on Living Room Roku" in log
-        assert "Tia chose no PIN in StationPlay for Roku on Living Room Roku" in log
+        assert "Tia set a PIN in tapiOca for Roku on Living Room Roku" in log
+        assert "Tia chose no PIN in tapiOca for Roku on Living Room Roku" in log
 
         # Exactly 4 digits.
         for wrong in ("123", "12345", "abcd", "12 4", "١٢٣٤", ""):

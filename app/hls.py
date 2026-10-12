@@ -1,7 +1,7 @@
-"""Stations as HLS, for StationPlay's own apps (and AirPlay and Chromecast).
+"""Stations as HLS, for tapiOca's own apps (and AirPlay and Chromecast).
 
 A station's HLS comes from the very stream everyone else watching it gets:
-StationPlay watches it as one more viewer, and ffmpeg cuts it into short
+tapiOca watches it as one more viewer, and ffmpeg cuts it into short
 pieces as it arrives (copying them, not converting, so it costs almost
 nothing). Every safeguard that keeps a station on the air applies as it is.
 

@@ -10,7 +10,7 @@ stopped, with a message saying why. That's Plex's own "stop playback",
 which works only with Plex Pass on the server owner's account. They can
 tune in again; it's stopped again.
 
-It's stopped only when StationPlay is sure which station that is
+It's stopped only when tapiOca is sure which station that is
 (sure_station): the one station of those with viewers airing what the
 session shows, nothing Plex says about it naming another channel, and
 either that very program (its show and episode, or movie) or Plex naming

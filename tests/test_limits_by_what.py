@@ -1,9 +1,9 @@
 """Limits by what a title is (1.33.0, see docs/users.md): a Viewing Level, or
 one person, hides titles by their genres, tags (Plex's labels), collections
 and studio, or by name; a title can be allowed for one person. Hidden
-everywhere StationPlay lists or plays things, judged by a title's tags
+everywhere tapiOca lists or plays things, judged by a title's tags
 whole (lists carry only a few genres), and what isn't known yet is hidden
-from anyone limited by tags. A StationPlay where no one hides by them
+from anyone limited by tags. A tapiOca where no one hides by them
 answers exactly as before."""
 
 from __future__ import annotations
@@ -100,7 +100,7 @@ def test_a_station_is_hidden_by_any_program_its_level_hides(tmp_path):
     unknown = reach_of([movie, Item(2, 2, 1, "301", "movie", "")], titles)
     assert not unknown.tagged
     assert level(genres=("Western",)).why_not(unknown) == (
-        "StationPlay is still asking Plex about the genres and tags of what it plays"
+        "tapiOca is still asking Plex about the genres and tags of what it plays"
     )
     assert Level(2, "Teen", 13, 14, True, None).allows_reach(unknown)
 
@@ -469,7 +469,7 @@ def test_media_on_a_big_folder_answers_in_time_and_keeps_what_plex_said(tmp_path
     assert max(len(b) for b in asked) == titles_module.ENSURE_AT_ONCE
     assert at_once[1] <= titles_module.ENSURE_TURNS
 
-    # Then, on the same event loop as StationPlay's: a title Plex didn't
+    # Then, on the same event loop as tapiOca's: a title Plex didn't
     # have isn't asked about again for a while; one answer's asks share its
     # wait (Titles.ensure_until); and another big folder, after the first
     # was done, has its rest asked about too (the batches waiting their turn
@@ -549,7 +549,7 @@ def test_a_restart_doesnt_ask_plex_about_every_titles_tags_again(tmp_path, monke
     before = now - 1_000  # (asked about before the restart)
     Titles(db)._save({"300": Title("movie", "PG", "1", before, NO_TAGS),
                       "301": Title("movie", "R", "1", before, None)}, before)  # fmt: skip
-    later = Titles(db)  # (StationPlay started again)
+    later = Titles(db)  # (tapiOca started again)
     later.want_tags = True
     assert later.wanted() == ["301"]
 

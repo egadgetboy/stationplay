@@ -65,8 +65,8 @@ function signInBy(name) {
 $('#signinOther').addEventListener('click', () => { signInBy(''); $('#signinName').focus(); });
 // Signed out after an hour without activity (see IDLE_SIGN_OUT_S in
 // access.py). Using the page (clicking, typing, scrolling or touching) tells
-// StationPlay, at most once a minute; its own polling doesn't count.
-// StationPlay's clock decides, so using StationPlay in another tab counts
+// tapiOca, at most once a minute; its own polling doesn't count.
+// tapiOca's clock decides, so using tapiOca in another tab counts
 // here too: when the time it last gave comes, the page asks it again (even
 // in a hidden tab, which doesn't poll).
 let idleTimer = null;
@@ -74,7 +74,7 @@ function signOutAt(leftMs) {
   clearTimeout(idleTimer);
   if (leftMs != null) idleTimer = setTimeout(checkMe, leftMs + 1000);
 }
-let usedAt = 0;  // when StationPlay was last told
+let usedAt = 0;  // when tapiOca was last told
 let usedLater = null;
 function used() {
   if (!me.user || signedOut() || usedLater) return;
@@ -252,7 +252,7 @@ async function loadAccess() {
   renderDevices();
   $('#accessState').textContent = me.required
     ? `Sign-in is on: ${plural(users.length, 'user')} can sign in, and everyone else sees only the sign-in page.`
-    : 'StationPlay is open: anyone on your network who can reach this page can use it. (From the internet, it always asks people to sign in.) Add a user to require sign-in. The first user is always an Admin, and you’re signed in as that user right away.';
+    : 'tapiOca is open: anyone on your network who can reach this page can use it. (From the internet, it always asks people to sign in.) Add a user to require sign-in. The first user is always an Admin, and you’re signed in as that user right away.';
   $('#addUserTitle').textContent = me.required ? 'Add a user' : 'Add the first user (an Admin)';
   if (!me.required) $('#newUserRole').value = 'admin';
   $('#newUserRole').disabled = !me.required;
@@ -307,8 +307,8 @@ async function loadAccess() {
           catch (err) { toast(err.message, true); }
           loadAccess();
         } }), 'Can change their own password');
-      // (Problems with what they watch, from StationPlay's apps: see reports.py.)
-      const canReport = h('label', { class: 'own-password', title: admin ? 'An Admin can always report problems' : 'From StationPlay’s apps, about what they watch. Reports go to the Broken files tab.' },
+      // (Problems with what they watch, from tapiOca's apps: see reports.py.)
+      const canReport = h('label', { class: 'own-password', title: admin ? 'An Admin can always report problems' : 'From tapiOca’s apps, about what they watch. Reports go to the Broken files tab.' },
         h('input', { type: 'checkbox', checked: admin || u.canReport, disabled: admin, onchange: async e => {
           const on = e.target.checked;
           try { await api(`/api/access/users/${u.id}`, { method: 'PUT', body: { canReport: on } }); toast(on ? `${u.name} can report problems` : `${u.name} can’t report problems now`); }

@@ -1,6 +1,6 @@
-"""Signing in to StationPlay's page, which is optional.
+"""Signing in to tapiOca's page, which is optional.
 
-A new StationPlay is open: anyone who can reach its page can use it. Adding
+A new tapiOca is open: anyone who can reach its page can use it. Adding
 the first user in the Access tab turns signing in on, and that first user is
 always an Admin. There are two roles:
 
@@ -16,19 +16,19 @@ the guide) stays open on the network, as they can't sign in.
 
 Passwords are kept as scrypt hashes, and a browser is signed in by a random
 token in a cookie that's kept only as a hash, until no one has used it for
-an hour (see IDLE_SIGN_OUT_S). StationPlay's apps sign in the same way, send
+an hour (see IDLE_SIGN_OUT_S). tapiOca's apps sign in the same way, send
 their token in a header instead (Authorization: Bearer; see appapi.py), and
 stay signed in. Signing in is logged (who and from where) in the access
 log, which the Logs tab shows.
 
-Scripts and other apps use StationPlay's API (/api/v1, see api.py) with an
+Scripts and other apps use tapiOca's API (/api/v1, see api.py) with an
 API token an Admin makes on the Access tab: a Viewer token reads; an Admin
 token does what an Admin may there too. A token works only under /api/v1,
 and from the internet only once an Admin allows that. It's kept as a hash,
 shown once, and can be revoked; removing the Admin who made it removes it.
 
 Locked out? Create an empty file called reset-access in the data folder and
-restart StationPlay: every user is removed, and it's open again.
+restart tapiOca: every user is removed, and it's open again.
 
 Whether a request may go ahead is decided as it arrives, and again once its
 body has (which may take a while), so a request can't start while it's
@@ -37,7 +37,7 @@ page (a browser says which site a request is from) are refused, signed in or
 not.
 
 From the internet (through a Cloudflare Tunnel, or another reverse proxy),
-StationPlay is reached on its public port (PUBLIC_PORT), never the one Plex
+tapiOca is reached on its public port (PUBLIC_PORT), never the one Plex
 uses. There, what Plex, Jellyfin and other apps use isn't offered at all, signing in is
 always needed (until there's a user, nothing but the sign-in page is shown:
 the first user is added on the home network), a program played on demand is
@@ -93,17 +93,17 @@ SESSION_DAYS = 30
 DEVICE_COOKIE = "stationplay_device"
 DEVICE_DAYS = 400
 DEVICES_KEPT = 20
-# Wrong PINs on one browser (StationPlay's page, at home) before its PIN
+# Wrong PINs on one browser (tapiOca's page, at home) before its PIN
 # signs in there only after the password again: two of the waits for wrong
 # PINs (see devices.py's PIN_TRIES), so guessing every PIN can't be waited out.
 BROWSER_PIN_TRIES = 10
 SESSIONS_KEPT = 20  # browsers signed in as one user at once, at most (the newest)
 SEEN_EVERY_MS = 5 * 60_000  # how often a session's "last seen" is saved
-# A browser (StationPlay's page, for Admins and Users alike) is signed out
+# A browser (tapiOca's page, for Admins and Users alike) is signed out
 # after this long without anyone using it: clicking, typing, scrolling or
-# touching, which the page tells StationPlay about (POST /api/access/active),
+# touching, which the page tells tapiOca about (POST /api/access/active),
 # or a change it sends. The page's own polling only reads, so it doesn't
-# count. StationPlay's apps stay signed in. It's ended on its next request
+# count. tapiOca's apps stay signed in. It's ended on its next request
 # (when it was last used is kept with the sign-in, so a restart doesn't
 # bring it back), and its later requests are told why.
 IDLE_SIGN_OUT_S = 3600
@@ -142,14 +142,14 @@ CLOUDFLARE = tuple(
     )
 )  # fmt: skip
 # Passwords checked at once, at most: each check takes a moment and memory,
-# deliberately, and StationPlay has streams to serve.
+# deliberately, and tapiOca has streams to serve.
 CHECKS_AT_ONCE = 2
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # The most a request may send, but for uploads (which have limits of their own).
 BODY_MAX = 4 * 1024 * 1024
 UPLOADS = frozenset({"/api/logos", "/api/bumpers", "/api/restore"})
 # Sent with every answer but what's open to Plex on the home network
-# (streams, and pictures): no other site may show StationPlay's page in a
+# (streams, and pictures): no other site may show tapiOca's page in a
 # frame, guess a file's type, or learn its addresses.
 SECURITY_HEADERS = (
     (b"x-content-type-options", b"nosniff"),
@@ -164,15 +164,13 @@ OWN_PASSWORD_OFF = (
     "An Admin has turned off changing your own password. Ask an Admin if it needs changing."
 )
 NO_PASSWORD = (
-    "You don't have a password to change. An Admin can give you one, on StationPlay's Access tab."
+    "You don't have a password to change. An Admin can give you one, on tapiOca's Access tab."
 )
 NOT_HTTPS = (
-    "From outside your home, StationPlay's apps connect only over HTTPS. Use an https:// "
-    "address, through a reverse proxy with HTTPS (see StationPlay's README)."
+    "From outside your home, tapiOca's apps connect only over HTTPS. Use an https:// "
+    "address, through a reverse proxy with HTTPS (see tapiOca's README)."
 )
-NOT_SET_UP = (
-    "Signing in to StationPlay isn't set up yet. Add the first user from your home network."
-)
+NOT_SET_UP = "Signing in to tapiOca isn't set up yet. Add the first user from your home network."
 
 # API tokens (see the module's notes, and api.py): "spk_" and 43 random
 # characters; what each may do (its scope).
@@ -183,26 +181,26 @@ API_TOKENS_MOST = 100
 API_TOKEN_NAME_MAX = 60
 API_OUTSIDE_META = "api_outside"  # whether tokens are taken from the internet
 BAD_TOKEN = "That API token isn't valid. It may have expired or been revoked."
-TOKEN_API_ONLY = "API tokens work only with StationPlay's API, under /api/v1"
+TOKEN_API_ONLY = "API tokens work only with tapiOca's API, under /api/v1"
 TOKEN_NOT_OUTSIDE = (
     "API tokens aren't accepted from the internet. An Admin can allow them on the Access tab."
 )
 TOKEN_READS_ONLY = "This API token can only read (its scope is Viewer)"
 # A device not on Tuner access's list (see tuner.py).
 TUNER_REFUSED = (
-    "This device isn't allowed to use StationPlay's tuner. An Admin can allow it on the "
+    "This device isn't allowed to use tapiOca's tuner. An Admin can allow it on the "
     "Access tab, under Tuner access."
 )
 
 # What Plex, Jellyfin and other apps use: the tuner, its guide, streams and pictures for
-# the guide (and the stations as HLS, for StationPlay's apps). Open on the
+# the guide (and the stations as HLS, for tapiOca's apps). Open on the
 # home network (they can't sign in); never offered on the public port.
 FOR_PLEX = frozenset({
     "/discover.json", "/lineup_status.json", "/lineup.json", "/lineup.post", "/device.xml",
     "/xmltv.xml", "/guide.xml", "/stations.m3u", "/channels.m3u",
 })  # fmt: skip
 FOR_PLEX_UNDER = ("/stream/", "/auto/", "/art/", "/hls/")
-# Stations as HLS for StationPlay's apps away from home, when that's on: on
+# Stations as HLS for tapiOca's apps away from home, when that's on: on
 # the public port too, each signed-in app's at an address of its own, which
 # is what lets it in (a player can't sign in; see away.py).
 AWAY_UNDER = "/hls/k/"
@@ -214,18 +212,26 @@ PAGE_FILES = (
     "js/filter.js", "js/broken.js", "js/apps.js", "js/checking.js", "js/access.js",
     "js/viewing.js", "js/stats.js", "js/updates.js", "js/boot.js",
 )  # fmt: skip
+# The page's fonts (in app/web/fonts, see page.css), each at /fonts/<file>.
+FONT_FILES = (
+    "SpaceGrotesk/SpaceGrotesk-Regular.woff2", "SpaceGrotesk/SpaceGrotesk-Medium.woff2",
+    "SpaceGrotesk/SpaceGrotesk-Bold.woff2", "SpaceMono/SpaceMono-Regular.woff2",
+    "SpaceMono/SpaceMono-Bold.woff2", "Unbounded/Unbounded-Regular.woff2",
+    "Unbounded/Unbounded-Bold.woff2",
+)  # fmt: skip
 # Open to anyone, signed in or not: the page itself (it asks you to sign
-# in), its styles and scripts, its icons and its manifest (for installing it
+# in), its styles, scripts and fonts, its icons and its manifest (for installing it
 # as an app, which a browser may do from the sign-in page), signing in, and
 # the open-source notices (linked from the sign-in page's foot too).
-# (And what StationPlay's apps ask first: see appapi.py.)
+# (And what tapiOca's apps ask first: see appapi.py.)
 PAGE = frozenset({
     "/", "/link", "/apple-touch-icon.png", "/manifest.webmanifest", "/icon-192.png",
-    "/icon-512.png", "/icon-maskable-512.png", "/api/access/me", "/api/v1/server",
-    "/open-source-notices", "/privacy",
+    "/icon-512.png", "/icon-maskable-512.png", "/favicon.svg", "/favicon.ico",
+    "/api/access/me", "/api/v1/server", "/open-source-notices", "/privacy",
     *(f"/web/{name}" for name in PAGE_FILES),
+    *(f"/fonts/{name}" for name in FONT_FILES),
 })  # fmt: skip
-# Where StationPlay checks that its apps can reach it from outside (see
+# Where tapiOca checks that its apps can reach it from outside (see
 # reach.py): open on both ports, to anyone, before there's a user, and over
 # plain HTTP too. It says nothing unless it's asked with the value a check
 # is waiting for.
@@ -239,12 +245,12 @@ OPEN = (
     | {"/api/internal/picker", "/api/internal/picker/choose", "/api/internal/picker/sign-in"}
     | FOR_PLEX
 )
-# Programs played on demand in StationPlay's apps: each at an address of its
+# Programs played on demand in tapiOca's apps: each at an address of its
 # own, which is what lets a player in (see ondemand.py). On the home network;
 # and on the public port, only a program a signed-in app started there,
 # while it and that sign-in last (see play_outside, and applibrary.py).
 PLAY_UNDER = "/play/"
-# What StationPlay's apps use, and the API: from the internet, only over
+# What tapiOca's apps use, and the API: from the internet, only over
 # HTTPS (passwords, sign-ins, tokens and stream addresses must never cross it
 # in the clear).
 API_UNDER = "/api/v1/"
@@ -279,7 +285,7 @@ FOR_USERS = {
     "DELETE": ("/api/channels/", "/api/internal/items/"),
 }  # fmt: skip
 # What a User on a limited Viewing Level may do (see viewing.py): watch what
-# they can see, in StationPlay's apps and on its page, and look after their
+# they can see, in tapiOca's apps and on its page, and look after their
 # own sign-in. Nothing that shows the libraries as a whole, or makes or
 # changes stations.
 FOR_WATCHERS = {
@@ -375,7 +381,7 @@ def _visitor(scope: dict) -> str | None:
     one the nearest proxy added: those before it can be anything a visitor
     sent). CF-Connecting-IP only when the request came through Cloudflare:
     the address found is one of Cloudflare's own, or there's neither header
-    (a Cloudflare Tunnel straight to StationPlay). Otherwise anyone could
+    (a Cloudflare Tunnel straight to tapiOca). Otherwise anyone could
     send that header, and a proxy would pass it on. None if what's there
     isn't an IP address."""
     real: bytes | None = None
@@ -489,8 +495,8 @@ class Access:
     # it's set, none may.
     play_outside: Callable[[str], bool] | None = field(init=False, default=None)
     # When a signed-in app last came in through the public port over HTTPS
-    # (time.monotonic(); None: not since StationPlay started), as proof that
-    # apps reach StationPlay from outside (see reach.py). In memory only.
+    # (time.monotonic(); None: not since tapiOca started), as proof that
+    # apps reach tapiOca from outside (see reach.py). In memory only.
     app_outside_at: float | None = field(init=False, default=None)
     # Browsers signed out after IDLE_SIGN_OUT_S (their tokens' hashes), so
     # each request from one can say why, not only the one that ended it
@@ -586,7 +592,7 @@ class Access:
         return user
 
     def sees_everything(self, user: User | None) -> bool:
-        """Whether someone may see how StationPlay is set up: an Admin, or
+        """Whether someone may see how tapiOca is set up: an Admin, or
         anyone while signing in is off."""
         return not self.required or (user is not None and user.role == ADMIN)
 
@@ -632,9 +638,7 @@ class Access:
         remain (removing the very last user turns signing in off)."""
         others = [u for u in self.db.users() if u.id != user.id]
         if user.role == ADMIN and others and self._last_admin(user):
-            raise ValueError(
-                "StationPlay needs at least one Admin. Make someone else an Admin first."
-            )
+            raise ValueError("tapiOca needs at least one Admin. Make someone else an Admin first.")
         self.db.delete_user(user.id)
         self._users_exist = bool(others)
 
@@ -672,9 +676,7 @@ class Access:
         if role == ADMIN and password is None and not current.has_password:
             raise ValueError(f"Give {current.name} a password before making them an Admin")
         if current.role == ADMIN and role not in (None, ADMIN) and self._last_admin(current):
-            raise ValueError(
-                "StationPlay needs at least one Admin. Make someone else an Admin first."
-            )
+            raise ValueError("tapiOca needs at least one Admin. Make someone else an Admin first.")
         if name is not None and name != current.name:
             try:
                 self.db.rename_user(user.id, name)  # (first: it's what can still fail)
@@ -742,7 +744,7 @@ class Access:
                 "Too many wrong passwords from the internet recently. Try again in a few minutes."
             )
         if self._checking >= CHECKS_AT_ONCE:
-            raise Busy("StationPlay is busy checking other sign-ins. Try again in a moment.")
+            raise Busy("tapiOca is busy checking other sign-ins. Try again in a moment.")
         this = (time.monotonic(), name.casefold())
         tries.append(this)
         if everyone is not None:
@@ -791,7 +793,7 @@ class Access:
         unlocked: bool = False,
         at: str | None = None,
     ) -> str:
-        """A new token for a browser (or `app`, one of StationPlay's: which,
+        """A new token for a browser (or `app`, one of tapiOca's: which,
         on what device; `device_id`: a linked device, from its picker, and
         `unlocked` when someone without a PIN was picked there: see
         devices.py) that's signed in as `user`, there (`at`, as the access
@@ -810,7 +812,7 @@ class Access:
         return token
 
     def pin_browser(self, token: str | None) -> User | None:
-        """Whose PIN may sign in on a browser (StationPlay's page, at home):
+        """Whose PIN may sign in on a browser (tapiOca's page, at home):
         someone who signed in on it with their password, since it last
         changed and they last signed out there, and who has a PIN."""
         if not token or self.picker is None:
@@ -925,7 +927,7 @@ class Access:
         if days is not None and not 1 <= days <= 3650:
             raise ValueError("A token can last from 1 day to 10 years, or never expire")
         if len(self.db.api_tokens()) >= API_TOKENS_MOST:
-            raise ValueError(f"StationPlay keeps at most {API_TOKENS_MOST} API tokens")
+            raise ValueError(f"tapiOca keeps at most {API_TOKENS_MOST} API tokens")
         token = API_TOKEN_PREFIX + secrets.token_urlsafe(32)
         now = _now()
         expires = now + days * 86_400_000 if days else None
@@ -1079,7 +1081,7 @@ def _for_users(path: str, method: str, paths: dict[str, tuple[str, ...]] = FOR_U
 class Gate:
     """Lets a request through only if whoever made it may (see the module's
     notes): a plain ASGI layer, so streams pass through it untouched.
-    `public_port`: the port the internet reaches StationPlay on (0: none)."""
+    `public_port`: the port the internet reaches tapiOca on (0: none)."""
 
     def __init__(
         self, app: Callable, access: Access, public_port: int = 0, tuner: TunerAccess | None = None
@@ -1133,9 +1135,9 @@ class Gate:
         elif public and path.startswith(FOR_APPS_UNDER) and path != REACH and not over_https(scope):
             await _refuse(send, 403, NOT_HTTPS)
         elif scope["method"] not in SAFE_METHODS and _from_another_site(scope):
-            await _refuse(send, 403, "StationPlay can only be changed from its own page")
+            await _refuse(send, 403, "tapiOca can only be changed from its own page")
         elif path not in UPLOADS and _length(scope) > BODY_MAX:
-            await _refuse(send, 413, "That request is too big for StationPlay")
+            await _refuse(send, 413, "That request is too big for tapiOca")
         elif refused := self._decide(scope):
             await _refuse(send, *refused)
         elif scope["method"] in SAFE_METHODS:
@@ -1164,7 +1166,7 @@ class Gate:
             return None if path in OPEN else refused
         user, idle = None, False
         if token:
-            # (Anything but reading is someone using StationPlay: see IDLE_SIGN_OUT_S.)
+            # (Anything but reading is someone using tapiOca: see IDLE_SIGN_OUT_S.)
             active = scope["method"] not in SAFE_METHODS
             user, idle = self.access.session_of(session_hash(token), active=active)
         state["user"], state["idle"] = user, idle
@@ -1173,7 +1175,7 @@ class Gate:
         if path in OPEN:
             return None
         if user is None:
-            return 401, IDLE_SIGNED_OUT if idle else "Sign in to StationPlay"
+            return 401, IDLE_SIGNED_OUT if idle else "Sign in to tapiOca"
         if user.role != ADMIN and not _for_users(path, scope["method"]):
             return 403, ADMINS_ONLY
         if (
@@ -1226,7 +1228,7 @@ class Gate:
                 return message
             received += len(message.get("body", b""))
             if limited and received > BODY_MAX:
-                refused = 413, "That request is too big for StationPlay"
+                refused = 413, "That request is too big for tapiOca"
             elif not message.get("more_body"):
                 refused = self._decide(scope)
             return {"type": "http.disconnect"} if refused else message
@@ -1266,7 +1268,7 @@ def _length(scope: dict) -> int:
 
 def over_https(scope: dict) -> bool:
     """Whether a request came over HTTPS: itself, or to the reverse proxy or
-    Cloudflare in front of StationPlay, as it says (X-Forwarded-Proto,
+    Cloudflare in front of tapiOca, as it says (X-Forwarded-Proto,
     CF-Visitor)."""
     if scope.get("scheme") == "https":
         return True
@@ -1402,7 +1404,7 @@ def _stations_text(limit: int | None) -> str:
 def _set_cookie(
     response: Response, request: Request, token: str, name: str = COOKIE, days: int = SESSION_DAYS
 ) -> None:
-    """Sets a cookie only StationPlay's page can see (not its script), sent
+    """Sets a cookie only tapiOca's page can see (not its script), sent
     only over https when the page is reached that way: as a reverse proxy
     or Cloudflare (CF-Visitor) says."""
     secure = over_https(request.scope)
@@ -1448,13 +1450,13 @@ def routes(app: FastAPI, access: Access) -> None:
             "user": _user_json(user, access.db.stations_made()) if user else None,
         }
         # When this browser is signed out unless someone uses it, as
-        # StationPlay's clock says (so a page open in several tabs agrees);
+        # tapiOca's clock says (so a page open in several tabs agrees);
         # or that it was signed out that way (see IDLE_SIGN_OUT_S).
         if user and (left := access.idle_left_ms(token)) is not None:
             said["idleLeftMs"] = left
         if getattr(request.state, "idle", False):
             said["idle"] = True
-        # From the internet (StationPlay's public port: through a proxy too,
+        # From the internet (tapiOca's public port: through a proxy too,
         # even from home), it's always the password, and the page says
         # where the PIN works.
         if outside(request.scope):
@@ -1469,7 +1471,7 @@ def routes(app: FastAPI, access: Access) -> None:
 
     @app.post("/api/access/active")
     async def active(request: Request):
-        """Someone is using StationPlay's page (see IDLE_SIGN_OUT_S; the Gate
+        """Someone is using tapiOca's page (see IDLE_SIGN_OUT_S; the Gate
         has noted it, as it does any change): when this browser is signed
         out unless it's used again."""
         return {"idleLeftMs": access.idle_left_ms(request.cookies.get(COOKIE))}
@@ -1499,7 +1501,7 @@ def routes(app: FastAPI, access: Access) -> None:
 
     @app.post("/api/access/pin-sign-in")
     async def pin_sign_in(body: PinSignIn, request: Request, response: Response):
-        """Signing in with a PIN on StationPlay's page: only at home, and
+        """Signing in with a PIN on tapiOca's page: only at home, and
         only on a browser its person signed in on with their password (since
         it last changed, and they last signed out there). Wrong PINs are
         limited as on the apps' Who's tuning in?: five, then 15 minutes, for
@@ -1522,7 +1524,7 @@ def routes(app: FastAPI, access: Access) -> None:
         except Refused as e:
             access.record(
                 logging.WARNING,
-                f"Wrong PIN for {user.name} on StationPlay's page, from {where(request.scope)}",
+                f"Wrong PIN for {user.name} on tapiOca's page, from {where(request.scope)}",
             )
             if e.status != 429 and access.pin_wrong_on(token):
                 access.record(

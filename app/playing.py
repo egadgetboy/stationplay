@@ -1,11 +1,11 @@
 """What's playing, and for whom, in words: how the Logs tab names stations,
-files and the way they play, and who's watching through StationPlay's apps.
+files and the way they play, and who's watching through tapiOca's apps.
 
 A station is named by its number and name, "station 2, Cartoon Classics"
 (or its number alone, when its name says no more). A file's picture and
 sound are said as a box would label them: "1080p H.264, 5.1 E-AC-3".
 
-Who's watching through StationPlay's apps: a player can't sign in, so at
+Who's watching through tapiOca's apps: a player can't sign in, so at
 home a station's HLS is asked for by an address alone. It's put down to the
 person whose app at that address last asked for the stations, signed in,
 which is how an app starts watching one (see appapi.py). Away from home, a
@@ -55,7 +55,10 @@ def station(number: int | None, name: str = "", *, mid: bool = False) -> str:
 
 
 def cap(text: str) -> str:
-    """`text` starting a sentence."""
+    """`text` starting a sentence. "tapiOca" keeps its lowercase t, even
+    there (the brand)."""
+    if text.startswith("tapiOca"):
+        return text
     return text[:1].upper() + text[1:]
 
 
@@ -169,21 +172,21 @@ def title(entry: Entry) -> str:
 
 def own(app: str) -> str:
     """An app's label (see appapi.app_label) after someone's name: "Pat's
-    StationPlay for Roku on Den", "Pat's StationPlay app on Den"."""
-    if app.startswith("A StationPlay app"):
+    tapiOca for Roku on Den", "Pat's tapiOca app on Den"."""
+    if app.startswith("A tapiOca app"):
         return app[2:]
     return app or "app"
 
 
 @dataclass(frozen=True)
 class Watcher:
-    """Who's watching through one of StationPlay's apps, as far as
-    StationPlay knows."""
+    """Who's watching through one of tapiOca's apps, as far as
+    tapiOca knows."""
 
     address: str  # where it's watching from
     away: bool = False
     person: str = ""  # who's signed in on it ("" if not known)
-    user_id: int | None = None  # (their StationPlay id)
+    user_id: int | None = None  # (their tapiOca id)
     app: str = ""  # which app on which device (appapi.app_label), "" if not known
     key: str = ""  # away from home: the start of its stream's own address
 
@@ -196,7 +199,7 @@ class Watcher:
 
     def subject(self, *, start: bool = True) -> str:
         """The app, starting a sentence (or not, `start`): "Pat's
-        StationPlay for Roku on Den at home (192.168.1.20)"; "An app at home
+        tapiOca for Roku on Den at home (192.168.1.20)"; "An app at home
         (192.168.1.20)"."""
         if not self.person:
             return f"{'An' if start else 'an'} app {self.where}"

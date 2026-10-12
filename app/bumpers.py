@@ -1,9 +1,9 @@
 """Intro Bumpers you make yourself: short videos uploaded in the station
 editor, which a station can play when someone tunes in instead of the card
-StationPlay draws.
+tapiOca draws.
 
 Each upload is checked and made again as a clean MP4 the size of the stream,
-its sound evened out (or silence, if it had none), so only a file StationPlay
+its sound evened out (or silence, if it had none), so only a file tapiOca
 made is ever played on the air. They're kept in the data folder's bumpers/
 folder as <id>.mp4 and <id>.json (its name and length): the folder is the
 library, and the database only says which one a station plays.
@@ -86,7 +86,7 @@ class BumperLibrary:
         return self.folder / f"{bumper.id}.mp4"
 
     def clear_leftovers(self) -> None:
-        """Removes what an upload StationPlay was stopped in the middle of
+        """Removes what an upload tapiOca was stopped in the middle of
         left behind (its hidden working files)."""
         if self.folder.is_dir():
             for leftover in self.folder.glob(".*"):
@@ -102,11 +102,11 @@ class BumperLibrary:
         probed = await ff.probe(settings, str(upload), timeout=60, options=ff.UPLOADED_VIDEO)
         if not probed.ok:
             raise BumperError(
-                "StationPlay can't play that file. Use a video such as MP4, MOV, MKV, or WebM."
+                "tapiOca can't play that file. Use a video such as MP4, MOV, MKV, or WebM."
             )
         if probed.dolby_vision_only:
             raise BumperError(
-                f"That video is Dolby Vision profile {probed.dolby_vision}, which StationPlay "
+                f"That video is Dolby Vision profile {probed.dolby_vision}, which tapiOca "
                 "can't show in its true colors. Save it as HDR10 or standard video and try again."
             )
         if not tone_map:
@@ -130,7 +130,7 @@ class BumperLibrary:
                 done = await ff.probe(settings, str(made), timeout=30)
                 if not done.ok or done.audio_index is None:
                     raise BumperError(
-                        "StationPlay couldn't convert that video into a format it can play"
+                        "tapiOca couldn't convert that video into a format it can play"
                     )
                 bumper = Bumper(
                     bumper_id,
@@ -246,4 +246,4 @@ async def _make(args: list[str]) -> None:
     except OSError as e:
         raise BumperError(f"Couldn't start ffmpeg: {e}") from None
     if code != 0:
-        raise BumperError(f"StationPlay couldn't prepare that video ({said[-200:] or 'it failed'})")
+        raise BumperError(f"tapiOca couldn't prepare that video ({said[-200:] or 'it failed'})")

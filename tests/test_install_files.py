@@ -1,7 +1,7 @@
 """The install files (the audit of 1.34.0): stationplay.yaml and
-docker-compose.yml start StationPlay without the internet (the image is
+docker-compose.yml start tapiOca without the internet (the image is
 fetched only when it isn't there; each install's update steps fetch it);
-the Unraid template runs StationPlay as docker-compose.yml does; and the
+the Unraid template runs tapiOca as docker-compose.yml does; and the
 README's update steps work in PowerShell, say plainly which steps haven't
 been confirmed, and tell installs from before 1.34.0 what to set."""
 
@@ -46,7 +46,7 @@ def environment(text: str) -> dict[str, str]:
 def test_starting_never_needs_the_internet():
     for path in (COMPOSE, YAML):
         text = path.read_text()
-        assert setting(text, "image") == "ghcr.io/egadgetboy/stationplay:latest", path.name
+        assert setting(text, "image") == "ghcr.io/egadgetboy/tapioca-server:latest", path.name
         # (Fetched only when it isn't there: `always` makes every start ask the registry.)
         assert setting(text, "pull_policy") in (None, "missing"), path.name
         assert "pull_policy: always" not in text, path.name

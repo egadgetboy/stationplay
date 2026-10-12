@@ -19,11 +19,11 @@ from .fakeplex import FakePlex
 
 ADA = {"name": "Ada", "password": "correct horse"}
 ROKU = {
-    "app": "StationPlay for Roku",
+    "app": "tapiOca for Roku",
     "version": "0.5.0",
     "device": "Roku Ultra 4850X, Roku OS 14.0",
 }
-PHONE = {"app": "StationPlay for Android", "version": "0.9.0", "device": "Pixel 8, Android 15"}
+PHONE = {"app": "tapiOca for Android", "version": "0.9.0", "device": "Pixel 8, Android 15"}
 
 
 @pytest.fixture
@@ -54,7 +54,7 @@ def test_problems_from_one_kind_of_device_and_from_everyone(app, caplog):
         said = [r.getMessage() for r in caplog.records]
         assert (
             said.count(
-                "Problem in StationPlay for Roku 0.5.0 on Roku Ultra 4850X, Roku OS 14.0 (Den): "
+                "Problem in tapiOca for Roku 0.5.0 on Roku Ultra 4850X, Roku OS 14.0 (Den): "
                 "Station 5 stopped playing: decoder error"
             )
             == 1
@@ -65,7 +65,7 @@ def test_problems_from_one_kind_of_device_and_from_everyone(app, caplog):
         stopped = by_label["Station 5 stopped playing"]
         assert (stopped["times"], stopped["devices"], stopped["only"]) == (4, 2, True)
         assert stopped["on"] == [
-            {"device": "StationPlay for Roku 0.5.0 on Roku Ultra 4850X, Roku OS 14.0", "times": 4}
+            {"device": "tapiOca for Roku 0.5.0 on Roku Ultra 4850X, Roku OS 14.0", "times": 4}
         ]
         assert stopped["details"] == ["decoder error"]
         failed = by_label["Northbound didn't play"]
@@ -130,7 +130,7 @@ def test_only_admins_see_them(app):
 
 
 # From 1.29.1: when each happened, the app's journal, trouble reaching
-# StationPlay, and what error codes mean ------------------------------------------
+# tapiOca, and what error codes mean ------------------------------------------
 
 
 def sent(client: TestClient, **fields):
@@ -156,7 +156,7 @@ def test_problems_sent_later_go_by_when_they_happened(app, caplog):
         assert rows["Slightly ahead"]["lastMs"] == now + 2 * 60_000
         order = [p["title"] for p in tv.get("/api/problems").json()["problems"]]
         assert order.index("Newest") < order.index("Older")
-        assert "Problem in StationPlay for Android 0.9.0 on Pixel 8, Android 15 (Den): Older " \
+        assert "Problem in tapiOca for Android 0.9.0 on Pixel 8, Android 15 (Den): Older " \
                "didn't play (3 hours ago)" in caplog.text  # fmt: skip
         # The same one again within 10 minutes of when it happened counts on its row,
         # whenever it's sent; further apart, it's another.
@@ -237,26 +237,25 @@ def test_trouble_reaching_stationplay_reads_plainly(app, caplog):
              at=now - 20 * 60_000, station=5, title="ignored")  # fmt: skip
         [row] = tv.get("/api/problems").json()["problems"]
         assert (
-            row["label"]
-            == "Den couldn't reach StationPlay for 12 minutes · No network on this device"
+            row["label"] == "Den couldn't reach tapiOca for 12 minutes · No network on this device"
         )
         assert row["station"] is None and row["means"] == [problems.TROUBLES[0][1]]
         assert (
-            "Problem in StationPlay for Android 0.9.0 on Pixel 8, Android 15 (Den): Den couldn't "
-            "reach StationPlay for 12 minutes · No network on this device (20 minutes ago)"
+            "Problem in tapiOca for Android 0.9.0 on Pixel 8, Android 15 (Den): Den couldn't "
+            "reach tapiOca for 12 minutes · No network on this device (20 minutes ago)"
         ) in caplog.text
-        # As StationPlay for Android says it, how long in its detail: read from there.
+        # As tapiOca for Android says it, how long in its detail: read from there.
         detail = "StationPlay didn't answer for 1 hr 5 min. The device was on Wi-Fi."
         for minutes in (0, 30):
             sent(tv, kind="unreachable", detail=detail, at=now - (90 + minutes) * 60_000)
         rows = {p["label"]: p for p in tv.get("/api/problems").json()["problems"]}
-        both = rows["Den couldn't reach StationPlay for 2 hours 10 minutes in all · StationPlay "
+        both = rows["Den couldn't reach tapiOca for 2 hours 10 minutes in all · StationPlay "
                     "didn't answer"]  # fmt: skip
         assert (both["times"], both["details"]) == (2, [detail])
         # An error answered: the status kept; a device with no name, by its model.
         tv.post("/api/internal/problem", json={**PHONE, "kind": "unreachable",
                 "detail": "StationPlay answered with an error (503) for 2 min.", "lastedMs": 125_000})  # fmt: skip
-        assert any(p["label"] == "Pixel 8 couldn't reach StationPlay for 2 minutes · StationPlay "
+        assert any(p["label"] == "Pixel 8 couldn't reach tapiOca for 2 minutes · StationPlay "
                    "answered with an error (503)" for p in tv.get("/api/problems").json()["problems"])  # fmt: skip
     assert problems.lasted(30_000) == "less than a minute"
     assert problems.lasted(61 * 60_000) == "1 hour 1 minute"
@@ -275,8 +274,8 @@ def test_what_the_error_codes_the_apps_send_mean(app):
             sent(tv, kind="library-failed", title=title, detail=detail)
         means = {p["title"]: p["means"] for p in tv.get("/api/problems").json()["problems"]}
         assert means["Android"] == [
-            "The device couldn't decode the picture or sound of this file. StationPlay makes a "
-            "converted copy when the app asks for one (StationPlay for Android 0.3.1 does)."
+            "The device couldn't decode the picture or sound of this file. tapiOca makes a "
+            "converted copy when the app asks for one (tapiOca for Android 0.3.1 does)."
         ]
         assert means["Apple"] == means["Android"]
         assert means["Offline"][0].startswith("The device lost its connection")

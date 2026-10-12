@@ -1,5 +1,5 @@
 """The setup (see setup.py): which questions an Admin is asked (all of them
-on a new StationPlay; after an update, just the new or changed ones; once
+on a new tapiOca; after an update, just the new or changed ones; once
 each), and the checks that say whether what's set up is working."""
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ def test_a_question_that_changes_is_asked_again(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     ("welcomed", "stations", "away_on", "sharing", "others", "left"),
     [
-        # A new StationPlay: everything.
+        # A new tapiOca: everything.
         ("", 0, False, False, False, list(setup.QUESTIONS)),
         # Set up with the last welcome: the apps' questions, new to the setup.
         (playback.WELCOME, 3, False, False, False, ["away", "library"]),
@@ -128,7 +128,7 @@ def test_the_media_check_finds_plexs_newest_file_where_stationplay_looks(tmp_pat
         check = next(x for x in c.get("/api/setup/checks").json()["checks"] if x["id"] == "media")
         assert check["state"] == "good"
         assert check["lines"] == [
-            f"StationPlay reads your files straight from disk: it found S01E02.mkv at {media}/TV/Show/S01E02.mkv."
+            f"tapiOca reads your files straight from disk: it found S01E02.mkv at {media}/TV/Show/S01E02.mkv."
         ]
         # (And what it learned is used when programs play.)
         assert c.app.state.ctx.media_access.learned == {"/data/media": str(media)}
@@ -136,7 +136,7 @@ def test_the_media_check_finds_plexs_newest_file_where_stationplay_looks(tmp_pat
         (media / "TV" / "Show" / "S01E02.mkv").unlink()
         check = next(x for x in c.get("/api/setup/checks").json()["checks"] if x["id"] == "media")
         assert check["state"] == "warn"
-        assert check["lines"][0].startswith("StationPlay couldn’t find S01E02.mkv")
+        assert check["lines"][0].startswith("tapiOca couldn’t find S01E02.mkv")
 
 
 def test_the_media_check_when_nothing_is_mounted(tmp_path):
@@ -148,7 +148,7 @@ def test_the_media_check_when_nothing_is_mounted(tmp_path):
     assert checks["media"]["state"] == "warn"
     assert (
         checks["media"]["lines"][0]
-        == f"Nothing is mounted at {tmp_path / 'nowhere'}, so StationPlay streams files from Plex."
+        == f"Nothing is mounted at {tmp_path / 'nowhere'}, so tapiOca streams files from Plex."
     )
     assert checks["plex"]["state"] == "good"
     assert checks["dvr"]["state"] == "info"
@@ -177,12 +177,12 @@ def test_the_media_check_says_when_a_file_isnt_allowed_to_be_read(tmp_path):
 def test_the_encoding_check():
     gpu = {"state": "gpu", "active": "NVIDIA GPU (NVENC)", "note": "", "tested": [{"ok": True}]}
     assert setup.encoding_check(gpu, True, True).state == "good"
-    plain = {"state": "cpu", "active": "CPU", "note": "StationPlay can't see a GPU.", "tested": []}
+    plain = {"state": "cpu", "active": "CPU", "note": "tapiOca can't see a GPU.", "tested": []}
     assert setup.encoding_check(plain, True, True).state == "info"
     # A GPU it isn't allowed to use is something to fix.
     denied = {
         **plain,
-        "note": "StationPlay isn't allowed to use /dev/dri/renderD128, which belongs to group 107. Add \"107\" under group_add in the app's YAML.",
+        "note": "tapiOca isn't allowed to use /dev/dri/renderD128, which belongs to group 107. Add \"107\" under group_add in the app's YAML.",
     }
     got = setup.encoding_check(denied, True, True)
     assert got.state == "warn" and "group_add" in got.lines[0]
@@ -202,8 +202,8 @@ def test_the_clock_check(monkeypatch):
         got = setup.clock_check(-300, "America/Chicago")
         assert got.state == "warn"
         assert got.lines[0] == (
-            "StationPlay’s clock is set to UTC, but this browser’s is America/Chicago, 5 hours apart. "
-            "Schedules, blocks and the guide follow StationPlay’s clock."
+            "tapiOca’s clock is set to UTC, but this browser’s is America/Chicago, 5 hours apart. "
+            "Schedules, blocks and the guide follow tapiOca’s clock."
         )
         assert "such as America/Chicago" in got.lines[1]
         assert "5.5 hours apart" in setup.clock_check(330, "Asia/Kolkata").lines[0]
@@ -226,7 +226,7 @@ def test_the_backups_check():
 
 def test_the_plex_check_says_what_plex_pass_means():
     connected = {"configured": True, "ok": True, "version": "1.41.0"}
-    assert setup.plex_check(connected, None).lines == ["StationPlay is connected to Plex 1.41.0."]
+    assert setup.plex_check(connected, None).lines == ["tapiOca is connected to Plex 1.41.0."]
     assert setup.plex_check(connected, True).state == "good"
     got = setup.plex_check(connected, False)
     assert got.state == "warn" and "Plex Pass" in got.lines[1]

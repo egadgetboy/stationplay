@@ -32,7 +32,7 @@ PAGE_SIZE = 1000
 # A request Plex didn't answer is asked again after this long (then twice
 # this), up to three times in all.
 RETRY_S = 0.5
-# Background requests (building and checking stations) StationPlay has in
+# Background requests (building and checking stations) tapiOca has in
 # flight to Plex at once, at most. Lookups for programs about to play don't
 # wait behind them.
 BULK_REQUESTS = 6
@@ -52,7 +52,7 @@ DEFAULT_FIELDS = (
 )
 # Filters with thousands of names: searched as you type rather than listed.
 PEOPLE_FIELDS = frozenset({"director", "actor", "writer", "producer"})
-# Plex filters StationPlay handles itself (decade, title) or that describe
+# Plex filters tapiOca handles itself (decade, title) or that describe
 # someone's viewing rather than the program (unwatched...).
 OWN_FIELDS = frozenset({"decade", "year", "title", "unwatched", "inProgress", "unmatched"})
 # Plex's lists of genres, directors and so on are kept this long.
@@ -64,9 +64,9 @@ class PlexError(LibraryError):
     did). Plex is a library, so this is a LibraryError too."""
 
 
-# What every address StationPlay asks Plex for looks like: names and numbers
+# What every address tapiOca asks Plex for looks like: names and numbers
 # (Plex's keys) between slashes, never "..", a query or anything escaped.
-# Keys come partly from what people send StationPlay, and the token makes
+# Keys come partly from what people send tapiOca, and the token makes
 # every request the server owner's, so nothing else is ever sent.
 _PLEX_PATH = re.compile(r"(/[A-Za-z0-9_:-]+)+")
 # (And several shows, movies or episodes at once, by their keys.)
@@ -76,12 +76,12 @@ _KEYS_PATH = re.compile(r"/library/metadata/\d+(,\d+)+")
 def _checked(path: str) -> str:
     # (/: the server's own details.)
     if path != "/" and not _PLEX_PATH.fullmatch(path) and not _KEYS_PATH.fullmatch(path):
-        raise PlexError(f"That isn't a Plex address StationPlay uses: {path[:80]!r}", 400)
+        raise PlexError(f"That isn't a Plex address tapiOca uses: {path[:80]!r}", 400)
     return path
 
 
 # Where Plex keeps a show's or movie's logo (its "clear logo"), and the
-# largest one StationPlay fetches (as large as an upload may be).
+# largest one tapiOca fetches (as large as an upload may be).
 _CLEAR_LOGO = re.compile(r"/library/metadata/\d+/clearLogo/\d+")
 MAX_LOGO_BYTES = 10 * 1024 * 1024
 
@@ -124,14 +124,14 @@ class PlexClient:
             headers={
                 "Accept": "application/json",
                 "X-Plex-Token": token,
-                "X-Plex-Product": "StationPlay",
+                "X-Plex-Product": "tapiOca",
                 "X-Plex-Client-Identifier": "stationplay-live-channels",
             },
             event_hooks={"response": [self._note_clock]},
         )
         # How far this machine's clock is ahead of Plex's, in seconds, by the
         # Date header of Plex's latest answer (None: none said so lately).
-        # The only reference StationPlay has for its clock (see alerts.py).
+        # The only reference tapiOca has for its clock (see alerts.py).
         self.clock_offset_s: float | None = None
         self._bulk = asyncio.Semaphore(BULK_REQUESTS)
         self._marker_slots = asyncio.Semaphore(MARKER_REQUESTS)
@@ -718,7 +718,7 @@ class PlexClient:
             return []
         top = [(files, m) for n, files, m in found if n == best]
         if len({files for files, _ in top}) != 1:
-            return []  # (they differ: not for StationPlay to choose)
+            return []  # (they differ: not for tapiOca to choose)
         return [min((m for _, m in top), key=lambda m: (int(m["_section"]), str(m["ratingKey"])))]
 
     async def _by_title(
@@ -993,7 +993,7 @@ class PlexClient:
 
     async def newest_files(self, most: int = 3) -> list[str]:
         """The newest file in each library of shows or movies (up to
-        `most`), where Plex has it: for checking StationPlay can read them."""
+        `most`), where Plex has it: for checking tapiOca can read them."""
         out: list[str] = []
         for section in await self.sections():
             data = await self._get(
@@ -1026,7 +1026,7 @@ class PlexClient:
             return ()
         return files_of(metadata[0])
 
-    # For StationPlay's apps (see docs/on-demand.md) -------------------------
+    # For tapiOca's apps (see docs/on-demand.md) -------------------------
 
     async def browse(
         self, section: str, kind: str, sort: str, start: int, size: int, genre: str | None = None
@@ -1187,7 +1187,7 @@ class PlexClient:
         return bytes(data), kind
 
 
-# For StationPlay's apps: how a library's shows and movies can be sorted.
+# For tapiOca's apps: how a library's shows and movies can be sorted.
 _SORTS = {"title": "titleSort", "added": "addedAt:desc", "released": "originallyAvailableAt:desc"}
 # Shows, movies and episodes asked for in one request, at most.
 ENTRIES_AT_ONCE = 50

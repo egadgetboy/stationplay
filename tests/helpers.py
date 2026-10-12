@@ -64,10 +64,10 @@ def like_plex(fp: FakePlex) -> httpx.MockTransport:
 
 
 class Proxy:
-    """A reverse proxy in front of StationPlay (`app`), as StationPlay's check
+    """A reverse proxy in front of tapiOca (`app`), as tapiOca's check
     of its outside address meets one (see reach.py): it passes each request
     to `port`, saying it came over HTTPS (X-Forwarded-Proto) if `https`, and
-    keeps StationPlay's answers. Its `transport` is what answers the check."""
+    keeps tapiOca's answers. Its `transport` is what answers the check."""
 
     def __init__(self, app, port: int, https: bool = True) -> None:
         self.port, self.https = port, https
@@ -109,7 +109,7 @@ def add_again(fp: FakePlex, show_key: str, new_key: str) -> dict[str, str]:
 
 
 def page_code(client) -> str:
-    """StationPlay's page as it's served, and each of its own files (its
+    """tapiOca's page as it's served, and each of its own files (its
     styles and scripts) as they're served: all of the page's code."""
     page = client.get("/").text
     files = [client.get(f"/web/{name}?v={__version__}") for name in PAGE_FILES]

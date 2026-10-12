@@ -1,4 +1,4 @@
-"""The setup: the questions an Admin answers when StationPlay is new, and
+"""The setup: the questions an Admin answers when tapiOca is new, and
 again, just the new ones, when an update brings something that needs an
 answer; and the checks that say whether what's set up is working.
 
@@ -13,7 +13,7 @@ checks.
 
 The checks look at Plex, the media files, video encoding, the clock and
 backups. Each gives a state ("good", "warn" for something to look at,
-"bad" for something that keeps StationPlay from working, "info" for
+"bad" for something that keeps tapiOca from working, "info" for
 something to know, "wait" for something that can't be checked yet), a
 title, and a sentence or two, with what to do when something's wrong.
 Nothing is guessed: a check that can't tell says so.
@@ -45,12 +45,12 @@ META_ANSWERED = "setup_answered"  # {question: its version when answered} (JSON)
 QUESTIONS: dict[str, int] = {
     "playback": 1,  # how stations play: the picture size and the tuners
     "newStation": 1,  # what new stations start with
-    "signIn": 1,  # who can use StationPlay
+    "signIn": 1,  # who can use tapiOca
     "viewing": 1,  # who sees what: Viewing Levels (1.23)
-    "away": 1,  # StationPlay's apps away from home
-    "library": 1,  # Media in StationPlay's apps
+    "away": 1,  # tapiOca's apps away from home
+    "library": 1,  # Media in tapiOca's apps
     "fileChecks": 1,  # the overnight deep scan
-    "plex": 1,  # adding StationPlay to Plex
+    "plex": 1,  # adding tapiOca to Plex
 }
 # The questions the welcome before this one asked (until 1.22.3): someone who
 # saw it answered them. Its version "3" added which corner, so with an
@@ -88,14 +88,14 @@ def mark(db: Any, questions: list[str]) -> list[str]:
 
 
 def start(db: Any, stations: int, away_on: bool, sharing: bool, others: bool = False) -> None:
-    """At startup, the first time with this setup: what a StationPlay set up
+    """At startup, the first time with this setup: what a tapiOca set up
     before it has already answered. A new one (no stations, no welcome seen)
     is asked everything. Otherwise, what the welcome asked counts as answered;
     so do the apps away from home, and your library in the apps, if they're
-    already on. The rest (for StationPlay set up before them, perhaps
+    already on. The rest (for tapiOca set up before them, perhaps
     without anyone noticing them) are asked once.
 
-    Who sees what is asked of a StationPlay set up before it only if there
+    Who sees what is asked of a tapiOca set up before it only if there
     are people to choose for (`others`: Users, not Admins)."""
     if db.get_meta(META_ANSWERED):
         if not others and "viewing" in pending(db):
@@ -119,7 +119,7 @@ def start(db: Any, stations: int, away_on: bool, sharing: bool, others: bool = F
 
 def state(db: Any, stations: int) -> dict[str, Any]:
     """What the page needs: the questions in order, which are still to
-    answer, and whether StationPlay is new (nothing answered, no stations)."""
+    answer, and whether tapiOca is new (nothing answered, no stations)."""
     left = pending(db)
     return {
         "questions": list(QUESTIONS),
@@ -160,24 +160,24 @@ def plex_check(plex_state: dict[str, Any], plex_pass: bool | None) -> Check:
     title = "Plex"
     if not plex_state.get("configured"):
         return Check("plex", title, BAD, [
-            "StationPlay isn’t connected to Plex: PLEX_URL and PLEX_TOKEN aren’t set.",
-            "Set both in StationPlay’s app settings (its YAML, or its Compose file), then "
-            "restart StationPlay. The README’s “Finding your Plex token” shows where to find "
+            "tapiOca isn’t connected to Plex: PLEX_URL and PLEX_TOKEN aren’t set.",
+            "Set both in tapiOca’s app settings (its YAML, or its Compose file), then "
+            "restart tapiOca. The README’s “Finding your Plex token” shows where to find "
             "the token.",
         ])  # fmt: skip
     if not plex_state.get("ok"):
         return Check("plex", title, BAD, [
             _sentence(str(plex_state.get("error") or "Plex didn’t answer")),
-            "Check that Plex is running, and that PLEX_URL in StationPlay’s app settings is "
+            "Check that Plex is running, and that PLEX_URL in tapiOca’s app settings is "
             "its address, such as http://192.168.1.20:32400.",
         ])  # fmt: skip
     version = plex_state.get("version")
-    lines = [f"StationPlay is connected to Plex{f' {version}' if version else ''}."]
+    lines = [f"tapiOca is connected to Plex{f' {version}' if version else ''}."]
     if plex_pass is False:
         lines.append(
             "The account that owns this Plex server doesn’t have Plex Pass, which Plex’s "
             "Live TV & DVR needs to show your stations in Plex. Jellyfin, Emby, Kodi and "
-            "StationPlay’s own apps don’t need it."
+            "tapiOca’s own apps don’t need it."
         )
         return Check("plex", title, WARN, lines)
     if plex_pass:
@@ -187,14 +187,12 @@ def plex_check(plex_state: dict[str, Any], plex_pass: bool | None) -> Check:
 
 
 async def media_check(ctx: AppContext, plex_ok: bool, present: bool) -> Check:
-    """Whether StationPlay can read the files Plex has: the newest in a
-    library, looked for where StationPlay looks when a program plays."""
+    """Whether tapiOca can read the files Plex has: the newest in a
+    library, looked for where tapiOca looks when a program plays."""
     title = "Your media files"
     media_dir = ctx.settings.media_dir
     if not plex_ok:
-        return Check(
-            "media", title, WAIT, ["This is checked once StationPlay is connected to Plex."]
-        )
+        return Check("media", title, WAIT, ["This is checked once tapiOca is connected to Plex."])
     try:
         files = await asyncio.wait_for(ctx.plex.newest_files(), PLEX_ASK_S)
     except (PlexError, TimeoutError):
@@ -215,38 +213,38 @@ async def media_check(ctx: AppContext, plex_ok: bool, present: bool) -> Check:
     if found is not None and problem is None:
         learn_mapping(ctx.media_access, found)
         return Check("media", title, GOOD, [
-            f"StationPlay reads your files straight from disk: it found {name} at {found.path}.",
+            f"tapiOca reads your files straight from disk: it found {name} at {found.path}.",
         ])  # fmt: skip
     slower = "That works, but reading files from disk is faster and puts less load on Plex."
     if timed_out:
         return Check("media", title, WARN, [
             f"Looking for {name} in {media_dir} took too long. A network share may be slow or "
-            "out of reach, so StationPlay streams files from Plex for now.",
+            "out of reach, so tapiOca streams files from Plex for now.",
             slower,
         ])  # fmt: skip
     if found is not None and problem == "denied":
         return Check("media", title, WARN, [
-            f"StationPlay found {found.path} but isn’t allowed to read it, so it streams files "
-            "from Plex. Give the user StationPlay runs as (1000, unless you changed it) "
+            f"tapiOca found {found.path} but isn’t allowed to read it, so it streams files "
+            "from Plex. Give the user tapiOca runs as (1000, unless you changed it) "
             "permission to read your media.",
             slower,
         ])  # fmt: skip
     if found is not None:
         return Check("media", title, WARN, [
-            f"StationPlay found {found.path} but couldn’t read it ({problem}), so it streams "
+            f"tapiOca found {found.path} but couldn’t read it ({problem}), so it streams "
             "files from Plex. The disk or share it’s on may have a problem.",
             slower,
         ])  # fmt: skip
     if not present:
         return Check("media", title, WARN, [
-            f"Nothing is mounted at {media_dir}, so StationPlay streams files from Plex.",
-            slower + f" Mount your media folder at {media_dir} in StationPlay’s app settings.",
+            f"Nothing is mounted at {media_dir}, so tapiOca streams files from Plex.",
+            slower + f" Mount your media folder at {media_dir} in tapiOca’s app settings.",
         ])  # fmt: skip
     return Check("media", title, WARN, [
-        f"StationPlay couldn’t find {name} in {media_dir} (Plex has it at {plex_file}), so it "
+        f"tapiOca couldn’t find {name} in {media_dir} (Plex has it at {plex_file}), so it "
         "streams files from Plex.",
         slower + f" Mount the folder that holds your shows and movies at {media_dir}, or set "
-        "PATH_MAPPINGS (see “How StationPlay reads your files” in the README).",
+        "PATH_MAPPINGS (see “How tapiOca reads your files” in the README).",
     ])  # fmt: skip
 
 
@@ -264,7 +262,7 @@ def _read_problem(path: str) -> str | None:
 
 # GPU notes that only say there's no GPU (or that it's turned off): those
 # are something to know, not something to fix.
-PLAIN_CPU = ("StationPlay can't see a GPU.", "GPU encoding is turned off (HW_ACCEL=cpu).")
+PLAIN_CPU = ("tapiOca can't see a GPU.", "GPU encoding is turned off (HW_ACCEL=cpu).")
 
 
 def encoding_check(encoding: dict[str, Any], tone_mapping: bool, subtitling: bool) -> Check:
@@ -277,7 +275,7 @@ def encoding_check(encoding: dict[str, Any], tone_mapping: bool, subtitling: boo
             "encoding",
             title,
             WAIT,
-            ["StationPlay is still checking for a GPU. Check again in a minute."],
+            ["tapiOca is still checking for a GPU. Check again in a minute."],
         )
     if state == "gpu":
         verdict, lines = GOOD, [f"Video is encoded on the {encoding.get('active')}."]
@@ -296,14 +294,13 @@ def encoding_check(encoding: dict[str, Any], tone_mapping: bool, subtitling: boo
         ]
     if not tone_mapping:
         lines.append(
-            "StationPlay’s ffmpeg can’t convert HDR to standard color, so HDR programs look "
+            "tapiOca’s ffmpeg can’t convert HDR to standard color, so HDR programs look "
             "washed out. The Logs tab says why."
         )
         verdict = WARN if verdict in (GOOD, INFO) else verdict
     if not subtitling:
         lines.append(
-            "StationPlay can’t draw subtitles, so programs play without them. The Logs tab "
-            "says why."
+            "tapiOca can’t draw subtitles, so programs play without them. The Logs tab says why."
         )
         verdict = WARN if verdict in (GOOD, INFO) else verdict
     return Check("encoding", title, verdict, lines)
@@ -316,8 +313,8 @@ def _zone_offset(minutes: int) -> str:
 
 
 def clock_check(browser_offset: int | None, browser_zone: str, now: float | None = None) -> Check:
-    """StationPlay's clock (its time zone, from TZ) against the browser's:
-    schedules, blocks and the guide follow StationPlay's. `browser_offset`:
+    """tapiOca's clock (its time zone, from TZ) against the browser's:
+    schedules, blocks and the guide follow tapiOca's. `browser_offset`:
     the browser's minutes ahead of UTC."""
     title = "The clock"
     local = time.localtime(now)
@@ -327,21 +324,21 @@ def clock_check(browser_offset: int | None, browser_zone: str, now: float | None
     shown = zone if plain else f"{zone} ({_zone_offset(ours)})"
     if browser_offset is None:
         return Check("clock", title, INFO, [
-            f"StationPlay’s clock is set to {shown}. Schedules, blocks and the guide follow it.",
+            f"tapiOca’s clock is set to {shown}. Schedules, blocks and the guide follow it.",
         ])  # fmt: skip
     if browser_offset == ours:
         return Check("clock", title, GOOD, [
-            f"StationPlay’s clock is set to {shown}, the same as this browser’s. Schedules, "
+            f"tapiOca’s clock is set to {shown}, the same as this browser’s. Schedules, "
             "blocks and the guide follow it.",
         ])  # fmt: skip
     theirs = browser_zone.strip()[:60] or _zone_offset(browser_offset)
     hours = abs(browser_offset - ours) / 60
     apart = f"{hours:g} hour{'s' if hours != 1 else ''}"
     return Check("clock", title, WARN, [
-        f"StationPlay’s clock is set to {shown}, but this browser’s is {theirs}, {apart} apart. "
-        "Schedules, blocks and the guide follow StationPlay’s clock.",
-        f"If this browser is right, set TZ in StationPlay’s app settings to your time zone "
-        f"(such as {theirs if '/' in theirs else 'America/Chicago'}), then restart StationPlay.",
+        f"tapiOca’s clock is set to {shown}, but this browser’s is {theirs}, {apart} apart. "
+        "Schedules, blocks and the guide follow tapiOca’s clock.",
+        f"If this browser is right, set TZ in tapiOca’s app settings to your time zone "
+        f"(such as {theirs if '/' in theirs else 'America/Chicago'}), then restart tapiOca.",
     ])  # fmt: skip
 
 
@@ -351,42 +348,42 @@ def backups_check(made: list[dict[str, Any]], up_s: float, now_ms: int) -> Check
     if not made:
         if up_s < BACKUP_FIRST_S:
             return Check("backups", title, WAIT, [
-                "StationPlay makes its first backup within 15 minutes of starting, then one "
+                "tapiOca makes its first backup within 15 minutes of starting, then one "
                 "every night.",
             ])  # fmt: skip
         return Check("backups", title, BAD, [
-            "StationPlay hasn’t been able to make a backup. Check that its data folder has room, "
+            "tapiOca hasn’t been able to make a backup. Check that its data folder has room, "
             "and look on the Logs tab for why.",
         ])  # fmt: skip
     age_s = (now_ms - made[0]["made"]) / 1000
     when = ago(age_s)
     if age_s > BACKUP_OLD_S:
         return Check("backups", title, WARN, [
-            f"The newest backup is from {when}. StationPlay backs up every night, so look on the "
+            f"The newest backup is from {when}. tapiOca backs up every night, so look on the "
             "Logs tab for why it hasn’t since.",
         ])  # fmt: skip
     return Check("backups", title, GOOD, [
-        f"StationPlay last backed up your stations and settings {when}. It keeps the last "
+        f"tapiOca last backed up your stations and settings {when}. It keeps the last "
         f"{backups.KEEP}, in the backups folder inside its data folder.",
     ])  # fmt: skip
 
 
 def dvr_check(plex_ok: bool, guide: dict[str, Any], now_ms: int) -> Check:
-    """Whether Plex has StationPlay as a DVR (it's found when StationPlay
+    """Whether Plex has tapiOca as a DVR (it's found when tapiOca
     looks, as the Add to Plex tab does), and when Plex last downloaded its guide."""
-    title = "StationPlay in Plex"
+    title = "tapiOca in Plex"
     if not plex_ok:
-        return Check("dvr", title, WAIT, ["This is checked once StationPlay is connected to Plex."])
+        return Check("dvr", title, WAIT, ["This is checked once tapiOca is connected to Plex."])
     downloaded = guide.get("plexDownloadedGuide")
     if guide.get("canRefreshPlexGuide"):
-        lines = ["Plex has StationPlay as a DVR, so your stations are in its Live TV guide."]
+        lines = ["Plex has tapiOca as a DVR, so your stations are in its Live TV guide."]
         if downloaded:
             lines.append(
-                f"Plex last downloaded StationPlay’s guide {ago((now_ms - downloaded) / 1000)}."
+                f"Plex last downloaded tapiOca’s guide {ago((now_ms - downloaded) / 1000)}."
             )
         return Check("dvr", title, GOOD, lines)
     return Check("dvr", title, INFO, [
-        "Plex doesn’t have StationPlay as a DVR yet. Adding it takes a few steps in Plex, shown "
+        "Plex doesn’t have tapiOca as a DVR yet. Adding it takes a few steps in Plex, shown "
         "in this setup and on the Add to Plex tab. (To watch only in Jellyfin, Emby, Kodi or "
-        "StationPlay’s own apps, you can skip them.)",
+        "tapiOca’s own apps, you can skip them.)",
     ])  # fmt: skip

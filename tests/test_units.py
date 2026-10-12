@@ -856,8 +856,8 @@ def test_data_dir_problem_explains_how_to_fix_it(tmp_path, monkeypatch):
     problem = data_dir_problem(data)
     assert problem is not None and "stationplay.db" in problem
 
-    # A reset-access file made by root (sudo touch) doesn't stop StationPlay:
-    # it only has to exist, and StationPlay deletes it.
+    # A reset-access file made by root (sudo touch) doesn't stop tapiOca:
+    # it only has to exist, and tapiOca deletes it.
     (data / "stationplay.db").unlink()
     (data / "reset-access").write_text("")
     assert data_dir_problem(data) is None

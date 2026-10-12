@@ -410,7 +410,7 @@ def test_the_quick_check_checks_every_part(tmp_path, part_files):
         )  # fmt: skip
         # The Admin's alert says which, and never a file's name.
         needing = ctx.reports.needing()
-        assert needing[0][2] == "StationPlay found Long Movie (2000) broken in part 2 of 2"
+        assert needing[0][2] == "tapiOca found Long Movie (2000) broken in part 2 of 2"
         # Retry: that file stays on the air, though its check finds the same.
         assert client.delete("/api/broken/300").status_code == 204
         assert ctx.db.scan("300/part2").kept and not ctx.db.scan("300").kept

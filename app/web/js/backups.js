@@ -11,7 +11,7 @@ async function loadBackups() {
         h('span', { class: 'spacer' }),
         h('span', { class: 'small muted' }, fmtSize(b.size)),
         h('a', { class: 'btn', href: `/api/backups/${encodeURIComponent(b.name)}`, download: b.name }, 'Download')))
-    : [h('p', { class: 'hint', style: 'padding:4px 2px' }, 'No backups yet. StationPlay makes one within 15 minutes of starting, then one every night. To make one now, choose Download a backup.')]));
+    : [h('p', { class: 'hint', style: 'padding:4px 2px' }, 'No backups yet. tapiOca makes one within 15 minutes of starting, then one every night. To make one now, choose Download a backup.')]));
 }
 $('#backupNow').addEventListener('click', async () => {
   try {
@@ -27,7 +27,7 @@ $('#restoreFile').addEventListener('change', async e => {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file) return;
-  if (!confirm(`Restore ${file.name}? This replaces all your stations, settings, and users with the ones in the backup. StationPlay restarts, and anyone watching is disconnected. (Your current setup is backed up first.)`)) return;
+  if (!confirm(`Restore ${file.name}? This replaces all your stations, settings, and users with the ones in the backup. tapiOca restarts, and anyone watching is disconnected. (Your current setup is backed up first.)`)) return;
   try {
     let res;
     try { res = await api('/api/restore', { method: 'POST', raw: file }); }
@@ -35,12 +35,12 @@ $('#restoreFile').addEventListener('change', async e => {
       if (err.status !== 409 || !confirm(`${err.message} Restore it anyway?`)) throw err;
       res = await api('/api/restore?opening=true', { method: 'POST', raw: file });
     }
-    toast(`Restoring ${plural(res.stations, 'station')}. StationPlay is restarting…`);
+    toast(`Restoring ${plural(res.stations, 'station')}. tapiOca is restarting…`);
     waitForRestart();
   } catch (err) { toast(err.message, true); }
 });
 async function waitForRestart() {
-  // Wait for StationPlay to go away and come back, then reload the page.
+  // Wait for tapiOca to go away and come back, then reload the page.
   const started = Date.now();
   let wentAway = false;
   while (Date.now() - started < 120000) {
@@ -50,7 +50,7 @@ async function waitForRestart() {
       if (wentAway || Date.now() - started > 15000) { location.reload(); return; }
     } catch { wentAway = true; }
   }
-  toast('StationPlay hasn’t come back yet. If it isn’t running in Docker, start it again.', true);
+  toast('tapiOca hasn’t come back yet. If it isn’t running in Docker, start it again.', true);
 }
 
 async function deleteLogo(l) {

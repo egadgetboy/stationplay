@@ -1,7 +1,7 @@
 """Who's watching which station, as Plex says: its Live TV sessions
 (/status/sessions), each matched to the station airing what it shows.
 
-Plex's session for Live TV shows the program its guide has (StationPlay's
+Plex's session for Live TV shows the program its guide has (tapiOca's
 guide), the Plex user watching, and sometimes the channel's number. A
 session is matched to one of the stations with viewers (`playing`: each
 station's id -> its number, and what its schedule has on now): the one
@@ -39,7 +39,7 @@ def user_of(session: dict[str, Any]) -> tuple[str, str]:
 
 
 def channel_numbers(session: dict[str, Any]) -> set[str]:
-    """Any channel number Plex gives a Live TV session (StationPlay's guide
+    """Any channel number Plex gives a Live TV session (tapiOca's guide
     and tuner both number a station's channel with the station's number)."""
     found: set[str] = set()
     for place in (session, *(session.get("Media") or [])):
@@ -106,6 +106,6 @@ def sure_station(session: dict[str, Any], playing: Playing) -> tuple[int | None,
     if shows(session, item, strictly=True) or names(numbers, number):
         return cid, ""
     return None, (
-        f"it's showing the same show as station {number}, but StationPlay can't be sure it's "
+        f"it's showing the same show as station {number}, but tapiOca can't be sure it's "
         "that station"
     )

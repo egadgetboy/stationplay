@@ -1,16 +1,16 @@
-// StationPlay's status, and the picture and tuners.
+// tapiOca's status, and the picture and tuners.
 // Status ---------------------------------------------------------------------
 let status = null;
-let pageVersion = null;  // (StationPlay's version when this page was loaded)
+let pageVersion = null;  // (tapiOca's version when this page was loaded)
 async function loadStatus() {
   try {
     status = await api('/api/status');
   } catch { return; }
-  // After an update, StationPlay's page as it is now, as soon as nothing's
+  // After an update, tapiOca's page as it is now, as soon as nothing's
   // open (an app's window, from a home screen, has no reload button).
   pageVersion ??= status.version;
   if (status.version !== pageVersion && !document.querySelector('dialog[open]')) { location.reload(); return; }
-  $('#appVersion').textContent = status.version ? `StationPlay ${status.version} · ` : '';
+  $('#appVersion').textContent = status.version ? `tapiOca: Stations & Media ${status.version} · ` : '';
   const pill = $('#plexPill');
   pill.firstElementChild.className = 'dot ' + (status.plex.ok ? 'ok' : 'bad');
   const plexError = status.plex.error || 'not connected';
@@ -24,7 +24,7 @@ async function loadStatus() {
   const connections = watched.reduce((n, s) => n + s.viewers, 0);
   const full = watched.length >= status.tuners;
   $('#livePill').hidden = !watched.length;
-  $('#livePill').title = `Stations being watched right now, and how many connections there are. Each station uses one tuner (StationPlay has ${plural(status.tuners, 'tuner')}), no matter how many people watch it in Plex or another app.${full ? ' Every tuner is in use, so anyone tuning in to another station sees a card saying so.' : ''}`;
+  $('#livePill').title = `Stations being watched right now, and how many connections there are. Each station uses one tuner (tapiOca has ${plural(status.tuners, 'tuner')}), no matter how many people watch it in Plex or another app.${full ? ' Every tuner is in use, so anyone tuning in to another station sees a card saying so.' : ''}`;
   $('#livePill').firstElementChild.className = full ? 'dot warn' : 'dot live';
   $('#livePill').lastElementChild.textContent = `${watched.length} of ${plural(status.tuners, 'tuner')} in use · ${plural(connections, 'connection')}`;
   // (What's for Admins comes only to Admins: Away from home and alerts too.)
@@ -73,7 +73,7 @@ function playbackForm(pb, { saveLabel, onSaved, extraButtons = [], embedded = fa
     seg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.textContent === picture)));
     hint.textContent = `${PICTURE_HINTS[picture]} You can give any station its own size under How it plays in its editor.`;
     select.value = String(tuners);
-    tunerHint.textContent = `Up to ${plural(tuners, 'station')} can play at once, across Plex and all other apps. Everyone watching the same station shares one stream, so a station uses one tuner no matter how many people watch it. When every tuner is in use, anyone tuning in to another station sees a card saying so. (StationPlay tells Plex it has ${Math.max(tuners + 1, 2 * tuners)} tuners so that Plex lets it show that card. If you raise this number and Plex still won’t play more, restart Plex.)`;
+    tunerHint.textContent = `Up to ${plural(tuners, 'station')} can play at once, across Plex and all other apps. Everyone watching the same station shares one stream, so a station uses one tuner no matter how many people watch it. When every tuner is in use, anyone tuning in to another station sees a card saying so. (tapiOca tells Plex it has ${Math.max(tuners + 1, 2 * tuners)} tuners so that Plex lets it show that card. If you raise this number and Plex still won’t play more, restart Plex.)`;
     if (tested) {
       const p = tested.pictures;
       const when = new Date(tested.at).toLocaleDateString([], { month: 'short', day: 'numeric' });

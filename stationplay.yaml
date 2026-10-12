@@ -1,4 +1,4 @@
-# StationPlay — TrueNAS SCALE custom app (TrueNAS SCALE 24.10 or later)
+# tapiOca — TrueNAS SCALE custom app (TrueNAS SCALE 24.10 or later)
 #
 # Install: Apps > Discover Apps > ⋮ (top right) > Install via YAML.
 # Name the app "stationplay" and paste this whole file.
@@ -10,19 +10,19 @@
 #        sudo chown -R 1000:1000 /mnt/tank/apps/stationplay/data
 #   2. Change every line marked  <- CHANGE
 #
-# Paths are case-sensitive: StationPlay and stationplay are different folders.
+# Paths are case-sensitive: Data and data are different folders.
 #
-# To update: follow the steps StationPlay's page gives when a new version
+# To update: follow the steps tapiOca's page gives when a new version
 # is out, or the README's Updating section.
 
 services:
   stationplay:
-    image: ghcr.io/egadgetboy/stationplay:latest     # the newest release; :1.34 or :1.34.0 stays on one
+    image: ghcr.io/egadgetboy/tapioca-server:latest     # the newest release; :1.34 or :1.34.0 stays on one
     pull_policy: missing                             # fetched only when it isn't here: starting never needs the internet
     container_name: stationplay
     restart: unless-stopped
     init: true
-    # The user StationPlay runs as. It needs write access to the data folder
+    # The user tapiOca runs as. It needs write access to the data folder
     # and read access to your media. (TrueNAS's built-in apps user is 568:568.)
     user: "1000:1000"                                # <- CHANGE if your media belongs to another user
     ports:
@@ -46,7 +46,7 @@ services:
     volumes:
       # Stations, settings, logos, the Broken files list and backups
       - /mnt/tank/apps/stationplay/data:/data        # <- CHANGE to your data folder
-      # Your media library, read-only. StationPlay matches the paths Plex
+      # Your media library, read-only. tapiOca matches the paths Plex
       # reports to this folder automatically.
       - /mnt/tank/media:/media:ro                    # <- CHANGE to your media folder
 
@@ -56,7 +56,7 @@ services:
     devices:
       - /dev/dri:/dev/dri
     group_add:
-      # The group that owns /dev/dri/renderD128, so StationPlay may use the
+      # The group that owns /dev/dri/renderD128, so tapiOca may use the
       # GPU. 107 is the usual TrueNAS value; check with:  ls -ln /dev/dri
       - "107"
 

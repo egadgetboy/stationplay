@@ -1,7 +1,7 @@
 """Alert notifications to up to 3 web addresses (notify.py, from 1.34.0):
 each message goes to every address, and one failing or slow never holds up
 or changes the others; Slack's format; the setting kept so an older
-StationPlay still notifies the first address; the API's `more`; and the log
+tapiOca still notifies the first address; the API's `more`; and the log
 naming only hosts.
 
 The audit of 1.34.0: only saved addresses keep a Last sent (a test of one
@@ -132,7 +132,7 @@ async def test_three_addresses_each_get_every_message(db):
     finally:
         task.cancel()
     assert ntfy.asked[0].content == b"Plex & co: <!channel> can't be reached."
-    assert ntfy.asked[0].headers["title"] == "StationPlay"
+    assert ntfy.asked[0].headers["title"] == "tapiOca"
     # Discord's: as it is, its markdown written as text (see
     # test_discord_shows_a_station_s_name_as_it_is).
     assert json.loads(discord.asked[0].content)["content"] == (
@@ -163,18 +163,18 @@ async def test_one_failing_while_the_others_still_get_theirs(db, monkeypatch, ca
     task = await running(sender)
     said = Said()
     try:
-        sender.send("StationPlay can't reach Plex.", "plex", "started", said.took, said.missed)
+        sender.send("tapiOca can't reach Plex.", "plex", "started", said.took, said.missed)
         assert await until(lambda: len(broken.asked) == 2 and ntfy.asked and gotify.asked)
         await asyncio.sleep(0.05)
     finally:
         task.cancel()
     assert len(ntfy.asked) == 1 and len(gotify.asked) == 1  # (taken: never sent again)
-    assert json.loads(gotify.asked[0].content)["message"] == "StationPlay can't reach Plex."
+    assert json.loads(gotify.asked[0].content)["message"] == "tapiOca can't reach Plex."
     # The others took it, so it's told: a restart never sends it them again.
     assert (said.done, said.failed) == (1, 0)
     assert sender.last.ok and sender.last_of(GOTIFY).ok  # type: ignore[union-attr]
     assert sender.last_of(DISCORD).status == "500 Internal Server Error"  # type: ignore[union-attr]
-    # StationPlay's own log names the host only. (The HTTP library's own
+    # tapiOca's own log names the host only. (The HTTP library's own
     # lines are kept out of it: see main.py.)
     ours = "\n".join(r.getMessage() for r in caplog.records if r.name.startswith("app"))
     assert "Couldn't notify https://discord.com of an alert: 500" in ours
@@ -190,7 +190,7 @@ async def test_none_taking_it_is_untold_once(db, monkeypatch):
     task = await running(sender)
     said = Said()
     try:
-        sender.send("StationPlay can't reach Plex.", "plex", "started", said.took, said.missed)
+        sender.send("tapiOca can't reach Plex.", "plex", "started", said.took, said.missed)
         assert await until(lambda: len(down.asked) == 6 and said.failed)
         await asyncio.sleep(0.05)
     finally:
@@ -217,7 +217,7 @@ async def test_a_slow_address_never_delays_the_others(db, monkeypatch):
         took = time.monotonic() - began
         # Meanwhile the slow one has its first, and waits on it.
         assert len(slow.asked) == 1
-        # StationPlay stops: what the others took is told; nothing's untold.
+        # tapiOca stops: what the others took is told; nothing's untold.
         sender.unsent()
     finally:
         task.cancel()
@@ -226,7 +226,7 @@ async def test_a_slow_address_never_delays_the_others(db, monkeypatch):
 
 
 async def test_stopping_before_any_address_takes_it(db):
-    """StationPlay stopping while the only addresses that would take it are
+    """tapiOca stopping while the only addresses that would take it are
     still sending, or it's still waiting: it's untold (sent again after the
     restart), once."""
     hangs = Address(wait_s=30.0)
@@ -439,14 +439,14 @@ def test_the_api(app, monkeypatch, caplog):
         assert home.post("/api/notify/test", json={"which": 3}).status_code == 422
         assert len(home.get("/api/notify").json()["more"]) == 2
         # An alert goes to all three.
-        home.portal.call(ctx.alerts.start, "plex", "StationPlay can't reach Plex.")
+        home.portal.call(ctx.alerts.start, "plex", "tapiOca can't reach Plex.")
         for _ in range(100):
             if len(ntfy.asked) == 2 and len(discord.asked) == 1 and len(slack.asked) == 2:
                 break
             time.sleep(0.02)
         assert json.loads(ntfy.asked[1].content)["state"] == "started"
-        assert json.loads(discord.asked[0].content)["content"] == "StationPlay can't reach Plex."
-        assert json.loads(slack.asked[1].content) == {"text": "StationPlay can't reach Plex."}
+        assert json.loads(discord.asked[0].content)["content"] == "tapiOca can't reach Plex."
+        assert json.loads(slack.asked[1].content) == {"text": "tapiOca can't reach Plex."}
         # The others removed: as before 1.34.0 again.
         home.put("/api/notify", json={"on": True, "url": NTFY, "format": "text", "more": []})
         assert set(home.get("/api/notify").json()) == {"on", "url", "format", "last"}

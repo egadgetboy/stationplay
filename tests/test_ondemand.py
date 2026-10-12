@@ -1,4 +1,4 @@
-"""Your library in StationPlay's apps (ondemand.py, applibrary.py): sharing
+"""Your library in tapiOca's apps (ondemand.py, applibrary.py): sharing
 libraries, what the apps are shown, whether a device can play a file as it
 is, playing, and each person's progress. The contract itself is checked in
 test_app_api.py."""
@@ -345,7 +345,7 @@ def test_nothing_is_shown_until_an_admin_shares_a_library(app, caplog):
         for address in ("/api/internal/libraries", "/api/internal/home", "/api/internal/items/300"):
             refused = home.get(address)
             assert refused.status_code == 404, address
-            assert refused.json()["detail"] == "No Media folders are shared with StationPlay's apps"
+            assert refused.json()["detail"] == "No Media folders are shared with tapiOca's apps"
         listed = home.get("/api/app-libraries").json()
         assert [(x["key"], x["title"]) for x in listed["libraries"]] == [
             ("1", "TV Shows"), ("2", "Movies"), ("3", "Home Videos")
@@ -356,7 +356,7 @@ def test_nothing_is_shown_until_an_admin_shares_a_library(app, caplog):
             "1",
             "2",
         ]
-        assert "Media folders in StationPlay's apps: TV Shows, Movies" in caplog.text
+        assert "Media folders in tapiOca's apps: TV Shows, Movies" in caplog.text
         assert "library" in home.get("/api/v1/server").json()["features"]
         # The library not shared stays out of sight: its movie is as good as
         # missing, by key, in search and in lists.
@@ -473,8 +473,8 @@ def test_playing_a_file_as_it_is(app, plex, tmp_path, caplog):
     caplog.set_level(logging.INFO)
     with TestClient(app) as home:
         home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
-        # From disk, where StationPlay can see the file: ranges and all.
-        played = play(home, "300", app="StationPlay for Android TV", deviceName="Den").json()
+        # From disk, where tapiOca can see the file: ranges and all.
+        played = play(home, "300", app="tapiOca for Android TV", deviceName="Den").json()
         assert played["method"] == "direct" and played["url"].endswith("/file.mkv")
         whole = (tmp_path / "movie.mkv").read_bytes()
         part = home.get(played["url"], headers={"Range": "bytes=100-199"})
@@ -660,7 +660,7 @@ def test_media_away_from_home_waits_until_its_turned_on(app):
                         "/api/internal/art/300"):  # fmt: skip
             refused = phone.get(address, headers=auth)
             assert refused.status_code == 403, address
-            assert "Admin turns on StationPlay's apps away from home" in refused.json()["detail"]
+            assert "Admin turns on tapiOca's apps away from home" in refused.json()["detail"]
         assert play(phone, "300", **auth).status_code == 403
         progress = {"key": "300", "positionMs": 600_000}
         assert phone.post("/api/internal/progress", json=progress, headers=auth).status_code == 403
@@ -697,7 +697,7 @@ def test_media_plays_away_from_home(app, plex, tmp_path, caplog):
         # From disk: ranges and all, through the proxy, with no sign-in for the player.
         played = phone.post(
             "/api/internal/play",
-            json={"key": "300", "device": TV, "app": "StationPlay for Android",
+            json={"key": "300", "device": TV, "app": "tapiOca for Android",
                   "deviceName": "Pixel"},
             headers=auth,
         )  # fmt: skip
@@ -716,7 +716,7 @@ def test_media_plays_away_from_home(app, plex, tmp_path, caplog):
         # Only over HTTPS, as everything for the apps is there.
         plain_http = TestClient(app, base_url=f"http://testserver:{PUBLIC_PORT}")
         assert plain_http.get(movie["url"]).status_code == 403
-        # From Plex, where StationPlay can't read the file (on another device:
+        # From Plex, where tapiOca can't read the file (on another device:
         # one plays one program at a time).
         episode = play(phone, "201", **signed_in(phone, ADMIN, "Tablet")).json()
         data = plex.files["201"]
@@ -732,7 +732,7 @@ def test_media_plays_away_from_home(app, plex, tmp_path, caplog):
         assert app.state.ctx.plays.find(movie["session"]).position_ms == 600_000
         # The log and the access log say it's away from home; so does Stats.
         assert (
-            "Pat started The Movie (1999) in StationPlay for Android on Pixel, away from home: "
+            "Pat started The Movie (1999) in tapiOca for Android on Pixel, away from home: "
             "movie.mkv" in caplog.text
         )
         log = home.get("/api/logs?access_log=true").json()["text"]
@@ -865,7 +865,7 @@ def test_the_quality_away_from_home(app, caplog):
         home.put("/api/away", json=AWAY)
         phone = internet(app)
         auth = signed_in(phone, ADMIN)
-        # The upload StationPlay's apps measured from outside, as a guide.
+        # The upload tapiOca's apps measured from outside, as a guide.
         phone.post("/api/internal/speed-test", json={"mbps": 23.4}, headers=auth)
         got = home.get("/api/away").json()
         assert (got["upload"]["mbps"], got["upload"]["where"]) == (23.4, "away")
@@ -879,7 +879,7 @@ def test_the_quality_away_from_home(app, caplog):
         # Up to 5 Mbps: the version within it, as it is.
         assert home.put("/api/away", json={**AWAY, "mediaMbps": 5}).json()["mediaMbps"] == 5
         log = home.get("/api/logs?access_log=true").json()["text"]
-        assert "Media away from home in StationPlay's apps: up to 5 Mbps (set by Pat)" in log
+        assert "Media away from home in tapiOca's apps: up to 5 Mbps (set by Pat)" in log
         within = play(phone, "300", **auth).json()
         assert (within["method"], within["version"]) == ("direct", "30001")
         assert play(home, "300").json()["version"] == "30000"  # (at home, as before)

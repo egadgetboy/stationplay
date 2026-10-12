@@ -1,5 +1,5 @@
 """A stand-in for Sonarr or Radarr, answering as their own code does (API
-v3, checked against Sonarr 4 and Radarr 5): only what StationPlay asks of
+v3, checked against Sonarr 4 and Radarr 5): only what tapiOca asks of
 them (see app/arr.py), with what's done to it kept to look at afterwards.
 
   * A search grabs the first release for the episode or movie that isn't

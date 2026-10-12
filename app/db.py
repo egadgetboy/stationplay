@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS scans (
     black_s      REAL    NOT NULL DEFAULT 0,
     gaps         TEXT    NOT NULL DEFAULT '[]' -- JSON: [kind, from, to]
 );
--- Who can sign in to StationPlay's page (none: anyone can use it).
+-- Who can sign in to tapiOca's page (none: anyone can use it).
 CREATE TABLE IF NOT EXISTS users (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT    NOT NULL UNIQUE COLLATE NOCASE,
@@ -161,7 +161,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- strangers' wrong passwords); and whether their PIN may sign them in there
 -- (pin_ok: they signed in there with their password, and haven't signed out
 -- there or changed their password since; 0 for those kept from before PINs
--- signed in on StationPlay's page).
+-- signed in on tapiOca's page).
 CREATE TABLE IF NOT EXISTS devices (
     token_hash   TEXT    PRIMARY KEY,
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -217,11 +217,11 @@ CREATE TABLE IF NOT EXISTS user_watched (
     seconds      REAL    NOT NULL,
     PRIMARY KEY (user_id, channel_id, day, title, kind)
 );
--- Who watched stations in StationPlay's apps (see stats.py): seconds of each
--- station and show or movie, by StationPlay user and day. (Plex users' are
+-- Who watched stations in tapiOca's apps (see stats.py): seconds of each
+-- station and show or movie, by tapiOca user and day. (Plex users' are
 -- in user_watched.)
 CREATE TABLE IF NOT EXISTS app_watched (
-    user_id      INTEGER NOT NULL,     -- StationPlay's id for them
+    user_id      INTEGER NOT NULL,     -- tapiOca's id for them
     user_name    TEXT    NOT NULL,     -- as they were last named
     channel_id   INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
     day          TEXT    NOT NULL,     -- the local date, YYYY-MM-DD
@@ -230,8 +230,8 @@ CREATE TABLE IF NOT EXISTS app_watched (
     seconds      REAL    NOT NULL,
     PRIMARY KEY (user_id, channel_id, day, title, kind)
 );
--- What was played on demand in StationPlay's apps (see stats.py): plays and
--- seconds of each show or movie, by StationPlay user (0 while signing in
+-- What was played on demand in tapiOca's apps (see stats.py): plays and
+-- seconds of each show or movie, by tapiOca user (0 while signing in
 -- is off) and day.
 CREATE TABLE IF NOT EXISTS media_watched (
     user_id      INTEGER NOT NULL,
@@ -243,8 +243,8 @@ CREATE TABLE IF NOT EXISTS media_watched (
     seconds      REAL    NOT NULL,
     PRIMARY KEY (user_id, day, title, kind)
 );
--- Where each person is in what they watch on demand in StationPlay's apps
--- (see ondemand.py), by StationPlay user (0 while signing in is off).
+-- Where each person is in what they watch on demand in tapiOca's apps
+-- (see ondemand.py), by tapiOca user (0 while signing in is off).
 CREATE TABLE IF NOT EXISTS progress (
     user_id      INTEGER NOT NULL,
     rating_key   TEXT    NOT NULL,     -- the episode or movie
@@ -256,8 +256,8 @@ CREATE TABLE IF NOT EXISTS progress (
     PRIMARY KEY (user_id, rating_key)
 );
 CREATE INDEX IF NOT EXISTS progress_by_time ON progress (user_id, updated_ms);
--- Each person's languages in StationPlay's apps (see languages.py), by
--- StationPlay user (0 while signing in is off): their own (key ''), and
+-- Each person's languages in tapiOca's apps (see languages.py), by
+-- tapiOca user (0 while signing in is off): their own (key ''), and
 -- what they chose for a show, an episode or a movie. NULL: not chosen there.
 CREATE TABLE IF NOT EXISTS languages (
     user_id      INTEGER NOT NULL,
@@ -270,7 +270,7 @@ CREATE TABLE IF NOT EXISTS languages (
 );
 -- Viewing Levels: what their users can see (see viewing.py). Ages are
 -- ratings read as ages (ratings.py); NULL: no limit. builtin names the four
--- that come with StationPlay ('' for an Admin's own).
+-- that come with tapiOca ('' for an Admin's own).
 CREATE TABLE IF NOT EXISTS levels (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT    NOT NULL UNIQUE COLLATE NOCASE,
@@ -287,7 +287,7 @@ CREATE TABLE IF NOT EXISTS user_stations (
     allowed      INTEGER NOT NULL,            -- 1 allowed, 0 blocked
     PRIMARY KEY (user_id, channel_id)
 );
--- StationPlay's apps linked to this server (see devices.py), by a hash of
+-- tapiOca's apps linked to this server (see devices.py), by a hash of
 -- the key each keeps: what each is, when it was linked and last used, and
 -- who linked it (their name, kept if they're removed; and from 1.27, their
 -- id, linked_by_id, which is what says it's theirs).
@@ -326,7 +326,7 @@ CREATE TABLE IF NOT EXISTS titles (
     seen_ms      INTEGER NOT NULL,
     checked_ms   INTEGER NOT NULL DEFAULT 0
 );
--- Problems StationPlay's apps ran into, sent by the apps themselves (see
+-- Problems tapiOca's apps ran into, sent by the apps themselves (see
 -- problems.py): the same one again soon after counts on the same row.
 -- first_ms and last_ms are when it happened, as the app says.
 CREATE TABLE IF NOT EXISTS problems (
@@ -345,7 +345,7 @@ CREATE TABLE IF NOT EXISTS problems (
     user_id      INTEGER,
     away         INTEGER NOT NULL DEFAULT 0,
     journal      TEXT    NOT NULL DEFAULT '',  -- the app's last lines before it (the newest's)
-    lasted_ms    INTEGER NOT NULL DEFAULT 0    -- how long trouble reaching StationPlay lasted
+    lasted_ms    INTEGER NOT NULL DEFAULT 0    -- how long trouble reaching tapiOca lasted
 );
 CREATE INDEX IF NOT EXISTS problems_by_last ON problems (last_ms);
 -- People's reports of problems in what they watch, picked from a list in
@@ -365,7 +365,7 @@ CREATE TABLE IF NOT EXISTS reports (
     position_ms  INTEGER,                       -- where in it
     how          TEXT    NOT NULL DEFAULT '{}', -- JSON: how it was playing
     program      TEXT    NOT NULL DEFAULT '{}', -- JSON: what it is (show, title...)
-    facts        TEXT    NOT NULL DEFAULT '[]', -- JSON: what StationPlay could tell
+    facts        TEXT    NOT NULL DEFAULT '[]', -- JSON: what tapiOca could tell
     state        TEXT    NOT NULL,
     note         TEXT    NOT NULL DEFAULT '',
     done_ms      INTEGER                        -- when it was dealt with
@@ -478,7 +478,7 @@ class Channel:
 
 # A station's settings: its column, its name in the web API, and what a new
 # station starts with. (Stations made before a setting existed keep how
-# StationPlay behaved then: see the defaults in _ADDED_COLUMNS.)
+# tapiOca behaved then: see the defaults in _ADDED_COLUMNS.)
 STATION_SETTINGS: tuple[tuple[str, str, object], ...] = (
     ("order_mode", "orderMode", "shuffle"),
     ("aspect_mode", "aspectMode", "fit"),
@@ -529,7 +529,7 @@ _CHANNEL_COLUMNS = ("number", "name", "sources", "logo", *(c for c, _, _ in STAT
 
 @dataclass(frozen=True)
 class User:
-    """Someone who can sign in to StationPlay's page."""
+    """Someone who can sign in to tapiOca's page."""
 
     id: int
     name: str
@@ -554,7 +554,7 @@ class SignedIn:
     user: User
     seen_ms: int  # when it was last seen
     device_id: int | None  # the linked device it's on, from its picker (see devices.py)
-    app: str  # which of StationPlay's apps; "" for a browser
+    app: str  # which of tapiOca's apps; "" for a browser
     active_ms: int  # when someone last used it, in a browser (see access.IDLE_SIGN_OUT_S)
     unlocked: bool  # made by picking someone without a PIN (see devices.choose)
 
@@ -742,7 +742,7 @@ _ADDED_COLUMNS = (
     ("channels", "tune_in", "TEXT NOT NULL DEFAULT 'now'"),
     # Added in 1.16.3: where the deep scan found the picture or sound break up.
     ("scans", "glitches", "TEXT NOT NULL DEFAULT '[]'"),
-    # Added in 1.19: which of StationPlay's apps a sign-in is ('' for a
+    # Added in 1.19: which of tapiOca's apps a sign-in is ('' for a
     # browser), on what device, as the app says.
     ("sessions", "app", "TEXT NOT NULL DEFAULT ''"),
     # Added in 1.23: each user's Viewing Level (NULL: Unrestricted), PIN (a hash; ''
@@ -777,7 +777,7 @@ _ADDED_COLUMNS = (
     # who's there, so it can't change their PIN.
     ("sessions", "unlocked", "INTEGER NOT NULL DEFAULT 0"),
     # Added in 1.29.1: an app's journal before a problem, and how long
-    # trouble reaching StationPlay lasted (see problems.py).
+    # trouble reaching tapiOca lasted (see problems.py).
     ("problems", "journal", "TEXT NOT NULL DEFAULT ''"),
     ("problems", "lasted_ms", "INTEGER NOT NULL DEFAULT 0"),
     # Added in 1.31.0: what the web address didn't take of an alert, and what
@@ -1443,7 +1443,7 @@ class Database:
             )
 
     def make_level_builtin(self, level_id: int, builtin: str, name: str) -> None:
-        """Marks a level as one StationPlay comes with (renamed to `name`,
+        """Marks a level as one tapiOca comes with (renamed to `name`,
         unless another level has that name)."""
         with self._lock, self._conn:
             self._conn.execute("UPDATE levels SET builtin = ? WHERE id = ?", (builtin, level_id))
@@ -1918,7 +1918,7 @@ class Database:
         unlocked: bool = False,
         where: str = "",
     ) -> None:
-        """Signs a browser (or `app`, one of StationPlay's; on a linked
+        """Signs a browser (or `app`, one of tapiOca's; on a linked
         device, from its picker: `device_id`, and `unlocked` when picked
         without a PIN) in as a user, from `where` (an address), keeping only their `keep` newest sign-ins
         (the rest are signed out). On a linked device, whoever was signed in
@@ -2566,7 +2566,7 @@ class Database:
                 self._conn.execute(f"DELETE FROM {table} WHERE day < ?", (day,))
 
     def add_app_watching(self, rows: list[tuple[int, str, int, str, str, str, float]]) -> None:
-        """Adds what StationPlay's users watched on stations in its apps:
+        """Adds what tapiOca's users watched on stations in its apps:
         (their id, name, station's id, day, show or movie, kind, seconds)
         for each. (Kept with their name now: the one given may be from
         before they were renamed.)"""
@@ -2580,7 +2580,7 @@ class Database:
             )
 
     def app_watched_since(self, since_day: str) -> list[tuple[int, str, int, str, str, float]]:
-        """(StationPlay's id for a user, their name as of their latest
+        """(tapiOca's id for a user, their name as of their latest
         viewing, station's id, show or movie, kind, seconds) watched in the
         apps on or since a day."""
         with self._lock:
@@ -2601,7 +2601,7 @@ class Database:
         ]
 
     def add_media_watching(self, row: tuple[int, str, str, str, str, int, float]) -> None:
-        """Adds what was played on demand: (StationPlay's id for whoever
+        """Adds what was played on demand: (tapiOca's id for whoever
         played it, their name, day, show or movie, kind, plays, seconds).
         (Kept with their name now, as add_app_watching.)"""
         with self._lock, self._conn:
@@ -2615,7 +2615,7 @@ class Database:
             )
 
     def media_watched_since(self, since_day: str) -> list[tuple[int, str, str, str, int, float]]:
-        """(StationPlay's id for whoever played it, their name as of their
+        """(tapiOca's id for whoever played it, their name as of their
         latest play, show or movie, kind, plays, seconds) played on demand
         on or since a day."""
         with self._lock:
@@ -2711,7 +2711,7 @@ class Database:
         )
 
 
-# A StationPlay user's name now, by their id (the first value given), or else
+# A tapiOca user's name now, by their id (the first value given), or else
 # the name given (the second): someone renamed while they watched is kept
 # under their new name.
 _NAME_NOW = "COALESCE((SELECT name FROM users WHERE id = ?), ?)"

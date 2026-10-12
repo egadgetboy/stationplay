@@ -1,4 +1,4 @@
-"""Watching away from home in StationPlay's apps (see away.py): the setting,
+"""Watching away from home in tapiOca's apps (see away.py): the setting,
 and the outside address it keeps. Playing through the public port is in
 test_hls.py."""
 

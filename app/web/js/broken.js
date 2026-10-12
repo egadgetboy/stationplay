@@ -1,6 +1,6 @@
 // Broken files, replacing files with Sonarr and Radarr, and people's reports.
 // Broken files -------------------------------------------------------------------
-// Everything about files: people's reports and what StationPlay found, in
+// Everything about files: people's reports and what tapiOca found, in
 // three parts (see replacing.tab_section and reports.py on the server):
 // what needs you, what Sonarr or Radarr is replacing, and the rest.
 // What's wrong with a file on the Broken files tab, in a word.
@@ -18,7 +18,7 @@ async function loadBroken() {
   renderBroken();
 }
 // Where a file is used: the stations that have it now, each opening its
-// editor, and Media in StationPlay's apps.
+// editor, and Media in tapiOca's apps.
 function usedLine(r) {
   const on = r.on?.length ? h('span', {}, 'On ',
     ...r.on.flatMap((st, n) => [n ? ', ' : '', h('button', { type: 'button', class: 'linkish', title: `Open ${st.name}’s settings`, onclick: () => {
@@ -38,7 +38,7 @@ function filesTable(rows) {
     h('thead', {}, h('tr', {}, h('th', {}, 'Program'), h('th', {}, 'What’s wrong'), h('th', {}, 'When'), h('th', {}))),
     h('tbody', {}, ...rows));
 }
-// An entry on the list (what StationPlay found).
+// An entry on the list (what tapiOca found).
 function entryRow(r) {
   const by = [...new Set((r.reports || []).map(x => `${x.who} (${x.label})`))];
   return h('tr', {},
@@ -222,7 +222,7 @@ async function loadArr() {
     loadArr().then(loadBroken);
   } }, { ask: 'Only when I ask', auto: 'Automatically' }[value]);
   body.replaceChildren(
-    h('p', { style: 'margin:0' }, 'Optional. StationPlay can ask Sonarr (for episodes) and Radarr (for movies) to replace files on this list that a station plays, or Media in StationPlay’s apps:'),
+    h('p', { style: 'margin:0' }, 'Optional. tapiOca can ask Sonarr (for episodes) and Radarr (for movies) to replace files on this list that a station plays, or Media in tapiOca’s apps:'),
     h('ul', {},
       h('li', {}, h('strong', {}, 'A broken or damaged file: '), 'First, its release is added to the app’s blocklist so the same file isn’t downloaded again. Then the file is deleted (into Sonarr’s or Radarr’s recycle bin, if you’ve set one up), and the app searches for another. This happens only if the app’s file is the exact file found broken and the app downloaded it. A file you added by hand can’t be blocklisted, so it’s left for you to handle.'),
       h('li', {}, h('strong', {}, 'A missing file '), '(gone from disk or from Plex while a station or Media still has it): the app first checks what’s on disk, then searches for it.')),
@@ -233,8 +233,8 @@ async function loadArr() {
     h('p', { style: 'margin:0' }, got.when === 'auto'
       ? 'Automatically: each entry is replaced without asking you. Want to deal with one yourself? Choose I’ll handle it on its entry.'
       : 'Only when I ask: nothing is replaced until you choose Replace with Sonarr (or Radarr) on its entry. After that, the app keeps working on it by itself.'),
-    h('p', { style: 'margin:0' }, 'Only what Sonarr and Radarr are monitoring gets replaced (in Sonarr, both the show and the episode). Unmonitor something there, and StationPlay leaves it alone too. Removed a show or movie on purpose? Unmonitor or delete it there (or choose Broken or damaged here), and remove it from its stations. Each entry on this list shows which stations have it, and whether it’s in Media. They also replace what people report, when you choose Replace on a report.'),
-    h('p', { style: 'margin:0' }, 'Each entry gets up to 3 searches over about a day. If none finds a file that plays, the entry stays on this list and says so. A new file is checked like any other, and the program goes back on the air once it passes. If the new file has the same problem in the same places as the old one, the problem may be part of the program itself (such as an old movie’s effects), not a bad file. The entry then says Needs your review: choose Retry to put it back on the air, or Try another file. StationPlay itself only needs Plex; this just uses apps you already have. You’ll find each app’s API key under Settings → General.'),
+    h('p', { style: 'margin:0' }, 'Only what Sonarr and Radarr are monitoring gets replaced (in Sonarr, both the show and the episode). Unmonitor something there, and tapiOca leaves it alone too. Removed a show or movie on purpose? Unmonitor or delete it there (or choose Broken or damaged here), and remove it from its stations. Each entry on this list shows which stations have it, and whether it’s in Media. They also replace what people report, when you choose Replace on a report.'),
+    h('p', { style: 'margin:0' }, 'Each entry gets up to 3 searches over about a day. If none finds a file that plays, the entry stays on this list and says so. A new file is checked like any other, and the program goes back on the air once it passes. If the new file has the same problem in the same places as the old one, the problem may be part of the program itself (such as an old movie’s effects), not a bad file. The entry then says Needs your review: choose Retry to put it back on the air, or Try another file. tapiOca itself only needs Plex; this just uses apps you already have. You’ll find each app’s API key under Settings → General.'),
     ...['sonarr', 'radarr'].map(app => arrRow(app, got.apps[app], got.status[app])));
 }
 function arrRow(app, a, st) {
@@ -265,7 +265,7 @@ function arrRow(app, a, st) {
     h('div', { class: 'scan-set' }, url, key),
     h('div', { class: 'scan-set' }, test, save, result));
 }
-// People's reports from StationPlay's apps (see reports.py) ---------------------------
+// People's reports from tapiOca's apps (see reports.py) ---------------------------
 // What they do, and who may send them: the same setting, for each person,
 // as Can report problems on the Access tab.
 async function loadReportSettings() {
@@ -283,10 +283,10 @@ async function loadReportSettings() {
       loadReportSettings();
     } }), u.name);
   $('#reportsBody').replaceChildren(
-    h('p', { style: 'margin:0' }, 'People can report a problem from StationPlay’s apps: from a movie’s or an episode’s page, from the player’s menu, and from a station’s player. They pick what’s wrong from a list. Each report comes here, under Needs you, saying who sent it, from which device, where in the program, and how it was playing.'),
+    h('p', { style: 'margin:0' }, 'People can report a problem from tapiOca’s apps: from a movie’s or an episode’s page, from the player’s menu, and from a station’s player. They pick what’s wrong from a list. Each report comes here, under Needs you, saying who sent it, from which device, where in the program, and how it was playing.'),
     h('ul', {},
-      h('li', {}, h('strong', {}, 'What StationPlay can check '), '(no picture, the picture breaking up, no sound, the sound cutting out, stopping early, not playing): its file is checked at once, where it happened first. If StationPlay finds the problem, the file goes on this list, and is replaced as you have that set. If not, the report says so, for you to dismiss.'),
-      h('li', {}, h('strong', {}, 'What only a person can judge '), '(the sound out of sync, the wrong language, the wrong episode or movie, poor picture quality, subtitles): it waits for you, with what StationPlay can tell beside it. Choose Replace (Sonarr or Radarr adds its release to the blocklist and fetches another), Find a better copy (they search for an upgrade, keeping the file until they find one), or Dismiss.'),
+      h('li', {}, h('strong', {}, 'What tapiOca can check '), '(no picture, the picture breaking up, no sound, the sound cutting out, stopping early, not playing): its file is checked at once, where it happened first. If tapiOca finds the problem, the file goes on this list, and is replaced as you have that set. If not, the report says so, for you to dismiss.'),
+      h('li', {}, h('strong', {}, 'What only a person can judge '), '(the sound out of sync, the wrong language, the wrong episode or movie, poor picture quality, subtitles): it waits for you, with what tapiOca can tell beside it. Choose Replace (Sonarr or Radarr adds its release to the blocklist and fetches another), Find a better copy (they search for an upgrade, keeping the file until they find one), or Dismiss.'),
       h('li', {}, h('strong', {}, 'Wrong title, details or artwork: '), 'fix it in Plex, then dismiss it.')),
     h('p', { style: 'margin:0' }, 'A report never takes anything off the air, or out of Media, by itself. Each person can send one report a day about each program, and ten a day in all. Admins are told through their alerts, at most once an hour.'),
     !me.required

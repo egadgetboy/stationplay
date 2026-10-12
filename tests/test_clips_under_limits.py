@@ -271,7 +271,7 @@ def test_a_new_stations_clips_are_dealt_before_its_ratings_are_known(app, plex):
 
 def test_rated_clips_play_while_stationplay_is_starting(app):
     """The audit of 1.33.0: until the clip folders had been looked in (as
-    StationPlay starts, or longer if Plex didn't answer), every commercial
+    tapiOca starts, or longer if Plex didn't answer), every commercial
     on a station someone with limits sees was a plain card, rated or not.
     Then, a clip is rated by the folder its path is in."""
     with TestClient(app) as admin:
@@ -280,7 +280,7 @@ def test_rated_clips_play_while_stationplay_is_starting(app):
         admin.put(
             "/api/access/clips", json={"ratings": {"commercials": 0, "commercials/1960s": 14}}
         )
-        # (As StationPlay starts: no folder looked in yet.)
+        # (As tapiOca starts: no folder looked in yet.)
         ctx.fillers.clips = {COMMERCIALS: [], TRAILERS: []}
         ctx.fillers._known.clear()
         ctx.fillers.refreshed_ms = 0

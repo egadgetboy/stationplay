@@ -589,7 +589,7 @@ async def test_programs_past_the_most_kept_arent_looked_at_again(tmp_path, monke
 async def test_a_file_left_is_tried_again_the_next_day(tmp_path, monkeypatch):
     """Files read through Plex while Plex is down for hours fail every try:
     they're left with their margins for a day, then tried again. (They were
-    left until StationPlay restarted.)"""
+    left until tapiOca restarted.)"""
     monkeypatch.setattr(cuts, "RETRY_S", (0.01, 0.01, 0.01))
     monkeypatch.setattr(cuts, "LEFT_FOR_S", 0.3)
     film = tmp_path / "1.mkv"
@@ -634,7 +634,7 @@ async def test_saving_is_worked_out_off_the_event_loop(tmp_path, monkeypatch):
 
 
 async def test_cuts_json_is_read_once_by_its_first_callers(tmp_path, monkeypatch):
-    """Two stations checked at once as StationPlay starts: what the first
+    """Two stations checked at once as tapiOca starts: what the first
     found while the second was still reading cuts.json was lost."""
     reads = []
     real = cuts.CutFinder._from_file
@@ -728,8 +728,8 @@ def _running(word: str) -> list[int]:
 
 @pytest.mark.skipif(shutil.which("ffprobe") is None, reason="needs ffprobe")
 async def test_stopping_stops_what_is_being_read(tmp_path):
-    """StationPlay stopping while a file is being opened: the reading stops
-    with it. (Opening went on, and its process outlived StationPlay's loop.)"""
+    """tapiOca stopping while a file is being opened: the reading stops
+    with it. (Opening went on, and its process outlived tapiOca's loop.)"""
     stuck = tmp_path / "stuck.ts"
     os.mkfifo(stuck)  # (nothing ever arrives: opening it waits)
     finder = cuts.CutFinder(SETTINGS, tmp_path, _reads(stuck))
@@ -745,7 +745,7 @@ async def test_stopping_stops_what_is_being_read(tmp_path):
 
 @pytest.mark.skipif(shutil.which("ffprobe") is None, reason="needs ffprobe")
 def test_stopping_stationplay_stops_what_is_being_read(tmp_path, monkeypatch):
-    """The final audit of 1.31.2: StationPlay itself stopping (not only the
+    """The final audit of 1.31.2: tapiOca itself stopping (not only the
     finder) stops a file being opened in the background, and waits for it a
     moment at most, after what matters more (alerts kept to send, streams
     ended)."""
@@ -780,7 +780,7 @@ def test_stopping_stationplay_stops_what_is_being_read(tmp_path, monkeypatch):
 def test_stopping_stationplay_keeps_alerts_and_ends_streams_before_cuts(
     tmp_path, monkeypatch, caplog
 ):
-    """The re-audit of 1.31.2: what matters more as StationPlay stops (the
+    """The re-audit of 1.31.2: what matters more as tapiOca stops (the
     alerts not sent yet kept, streams ended) comes before waiting on a file
     being opened for its cuts; looking stops at once, at the start; and
     looking's saving runs even if an earlier step fails."""
@@ -908,7 +908,7 @@ async def test_closing_waits_for_whats_being_read_a_moment_at_most(tmp_path):
 
 
 def test_looking_checks_the_share_one_check_at_a_time(tmp_path, monkeypatch):
-    """The re-audit of 1.31.2: StationPlay's own reading for cuts goes through
+    """The re-audit of 1.31.2: tapiOca's own reading for cuts goes through
     its one-check-at-a-time share check (it could be left out unnoticed)."""
     from fastapi.testclient import TestClient
 
@@ -939,12 +939,12 @@ def test_looking_checks_the_share_one_check_at_a_time(tmp_path, monkeypatch):
                 assert got.transient
             assert len(calls) == 1
         finally:
-            release.set()  # (before StationPlay stops: it waits for its threads)
+            release.set()  # (before tapiOca stops: it waits for its threads)
 
 
 async def test_a_share_check_stuck_for_long_is_said_once(tmp_path, monkeypatch, caplog):
     """The re-audit of 1.31.2: a check that never comes back stops placing
-    skips until StationPlay restarts; the log says so once it's been stuck
+    skips until tapiOca restarts; the log says so once it's been stuck
     that long (not before), once, and again only for another stuck check."""
     from app import sources
 
@@ -984,7 +984,7 @@ async def test_a_share_check_stuck_for_long_is_said_once(tmp_path, monkeypatch, 
         release.set()
     assert caplog.records[-1].getMessage() == (
         "The media share hasn't answered for over an hour. Placing skipped intros and credits "
-        "waits until it does. Check the share, then restart StationPlay."
+        "waits until it does. Check the share, then restart tapiOca."
     )
 
 

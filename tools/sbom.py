@@ -1,15 +1,15 @@
 """What was in the image built and tested for a release, package by
 package, with where each one's source is kept: the list each release
-carries (stationplay-<version>-packages.txt). It's the image people build
+carries (tapioca-<version>-packages.txt). It's the image people build
 (the tests' own stage adds pytest, git and jq, which aren't listed).
 
 Every Debian package installed, at its exact version, with the source
 package it's built from and that source's page on snapshot.debian.org
 (which keeps every version Debian has published); and every Python package,
-with its license and its page on PyPI. StationPlay's own source is the
+with its license and its page on PyPI. tapiOca's own source is the
 release's zip. From 1.34.0 the image that was tested is the one published
 (the owner, October 12: D4 is No), and the source of its GPL and LGPL
-packages goes with the release (stationplay-<version>-source.tar).
+packages goes with the release (tapioca-<version>-source.tar).
 
 It runs inside the image (the image workflow runs it, piped in, after the
 tests, so the image needs nothing more):
@@ -83,16 +83,16 @@ def report(
     arch: str = "",
 ) -> str:
     lines = [
-        f"StationPlay {version}: every package in the image that was tested",
+        f"tapiOca {version}: every package in the image that was tested",
         "",
         "Each Debian package at its exact version, with the source package it's",
         "built from and where Debian keeps that source. Each package's own",
         "license is in the image, in /usr/share/doc/<package>/copyright.",
-        f"StationPlay's own source is stationplay-{version}.zip, under the AGPL.",
-        f"This image is published as ghcr.io/egadgetboy/stationplay:{version}"
+        f"tapiOca's own source is tapioca-{version}.zip, under the AGPL.",
+        f"This image is published as ghcr.io/egadgetboy/tapioca-server:{version}"
         + (f" (this list is its {arch} image's)." if arch else "."),
         "The source of its GPL and LGPL packages, as Debian publishes it, is",
-        f"stationplay-{version}-source.tar, beside this list. An image built from",
+        f"tapioca-{version}-source.tar, beside this list. An image built from",
         "the zip instead gets Debian's packages from Debian, as they are on the",
         "day it's built, and lists them in /opt/stationplay/third-party-packages.txt.",
         "",

@@ -1,13 +1,13 @@
-"""Admin alerts: what StationPlay finds wrong that an Admin can act on, each
+"""Admin alerts: what tapiOca finds wrong that an Admin can act on, each
 said once when it starts and again when it's fixed: in the Logs tab, in the
-page's header (for Admins), to StationPlay's apps (GET /api/internal/alerts,
+page's header (for Admins), to tapiOca's apps (GET /api/internal/alerts,
 for Admins), and to the web addresses an Admin chose (see notify.py).
 
-Only what StationPlay can tell for sure, and only once it has held a while,
+Only what tapiOca can tell for sure, and only once it has held a while,
 so a moment's hiccup is never an alert; and once one starts, it's fixed
 only once things have been right a while too, so none comes and goes:
 
-  plex        Plex can't be reached (or won't take StationPlay's token): 5
+  plex        Plex can't be reached (or won't take tapiOca's token): 5
               checks in a row, a minute apart. Fixed after 2 that reach it.
   data-full   The data folder's disk has less than 2 GB free: 3 checks in
               a row. Fixed once it has 3 GB free, twice. (A size, never a
@@ -21,18 +21,18 @@ only once things have been right a while too, so none comes and goes:
               deleted.
   backups     A backup (the nightly one, or one made from the page) failed
               twice in a row. Fixed when one is made.
-  clock       StationPlay's clock is more than 2 minutes from Plex's, by the
+  clock       tapiOca's clock is more than 2 minutes from Plex's, by the
               Date header Plex answers with: 3 checks in a row. Fixed under a
-              minute, twice. It's the only reference StationPlay has without
+              minute, twice. It's the only reference tapiOca has without
               asking anything else: with no Date from Plex (or no Plex),
               the clock isn't checked.
-  outside     StationPlay's apps can't reach it from outside: the outside
+  outside     tapiOca's apps can't reach it from outside: the outside
               check's own Down (see reach.py: two checks in a row, a minute
               apart, found a problem that counts). Fixed when it's Up again,
               or watching away from home is turned off.
   files       Something on the Broken files tab needs an Admin (see
               reports.py): a person's report, a file a station or Media
-              plays that StationPlay found broken or damaged and that isn't
+              plays that tapiOca found broken or damaged and that isn't
               being replaced by itself, or one Sonarr or Radarr couldn't
               replace. It says how many, and the newest. Fixed when nothing
               does. Said at most once an hour: once an hour has gone by
@@ -49,7 +49,7 @@ Each has an ID that stays the same while it lasts (a new one starting
 later has a new ID), its kind, a sentence an Admin can act on, when it
 started, and when it was fixed. The alerts now, and those fixed in the last
 day, are kept in the database as they change (never at every check), so
-when StationPlay starts again they're as they were: one still going isn't
+when tapiOca starts again they're as they were: one still going isn't
 said again, and keeps its ID; it's fixed (and said to be, once) when its
 check finds it right again, by that check's own rules, and until a check
 can tell (Plex's first, or a station playing again), it stays as it was.
@@ -91,7 +91,7 @@ STATION, BACKUPS, CLOCK, OUTSIDE = "station", "backups", "clock", "outside"
 FILES, CLIPS = "files", "clips"
 KINDS = (PLEX, DATA_FULL, DATA_WRITE, STATION, BACKUPS, CLOCK, OUTSIDE, FILES, CLIPS)
 CHECK_S = 60.0  # how often what's checked is looked at
-FIRST_S = 20.0  # the first look, after StationPlay starts
+FIRST_S = 20.0  # the first look, after tapiOca starts
 PLEX_WAIT_S = 10.0  # the longest Plex is waited for, in a check
 FIXED_KEPT_S = 24 * 3600.0  # alerts fixed this long ago are still listed
 FIXED_MOST = 100
@@ -105,8 +105,8 @@ BACKUP_FAILS = 2
 CLOCK_OFF_S, CLOCK_RIGHT_S = 120.0, 60.0
 # The Broken files tab: said again (with a new ID) at most this often.
 FILES_AGAIN_S = 3600.0
-# That the alerts are kept by a StationPlay running now: noted at most this
-# often. Alerts kept longer ago than ALIVE_STALE_S (StationPlay stopped that
+# That the alerts are kept by a tapiOca running now: noted at most this
+# often. Alerts kept longer ago than ALIVE_STALE_S (tapiOca stopped that
 # long, or an older version, which doesn't keep them, ran meanwhile) aren't
 # brought back as going: anything still wrong is found, and said, afresh.
 ALIVE_META, ALIVE_EVERY_S, ALIVE_STALE_S = "alerts_alive_ms", 600.0, 2 * 24 * 3600.0
@@ -168,15 +168,15 @@ class Alerts:
         self._station_fails: dict[int, deque[float]] = {}
         self._backup_fails = 0
         # The Broken files tab: what needed an Admin when it was last looked
-        # at (None: not yet, since StationPlay started), when the alert was
+        # at (None: not yet, since tapiOca started), when the alert was
         # last said (started), and what's come since.
         self._files_seen: set[str] | None = set()
         self._files_said = 0.0
         self._files_unsaid: set[str] = set()
         self._files_kept: str = ""  # (what the database has of them)
         self._unkept = False  # (the database couldn't be written: said once)
-        # What the web address didn't take before StationPlay stopped (it
-        # didn't answer, or StationPlay stopped first): sent again at the
+        # What the web address didn't take before tapiOca stopped (it
+        # didn't answer, or tapiOca stopped first): sent again at the
         # first look, when sending is under way.
         self._retell: list[tuple[Alert, str]] = []
         self._alive_at: float | None = None
@@ -184,7 +184,7 @@ class Alerts:
         self._alive()
 
     def _restore(self) -> None:
-        """The alerts as they were kept, when StationPlay starts (see the
+        """The alerts as they were kept, when tapiOca starts (see the
         module's notes)."""
         try:
             rows = self.db.kept_alerts()
@@ -235,7 +235,7 @@ class Alerts:
                 self._files_seen = None
 
     def _alive(self) -> None:
-        """Notes that the alerts are kept by a StationPlay running now (at
+        """Notes that the alerts are kept by a tapiOca running now (at
         most every ALIVE_EVERY_S)."""
         now = self.clock()
         if self._alive_at is None or now - self._alive_at >= ALIVE_EVERY_S:
@@ -315,7 +315,7 @@ class Alerts:
             if not self._unkept:
                 log.warning(
                     "Couldn't keep the alerts in the database (%s), so they may be said again "
-                    "if StationPlay restarts",
+                    "if tapiOca restarts",
                     e,
                 )
             self._unkept = True
@@ -379,14 +379,14 @@ class Alerts:
         if self._backup_fails >= BACKUP_FAILS:
             self.start(
                 BACKUPS,
-                f"StationPlay's backups are failing: the last {self._backup_fails} tries didn't "
+                f"tapiOca's backups are failing: the last {self._backup_fails} tries didn't "
                 "work. The Logs tab says why; check that the data folder has room and can be "
                 "written to.",
             )
 
     def backup_made(self) -> None:
         self._backup_fails = 0
-        self.fix(BACKUPS, "StationPlay made a backup again.")
+        self.fix(BACKUPS, "tapiOca made a backup again.")
 
     # The Broken files tab ----------------------------------------------------------
 
@@ -396,7 +396,7 @@ class Alerts:
         seen = {which for _, which, _ in things}
         going = self._now.get((FILES, ""))
         if self._files_seen is None:
-            # (The first look since StationPlay started again: what's come
+            # (The first look since tapiOca started again: what's come
             # since the alert was said is what's newer.)
             said_ms = going.since_ms if going else 0
             self._files_seen = {which for when, which, _ in things if when <= said_ms}
@@ -410,7 +410,7 @@ class Alerts:
         _, _, newest = max(things)
         sentence = (
             f"There {'is' if n == 1 else 'are'} {n} file{'' if n == 1 else 's'} to look at on "
-            f"the Broken files tab: {newest[:1].upper()}{newest[1:]}."
+            f"the Broken files tab: {playing.cap(newest)}."
         )
         if going is not None and not (
             self._files_unsaid and self.clock() - self._files_said >= FILES_AGAIN_S
@@ -455,7 +455,7 @@ class Alerts:
     # Checking --------------------------------------------------------------------
 
     async def run_forever(self, ctx: AppContext) -> None:
-        """Looks every CHECK_S, for as long as StationPlay runs."""
+        """Looks every CHECK_S, for as long as tapiOca runs."""
         await asyncio.sleep(FIRST_S)
         while True:
             try:
@@ -468,7 +468,7 @@ class Alerts:
 
     async def look(self, ctx: AppContext) -> None:
         """Checks Plex (and the clock, by its answer), the data folder,
-        whether the apps reach StationPlay from outside, and what needs an
+        whether the apps reach tapiOca from outside, and what needs an
         Admin on the Broken files tab."""
         self._alive()
         for alert, state in self._retell:
@@ -494,14 +494,14 @@ class Alerts:
             await asyncio.wait_for(plex.identity(), PLEX_WAIT_S)
         except PlexError as e:
             why = (
-                f"Plex at {where} doesn't accept StationPlay's token. Check PLEX_TOKEN in "
-                "StationPlay's settings."
+                f"Plex at {where} doesn't accept tapiOca's token. Check PLEX_TOKEN in "
+                "tapiOca's settings."
                 if e.status == 401
-                else f"StationPlay can't reach Plex at {where}. Check that Plex is running."
+                else f"tapiOca can't reach Plex at {where}. Check that Plex is running."
             )
         except TimeoutError:
-            why = f"StationPlay can't reach Plex at {where}. Check that Plex is running."
-        self.checked(PLEX, bool(why), why, f"StationPlay can reach Plex at {where} again.", 5, 2)
+            why = f"tapiOca can't reach Plex at {where}. Check that Plex is running."
+        self.checked(PLEX, bool(why), why, f"tapiOca can reach Plex at {where} again.", 5, 2)
         offset = plex.clock_offset_s
         if why or offset is None:
             return  # (nothing to tell the time by)
@@ -514,9 +514,9 @@ class Alerts:
         self.checked(
             CLOCK,
             wrong,
-            f"StationPlay's clock is {said} Plex's. The guide and the stations' clocks go by "
+            f"tapiOca's clock is {said} Plex's. The guide and the stations' clocks go by "
             "it: check the date and time on this server (and on Plex's, if it runs elsewhere).",
-            "StationPlay's clock agrees with Plex's again.",
+            "tapiOca's clock agrees with Plex's again.",
             3,
             2,
         )
@@ -535,17 +535,17 @@ class Alerts:
             self.checked(
                 DATA_FULL,
                 low or (going and not room),
-                f"StationPlay's data folder has only {_size(free)} free ({share:.0%} of its disk). "
-                "Free up room on its disk, or StationPlay can't keep stations, backups and "
+                f"tapiOca's data folder has only {_size(free)} free ({share:.0%} of its disk). "
+                "Free up room on its disk, or tapiOca can't keep stations, backups and "
                 "settings.",
-                f"StationPlay's data folder has room again ({_size(free)} free).",
+                f"tapiOca's data folder has room again ({_size(free)} free).",
                 3,
                 2,
             )
         problem = ""
         probe = folder / WRITE_TEST
         try:
-            probe.write_text("StationPlay checks it can write here\n")
+            probe.write_text("tapiOca checks it can write here\n")
         except OSError as e:
             problem = e.strerror or type(e).__name__
         finally:
@@ -556,9 +556,9 @@ class Alerts:
             bool(problem),
             # (Not the folder's path: the apps show alerts, and never name a
             # file or folder.)
-            f"StationPlay can't write to its data folder ({problem}). Check the folder's "
+            f"tapiOca can't write to its data folder ({problem}). Check the folder's "
             "permissions, and that its disk has room.",
-            "StationPlay can write to its data folder again.",
+            "tapiOca can write to its data folder again.",
             2,
             2,
         )
@@ -569,16 +569,16 @@ class Alerts:
         if status.state == reach.DOWN:
             self.start(
                 OUTSIDE,
-                f"StationPlay's apps can't reach it from outside at {address} "
-                f"({status.short.lower()}). See StationPlay's apps away from home, on the "
+                f"tapiOca's apps can't reach it from outside at {address} "
+                f"({status.short.lower()}). See tapiOca's apps away from home, on the "
                 "Access tab.",
             )
         elif status.state in (reach.UP, reach.OFF):
             self.fix(
                 OUTSIDE,
-                f"StationPlay's apps can reach it from outside again, at {address}."
+                f"tapiOca's apps can reach it from outside again, at {address}."
                 if status.state == reach.UP
-                else "Watching away from home was turned off, so StationPlay's apps no longer "
+                else "Watching away from home was turned off, so tapiOca's apps no longer "
                 "need to reach it from outside.",
             )
 

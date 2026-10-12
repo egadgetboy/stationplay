@@ -1,4 +1,4 @@
-"""Draws StationPlay's logo library into app/logos/.
+"""Draws tapiOca's logo library into app/logos/.
 
     cd tools/logos
     npm ci                      # the fonts (open-licensed, from npm)

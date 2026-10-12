@@ -9,7 +9,7 @@ apps show only what the server sends.
 
 ## Goals
 
-1. **Off until it's used.** A StationPlay with one person, or none, works
+1. **Off until it's used.** A tapiOca with one person, or none, works
    exactly as it always has. Viewing Levels, PINs and Who's tuning in?
    appear only once there's a second person.
 2. **Nothing leaks.** Anything a person can't see is missing from every
@@ -22,7 +22,7 @@ apps show only what the server sends.
    allowed that station for them.
 4. **Plain rules, in order.** The first rule that applies decides, so an
    Admin can always tell why something is hidden.
-5. **Lean.** Plex stays the catalog. StationPlay keeps a title's rating and
+5. **Lean.** Plex stays the catalog. tapiOca keeps a title's rating and
    Media folder only where its stations need them, and asks Plex for
    genres and tags only while some level or person hides by them.
 
@@ -52,8 +52,8 @@ themselves and other Admins. A new name follows the usual rules: up to 40
 letters, numbers, spaces and `. _ - @`, and not someone else's name in any
 case. From then on, the person signs in with the new name.
 
-StationPlay keeps everything of a person's by their ID, never their name, so
-it all stays theirs after a rename: their sign-ins (on StationPlay's page
+tapiOca keeps everything of a person's by their ID, never their name, so
+it all stays theirs after a rename: their sign-ins (on tapiOca's page
 and in the apps), linked devices, stations, Viewing Level, progress and
 stats. Who linked a device is kept by ID too, so an Admin given a removed
 person's name never gets that person's devices. The stats and the **Access**
@@ -76,7 +76,7 @@ everything, whatever their level.
 | Kid | PG | TV-PG | Hidden |
 | Young Child | G | TV-G | Hidden |
 
-**Unrestricted** always exists and never changes. StationPlay creates Teen,
+**Unrestricted** always exists and never changes. tapiOca creates Teen,
 Kid and Young Child once, as a starting point. An Admin can rename, change
 or remove them, like any level they add. A change applies at once to
 everyone on that level. An Admin can add as many levels as they need, such
@@ -98,7 +98,7 @@ Admin chooses a level.
 
 ### Ratings as ages
 
-StationPlay reads every rating as the youngest age it suits:
+tapiOca reads every rating as the youngest age it suits:
 
 | Age | Ratings |
 |---|---|
@@ -113,11 +113,11 @@ StationPlay reads every rating as the youngest age it suits:
 Other countries' ratings are read the same way, by the age they name. Plex
 writes them as `gb/15`, `de/12`, `au/MA15+` and so on. Anything else (`NR`,
 `Not Rated`, blank or an unknown code) is **unrated**. A level stores its
-limits as ages, and StationPlay's page shows each one as the US rating for
+limits as ages, and tapiOca's page shows each one as the US rating for
 that age.
 
 An episode uses its show's rating, or its own if that's stricter. Rating
-overrides (after 1.0) will belong to StationPlay and never change Plex.
+overrides (after 1.0) will belong to tapiOca and never change Plex.
 
 ## What's hidden or allowed for one person
 
@@ -130,13 +130,13 @@ From 1.33.0, an Admin can choose, for each person who isn't an Admin:
   person's level includes. A show or movie hidden for them wins over one
   allowed; a hidden genre, tag, collection or studio doesn't.
 
-A hidden title is hidden everywhere StationPlay shows titles to that
+A hidden title is hidden everywhere tapiOca shows titles to that
 person: Media, search, More like this, cast and crew pages and Continue
 Watching (the Resume row), and any station that plays it. Someone with
 anything hidden for them watches only, as on a level with limits: the
 station editor, which shows Media folders whole, isn't for them.
 
-**What StationPlay knows.** StationPlay asks Plex for each title's genres
+**What tapiOca knows.** tapiOca asks Plex for each title's genres
 and tags in the background, only while some level or person hides by them:
 each title again every day, and every title at once when a new name is
 hidden. Until it knows a title's, the title is hidden from anyone whose
@@ -228,20 +228,20 @@ has its own rating.
 - **Twice.** Clips are chosen as a lineup is made, and each is checked
   again as it's about to play. While what a station plays isn't known yet
   (a new show not asked about), every clip is chosen, and the check as each
-  plays decides. As StationPlay starts, before the clip folders have been
+  plays decides. As tapiOca starts, before the clip folders have been
   looked in, a clip is rated by the folder its file is in.
 - **Nothing rated on the station.** A station whose programs are all
   unrated, seen by someone with limits, plays no commercials or trailers.
 - **It's logged.** The access log shows "Ada rated the clip folders:
   commercials/1960s TV-14".
 
-## Parental limits: what StationPlay enforces, and what it can't
+## Parental limits: what tapiOca enforces, and what it can't
 
-Viewing Levels are limits in StationPlay's apps and on StationPlay's page,
+Viewing Levels are limits in tapiOca's apps and on tapiOca's page,
 and the docs say plainly what they don't cover.
 
-**Enforced.** For someone signed in as themselves, on StationPlay's own
-server, in StationPlay's apps and on its page: what they can find, see and
+**Enforced.** For someone signed in as themselves, on tapiOca's own
+server, in tapiOca's apps and on its page: what they can find, see and
 play, as Viewing Levels and the rules above say; stations, all or nothing;
 and commercials and trailers, as above.
 
@@ -255,25 +255,25 @@ and commercials and trailers, as above.
   PIN on devices people with limits use.
 - **Signing in as someone else,** on one's own device, with that person's
   password.
-- **A rating or genre Plex has wrong, or doesn't have.** StationPlay goes
+- **A rating or genre Plex has wrong, or doesn't have.** tapiOca goes
   by what Plex says. Unrated titles follow the level's Unrated setting.
 - **What's inside a program,** beyond its rating, genres and tags.
 
 Use the device's own controls too: Apple's Screen Time or Google's Family
 Link.
 
-## What StationPlay keeps
+## What tapiOca keeps
 
 - **`titles`.** A row for each show and movie on a station: its key, kind,
   rating as Plex has it, that rating's age (or none) and its Media folder.
-  StationPlay fills it in as it makes a station's lineup, since Plex sends
+  tapiOca fills it in as it makes a station's lineup, since Plex sends
   these with the items. It also fills it once at startup for lineups made
   before this existed. From 1.33.0, it also keeps each title's genres,
   tags, collections and studio, asked of Plex in the background while some
   level or person hides by them. An episode's own rating is kept in its lineup row
   when Plex gives one.
 - **Each station's reach.** The oldest age and the Media folders its programs
-  need, and whether any program is unrated. StationPlay works this out when
+  need, and whether any program is unrated. tapiOca works this out when
   the lineup changes, so deciding whether someone sees a station takes only
   a few comparisons.
 - **`levels`.** Name, movie age, TV age, whether unrated titles are shown,
@@ -293,16 +293,16 @@ Link.
 
 Media in the apps (browsing, search, details, pictures and playing) already
 asks Plex about each title. Plex sends its rating and Media folder, so
-StationPlay judges the title from that and keeps no copy. Plex's lists
+tapiOca judges the title from that and keeps no copy. Plex's lists
 don't carry genres and tags, so from 1.33.0, while some level or person
-hides by them, StationPlay asks for the genres and tags of the titles Media
+hides by them, tapiOca asks for the genres and tags of the titles Media
 shows, and keeps them in `titles`.
 
 ## Devices and Who's tuning in?
 
-A **device** is one install of a StationPlay app, on a TV, phone or tablet.
+A **device** is one install of a tapiOca app, on a TV, phone or tablet.
 It's linked to the server once, by signing in or with a code entered on
-StationPlay's page. It gets a long-lived **device token**, which an Admin
+tapiOca's page. It gets a long-lived **device token**, which an Admin
 can see and revoke on the **Access** tab. A revoked device is signed out on
 its next request. Whoever is using the device gets a short-lived
 **session** for one person, made by picking that person.
@@ -384,7 +384,7 @@ this device**.
   from anywhere by guessing a name like "Kids." No device away from home
   lists them unless an Admin chose it.
 - **A password still works.** Someone with a password signs in with it, on
-  StationPlay's page or in an app, as before.
+  tapiOca's page or in an app, as before.
 - **The first sign-in needs more.** The first sign-in on a device takes an
   invite code or a password, never just a PIN. An Admin makes an
   **invite code** for one person. It works once and expires after 7 days.
@@ -402,7 +402,7 @@ this device**.
 From 1.28.0, once someone has signed in with their password or an invite
 code, later sign-ins are open, or locked with a 4-digit PIN if they
 choose. The first time they sign in on a device that way (by name in an
-app, or with a code entered on StationPlay's page), the app asks them to
+app, or with a code entered on tapiOca's page), the app asks them to
 choose a PIN or No PIN. It doesn't ask if they already have one,
 or already chose none. Either answer applies on every device, and
 they can change it in the app's Options. Everyone in a household, from
@@ -433,7 +433,7 @@ adults and teens to kids and little kids, can choose either way.
 ### Changing your password in the apps
 
 From 1.28.0, people can change their own password in the apps' Options, as
-on StationPlay's page (under their name at the top). They need their
+on tapiOca's page (under their name at the top). They need their
 current password. The rules match the page: the same length, and the same
 limit on wrong passwords (5 from one address in 15 minutes, then a wait).
 Every other sign-in of theirs ends, as on the page, but the app they changed
@@ -443,7 +443,7 @@ in <the app, on the device>."
 - **Can change their own password.** An Admin sets this for each person on
   the **Access** tab, next to their New password. It's on by default,
   including for everyone already added.
-- **When it's off.** StationPlay's page and the apps both refuse the change
+- **When it's off.** tapiOca's page and the apps both refuse the change
   with a plain sentence, and `GET /api/internal/me` reports it
   (`canChangePassword: false`). An Admin can always change their own.
 - **No password yet.** Someone without a password, such as a PIN-only
@@ -494,7 +494,7 @@ The **Access** tab's addresses are `/api/access/viewing`,
 `/api/access/devices` (with `PUT /api/access/devices/default` for New
 people show on, and `POST /api/access/devices/everyone`),
 `/api/access/users/{id}/picker` and `/invite`. Like everything on the
-**Access** tab, they're for Admins only, and StationPlay refuses a change
+**Access** tab, they're for Admins only, and tapiOca refuses a change
 sent from another site's page.
 
 `POST /api/access/devices/everyone` (1.31.0) is Use for everyone. It takes
@@ -514,7 +514,7 @@ access log:
 ## Streams
 
 The apps play stations from addresses that carry a key made for that
-session. StationPlay checks the key on every request, and ends it when the
+session. tapiOca checks the key on every request, and ends it when the
 session ends. A key works only for the stations its person can see.
 Programs from Media already play from addresses made for each play, checked
 the same way.
@@ -546,4 +546,4 @@ stations.)
 - A revoked device is signed out on its next request.
 - Someone with neither a password nor a PIN can't sign in by name.
 - Five wrong PINs lock that person out for 15 minutes, on every device.
-- A StationPlay with one person, or none, answers exactly as before.
+- A tapiOca with one person, or none, answers exactly as before.

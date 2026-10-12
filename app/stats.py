@@ -6,7 +6,7 @@ started and ended), with what aired meanwhile: the seconds of each show or
 movie, by day. Viewings shorter than MIN_VIEW_S (flicking past a station)
 aren't kept.
 
-StationPlay sees what Plex asks it for, not who's watching in Plex: several
+tapiOca sees what Plex asks it for, not who's watching in Plex: several
 people watching a station together in Plex (or Plex recording it) may be
 one viewing. Who's watching comes from Plex itself (WhoWatches): while a
 station has viewers, Plex is asked every POLL_S what it's playing to whom,
@@ -16,7 +16,7 @@ or movie. A session that can't be told apart (two stations airing the same
 thing at once) counts for no one, and watching through other apps isn't
 seen. The same look stops what's kept from some Plex users (limits.py).
 
-StationPlay's own apps are counted one by one: each app watching a station
+tapiOca's own apps are counted one by one: each app watching a station
 is a viewing of its own (see hls.py), and counts for the person signed in
 on it (see playing.py), so who watched is known exactly. What's played on
 demand (Media) counts in its own place: its plays and time, by show or
@@ -121,7 +121,7 @@ class Stats:
         """Keeps a viewing of a station, unless it was too short to count:
         when it was, and what aired meanwhile (`behind_ms` behind the
         schedule, if someone tuned in from the beginning); and with a
-        `person` (a StationPlay user's id and name, in its apps), what they
+        `person` (a tapiOca user's id and name, in its apps), what they
         watched."""
         if end_ms - start_ms < MIN_VIEW_S * 1000:
             return
@@ -229,7 +229,7 @@ class WhoWatches:
             if e.status in (401, 403):
                 self._refused_until = time.monotonic() + REFUSED_WAIT_S
                 self._say(
-                    "Plex won't say who's watching because StationPlay's Plex token isn't "
+                    "Plex won't say who's watching because tapiOca's Plex token isn't "
                     "allowed to see what's playing"
                 )
             return 0
@@ -440,7 +440,7 @@ def users(ctx: AppContext, days: int, now_ms: int) -> list[dict]:
 
 def people(ctx: AppContext, days: int, now_ms: int) -> list[dict]:
     """Who watched most (TOP_PEOPLE), stations and Media together: each
-    StationPlay user, by what they watched in its apps, and each Plex user,
+    tapiOca user, by what they watched in its apps, and each Plex user,
     as Plex said (see WhoWatches); with their hours, and the stations and
     shows or movies they watched most."""
     since = since_ms(days, now_ms)
@@ -596,7 +596,7 @@ def _row(
     station: dict | None = None,
     media: dict | None = None,
 ) -> dict:
-    """One row of Watching now: who (a StationPlay user, or with `plex`, a
+    """One row of Watching now: who (a tapiOca user, or with `plex`, a
     Plex user), in which app on which device, at home or away, from where,
     since when, what (a station, or something from Media), and how it's
     sent."""
@@ -616,7 +616,7 @@ def _row(
 def _app_row(
     who: playing.Watcher, since_ms: int, how: dict, names: dict[int, str], **what: dict | None
 ) -> dict:
-    """A row for an app watching (`names`: StationPlay's users' names now,
+    """A row for an app watching (`names`: tapiOca's users' names now,
     by id: someone renamed while watching shows by their new one)."""
     person = names.get(who.user_id, who.person) if who.user_id is not None else who.person
     # (Away from home, the start of its own address; at home, the device's,

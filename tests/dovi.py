@@ -1,7 +1,7 @@
 """Test files that say they're Dolby Vision: an ordinary HEVC MP4 with a
 Dolby Vision configuration record (the box players read to learn a file's
 profile) put into its video track. Only the record is real: the picture is
-plain HEVC, which is all StationPlay's checks look at."""
+plain HEVC, which is all tapiOca's checks look at."""
 
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
-"""StationPlay's page at every screen size, for checking before a release.
+"""tapiOca's page at every screen size, for checking before a release.
 
-Starts StationPlay with stand-in data (the tests' stand-in Plex, from
+Starts tapiOca with stand-in data (the tests' stand-in Plex, from
 tests/fakeplex_library.py, with shows, movies and collections; and
 stations, people, linked devices, stats, logs, problems from the apps,
 broken files and a person's report, devices that used the tuner, and Admin
@@ -207,17 +207,17 @@ def library() -> StandInPlex:
     return plex
 
 
-# StationPlay, running ----------------------------------------------------------------
+# tapiOca, running ----------------------------------------------------------------
 
 
-# A newer StationPlay, as the stand-in for GitHub says (see Running), and
+# A newer tapiOca, as the stand-in for GitHub says (see Running), and
 # the page's "Not now" for it (updates.js).
 NEWER = "9.0.0"
 NOT_NOW = "stationplay.updateNotNow"
 
 
 class Running:
-    """StationPlay on its home-network port and its public one, in a thread
+    """tapiOca on its home-network port and its public one, in a thread
     of its own; `call` runs something on its event loop."""
 
     def __init__(self, data: Path, plex: StandInPlex) -> None:
@@ -232,7 +232,7 @@ class Running:
             settings, PlexClient("http://plex.test", "token", transport=plex.transport())
         )
         self.ctx = self.app.state.ctx
-        # (The update check finds a newer StationPlay here, `newest`, never
+        # (The update check finds a newer tapiOca here, `newest`, never
         # asking GitHub.)
         self.newest = NEWER
         self.ctx.releases.transport = httpx.MockTransport(
@@ -265,7 +265,7 @@ class Running:
         asyncio.run_coroutine_threadsafe(self.ctx.releases.check(), self.loop).result(30)
 
     def unanswered(self) -> None:
-        """As a StationPlay updated from before 1.34.0: no Admin has said
+        """As a tapiOca updated from before 1.34.0: no Admin has said
         whether the update check may look."""
 
         def forget() -> None:
@@ -280,7 +280,7 @@ class Running:
 
 
 def kept_from_before(data: Path) -> None:
-    """Admin alerts kept from before StationPlay last stopped, as it finds
+    """Admin alerts kept from before tapiOca last stopped, as it finds
     them when it starts (see alerts.py): the clock off since three hours
     ago, still going (the stand-in Plex doesn't say the time, so it stays),
     and the data folder's space, fixed an hour ago."""
@@ -288,14 +288,14 @@ def kept_from_before(data: Path) -> None:
     db = Database(data / "stationplay.db")
     db.keep_alert(
         "clock", "", now - 3 * 3600_000,
-        "StationPlay's clock is 7 minutes ahead of Plex's. The guide and the stations' clocks "
+        "tapiOca's clock is 7 minutes ahead of Plex's. The guide and the stations' clocks "
         "go by it: check the date and time on this server (and on Plex's, if it runs elsewhere).",
         None,
     )  # fmt: skip
     db.keep_alert(
         "data-full", "", now - 5 * 3600_000,
-        "StationPlay's data folder has only 1.4 GB free (1% of its disk). Free up room on its "
-        "disk, or StationPlay can't keep stations, backups and settings.",
+        "tapiOca's data folder has only 1.4 GB free (1% of its disk). Free up room on its "
+        "disk, or tapiOca can't keep stations, backups and settings.",
         now - 3600_000,
     )  # fmt: skip
     db.close()
@@ -304,9 +304,9 @@ def kept_from_before(data: Path) -> None:
 def fill(sp: Running, data: Path) -> None:
     """Everything the tabs show: stations (from shows and movies, smart ones
     and from collections), people, linked devices, signed-in apps, an API
-    token, StationPlay's apps away from home, stats, logs, problems from the
+    token, tapiOca's apps away from home, stats, logs, problems from the
     apps, a logo and an Intro Bumper of your own, a backup; and on the Broken
-    files tab, people's reports (several on one program, one StationPlay
+    files tab, people's reports (several on one program, one tapiOca
     checked and found nothing wrong in, one it found what's wrong in), files
     that need you, one being replaced, and the rest, with Sonarr and Radarr
     on, which sends an Admin's alert; and Tuner access, with two devices
@@ -374,18 +374,18 @@ def fill(sp: Running, data: Path) -> None:
         ok(home.post("/api/backups"))
 
         # Signed-in apps, problems they ran into, and a token for a script.
-        tv = {"app": "StationPlay for Android TV", "deviceName": "Living Room TV"}
+        tv = {"app": "tapiOca for Android TV", "deviceName": "Living Room TV"}
         signed = ok(home.post("/api/internal/sign-in", json={**ADMIN, **tv}))
         app_token = {"Authorization": f"Bearer {signed['token']}"}
         sams = ok(home.post("/api/internal/sign-in", json={
-            **USER, "app": "StationPlay for iPhone", "deviceName": "Sam’s iPhone"}))  # fmt: skip
+            **USER, "app": "tapiOca for iPhone", "deviceName": "Sam’s iPhone"}))  # fmt: skip
         sam_token = {"Authorization": f"Bearer {sams['token']}"}
         jos = ok(home.post("/api/internal/sign-in", json={
-            **JO, "app": "StationPlay for Roku", "deviceName": "Bedroom"}))  # fmt: skip
+            **JO, "app": "tapiOca for Roku", "deviceName": "Bedroom"}))  # fmt: skip
         jo_token = {"Authorization": f"Bearer {jos['token']}"}
-        roku = {"app": "StationPlay for Roku", "version": "0.5.0",
+        roku = {"app": "tapiOca for Roku", "version": "0.5.0",
                 "device": "Roku Ultra 4850X, Roku OS 14.0", "deviceName": "Bedroom"}  # fmt: skip
-        phone = {"app": "StationPlay for Android", "version": "0.9.0",
+        phone = {"app": "tapiOca for Android", "version": "0.9.0",
                  "device": "Pixel 8, Android 15", "deviceName": "Pat’s phone"}  # fmt: skip
         for device in (roku, phone):
             ok(home.post("/api/internal/problem", headers=app_token, json={
@@ -394,7 +394,7 @@ def fill(sp: Running, data: Path) -> None:
             "kind": "library-failed", "title": "Cosmic Drift", "detail": "HTTP 500", **roku}))  # fmt: skip
         ok(home.post("/api/internal/problem", headers=app_token, json={"kind": "crashed", **phone}))
         # People's reports, for the Broken files tab: one waiting for an
-        # Admin; three people's on one program; and two StationPlay checks
+        # Admin; three people's on one program; and two tapiOca checks
         # (one finds nothing wrong, the other what's wrong: see inside).
         ok(home.put("/api/arr", json={"app": "sonarr", "url": "http://nas:8989", "key": "abc123",
                                       "on": True}))  # fmt: skip
@@ -413,7 +413,7 @@ def fill(sp: Running, data: Path) -> None:
             "choice": "picture-breaks", "key": "1050", "positionMs": 754_000}))  # fmt: skip
         ok(home.put(f"/api/access/users/{robin['id']}", json={"canReport": False}))
         # One sent later, with what led up to it (a long line too), and trouble
-        # reaching StationPlay.
+        # reaching tapiOca.
         journal = "\n".join([
             "10:41:02 Asked to play Cosmic Drift · S1 E2 (303), up to 42000 kbps",
             "10:41:03 Playing as it is: video/hevc 3840×2160, audio/eac3 6 channels",
@@ -430,14 +430,14 @@ def fill(sp: Running, data: Path) -> None:
             "at": int(time.time() * 1000) - 2 * 3_600_000, **galaxy}))  # fmt: skip
         ok(home.post("/api/internal/problem", headers=app_token, json={
             "kind": "unreachable", "detail": "No network on this device for 12 min 4 s.",
-            "lastedMs": 724_000, "journal": "10:12:30 Can't reach StationPlay: No network on "
-            "this device\n10:24:34 StationPlay answered again", **galaxy}))  # fmt: skip
+            "lastedMs": 724_000, "journal": "10:12:30 Can't reach tapiOca: No network on "
+            "this device\n10:24:34 tapiOca answered again", **galaxy}))  # fmt: skip
         ok(home.post("/api/api-tokens", json={"name": "Home Assistant", "scope": "viewer"}))
         ok(home.post("/api/internal/play", headers=app_token, json={"key": "303", "device": {
             "containers": ["mkv", "mp4"], "hdr": [], "audio": ["aac", "ac3"], "hls": ["ts"],
             "video": [{"codec": "h264", "width": 3840, "height": 2160, "bitDepth": 8}]}}))  # fmt: skip
 
-        # A newer StationPlay is out (see Running), on Docker Compose, and
+        # A newer tapiOca is out (see Running), on Docker Compose, and
         # the Admin said yes to the update check.
         ctx.releases.install = "compose"
         ok(home.put("/api/updates", json={"on": True}))
@@ -446,13 +446,13 @@ def fill(sp: Running, data: Path) -> None:
         # Tuner access: any device on the home network, with two devices listed.
         ok(home.put("/api/tuner", json={"only": False, "devices": TUNER_LISTED}))
 
-        # StationPlay's apps away from home, through a reverse proxy.
+        # tapiOca's apps away from home, through a reverse proxy.
         ctx.reach.transport = Proxy(sp.app, sp.ports[1]).transport
         ok(home.put("/api/away", json={"on": True, "address": "https://tv.example.com"}))
 
     def inside() -> None:
         pat = next(u for u in ctx.db.users() if u.name == ADMIN["name"])
-        ctx.devices.link("StationPlay for Android TV on Den", pat)
+        ctx.devices.link("tapiOca for Android TV on Den", pat)
         # Stats: viewings over the last few weeks, by Plex users and in the apps.
         now = int(time.time() * 1000)
         ids = [made[n]["id"] for n in (2, 4, 5, 7, 12)]
@@ -500,7 +500,7 @@ def fill(sp: Running, data: Path) -> None:
             )  # fmt: skip
             ctx.broken.record(item, reason, 4, problem=problem, file_size=1_400_000_000,
                               library="1" if problem == "broken" else None)  # fmt: skip
-        # What StationPlay's checks of what people reported came to: nothing
+        # What tapiOca's checks of what people reported came to: nothing
         # wrong in Deep Water; Kitchen Rescue's picture breaking up, found.
         for target in list(ctx.scanner._targets):
             if target.rating_key == "302":
@@ -1236,7 +1236,7 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
             look.expect("setup on a phone: a step that runs past the screen", bool(ran_on), True)
         look.expect(
             "setup's last step: the update check isn't ticked before an Admin answers",
-            page.is_checked("#setupBody label:has-text('Tell me when a new StationPlay') input"),
+            page.is_checked("#setupBody label:has-text('Tell me when a new tapiOca') input"),
             False,
         )
         close_dialogs(page)
@@ -1245,9 +1245,9 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
     if wanted("addtoplex"):
         tab(page, "setup")
         look("addtoplex", full=True)
-        # The question a StationPlay updated from before 1.34.0 asks once,
+        # The question a tapiOca updated from before 1.34.0 asks once,
         # then Yes: the New versions panel shows the answer, and the banner a
-        # newer StationPlay brings (hidden, as Not now, in the other views)
+        # newer tapiOca brings (hidden, as Not now, in the other views)
         # shows what it says; Not now hides it, for that version only.
         sp.unanswered()
         page.evaluate(f"() => {{ localStorage.removeItem('{NOT_NOW}'); return loadUpdates(); }}")
@@ -1255,7 +1255,7 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
         page.evaluate("() => window.scrollTo(0, 0)")
         look.expect("the update check's question",
                     page.inner_text("#updateBanner .update-title strong"),
-                    "Should StationPlay tell you when a new version is out?")  # fmt: skip
+                    "Should tapiOca tell you when a new version is out?")  # fmt: skip
         look.expect("New versions, before an answer: not ticked", page.is_checked("#updateCheckOn"),
                     False)  # fmt: skip
         look("update-question")
@@ -1264,7 +1264,7 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
         look.expect("Yes: New versions shows it", page.is_checked("#updateCheckOn"), True)
         page.evaluate("() => window.scrollTo(0, 0)")
         look.expect("the update banner", page.inner_text("#updateBanner .update-title strong"),
-                    f"StationPlay {NEWER} is available.")  # fmt: skip
+                    f"tapiOca {NEWER} is available.")  # fmt: skip
         look.expect("the update banner's steps", page.inner_text("#updateBanner .update-steps p"),
                     "To update with Docker Compose:")  # fmt: skip
         look.expect("the update banner's command", page.inner_text("#updateBanner code"),
@@ -1277,7 +1277,7 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
         page.wait_for_selector("#updateBanner:not([hidden])")
         look.expect("Not now is for that version only: a newer one shows the banner again",
                     page.inner_text("#updateBanner .update-title strong"),
-                    "StationPlay 9.1.0 is available.")  # fmt: skip
+                    "tapiOca 9.1.0 is available.")  # fmt: skip
         # (As it was, for the other views.)
         sp.newest_out(NEWER)
         page.evaluate(
@@ -1454,7 +1454,7 @@ def main() -> None:
         kept_from_before(data)
         sp = Running(data, library())
         try:
-            print(f"StationPlay is at {sp.home} (and {sp.internet} for the internet)")
+            print(f"tapiOca is at {sp.home} (and {sp.internet} for the internet)")
             fill(sp, Path(tmp))
             with sync_playwright() as pw:
                 browser = pw.chromium.launch()

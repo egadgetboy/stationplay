@@ -67,7 +67,7 @@ function madeNotice(made, problems = []) {
   notice(one ? `Station ${made[0].number} is on the air` : `${made.length} new stations are on the air`,
     h('ul', { class: 'steps' }, ...made.map(s => h('li', {}, h('strong', {}, String(s.number)), ` ${s.name}`))),
     h('p', { style: 'margin:0' }, `To add ${one ? 'it' : 'them'} to Plex, go to `, h('em', {}, 'Settings → Live TV & DVR → your tuner → Scan for channels'),
-      ' in Plex (Plex calls stations “channels”). If you haven’t added StationPlay to Plex yet, the Add to Plex tab shows how.'),
+      ' in Plex (Plex calls stations “channels”). If you haven’t added tapiOca to Plex yet, the Add to Plex tab shows how.'),
     problems.length ? h('div', { class: 'notice-bad' }, h('strong', {}, 'Couldn’t make these'),
       h('ul', { class: 'steps' }, ...problems.map(p => h('li', {}, p)))) : null);
 }
@@ -119,7 +119,7 @@ function showTab(name) {
 // More above, more below ------------------------------------------------------
 // Something that runs on past what shows (a dialog's body, the log, the
 // page itself) has a down arrow while more of it is below what shows, and
-// an up arrow while more is above, as StationPlay's apps have them. "More"
+// an up arrow while more is above, as tapiOca's apps have them. "More"
 // is more than 1px (less is rounding, never a line of words), worked out
 // from what's laid out, so a turned tablet or a short window gets them just
 // when it needs them. Each is a chevron on a short fade into the background

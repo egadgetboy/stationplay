@@ -130,7 +130,7 @@ function renderViewing() {
           loadAccess();
         } }, 'Remove')])))));
   body.replaceChildren(
-    h('p', { style: 'margin:0' }, 'A Viewing Level says what its people can see in StationPlay’s apps and on this page: movies and shows up to a rating, whether unrated ones are shown, which Media folders, and any genres, tags, collections or studios it hides. Everyone starts on Unrestricted, which shows everything and stays as it is. Teen, Kid and Young Child are there to start from: rename them, change them or remove them, and add as many levels of your own as you need, such as “Adults” with no R-rated movies or unrated titles. Admins always see everything.'),
+    h('p', { style: 'margin:0' }, 'A Viewing Level says what its people can see in tapiOca’s apps and on this page: movies and shows up to a rating, whether unrated ones are shown, which Media folders, and any genres, tags, collections or studios it hides. Everyone starts on Unrestricted, which shows everything and stays as it is. Teen, Kid and Young Child are there to start from: rename them, change them or remove them, and add as many levels of your own as you need, such as “Adults” with no R-rated movies or unrated titles. Admins always see everything.'),
     h('div', { class: 'limit-note' }, h('strong', {}, 'How it works'),
       h('ul', {},
         h('li', {}, h('strong', {}, 'Stations are all or nothing. '), 'Everyone watching a station sees the same stream, so a station is shown only if everything it plays is within the level. Choose What they see beside someone’s name to allow or block one for them anyway.'),
@@ -337,7 +337,7 @@ function newPassword(u, cell) {
 async function removeUser(u, count) {
   const last = count === 1;
   if (!confirm(last
-    ? `Remove ${u.name}? They’re the last user, so sign-in turns off and anyone on your network who can reach StationPlay can use it.`
+    ? `Remove ${u.name}? They’re the last user, so sign-in turns off and anyone on your network who can reach tapiOca can use it.`
     : `Remove ${u.name}? They won’t be able to sign in anymore. Stations they made stay, and only Admins can change them.`)) return;
   try { await api(`/api/access/users/${u.id}`, { method: 'DELETE' }); toast(`${u.name} removed`); }
   catch (err) { toast(err.message, true); return; }

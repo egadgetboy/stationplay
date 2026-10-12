@@ -1,5 +1,5 @@
 """The server's health, now, for the Stats tab (Admins only): the processor
-and memory StationPlay uses and the whole machine's, what it's sending and
+and memory tapiOca uses and the whole machine's, what it's sending and
 receiving, and the data folder's free space; with the last HISTORY_S of
 each, kept in memory only.
 
@@ -9,7 +9,7 @@ whether or not anyone's looking. Anything that isn't there (another system,
 a container that hides it) is None: the Stats tab says "not available"
 for it.
 
-StationPlay's own use is its container's (its cgroup: StationPlay and the
+tapiOca's own use is its container's (its cgroup: tapiOca and the
 ffmpegs it runs), or this process's alone where there's no cgroup to read.
 Memory used is the cgroup's, less what the kernel can drop at once (files
 it has read lately), as `docker stats` counts it. The machine's memory is
@@ -44,7 +44,7 @@ class Sample:
     """One look at the server: each value None where it couldn't be read."""
 
     at_ms: int
-    own_cpu: float | None = None  # StationPlay's share of the machine's processors, in %
+    own_cpu: float | None = None  # tapiOca's share of the machine's processors, in %
     cpu: float | None = None  # the whole machine's, in %
     own_memory: int | None = None  # bytes
     memory_used: int | None = None  # the machine's (or within the container's limit)
@@ -64,7 +64,7 @@ class _Counters:
     at: float  # time.monotonic()
     busy: int | None = None  # the machine's processor time, in ticks
     total: int | None = None
-    own_s: float | None = None  # StationPlay's processor time, in seconds
+    own_s: float | None = None  # tapiOca's processor time, in seconds
     received: int | None = None  # bytes
     sent: int | None = None
 
@@ -119,7 +119,7 @@ class Health:
         return out
 
     async def run_forever(self, on_gpu: Callable[[], int]) -> None:
-        """Looks every SAMPLE_S, for as long as StationPlay runs."""
+        """Looks every SAMPLE_S, for as long as tapiOca runs."""
         while True:
             try:
                 await asyncio.to_thread(self.sample, on_gpu())
@@ -200,7 +200,7 @@ class Health:
         return None
 
     def _own_cpu_s(self) -> float | None:
-        """StationPlay's processor time so far, in seconds."""
+        """tapiOca's processor time so far, in seconds."""
         usec = _field(self._cgroup_text("cpuacct", "cpu.stat") or "", "usage_usec")  # (v2)
         if usec is not None:
             return usec / 1e6
@@ -220,7 +220,7 @@ class Health:
         return ticks / (os.sysconf("SC_CLK_TCK") or 100)
 
     def _own_memory(self) -> int | None:
-        """StationPlay's memory, in bytes."""
+        """tapiOca's memory, in bytes."""
         stat = self._cgroup_text("memory", "memory.stat") or ""
         current = (self._cgroup_text("memory", "memory.current") or "").strip()  # (v2)
         if current.isdigit():

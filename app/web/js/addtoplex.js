@@ -32,7 +32,7 @@ $('#runSetup').addEventListener('click', runSetup);
 $('#footSetup').addEventListener('click', runSetup);
 
 // Appearance: Automatic follows the device; Light or Dark is kept for this
-// browser in a cookie, which StationPlay reads so the page starts in it.
+// browser in a cookie, which tapiOca reads so the page starts in it.
 const appearance = $('#appearance');
 appearance.value = document.documentElement.dataset.theme || '';
 appearance.addEventListener('change', () => {
@@ -63,13 +63,13 @@ function renderMediaAccess(m) {
   if (m.direct && !m.viaPlex) {
     text = `Read directly from disk${maps ? ` (${maps})` : ''}.`; cls = 'chip good';
   } else if (m.viaPlex) {
-    text = `${m.viaPlex} of ${m.direct + m.viaPlex} files were streamed from Plex because StationPlay couldn’t find them in ${m.mediaDir}. That works, but mounting your media folder there is faster and puts less load on Plex.`;
+    text = `${m.viaPlex} of ${m.direct + m.viaPlex} files were streamed from Plex because tapiOca couldn’t find them in ${m.mediaDir}. That works, but mounting your media folder there is faster and puts less load on Plex.`;
     cls = 'chip bad';
   } else if (!m.mediaDirPresent) {
     text = `Nothing is mounted at ${m.mediaDir}, so files will be streamed from Plex. Mount your media folder there to read files directly.`;
     cls = 'chip accent';
   } else {
-    text = `Media folder found at ${m.mediaDir}. Once a station plays, this shows whether StationPlay can read your files there.`;
+    text = `Media folder found at ${m.mediaDir}. Once a station plays, this shows whether tapiOca can read your files there.`;
     cls = '';
   }
   el.className = 'small';
@@ -87,7 +87,7 @@ function renderEncoding(e) {
     const extra = e.gpuFailures
       ? ` ${plural(e.gpuFailures, 'program')} had a GPU problem and finished on the CPU.` : '';
     const copies = e.copiesOnCpu
-      ? ' Copies for StationPlay’s apps are converted on the CPU, since 3 in a row had a GPU problem (restart StationPlay to try the GPU again).' : '';
+      ? ' Copies for tapiOca’s apps are converted on the CPU, since 3 in a row had a GPU problem (restart tapiOca to try the GPU again).' : '';
     content = chip('chip good', `${e.active}.${extra}${copies}`);
   } else if (e.state === 'disabled') {
     content = chip('chip bad', e.note);
@@ -103,8 +103,8 @@ function renderGuideState(g) {
   const text = [
     when ? `Plex last downloaded the guide on ${when}.` : 'Plex hasn’t downloaded the guide yet.',
     g.canRefreshPlexGuide
-      ? 'When a station changes, StationPlay asks Plex to refresh the guide.'
-      : 'Once StationPlay is set up in Plex’s Live TV & DVR, it will ask Plex to refresh the guide whenever a station changes.',
+      ? 'When a station changes, tapiOca asks Plex to refresh the guide.'
+      : 'Once tapiOca is set up in Plex’s Live TV & DVR, it will ask Plex to refresh the guide whenever a station changes.',
   ].join(' ');
   $('#guideState').replaceChildren(h('span', { class: g.canRefreshPlexGuide ? 'chip good note' : 'chip accent note' }, text));
 }

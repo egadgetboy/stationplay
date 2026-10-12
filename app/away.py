@@ -1,26 +1,26 @@
-"""Watching away from home in StationPlay's own apps: optional, off unless
+"""Watching away from home in tapiOca's own apps: optional, off unless
 an Admin turns it on in the Access tab. Setups that use only Plex, Jellyfin
 or other apps never see a difference.
 
 What Plex, Jellyfin and other apps use stays on the home network (see access.py). An
-app away from home reaches StationPlay one of two ways:
+app away from home reaches tapiOca one of two ways:
 
 - Through a VPN (Tailscale, WireGuard), straight to the home port: as far as
-  StationPlay can tell, it's at home, and everything works as it does there.
+  tapiOca can tell, it's at home, and everything works as it does there.
 - Through the public port (PUBLIC_PORT, behind a reverse proxy), signed in.
   A player can't sign in, so there a station's stream has an address of its
   own for each signed-in app: /hls/k/<key>/<number>/... The key belongs to
   that app's sign-in. It stops working when the sign-in does (signing out, a
   new password, the user being removed), when this is turned off, and when
-  StationPlay restarts (the app then asks for the stations again and gets a
+  tapiOca restarts (the app then asks for the stations again and gets a
   new one). Nothing about it is kept on disk.
 
-The address set here (what the apps reach StationPlay at from outside) is
+The address set here (what the apps reach tapiOca at from outside) is
 told to the apps (/api/v1/server), so an app set up at home remembers it and
-uses it when home doesn't answer. Whether it really reaches StationPlay is
+uses it when home doesn't answer. Whether it really reaches tapiOca is
 checked while this is on (see reach.py).
 
-At home, each of StationPlay's own apps, signed in, gets its stations at an
+At home, each of tapiOca's own apps, signed in, gets its stations at an
 address of its own too (and an API token's script does while only listed
 devices may use the tuner: see tuner.py), so it needn't be listed, and
 changing that never stops it: a key made for use at home, which works only
@@ -79,7 +79,7 @@ class _Key:
 
 
 def normalize_address(text: str) -> str:
-    """The address the apps reach StationPlay at from outside, as typed:
+    """The address the apps reach tapiOca at from outside, as typed:
     "https://tv.example.com", "http://nas.tailnet.ts.net:3310". ValueError
     if it isn't one."""
     text = text.strip()
@@ -122,8 +122,8 @@ def check_cap(mbps: int | None) -> None:
 
 
 def port_problem(address: str, port: int, public_port: int) -> str:
-    """What's wrong with an https:// address on one of StationPlay's own
-    ports ("" if nothing is): StationPlay never speaks HTTPS itself, so that
+    """What's wrong with an https:// address on one of tapiOca's own
+    ports ("" if nothing is): tapiOca never speaks HTTPS itself, so that
     can't reach it through a reverse proxy. It's saved all the same, and the
     page says so."""
     parts = urlsplit(address)
@@ -137,14 +137,14 @@ def port_problem(address: str, port: int, public_port: int) -> str:
         return ""
     host = parts.hostname if ":" not in parts.hostname else f"[{parts.hostname}]"
     return (
-        f"Leave the port out: StationPlay never speaks HTTPS itself, so an https:// address "
+        f"Leave the port out: tapiOca never speaks HTTPS itself, so an https:// address "
         f"with port {given} can't reach it. Use your reverse proxy's address alone, "
         f"https://{host}."
     )
 
 
 class Away:
-    """Whether apps may watch away from home, where they reach StationPlay
+    """Whether apps may watch away from home, where they reach tapiOca
     then, and the keys of the apps' streams."""
 
     def __init__(self, db: Database, access: Access) -> None:

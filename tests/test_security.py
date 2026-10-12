@@ -1,4 +1,4 @@
-"""What keeps StationPlay safe when its page is reachable from the internet:
+"""What keeps tapiOca safe when its page is reachable from the internet:
 its public port (no Plex addresses, always signing in), only Plex's own
 addresses ever asked of Plex, files people upload read only as what they
 claim to be, plain names, limits on what a request can send, and a page
@@ -274,7 +274,7 @@ def test_uploads_are_limited(client, monkeypatch):
 
 @contextlib.asynccontextmanager
 async def both_ports(tmp_path):
-    """StationPlay listening on its home-network port and its public one:
+    """tapiOca listening on its home-network port and its public one:
     (the home network's address, the internet's)."""
     lan, public = (socket.create_server(("127.0.0.1", 0)) for _ in range(2))
     ports = lan.getsockname()[1], public.getsockname()[1]

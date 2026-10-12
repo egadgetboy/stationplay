@@ -16,7 +16,7 @@ RUN apt-get update \
 # GPU drivers: intel-media for Intel (Broadwell and newer, including 12th-gen
 # UHD 770) and mesa for AMD. NVIDIA's libraries come from the NVIDIA
 # container runtime instead. These are optional: if they can't be installed
-# the image still builds and StationPlay encodes on the CPU. vainfo is for
+# the image still builds and tapiOca encodes on the CPU. vainfo is for
 # troubleshooting (docker exec stationplay vainfo).
 RUN sed -i 's/^Components: main$/Components: main non-free/' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
@@ -32,11 +32,11 @@ WORKDIR /opt/stationplay
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
-# The AGPL's text goes wherever StationPlay does, the image included, with
+# The AGPL's text goes wherever tapiOca does, the image included, with
 # the open-source notices of what's built in. The exact Debian packages
 # installed (FFmpeg's among them) are listed too, so each one's source can
 # be found. (Each package's copyright file stays in /usr/share/doc.) And
-# StationPlay's privacy notice, which its page links to.
+# tapiOca's privacy notice, which its page links to.
 COPY LICENSE THIRD_PARTY_NOTICES.md PRIVACY.md ./
 # The public half of the key each release's zip is signed with (see
 # release.yml): for checking an update before it's used.

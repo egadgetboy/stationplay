@@ -1,6 +1,6 @@
-# Brief: new logos for StationPlay's logo library
+# Brief: new logos for tapiOca's logo library
 
-StationPlay is a self-hosted app that makes broadcast-style TV stations; each
+tapiOca is a self-hosted app that makes broadcast-style TV stations; each
 station shows its logo in TV guides (small, ~64 px) and on screen (large).
 The library lives in `/home/claude/stationplay/tools/logos` and already has
 ~500 logos. You are adding a set of new ones in a NEW module of your own.

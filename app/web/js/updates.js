@@ -1,12 +1,12 @@
-// StationPlay's own new versions (see releases.py on the server): for
+// tapiOca's own new versions (see releases.py on the server): for
 // Admins, a banner when a newer one is out, with how this kind of install
 // updates its image, What's new and Back up now; the one-time question
-// whether to look at all (asked here once setup is done, of a StationPlay
+// whether to look at all (asked here once setup is done, of a tapiOca
 // updated from before 1.34.0: a new one asks in setup's last step); and the
 // update check's setting, on the Add to Plex tab. "Not now" hides the
 // banner for that version, in this browser.
 const UPDATE_NOT_NOW = 'stationplay.updateNotNow';
-const UPDATE_PRIVACY = 'Once a day, StationPlay asks GitHub whether a newer version is out. GitHub sees your server’s internet address when it asks, as any website does. StationPlay sends only its version, and never updates by itself.';
+const UPDATE_PRIVACY = 'Once a day, tapiOca asks GitHub whether a newer version is out. GitHub sees your server’s internet address when it asks, as any website does. tapiOca sends only its version, and never updates by itself.';
 const notNowFor = () => { try { return localStorage.getItem(UPDATE_NOT_NOW) || ''; } catch { return ''; } };
 let updates = null;
 // An Admin's answer, from the question, the setting or setup: then the
@@ -14,7 +14,7 @@ let updates = null;
 async function answerUpdates(on) {
   try { updates = await api('/api/updates', { method: 'PUT', body: { on } }); }
   catch (err) { toast(err.message, true); return false; }
-  toast(on ? 'StationPlay will tell you when a new version is out' : 'The update check is off');
+  toast(on ? 'tapiOca will tell you when a new version is out' : 'The update check is off');
   loadUpdates();
   return true;
 }
@@ -30,7 +30,7 @@ async function loadUpdates() {
       if (!(await answerUpdates(on))) for (const b of banner.querySelectorAll('button')) b.disabled = false;
     };
     banner.replaceChildren(
-      h('p', { class: 'update-title' }, h('strong', {}, 'Should StationPlay tell you when a new version is out?')),
+      h('p', { class: 'update-title' }, h('strong', {}, 'Should tapiOca tell you when a new version is out?')),
       h('p', { class: 'small' }, UPDATE_PRIVACY),
       h('p', { class: 'small muted' }, 'You can change this later under New versions on the Add to Plex tab.'),
       h('div', { class: 'row-btns' },
@@ -42,7 +42,7 @@ async function loadUpdates() {
   if (!u.latest || notNowFor() === u.latest.version) { banner.hidden = true; return; }
   const copy = h('button', { class: 'btn', type: 'button', onclick: async () => toast(await copyText(u.command) ? 'Copied' : 'Couldn’t copy: select it and copy it yourself', !u.command) }, 'Copy');
   banner.replaceChildren(
-    h('p', { class: 'update-title' }, h('strong', {}, `StationPlay ${u.latest.version} is available.`), ' ', h('span', { class: 'muted' }, `This is ${u.current}.`)),
+    h('p', { class: 'update-title' }, h('strong', {}, `tapiOca ${u.latest.version} is available.`), ' ', h('span', { class: 'muted' }, `This is ${u.current}.`)),
     h('div', { class: 'update-steps' },
       u.install ? h('p', { class: 'small muted' }, u.heading) : null,
       ...u.steps.map(s => h('p', { class: 'small' }, s)),
@@ -73,11 +73,11 @@ function renderUpdatesPanel() {
       : `Last checked ${new Date(u.checked.at).toLocaleString()}.`)
     : 'Not checked yet.';
   const now = u.on === true
-    ? (u.latest ? `StationPlay ${u.latest.version} is available. ${last}` : `This is the newest StationPlay (${u.current}). ${last}`)
-    : u.on === null ? `This is StationPlay ${u.current}. You haven’t chosen yet whether StationPlay looks for new versions.`
-      : `This is StationPlay ${u.current}.`;
+    ? (u.latest ? `tapiOca ${u.latest.version} is available. ${last}` : `This is the newest tapiOca (${u.current}). ${last}`)
+    : u.on === null ? `This is tapiOca ${u.current}. You haven’t chosen yet whether tapiOca looks for new versions.`
+      : `This is tapiOca ${u.current}.`;
   panel.replaceChildren(
-    h('label', {}, on, ' Tell me when a new StationPlay is out'),
+    h('label', {}, on, ' Tell me when a new tapiOca is out'),
     h('p', { class: 'hint', style: 'margin:0' }, UPDATE_PRIVACY),
     h('div', { class: 'row-btns' },
       h('span', { class: 'small muted' }, now),

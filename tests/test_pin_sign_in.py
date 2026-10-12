@@ -1,4 +1,4 @@
-"""Signing in with a PIN on StationPlay's page (see access.py's
+"""Signing in with a PIN on tapiOca's page (see access.py's
 pin_sign_in): at home, on a browser its person signed in on with their
 password; never from the internet."""
 
@@ -38,7 +38,7 @@ def app(tmp_path):
 
 @pytest.fixture
 def pat(app):
-    """Pat, StationPlay's first user (an Admin), signed in, with PIN 4321;
+    """Pat, tapiOca's first user (an Admin), signed in, with PIN 4321;
     and Sam, a User, with PIN 1234."""
     with TestClient(app) as client:
         made = client.post("/api/access/users", json=PAT)
@@ -128,7 +128,7 @@ def test_wrong_pins_wait_15_minutes(pat, app):
     assert waits.json()["detail"].startswith("Too many wrong PINs for Pat. Try again in")
     assert browser.get("/api/access/me").json()["user"] is None
     log = pat.get("/api/logs?access_log=true").json()["text"]
-    assert "Wrong PIN for Pat on StationPlay's page, from testclient" in log
+    assert "Wrong PIN for Pat on tapiOca's page, from testclient" in log
     assert "Too many wrong PINs for Pat: they wait 15 minutes" in log
     # Not a PIN at all counts as wrong too.
     assert (
@@ -304,9 +304,9 @@ def test_ten_wrong_pins_need_the_password_however_often_the_page_asks(pat, app):
 
 def test_the_sign_in_page_says_where_the_pin_works(pat, app):
     """The owner's report (October 12): at home, through his internet
-    address (his proxy, so StationPlay's public port), the page asked for
+    address (his proxy, so tapiOca's public port), the page asked for
     his password, not his PIN. From the internet it always does; the page
-    now says the PIN works at StationPlay's home address."""
+    now says the PIN works at tapiOca's home address."""
     home = signed_out(signed_in_with_password(app))
     assert "outside" not in home.get("/api/access/me").json()
     away = TestClient(app, base_url=f"http://testserver:{PUBLIC_PORT}")
@@ -341,9 +341,7 @@ def test_asking_who_is_signed_in_never_makes_a_browser_take_the_pin(pat, app):
     ctx.db._conn.commit()
     app_token = (
         TestClient(app)
-        .post(
-            "/api/internal/sign-in", json={**SAM, "app": "StationPlay for Roku", "deviceName": "TV"}
-        )
+        .post("/api/internal/sign-in", json={**SAM, "app": "tapiOca for Roku", "deviceName": "TV"})
         .json()["token"]
     )
     before = devices()
@@ -366,7 +364,7 @@ def test_the_sign_in_page_shows_where_the_pin_works():
     from .test_web_app import PAGE, WEB_DIR
 
     assert (
-        '<p class="hint" id="signinWhere" hidden>At this address, StationPlay always asks for your password, even at home.'
+        '<p class="hint" id="signinWhere" hidden>At this address, tapiOca always asks for your password, even at home.'
         in PAGE
     )
     assert (

@@ -385,7 +385,7 @@ function toggleSource(src, on) {
 }
 
 // The editor as you left it, to tell whether closing it would lose
-// anything: what StationPlay fills in by itself for a new station (its name
+// anything: what tapiOca fills in by itself for a new station (its name
 // from its only show, a logo you didn't choose) doesn't count.
 let editorSnapshot = '';
 function editorState() {

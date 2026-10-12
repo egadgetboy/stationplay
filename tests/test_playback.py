@@ -55,7 +55,7 @@ def test_playback_settings_are_kept_and_checked(tmp_path):
         with pytest.raises(ValueError):
             playback.save(db, **bad)
     assert playback.load(db).tuners == 6
-    # Plex is told of more, so StationPlay can say when they're all in use.
+    # Plex is told of more, so tapiOca can say when they're all in use.
     assert [playback.announced(n) for n in (1, 2, 4, 10)] == [2, 4, 8, 20]
 
 
@@ -81,8 +81,8 @@ def test_the_old_settings_are_where_they_start(tmp_path, caplog):
 def test_what_the_all_tuners_card_says():
     assert playback.busy_lines(1, [3]) == [
         "All tuners in use",
-        "StationPlay can play only 1 station at a time",
-        "On now: Station 3. Try again soon, or ask whoever runs StationPlay to add more tuners.",
+        "tapiOca can play only 1 station at a time",
+        "On now: Station 3. Try again soon, or ask whoever runs tapiOca to add more tuners.",
     ]
     assert "On now: Stations 3, 7 and 12." in playback.busy_lines(3, [3, 7, 12])[2]
 

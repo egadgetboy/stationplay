@@ -258,7 +258,7 @@ async def test_finds_commercials_and_trailers_beside_the_libraries(tmp_path):
 
 @needs_ffmpeg
 async def test_a_station_made_while_the_first_look_is_going_waits_for_it(tmp_path):
-    """A station made just after StationPlay starts, while it's still looking
+    """A station made just after tapiOca starts, while it's still looking
     for commercials, gets them: ready() waits for the look under way (it
     once didn't, and the station had none until the next check for updates)."""
     ctx, _plex = library(tmp_path)
@@ -272,7 +272,7 @@ async def test_a_station_made_while_the_first_look_is_going_waits_for_it(tmp_pat
         return await asked()
 
     ctx.library.libraries = slow_libraries
-    first = asyncio.create_task(fillers.refresh())  # (as StationPlay starts)
+    first = asyncio.create_task(fillers.refresh())  # (as tapiOca starts)
     await asyncio.sleep(0.05)
     waiting = asyncio.create_task(fillers.ready())  # (a station being made)
     await asyncio.sleep(0.2)
@@ -449,7 +449,7 @@ async def test_clips_that_failed_stay_left_out_after_a_restart(tmp_path):
     fillers = FillerLibrary(ctx)
     await fillers.refresh()
     fillers.mark_bad(str(tmp_path / "tv/commercials/a.mp4"), "test")
-    again = FillerLibrary(ctx)  # StationPlay restarted
+    again = FillerLibrary(ctx)  # tapiOca restarted
     await again.refresh()
     assert [Path(c.path).name for c in again.pool("commercials")] == ["b.mp4"]
     assert again.signature == fillers.signature
@@ -568,7 +568,7 @@ def test_the_card_says_whats_next_with_its_season_and_episode():
 @needs_ffmpeg
 def test_measured_text_matches_what_ffmpeg_draws():
     """The card fits text by measuring it: the measurements must match the
-    font ffmpeg draws with (DejaVu Sans, as in StationPlay's image)."""
+    font ffmpeg draws with (DejaVu Sans, as in tapiOca's image)."""
     import subprocess
 
     from app import ffmpeg as ffm

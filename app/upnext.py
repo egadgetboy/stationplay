@@ -257,7 +257,7 @@ def _title(title: str, room: float, s: Callable[[float], int]) -> tuple[list[str
 def _cant_draw_in(folder: Path) -> None:
     """Says (once) that a folder's path can't be given to ffmpeg."""
     log.warning(
-        "Up Next Banners can't be drawn: the path of StationPlay's data folder (%s) has "
+        "Up Next Banners can't be drawn: the path of tapiOca's data folder (%s) has "
         "characters ffmpeg can't handle. Use a path with only letters, numbers, and - _ . /",
         folder,
     )

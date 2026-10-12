@@ -789,7 +789,7 @@ def test_cuts_found_reach_a_station_twice_a_day_and_other_changes_at_once(app_cl
 
 
 def test_a_skip_too_short_to_keep_inside_its_margins_isnt_lost(app_client):
-    """Programs with 5-second intros, on a station made before StationPlay
+    """Programs with 5-second intros, on a station made before tapiOca
     placed skips by the picture: inside their margins those skips are too
     short to keep, and they play in full. That isn't Plex losing its
     markers, so the station's update isn't held for review."""

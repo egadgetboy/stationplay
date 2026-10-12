@@ -1,4 +1,4 @@
-"""The library: everything StationPlay reads about your shows and movies,
+"""The library: everything tapiOca reads about your shows and movies,
 whichever source they come from (see docs/library.md).
 
 Everything that reads the media library goes through `Library`, never
@@ -6,7 +6,7 @@ through a source directly. Today its one source is Plex; folders of your own
 come later, and nothing outside this module needs to change for them.
 
 Every program, show, movie, collection and library has a key, a short string
-the rest of StationPlay treats as opaque. Plex's keys are digits (as they
+the rest of tapiOca treats as opaque. Plex's keys are digits (as they
 always were, so nothing stored changes); folder libraries' keys will be "f"
 followed by digits, so the two can never collide. A key's shape says which
 source it belongs to.
@@ -58,7 +58,7 @@ def is_key(key: str) -> bool:
 
 
 def _not_yet(key: str) -> LibraryError:
-    return LibraryError(f"StationPlay doesn't read your own folders yet ({key})", 404)
+    return LibraryError(f"tapiOca doesn't read your own folders yet ({key})", 404)
 
 
 class Library:
@@ -153,7 +153,7 @@ class Library:
         return await self._plex_for(key).current_files(key)
 
     def stream_url(self, key: str, part_key: str) -> str | None:
-        """An address to stream a program's file from, for when StationPlay
+        """An address to stream a program's file from, for when tapiOca
         can't read it directly (None: there's no such address)."""
         if is_folder_key(key):
             return None
@@ -184,7 +184,7 @@ class Library:
     async def logo_bytes(self, key: str, where: str) -> bytes:
         return await self._plex_for(key).logo_bytes(where)
 
-    # For StationPlay's apps (see docs/on-demand.md) ------------------------
+    # For tapiOca's apps (see docs/on-demand.md) ------------------------
 
     async def browse(
         self, library: str, kind: str, sort: str, start: int, size: int, genre: str | None = None

@@ -121,7 +121,7 @@ def test_restoring_puts_everything_back_on_the_next_start(tmp_path):
         add_station(client, 9, "Something else")
         (data / "logos" / "upload-abc123.png").unlink()
         (data / "logos" / "upload-ffff.png").write_bytes(PNG)
-        # ...and the backup is restored. It's put in place when StationPlay
+        # ...and the backup is restored. It's put in place when tapiOca
         # restarts, not while it's running.
         restarted = []
         client.app.state.ctx.restart = lambda: restarted.append(True)
@@ -131,7 +131,7 @@ def test_restoring_puts_everything_back_on_the_next_start(tmp_path):
         assert [c["number"] for c in client.get("/api/channels").json()] == [9]
         client.portal.call(__import__("asyncio").sleep, 1.3)
         assert restarted == [True]
-    # StationPlay starts again.
+    # tapiOca starts again.
     with client_for(data, fp) as client:
         channels = client.get("/api/channels").json()
         assert [(c["number"], c["name"], c["breaks"], c["watermark"]) for c in channels] == [
@@ -173,7 +173,7 @@ def test_back_up_now_failing_says_so_in_a_sentence(tmp_path, caplog):
 
 def test_back_up_now_failing_for_another_reason_logs_where(tmp_path, caplog, monkeypatch):
     """The audit of 1.32.0: an error that isn't the disk's or the folder's
-    (a mistake in StationPlay) was logged as one line, without where it
+    (a mistake in tapiOca) was logged as one line, without where it
     happened. It's logged with that now; the page still gets a sentence."""
     caplog.set_level(logging.INFO)
 
@@ -259,13 +259,13 @@ def test_a_restored_backup_brings_back_no_alerts(tmp_path):
     fp = plex()
     with client_for(data, fp) as client:
         ctx = client.app.state.ctx
-        client.portal.call(ctx.alerts.start, "backups", "StationPlay's backups are failing.")
+        client.portal.call(ctx.alerts.start, "backups", "tapiOca's backups are failing.")
         # (Made while the alert was going, which the backup then fixes.)
         name = client.post("/api/backups").json()["name"]
         backup = client.get(f"/api/backups/{name}").content
         with zipfile.ZipFile(io.BytesIO(backup)) as z, tempfile_db(z) as copy:
             assert [r[0] for r in copy.execute("SELECT kind FROM alerts")] == ["backups"]
-        client.portal.call(ctx.alerts.start, "plex", "StationPlay can't reach Plex.")
+        client.portal.call(ctx.alerts.start, "plex", "tapiOca can't reach Plex.")
         assert client.post("/api/restore", content=backup).status_code == 200
     sent: list[tuple] = []
     with client_for(data, fp) as client:
@@ -296,7 +296,7 @@ def tempfile_db(z: zipfile.ZipFile):
 
 
 def as_1290(db_path) -> None:
-    """Makes the database as StationPlay 1.29.0 kept it: without the
+    """Makes the database as tapiOca 1.29.0 kept it: without the
     problems' journal and how long trouble lasted (added in 1.29.1)."""
     conn = sqlite3.connect(db_path)
     for column in ("journal", "lasted_ms"):
@@ -355,7 +355,7 @@ def test_an_update_backs_up_the_database_before_changing_it(tmp_path, caplog):
     assert conn.execute("SELECT name FROM channels").fetchall() == [("Cartoons",)]
     assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
     conn.close()
-    assert f"Backed up the database to backups/{copy.name} before updating it for StationPlay" in (
+    assert f"Backed up the database to backups/{copy.name} before updating it for tapiOca" in (
         caplog.text
     )
     assert "Backed up the database" in logged  # (on the Logs tab too)
@@ -378,11 +378,11 @@ def test_without_room_for_the_copy_nothing_is_changed(tmp_path, monkeypatch, cap
         client_for(data, plex())
     assert db_path.read_bytes() == before and "journal" not in columns(db_path, "problems")
     assert (
-        f"StationPlay {__version__} needs to update its database, but couldn't back it up "
+        f"tapiOca {__version__} needs to update its database, but couldn't back it up "
         "first, so it changed nothing and stopped: its data folder's disk has 1 MB free, and the "
         "copy needs about"
     ) in caplog.text
-    assert "Free up room on that disk, then start StationPlay again." in caplog.text
+    assert "Free up room on that disk, then start tapiOca again." in caplog.text
     monkeypatch.undo()
     # A copy that fails partway (the disk filling, say) leaves nothing behind.
     real = db.copy_database

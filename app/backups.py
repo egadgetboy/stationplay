@@ -1,4 +1,4 @@
-"""Backups of everything StationPlay keeps: stations and their schedules,
+"""Backups of everything tapiOca keeps: stations and their schedules,
 settings, the broken-files list, the tuner's identity, uploaded logos, who
 can sign in (passwords only as hashes; not who's signed in) and viewing
 statistics.
@@ -7,9 +7,9 @@ A backup is a zip file. One is made every night and the last KEEP are kept
 in the data folder's backups/ folder; the web page can download one at any
 time, and restore one.
 
-Restoring never swaps files under a running StationPlay: the backup is
+Restoring never swaps files under a running tapiOca: the backup is
 checked, unpacked into restore/ (and what's in it checked again: see
-main.py), marked ready, and StationPlay restarts (Docker starts it again).
+main.py), marked ready, and tapiOca restarts (Docker starts it again).
 On the way up, before anything opens the database, the files are moved
 into place, after a backup of what was there before. (Its Admin alerts are
 left out: they were about when it was made. See _forget_alerts.)
@@ -19,7 +19,7 @@ else Database does to bring one up to date: see db.changes_needed), the
 database is copied as it is, sign-ins and all, to backups/ as
 before-<version>-<date>.db (the newest BEFORE_KEPT kept), so going back to
 the version before is putting that copy in place (see the README's
-Updating). If the copy can't be made, StationPlay changes nothing and stops.
+Updating). If the copy can't be made, tapiOca changes nothing and stops.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ LOGO_NAME = re.compile(r"logos/upload-[0-9a-f]{1,32}\.png")
 BACKUP_NAME = re.compile(r"stationplay-(backup|before-restore)-\d{8}-\d{6}\.zip")
 BEFORE_NAME = re.compile(r"before-[0-9A-Za-z.+-]+-(\d{8}-\d{6})\.db")
 MANIFEST = "stationplay-backup.json"
-# A backup bigger than this, unpacked, isn't StationPlay's.
+# A backup bigger than this, unpacked, isn't tapiOca's.
 MAX_UNPACKED = 500 * 1024 * 1024
 MAX_UPLOAD = 200 * 1024 * 1024
 # The nightly backup is made in this hour (local time), or whenever the
@@ -179,7 +179,7 @@ def before_update(data_dir: Path) -> Path | None:
         changes = changes_needed(current)
     except sqlite3.Error as e:
         raise CantBackUp(
-            f"StationPlay {__version__} couldn't read its database to see whether it needs "
+            f"tapiOca {__version__} couldn't read its database to see whether it needs "
             f"updating ({e}), so it changed nothing and stopped. Check its data folder's "
             "stationplay.db, or restore a backup."
         ) from None
@@ -189,7 +189,7 @@ def before_update(data_dir: Path) -> Path | None:
     path = folder / f"before-{__version__}-{_stamp()}.db"
     part = path.with_name(path.name + ".part")
     stop = (
-        f"StationPlay {__version__} needs to update its database, but couldn't back it up "
+        f"tapiOca {__version__} needs to update its database, but couldn't back it up "
         "first, so it changed nothing and stopped"
     )
     try:
@@ -203,7 +203,7 @@ def before_update(data_dir: Path) -> Path | None:
         if free < need:
             raise CantBackUp(
                 f"{stop}: its data folder's disk has {_mb(free)} free, and the copy needs about "
-                f"{_mb(need)}. Free up room on that disk, then start StationPlay again."
+                f"{_mb(need)}. Free up room on that disk, then start tapiOca again."
             )
         copy_database(current, part, sign_ins=True)
         _check_copy(part)
@@ -212,7 +212,7 @@ def before_update(data_dir: Path) -> Path | None:
         part.unlink(missing_ok=True)
         raise CantBackUp(
             f"{stop} ({e}). Check that its data folder can be written to and its disk has "
-            "room, then start StationPlay again."
+            "room, then start tapiOca again."
         ) from None
     ours = sorted(
         ((found.group(1), p) for p in folder.glob("before-*.db")
@@ -222,7 +222,7 @@ def before_update(data_dir: Path) -> Path | None:
     for _, old in ours[BEFORE_KEPT:]:
         old.unlink(missing_ok=True)
     log.info(
-        "Backed up the database to backups/%s before updating it for StationPlay %s (%s). "
+        "Backed up the database to backups/%s before updating it for tapiOca %s (%s). "
         "To go back to the version before, see Rolling back in the README.",
         path.name,
         __version__,
@@ -250,21 +250,21 @@ def _mb(size: int) -> str:
 
 def stage_restore(data_dir: Path, data: bytes) -> dict:
     """Checks an uploaded backup and unpacks it, set aside to be put in place
-    when StationPlay next starts, once it's marked ready (mark_ready).
+    when tapiOca next starts, once it's marked ready (mark_ready).
     Returns what it holds."""
     if len(data) > MAX_UPLOAD:
-        raise BackupError("That file is too big to be a StationPlay backup")
+        raise BackupError("That file is too big to be a tapiOca backup")
     try:
         z = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:
-        raise BackupError("That isn't a StationPlay backup (it isn't a zip file)") from None
+        raise BackupError("That isn't a tapiOca backup (it isn't a zip file)") from None
     with z:
         infos = {i.filename: i for i in z.infolist() if not i.is_dir()}
         if DB_NAME not in infos:
-            raise BackupError("That isn't a StationPlay backup (it has no stationplay.db)")
+            raise BackupError("That isn't a tapiOca backup (it has no stationplay.db)")
         wanted = [n for n in infos if n == DB_NAME or n in FILES or LOGO_NAME.fullmatch(n)]
         if sum(infos[n].file_size for n in wanted) > MAX_UNPACKED:
-            raise BackupError("That file is too big to be a StationPlay backup")
+            raise BackupError("That file is too big to be a tapiOca backup")
         staging = data_dir / RESTORE_DIR
         shutil.rmtree(staging, ignore_errors=True)
         (staging / "logos").mkdir(parents=True)
@@ -322,7 +322,7 @@ def staged_logos(data_dir: Path) -> list[Path]:
 
 
 def mark_ready(data_dir: Path) -> None:
-    """Marks a backup set aside as ready, to be put in place when StationPlay
+    """Marks a backup set aside as ready, to be put in place when tapiOca
     next starts."""
     (data_dir / RESTORE_DIR / READY).write_text(json.dumps({"staged": _stamp()}) + "\n")
 
@@ -334,19 +334,19 @@ def discard_restore(data_dir: Path) -> None:
 
 def _check_database(path: Path) -> tuple[int, int]:
     """The number of stations and users in a backup's database (none in one
-    made before 1.9); raises BackupError if it isn't a StationPlay database in
+    made before 1.9); raises BackupError if it isn't a tapiOca database in
     good order."""
     try:
         conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro&immutable=1", uri=True)
         try:
             if conn.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 raise BackupError("That backup's database is damaged")
-            # StationPlay's databases have tables and indexes, nothing that
+            # tapiOca's databases have tables and indexes, nothing that
             # would run by itself once it's in use (a trigger) or hide one.
             if conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type NOT IN ('table', 'index')"
             ).fetchone():
-                raise BackupError("That backup's database wasn't made by StationPlay")
+                raise BackupError("That backup's database wasn't made by tapiOca")
             stations = int(conn.execute("SELECT COUNT(*) FROM channels").fetchone()[0])
             has_users = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users'"
@@ -358,7 +358,7 @@ def _check_database(path: Path) -> tuple[int, int]:
         finally:
             conn.close()
     except sqlite3.DatabaseError as e:
-        raise BackupError(f"That isn't a StationPlay backup ({e})") from None
+        raise BackupError(f"That isn't a tapiOca backup ({e})") from None
 
 
 def apply_staged_restore(data_dir: Path) -> bool:
@@ -446,7 +446,7 @@ async def nightly_forever(ctx: AppContext) -> None:
             if tonight or age > MAX_AGE_S:
                 path = await asyncio.to_thread(make_backup, ctx)
                 ctx.alerts.backup_made()
-                log.info("Backed up StationPlay to %s", path.name)
+                log.info("Backed up tapiOca to %s", path.name)
         except Exception:
             log.exception("The nightly backup failed")
             ctx.alerts.backup_failed()

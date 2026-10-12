@@ -1,4 +1,4 @@
-"""StationPlay's page as a web app: added to a phone's or tablet's home
+"""tapiOca's page as a web app: added to a phone's or tablet's home
 screen, or installed on a computer, it opens in a window of its own. Its
 manifest and icons (open before signing in, at home and from the internet),
 what the page's head says about it, and links to other sites opening
@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import __version__
-from app.access import PAGE_FILES
+from app.access import FONT_FILES, PAGE_FILES
 from app.config import Settings
 from app.main import WEB_DIR, create_app
 from app.plex import PlexClient
@@ -25,6 +25,9 @@ from .helpers import page_code
 from .test_security import PAT, both_ports
 
 ICONS = {"/icon-192.png": 192, "/icon-512.png": 512, "/icon-maskable-512.png": 512}
+# (1.34.0, tapiOca's brand) Its mark in a browser's tab, and the page's fonts.
+FAVICONS = {"/favicon.svg": "image/svg+xml", "/favicon.ico": "image/x-icon"}
+FONTS = [f"/fonts/{name}" for name in FONT_FILES]
 # The page's code: index.html, and its own styles and scripts.
 PAGE = "\n".join(
     (WEB_DIR / name).read_text(encoding="utf-8") for name in ("index.html", *PAGE_FILES)
@@ -60,11 +63,11 @@ def test_the_manifest_says_how_to_install_the_page(client):
     assert got.headers["content-type"] == "application/manifest+json"
     assert got.headers["cache-control"] == "max-age=86400"
     manifest = got.json()
-    assert manifest["name"] == manifest["short_name"] == "StationPlay"
+    assert manifest["name"] == manifest["short_name"] == "tapiOca"
     assert manifest["start_url"] == manifest["scope"] == "/"
     assert manifest["display"] == "standalone"
     # The page's own background, as it is in dark (the window's color before the page is drawn).
-    assert background("dark") == "#11161b" and background("light") == "#f4f2ee"
+    assert background("dark") == "#0a0a0a" and background("light") == "#ffffff"
     assert manifest["background_color"] == manifest["theme_color"] == background("dark")
     assert [(i["src"], i["sizes"], i["type"], i["purpose"]) for i in manifest["icons"]] == [
         ("/icon-192.png", "192x192", "image/png", "any"),
@@ -136,12 +139,12 @@ def test_the_page_says_its_an_app(client):
     for meta in (
         '<meta name="mobile-web-app-capable" content="yes">',
         '<meta name="apple-mobile-web-app-capable" content="yes">',
-        '<meta name="apple-mobile-web-app-title" content="StationPlay">',
+        '<meta name="apple-mobile-web-app-title" content="tapiOca">',
         # (Below the iPhone's status bar: "black-translucent" would put the page under it.)
         '<meta name="apple-mobile-web-app-status-bar-style" content="default">',
     ):
         assert meta in head, meta
-    # No service worker: the page is always the one StationPlay serves now.
+    # No service worker: the page is always the one tapiOca serves now.
     assert "serviceWorker" not in page_code(client)
 
 
@@ -156,7 +159,7 @@ def test_links_to_other_sites_open_outside_the_apps_window():
 
 
 def test_the_server_has_no_license():
-    """StationPlay's apps are unlocked in their own stores (the owner's
+    """tapiOca's apps are unlocked in their own stores (the owner's
     choice, October 10): the server has no License section, no license
     addresses and no server ID, and its page says nothing of a license but
     its own, the AGPL."""
@@ -190,7 +193,7 @@ def test_codes_and_addresses_arent_autocorrected():
 
 def test_a_stations_progress_bar_marks_its_end():
     """The bar under what's playing has an end mark like the playhead's (the
-    same size), in orange, inside the bar; it turns red with a short glow
+    same size), in the warning color (--warn), inside the bar; it turns red with a short glow
     in the program's last 2%, timed by the page, and with less motion only
     its color changes."""
     css = (WEB_DIR / "page.css").read_text(encoding="utf-8")
@@ -239,9 +242,9 @@ def test_the_users_table_sets_changes_and_removes_pins():
 
 
 def test_the_page_says_its_license_and_offers_its_source(client):
-    """StationPlay is under the GNU AGPL v3 (LICENSE, pyproject.toml, the
+    """tapiOca is under the GNU AGPL v3 (LICENSE, pyproject.toml, the
     API's spec): the page's foot says so, with the license's link and a link
-    to StationPlay's source, as the AGPL asks of a program used over a
+    to tapiOca's source, as the AGPL asks of a program used over a
     network."""
     root = WEB_DIR.parent.parent
     assert (
@@ -257,7 +260,7 @@ def test_the_page_says_its_license_and_offers_its_source(client):
         "© 2026 egadgetboy · Open source under the "
         '<a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" '
         'rel="noopener noreferrer">GNU AGPL v3</a> · '
-        '<a href="https://github.com/egadgetboy/stationplay" target="_blank" '
+        '<a href="https://github.com/egadgetboy/tapioca-server" target="_blank" '
         'rel="noopener noreferrer">Source</a> · '
         '<a href="/open-source-notices" target="_blank" '
         'rel="noopener noreferrer">Open-source notices</a> · No warranty'
@@ -266,7 +269,7 @@ def test_the_page_says_its_license_and_offers_its_source(client):
 
 
 def test_the_open_source_notices_are_open_to_everyone(client):
-    """The notices are for anyone StationPlay is offered to: with sign-in
+    """The notices are for anyone tapiOca is offered to: with sign-in
     on, someone signed out (the sign-in page links to them) and a User get
     them too, as the page's own files are open."""
     from fastapi.testclient import TestClient
@@ -282,7 +285,7 @@ def test_the_page_offers_the_open_source_notices(client):
     """THIRD_PARTY_NOTICES.md (beside LICENSE, and in the image beside it,
     with the exact Debian packages: see the Dockerfile) is served as plain text at /open-source-notices, the
     link beside Source at the foot of the page and of the sign-in page. It
-    names StationPlay's own license and FFmpeg's, and where FFmpeg's exact
+    names tapiOca's own license and FFmpeg's, and where FFmpeg's exact
     source is."""
     root = WEB_DIR.parent.parent
     notices = (root / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
@@ -330,7 +333,7 @@ def test_the_access_tab_has_tuner_access():
     core = (WEB_DIR / "js/core.js").read_text(encoding="utf-8")
     assert "if (name === 'access') { loadAccess(); loadApps(); loadTuner();" in core
     apps = (WEB_DIR / "js/apps.js").read_text(encoding="utf-8")
-    tuner = apps.split("async function loadTuner() {", 1)[1].split("\n// StationPlay's apps", 1)[0]
+    tuner = apps.split("async function loadTuner() {", 1)[1].split("\n// tapiOca's apps", 1)[0]
     assert "api('/api/tuner')" in tuner
     assert "send('/api/tuner', { method: 'PUT', body: { only: onlyThese, devices } }" in tuner
     assert "send('/api/tuner/allow', { method: 'POST', body: { address: r.address } }" in tuner
@@ -347,7 +350,7 @@ def test_the_access_tab_has_tuner_access():
     assert "h('span', { class: 'hint', role: 'status' }, said)" in tuner
     for words in (
         "'Any device on my home network'",
-        "'Only these devices', 'StationPlay’s own apps, signed in, never need listing.'",
+        "'Only these devices', 'tapiOca’s own apps, signed in, never need listing.'",
         "`Only ${plural(got.devices.length, 'device')}`",
         "'Recent tuner connections'",
         "r.name || 'Unknown device'",
@@ -358,7 +361,7 @@ def test_the_access_tab_has_tuner_access():
         "ago(r.lastMs)",
     ):
         assert words in tuner, words
-    # The warning: as StationPlay says it, with an icon (not color alone).
+    # The warning: as tapiOca says it, with an icon (not color alone).
     assert "...(got.warning ? [h('div', { class: 'reach down' }," in tuner
     # (replaceChildren shows a null as the word "null": nothing is passed as one.)
     shown = tuner.rsplit("$('#tunerBody').replaceChildren(", 1)[1]  # (the panel, not a problem)
@@ -418,7 +421,7 @@ def test_the_privacy_notice_is_open_on_the_public_port_too(tmp_path):
 
 def test_first_run_setup_says_what_plexs_terms_require():
     """The owner, October 12: the Plex step of first-run setup states Plex's
-    personal-use terms (and links StationPlay's privacy notice)."""
+    personal-use terms (and links tapiOca's privacy notice)."""
     script = (WEB_DIR / "js" / "setup.js").read_text(encoding="utf-8")
     assert (
         "Plex’s terms license Plex Media Server for personal use, on hardware and storage you own."
@@ -429,13 +432,13 @@ def test_first_run_setup_says_what_plexs_terms_require():
     plex_step = script[script.index("  async plex(") :]
     plex_step = plex_step[: plex_step.index("\n  },\n")]
     assert "PERSONAL_USE()" in plex_step
-    # Plex's own terms are linked, beside StationPlay's privacy notice.
+    # Plex's own terms are linked, beside tapiOca's privacy notice.
     assert "https://www.plex.tv/about/privacy-legal/plex-terms-of-service/" in script
 
 
 def test_more_arrows_are_only_drawn():
     """The owner, October 12: the down arrow while more is below what shows,
-    and the up arrow while more is above (as StationPlay's apps have them),
+    and the up arrow while more is above (as tapiOca's apps have them),
     on every dialog's body, the log, a problem's journal, the editor's lists
     and the page itself. "More" is more than 1px, from what's laid out. They
     never take a click or a tap, are never focused, and screen readers pass
@@ -476,3 +479,54 @@ def test_every_file_the_page_loads_is_one_of_its_files():
     assert asked == list(PAGE_FILES)
     scripts = sorted(f"js/{p.name}" for p in (WEB_DIR / "js").glob("*.js"))
     assert scripts == sorted(name for name in PAGE_FILES if name.startswith("js/"))
+
+
+async def test_the_brands_icons_and_fonts_need_no_sign_in_at_home_or_from_the_internet(tmp_path):
+    """(1.34.0) The favicons and the page's fonts load on the sign-in page
+    too: from the internet before there's a user, and before signing in."""
+    wanted = [*FAVICONS, *FONTS]
+    others = ["/fonts/SpaceGrotesk/OFL.txt", "/fonts/..%2findex.html", "/favicon.png"]
+    async with both_ports(tmp_path) as (home, internet):
+        async with httpx.AsyncClient(base_url=internet) as outside:
+            for path in wanted:
+                assert (await outside.get(path)).status_code == 200, path
+            for path in others:
+                assert (await outside.get(path)).status_code == 403, path
+        async with httpx.AsyncClient(base_url=home) as inside:
+            assert (await inside.post("/api/access/users", json=PAT)).status_code == 201
+        for base in (home, internet):
+            async with httpx.AsyncClient(base_url=base) as visitor:
+                assert (await visitor.get("/api/channels")).status_code == 401
+                for path in wanted:
+                    got = await visitor.get(path)
+                    assert got.status_code == 200, (base, path)
+                    assert got.headers["x-content-type-options"] == "nosniff"
+                for path in others:
+                    assert (await visitor.get(path)).status_code == 401, (base, path)
+
+
+def test_the_page_has_tapiocas_icons_and_its_own_fonts(client):
+    """(1.34.0) The head asks for the favicons; each is served as its kind.
+    The page's fonts are tapiOca's own files (never a font service's), each
+    swapped in once loaded, served as WOFF2, with its license beside it."""
+    head = client.get("/").text.split("</head>")[0]
+    assert '<link rel="icon" href="/favicon.svg" type="image/svg+xml">' in head
+    assert '<link rel="icon" href="/favicon.ico" sizes="48x48">' in head
+    for path, kind in FAVICONS.items():
+        got = client.get(path)
+        assert got.status_code == 200 and got.headers["content-type"].startswith(kind), path
+        assert got.content == (WEB_DIR / path.lstrip("/")).read_bytes()
+    css = (WEB_DIR / "page.css").read_text(encoding="utf-8")
+    faces = re.findall(r"@font-face \{([^}]*)\}", css)
+    assert sorted(re.search(r"url\(([^)]+)\)", f)[1] for f in faces) == sorted(FONTS)
+    assert all("font-display: swap;" in f for f in faces)
+    assert not re.search(r"https?://|//fonts\.|@import", css)
+    for path in FONTS:
+        got = client.get(path)
+        assert got.status_code == 200 and got.headers["content-type"] == "font/woff2", path
+        assert got.content[:4] == b"wOF2"
+        assert (WEB_DIR / path.lstrip("/")).with_name("OFL.txt").is_file()
+    assert client.get("/fonts/SpaceGrotesk/OFL.txt").status_code == 404
+    on_disk = sorted(p.relative_to(WEB_DIR / "fonts").as_posix()
+                     for p in (WEB_DIR / "fonts").rglob("*.woff2"))  # fmt: skip
+    assert on_disk == sorted(FONT_FILES)

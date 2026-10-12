@@ -22,7 +22,7 @@ from .fakeplex_library import LibraryPlex
 PAT = {"name": "Pat", "password": "correct horse"}
 SAM = {"name": "Sam", "password": "battery staple", "role": "user"}
 ADA = {"name": "Ada", "password": "horse battery", "role": "admin"}
-TV = {"app": "StationPlay for Roku", "deviceName": "Den", "picker": True}
+TV = {"app": "tapiOca for Roku", "deviceName": "Den", "picker": True}
 BOX = {"containers": ["mkv"], "video": [{"codec": "h264", "width": 1920, "height": 1080}],
        "hdr": [], "audio": ["ac3", "aac"]}  # fmt: skip
 

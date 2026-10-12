@@ -32,7 +32,7 @@ from .test_hls import two_episode_show
 
 PAT = {"name": "Pat", "password": "correct horse"}
 BO = {"name": "Bo", "password": "bo password", "role": "user"}
-DEN = {"app": "StationPlay for Android TV", "deviceName": "Den"}
+DEN = {"app": "tapiOca for Android TV", "deviceName": "Den"}
 TV = {
     "containers": ["mkv", "mp4", "ts"],
     "video": [
@@ -83,15 +83,15 @@ def test_a_station_is_named_with_its_number():
 def test_an_app_is_named_by_who_and_where():
     """(What the HLS lines say: "An app on <address> is watching..." read
     wrongly when the address was an app away from home's.)"""
-    home = playing.Watcher("192.168.1.20", False, "Pat", 1, "StationPlay for Roku on Den")
-    assert home.subject() == "Pat's StationPlay for Roku on Den at home (192.168.1.20)"
+    home = playing.Watcher("192.168.1.20", False, "Pat", 1, "tapiOca for Roku on Den")
+    assert home.subject() == "Pat's tapiOca for Roku on Den at home (192.168.1.20)"
     away = playing.Watcher("203.0.113.7", True, "insertdisc", 2, "", "HJ1mNj")
     assert away.subject() == "insertdisc's app away from home (HJ1mNj)"
     unknown = playing.Watcher("192.168.1.30")
     assert unknown.subject() == "An app at home (192.168.1.30)"
     assert unknown.subject(start=False) == "an app at home (192.168.1.30)"
-    nameless = playing.Watcher("10.0.0.5", False, "Kit", 3, "A StationPlay app on Bedroom")
-    assert nameless.subject() == "Kit's StationPlay app on Bedroom at home (10.0.0.5)"
+    nameless = playing.Watcher("10.0.0.5", False, "Kit", 3, "A tapiOca app on Bedroom")
+    assert nameless.subject() == "Kit's tapiOca app on Bedroom at home (10.0.0.5)"
 
 
 # A station's program starting ------------------------------------------------------
@@ -219,17 +219,17 @@ def test_media_playing_says_who_what_and_how(app, caplog):
         played = home.post("/api/internal/play", json={"key": "300", "device": TV}, headers=den)
         assert played.status_code == 200 and played.json()["method"] == "direct"
         assert lines(caplog) == [
-            "Pat started Jaws (1975) in StationPlay for Android TV on Den, at home: jaws.mkv "
+            "Pat started Jaws (1975) in tapiOca for Android TV on Den, at home: jaws.mkv "
             "(1080p H.264, 5.1 AC-3) from Plex, playing as it is"
         ]
-        phone = app_signed_in(home, PAT, {"app": "StationPlay for Android", "deviceName": "Pixel"})
+        phone = app_signed_in(home, PAT, {"app": "tapiOca for Android", "deviceName": "Pixel"})
         caplog.clear()
         copied = home.post(
             "/api/internal/play", json={"key": "204", "device": PHONE}, headers=phone
         )
         assert copied.status_code == 200 and copied.json()["method"] == "convert", copied.text
         assert lines(caplog) == [
-            "Pat started Northbound · S2 E4 in StationPlay for Android on Pixel, at home: "
+            "Pat started Northbound · S2 E4 in tapiOca for Android on Pixel, at home: "
             "northbound.s02e04.mkv (1080p HEVC, 5.1 E-AC-3) from Plex, converted to 1080p H.264 "
             "at 8 Mbps on the CPU, with even sound, because this device can't play its file type "
             "(MKV), its picture's format (HEVC) and its sound's format (Dolby Digital Plus)"
@@ -243,7 +243,7 @@ def test_media_playing_says_who_what_and_how(app, caplog):
         assert night.status_code == 200, night.text
         # (Just after the other: a step down, said as one.)
         assert lines(caplog) == [
-            "Pat's StationPlay for Android on Pixel at home (testclient) switched Northbound · "
+            "Pat's tapiOca for Android on Pixel at home (testclient) switched Northbound · "
             "S2 E4 to a smaller copy, from 1080p H.264 at 8 Mbps on the CPU to 480p H.264 at 1.8 "
             "Mbps on the CPU: to fit its connection (about 3 Mbps)"
         ]
@@ -287,7 +287,7 @@ def test_a_step_down_in_quality_and_stopping(app, caplog):
         )
         assert smaller.status_code == 200, smaller.text
         assert lines(caplog) == [
-            "Pat's StationPlay for Android TV on Den at home (testclient) switched Jaws (1975) "
+            "Pat's tapiOca for Android TV on Den at home (testclient) switched Jaws (1975) "
             "to a smaller version, from 1080p at 8 Mbps to 720p at 4 Mbps: to fit its connection "
             "(about 6 Mbps); the app said: It kept stopping to load"
         ]
@@ -363,7 +363,7 @@ def test_the_apps_problems_are_warnings_naming_the_station(app, caplog):
         said = [
             (r.levelno, r.getMessage()) for r in caplog.records if r.name == "stationplay.problems"
         ]
-        on = "Problem in StationPlay for Android TV (Den)"
+        on = "Problem in tapiOca for Android TV (Den)"
         assert said == [
             (logging.WARNING, f"{on}: Station 5, Five, stopped playing: decoder error"),
             (
@@ -389,7 +389,7 @@ def test_whos_watching_now(app):
             {"type": "show", "ratingKey": "100"}]})  # fmt: skip
         assert made.status_code == 201, made.text
         cid = made.json()["id"]
-        # A stream Plex asked for (StationPlay's own stream isn't played here).
+        # A stream Plex asked for (tapiOca's own stream isn't played here).
         b = ctx.broadcaster(cid)
         b.viewers.add(Viewer("192.168.1.10 on 5", client="192.168.1.10", agent="Lavf/60.16.100"))
         den = app_signed_in(home, PAT, DEN)
@@ -414,7 +414,7 @@ def test_whos_watching_now(app):
         movie = rows["Jaws (1975)"]
         assert (movie["who"], movie["app"], movie["where"], movie["address"]) == (
             "Pat",
-            "StationPlay for Android TV on Den",
+            "tapiOca for Android TV on Den",
             "home",
             "testclient",
         )
@@ -521,7 +521,7 @@ async def test_an_apps_station_viewing_counts_for_whoever_is_signed_in(
             [row] = [r for r in now if not r["plex"] and r["station"]]
             assert (row["who"], row["app"], row["where"], row["address"]) == (
                 "Pat",
-                "StationPlay for Android TV on Den",
+                "tapiOca for Android TV on Den",
                 "home",
                 "127.0.0.1",
             )
@@ -536,7 +536,7 @@ async def test_an_apps_station_viewing_counts_for_whoever_is_signed_in(
         [pat] = got["people"]
         assert pat["name"] == "Pat" and pat["stations"][0]["number"] == 7
         said = [r.getMessage() for r in caplog.records]
-        who = "Pat's StationPlay for Android TV on Den at home (127.0.0.1)"
+        who = "Pat's tapiOca for Android TV on Den at home (127.0.0.1)"
         assert f"{who} is watching station 7, Test TV" in said
         assert f"{who} stopped watching station 7, Test TV, after less than a minute" in said
         assert "Started the stream for apps of station 7, Test TV" in said
@@ -552,3 +552,14 @@ async def test_an_apps_station_viewing_counts_for_whoever_is_signed_in(
         await app.state.ctx.hls_streams.stop_all("the test is over")
         srv.should_exit = True
         await task
+
+
+def test_a_sentence_starts_with_a_capital_but_tapioca_keeps_its_lowercase_t():
+    """(1.34.0, the rebrand) "tapiOca" is written that way even at the start
+    of a sentence: an alert that opens with it never says "TapiOca"."""
+    assert playing.cap("station 4, Cartoons") == "Station 4, Cartoons"
+    assert playing.cap("tapiOca found Northbound S2 E5 broken") == (
+        "tapiOca found Northbound S2 E5 broken"
+    )
+    assert playing.cap("tapiOca's tuner") == "tapiOca's tuner"
+    assert playing.cap("") == ""

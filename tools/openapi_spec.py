@@ -1,4 +1,4 @@
-"""Writes docs/openapi-v1.json, the OpenAPI spec of StationPlay's API
+"""Writes docs/openapi-v1.json, the OpenAPI spec of tapiOca's API
 (version 1), from the server itself. Run it after changing the API:
 
     python tools/openapi_spec.py

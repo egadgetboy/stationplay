@@ -203,7 +203,7 @@ async def test_a_missing_part_is_a_broken_file_and_a_stand_in_plays_the_rest(
 async def test_with_plex_unreachable_a_stand_in_plays_after_the_first_file(
     tmp_path, parts, caplog, monkeypatch
 ):
-    """Plex down, StationPlay plays the file it knew (the first): when that
+    """Plex down, tapiOca plays the file it knew (the first): when that
     ends long before the movie's time, it can't tell whether there's more,
     so a stand-in plays the rest, not black; and nothing's called broken."""
     from app import broadcaster

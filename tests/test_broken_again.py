@@ -289,7 +289,7 @@ async def test_a_moved_show_is_followed_by_the_stations_own_files():
     assert [i.rating_key for i in await fresh.items_for_source(source)] == ["1201", "1202"]
 
     # Two with the station's files that differ otherwise (TV Parents has
-    # another season): not for StationPlay to choose.
+    # another season): not for tapiOca to choose.
     bonanza("140", "4", "/media/tv-classics.teens/Bonanza", episodes=(1, 2, 3))
     third = PlexClient("http://plex.test", "token", transport=like_plex(plex))
     third.known_files = client.known_files

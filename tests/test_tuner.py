@@ -122,9 +122,9 @@ def test_a_refused_device_is_logged_once_an_hour_and_can_be_allowed(admin, app, 
     other = device(app, "10.0.0.3")
     for _ in range(3):
         assert refused(other.get("/stream/7"))
-    said = [r.getMessage() for r in caplog.records if "StationPlay's tuner" in r.getMessage()]
+    said = [r.getMessage() for r in caplog.records if "tapiOca's tuner" in r.getMessage()]
     assert said == [
-        "Turned away 10.0.0.3 (VLC), which asked StationPlay's tuner for a station. Only the "
+        "Turned away 10.0.0.3 (VLC), which asked tapiOca's tuner for a station. Only the "
         "devices listed under Tuner access may use it: to let this one, choose Allow beside it "
         "on the Access tab."
     ]
@@ -143,7 +143,7 @@ def test_a_refused_device_is_logged_once_an_hour_and_can_be_allowed(admin, app, 
 
 
 def test_plex_server_only_and_the_warning(admin, app):
-    # Plex in Docker reaches StationPlay from the Docker network, not the server's address.
+    # Plex in Docker reaches tapiOca from the Docker network, not the server's address.
     plex = device(app, "172.17.0.1", PLEX)
     assert plex.get("/discover.json").status_code == 200
     assert admin.get("/api/tuner").json()["plex"] == ["172.17.0.1"]
@@ -161,7 +161,7 @@ def test_plex_server_only_and_the_warning(admin, app):
     # Only another device listed: Plex is shut out, and the Access tab says so.
     admin.put("/api/tuner", json={"only": True, "devices": [{"address": "10.0.0.2"}]})
     assert admin.get("/api/tuner").json()["warning"] == (
-        "Plex uses StationPlay's tuner from 172.17.0.1, which isn't on the list, so Plex can't "
+        "Plex uses tapiOca's tuner from 172.17.0.1, which isn't on the list, so Plex can't "
         "show your stations. Allow it below."
     )
 
@@ -274,7 +274,7 @@ def test_a_key_for_home_is_no_good_from_the_internet(tmp_path):
 
 def test_the_images_health_check_isnt_the_tuner(tmp_path):
     """The audit of 1.32.0: Docker's health check asked for discover.json,
-    which is the tuner's, so with only listed devices allowed, StationPlay's
+    which is the tuner's, so with only listed devices allowed, tapiOca's
     own check (from 127.0.0.1) was refused: the container showed as
     unhealthy, and 127.0.0.1 topped Recent tuner connections with Allow."""
     found = re.search(r"127\.0\.0\.1:\{[^}]*\}(/[^'\"]*)'", (ROOT / "Dockerfile").read_text())
@@ -335,7 +335,7 @@ def test_plex_turned_away_is_said_plainly(tmp_path):
         unknown = admin.post("/api/tuner/plex-only")
         assert unknown.status_code == 400
         assert unknown.json()["detail"] == (
-            "StationPlay doesn't know Plex's address yet. If Plex was turned away, choose Allow "
+            "tapiOca doesn't know Plex's address yet. If Plex was turned away, choose Allow "
             "beside it under Recent tuner connections."
         )
         assert admin.get("/api/tuner").json()["devices"] == [{"address": "10.0.0.2", "name": ""}]
@@ -382,7 +382,7 @@ def test_refusals_are_logged_a_few_at_a_time(admin, app, caplog):
     said = [r.getMessage() for r in caplog.records if r.name == "app.tuner"]
     assert len(said) == 11, said
     assert said[-1] == (
-        "Turned more devices away from StationPlay's tuner this hour. Recent tuner connections, "
+        "Turned more devices away from tapiOca's tuner this hour. Recent tuner connections, "
         "on the Access tab, lists them."
     )
 

@@ -167,7 +167,7 @@ async def test_tuning_in_part_way_starts_at_the_right_moment(tmp_path, episodes)
 async def test_a_hiccup_after_a_skip_resumes_in_the_right_place(
     tmp_path, episodes, monkeypatch, caplog
 ):
-    """ffmpeg stops early once, in the part after the intro: StationPlay
+    """ffmpeg stops early once, in the part after the intro: tapiOca
     carries on from where it got to, in the same part."""
     from app import ffmpeg as ff_mod
 
@@ -378,7 +378,7 @@ async def test_an_intro_marked_by_its_theme_music_skips_where_the_picture_cuts(
 
 
 async def test_where_the_picture_cuts_reaches_a_station_made_before(tmp_path, monkeypatch):
-    """A station made before StationPlay looked at where its programs'
+    """A station made before tapiOca looked at where its programs'
     pictures cut (here, as 1.31.1 made it: its skip just where Plex's
     markers say, 1.5 s before the cold open ends). Once the program is
     looked at, the next update from Plex moves its skip, and so does Update

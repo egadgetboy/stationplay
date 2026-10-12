@@ -1,4 +1,4 @@
-"""StationPlay's API (/api/v1, see appapi.py and api.py) and the apps' own
+"""tapiOca's API (/api/v1, see appapi.py and api.py) and the apps' own
 addresses (/api/internal): checked against their documents, docs/api.md and
 docs/internal-api.md, field by field, so they can't drift apart. (The API's
 tokens and its OpenAPI spec: test_api.py.)"""
@@ -309,7 +309,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         assert data.status_code == 200 and len(data.content) == 1 << 20
         assert data.headers["stationplay-api"] == "1"
         assert phone.get("/api/internal/speed-test?mb=1").status_code == 401
-        tested = {"mbps": 52.0, "app": "StationPlay for Android", "deviceName": "Pixel"}
+        tested = {"mbps": 52.0, "app": "tapiOca for Android", "deviceName": "Pixel"}
         found = check.answer(
             phone.post("/api/internal/speed-test", headers=sam, json=tested),
             "POST /api/internal/speed-test",
@@ -317,11 +317,11 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         assert (found["where"], found["mbps"]) == ("home", 52.0)
 
         # A problem report, for the Logs tab: each line plain, and not too many.
-        lines = ["StationPlay for Android 0.1.0 (build 7)", "14:02:05 Tuned to 5\tHometown 5"]
+        lines = ["tapiOca for Android 0.1.0 (build 7)", "14:02:05 Tuned to 5\tHometown 5"]
         reported = phone.post(
             "/api/internal/report",
             headers=sam,
-            json={"text": "\n".join(lines + ["x" * 10] * 500), "app": "StationPlay for Android",
+            json={"text": "\n".join(lines + ["x" * 10] * 500), "app": "tapiOca for Android",
                   "deviceName": "Pixel"},
         )  # fmt: skip
         assert check.answer(reported, "POST /api/internal/report") == {"ok": True}
@@ -332,7 +332,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
             "/api/internal/problem",
             headers=sam,
             json={"kind": "station-failed", "station": 5, "detail": "It didn't answer in time",
-                  "app": "StationPlay for Android", "version": "0.1.0",
+                  "app": "tapiOca for Android", "version": "0.1.0",
                   "device": "Pixel 8, Android 15", "deviceName": "Pixel"},
         )  # fmt: skip
         assert check.answer(problem, "POST /api/internal/problem") == {"ok": True}
@@ -347,9 +347,9 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
             if e["message"].startswith("Report from")
         ]
         head, *body = entry.splitlines()
-        assert head == "Report from StationPlay for Android on Pixel (Sam):"
+        assert head == "Report from tapiOca for Android on Pixel (Sam):"
         assert body[:2] == [
-            "StationPlay for Android 0.1.0 (build 7)",
+            "tapiOca for Android 0.1.0 (build 7)",
             "14:02:05 Tuned to 5 Hometown 5",
         ]
         assert body[-1] == "(and 102 more lines, left off)" and len(body) == 401
@@ -494,7 +494,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         )
         assert played["markers"]["intro"] == [60_000, 120_000]
         assert phone.post(played["leave"]).status_code == 204
-        # A copy (StationPlay 1.24.0): a smaller picture made to fit.
+        # A copy (tapiOca 1.24.0): a smaller picture made to fit.
         phone_device = {**tv, "video": [{"codec": "h264", "width": 1920, "height": 1080}],
                         "hls": ["ts"]}  # fmt: skip
         copied = check.answer(
@@ -547,15 +547,15 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
             phone.get("/api/v1/stations", headers=bearer(again.json()["token"])).status_code == 200
         )
         log = home.get("/api/logs?access_log=true").json()["text"]
-        assert "Sam (User) signed in to a StationPlay app" in log
-        assert "Failed sign-in as 'Sam' in a StationPlay app" in log
-        assert "Sam signed out of a StationPlay app" in log
+        assert "Sam (User) signed in to a tapiOca app" in log
+        assert "Failed sign-in as 'Sam' in a tapiOca app" in log
+        assert "Sam signed out of a tapiOca app" in log
 
         # Signing in with a code: the TV asks, someone signed in enters it.
         tv = TestClient(app)
         started = check.answer(
             tv.post(
-                "/api/internal/link", json={"app": "StationPlay for Roku", "deviceName": "Den Roku"}
+                "/api/internal/link", json={"app": "tapiOca for Roku", "deviceName": "Den Roku"}
             ),
             "POST /api/internal/link",
         )
@@ -573,7 +573,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         assert wrong.status_code == 404 and "TV" in wrong.json()["detail"]
         typed = started["code"].lower().replace("-", " ")
         shown = home.get(f"/api/access/link/{typed}")
-        assert shown.json() == {"app": "StationPlay for Roku on Den Roku"}
+        assert shown.json() == {"app": "tapiOca for Roku on Den Roku"}
         assert home.post("/api/access/link", json={"code": typed}).status_code == 200
         assert home.post("/api/access/link", json={"code": typed}).status_code == 404  # (once)
         linked = check.answer(
@@ -586,10 +586,10 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         gone = tv.post("/api/internal/link/check", json={"poll": started["poll"]})
         check.answer(gone, "POST /api/internal/link/check", 404)
         log = home.get("/api/logs?access_log=true").json()["text"]
-        assert "Pat (Admin) linked StationPlay for Roku on Den Roku" in log
+        assert "Pat (Admin) linked tapiOca for Roku on Den Roku" in log
         # The Access tab lists signed-in apps, and signs one out.
         apps = home.get("/api/access/apps").json()
-        den = next(a for a in apps if a["app"] == "StationPlay for Roku on Den Roku")
+        den = next(a for a in apps if a["app"] == "tapiOca for Roku on Den Roku")
         assert den["user"] == "Pat"
         assert (
             phone.get("/api/access/apps", headers=bearer(again.json()["token"])).status_code == 403
@@ -603,7 +603,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         started = check.answer(
             tv.post(
                 "/api/internal/link",
-                json={"app": "StationPlay for Roku", "deviceName": "Den Roku", "picker": True},
+                json={"app": "tapiOca for Roku", "deviceName": "Den Roku", "picker": True},
             ),
             "POST /api/internal/link",
         )
@@ -616,7 +616,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         listed = check.answer(
             tv.get("/api/internal/picker", headers=key), "GET /api/internal/picker"
         )
-        assert listed["device"] == "StationPlay for Roku on Den Roku"
+        assert listed["device"] == "tapiOca for Roku on Den Roku"
         assert [(p["name"], p["admin"]) for p in listed["people"]] == [
             ("Pat", True),
             ("Sam", False),
@@ -656,8 +656,8 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         away = internet.post("/api/internal/speed-test", headers=pat, json={"mbps": 12.5})
         assert check.answer(away, "POST /api/internal/speed-test")["where"] == "away"
 
-        # StationPlay's API with an Admin's API token (see test_api.py): how
-        # StationPlay is doing, and what an Admin can have it do.
+        # tapiOca's API with an Admin's API token (see test_api.py): how
+        # tapiOca is doing, and what an Admin can have it do.
         minted = home.post("/api/api-tokens", json={"name": "Home Assistant", "scope": "admin"})
         assert minted.status_code == 201, minted.text
         admin = bearer(minted.json()["token"])  # (from home, whose event loop the check runs on)
@@ -702,7 +702,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         name = check.answer(backed, "POST /api/v1/backups", 201)["name"]
         assert name in [b["name"] for b in home.get("/api/backups").json()["backups"]]
         spec = home.get("/api/v1/openapi.json", headers=admin)
-        assert spec.status_code == 200 and spec.json()["info"]["title"] == "StationPlay API"
+        assert spec.status_code == 200 and spec.json()["info"]["title"] == "tapiOca API"
 
         # Admin alerts (see test_alerts.py): for Admins only.
         ctx.alerts.backup_failed()
@@ -719,7 +719,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         ]
         assert alerts[0]["fixed"] >= alerts[0]["since"]
 
-        # StationPlay checking that apps reach it from outside (see
+        # tapiOca checking that apps reach it from outside (see
         # test_reach.py), through a reverse proxy to the public port.
         proxy = Proxy(app, PUBLIC_PORT)
         ctx.reach.transport = proxy.transport

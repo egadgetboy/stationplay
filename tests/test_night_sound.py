@@ -1,4 +1,4 @@
-"""Night mode's sound, as StationPlay makes it (hls.NIGHT_SOUND) for apps
+"""Night mode's sound, as tapiOca makes it (hls.NIGHT_SOUND) for apps
 that can't make it themselves (Apple's, Roku's), and for converted copies:
 it only ever turns sound down, loud scenes the most, so turning night mode
 on never makes anything louder (the owner's report: in 1.31 and before, it

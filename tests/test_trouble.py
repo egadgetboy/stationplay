@@ -1,6 +1,6 @@
 """While someone watches Media (1.30.0): trouble playing a file (a copy that
 fails, an app saying it stopped) puts that file at the front of the queue
-for a check there, and only what StationPlay finds puts it on the list; and
+for a check there, and only what tapiOca finds puts it on the list; and
 what's on the list as broken never plays in the apps, while another version
 of it does."""
 
@@ -102,7 +102,7 @@ def test_a_file_someone_had_trouble_with_is_checked_where_it_happened(tmp_path, 
         assert ctx.broken.entry("301") is None
         assert ctx.db.scan("301").quick == "ok"
         assert (
-            "“Movie 301” (2000): StationPlay found nothing wrong with its file (Tia's app said it "
+            "“Movie 301” (2000): tapiOca found nothing wrong with its file (Tia's app said it "
             "stopped playing), so it stays as it is"
         ) in caplog.text
         assert not ctx.scanner.waiting("300") and not ctx.scanner.waiting("301")
@@ -114,17 +114,15 @@ def test_what_a_check_that_found_nothing_says():
         return sc._nothing_found(sc.Target("1", "1", ran=list(ran)))
 
     assert said("from 0:10 to 1:10", "the quick check") == (
-        "StationPlay checked it from 0:10 to 1:10, then gave it the quick check, and found "
+        "tapiOca checked it from 0:10 to 1:10, then gave it the quick check, and found "
         "nothing wrong."
     )
     assert said("from 0:10 to 1:10", "the quick check", "the deep scan") == (
-        "StationPlay checked it from 0:10 to 1:10, then gave it the quick check and the deep "
+        "tapiOca checked it from 0:10 to 1:10, then gave it the quick check and the deep "
         "scan, and found nothing wrong."
     )
-    assert (
-        said("the quick check") == "StationPlay gave it the quick check, and found nothing wrong."
-    )
-    assert said() == "StationPlay checked it, and found nothing wrong."
+    assert said("the quick check") == "tapiOca gave it the quick check, and found nothing wrong."
+    assert said() == "tapiOca checked it, and found nothing wrong."
 
 
 def test_what_waits_is_kept_and_checked_after_a_restart(tmp_path):
@@ -164,7 +162,7 @@ def test_whats_wrong_only_by_the_network_changes_nothing(tmp_path, monkeypatch):
         ctx.scanner.target("300", "", 30.0, "Tia reported No sound", report=3)
         for _ in range(sc.TARGET_TRIES):
             client.portal.call(ctx.scanner.round)
-        assert told == [([3], sc.COULDNT, "StationPlay couldn't check its file (the share isn't "
+        assert told == [([3], sc.COULDNT, "tapiOca couldn't check its file (the share isn't "
                          "responding).")]  # fmt: skip
         assert ctx.broken.keys() == set() and not ctx.scanner.waiting("300")
 
@@ -260,7 +258,7 @@ def test_trouble_in_media_puts_the_file_first(tmp_path):
         [target] = ctx.scanner._targets
         assert (target.key, target.at_s) == ("300", 99.0)
         ctx.scanner._done_with(target, sc.NOTHING)
-        # One sent later (after trouble reaching StationPlay, say) may be
+        # One sent later (after trouble reaching tapiOca, say) may be
         # about something else: what the device played since isn't checked
         # for it, nor for one from before that started.
         now = int(time.time() * 1000)
@@ -319,7 +317,7 @@ def test_a_broken_version_never_plays_while_another_does(tmp_path, caplog):
         assert played["version"] == hd.id and played["method"] == "direct"
         assert played["why"] == ["another version, as 4K can't play right now"]
         assert [v["problem"] for v in played["versions"]] == ["broken", None]
-        assert "StationPlay found the 4K one broken" in caplog.text
+        assert "tapiOca found the 4K one broken" in caplog.text
         # Asked for by name, too.
         asked = client.post("/api/internal/play", json={"key": "300", "device": TV,
                                                         "version": uhd.id}).json()  # fmt: skip

@@ -121,7 +121,7 @@ async def test_an_alert_starts_once_and_is_fixed_once(tmp_path, caplog, db):
         plex.down = 0
         await found.look(ctx)
     [alert] = found.now()
-    sentence = "StationPlay can't reach Plex at 192.168.1.10:32400. Check that Plex is running."
+    sentence = "tapiOca can't reach Plex at 192.168.1.10:32400. Check that Plex is running."
     assert (alert.kind, alert.sentence, alert.fixed_ms) == ("plex", sentence, None)
     assert told.said == [(sentence, "plex", "started")]
     # Back once: not yet fixed (and its ID stays the same while it lasts).
@@ -136,17 +136,17 @@ async def test_an_alert_starts_once_and_is_fixed_once(tmp_path, caplog, db):
         await found.look(ctx)
     assert found.now() == [] and len(told.said) == 2
     assert told.said[1] == (
-        "StationPlay can reach Plex at 192.168.1.10:32400 again.", "plex", "fixed"
+        "tapiOca can reach Plex at 192.168.1.10:32400 again.", "plex", "fixed"
     )  # fmt: skip
     [fixed] = found.listed()
     assert fixed.id == first_id and fixed.fixed_ms >= fixed.since_ms
     lines = [r.getMessage() for r in caplog.records if r.name == "app.alerts"]
     assert lines == [f"Alert: {sentence}", f"Alert fixed: {told.said[1][0]}"]
-    # Plex refusing StationPlay's token says so.
+    # Plex refusing tapiOca's token says so.
     for _ in range(5):
         plex.down = 401
         await found.look(ctx)
-    assert "doesn't accept StationPlay's token" in found.now()[0].sentence
+    assert "doesn't accept tapiOca's token" in found.now()[0].sentence
     # Starting again later, it's a new alert, with an ID of its own.
     assert found.now()[0].id != first_id
 
@@ -200,7 +200,7 @@ async def test_the_data_folder(tmp_path, monkeypatch, db):
     assert found.now() != []
     await found.look(ctx)
     assert found.now() == [] and told.said[-1] == (
-        "StationPlay's data folder has room again (3.1 GB free).", "data-full", "fixed"
+        "tapiOca's data folder has room again (3.1 GB free).", "data-full", "fixed"
     )  # fmt: skip
     # A large pool with a small share free still has plenty: no alert.
     total, free["bytes"] = 20 * 1024**4, 300 * 1024**3
@@ -213,7 +213,7 @@ async def test_the_data_folder(tmp_path, monkeypatch, db):
     await found.look(ctx)
     [alert] = found.now()
     assert alert.sentence == (
-        "StationPlay can't write to its data folder (No such file or directory). Check the "
+        "tapiOca can't write to its data folder (No such file or directory). Check the "
         "folder's permissions, and that its disk has room."
     )  # (never its path: the apps show alerts)
     assert alert.kind == "data-write" and str(tmp_path) not in alert.sentence
@@ -231,12 +231,12 @@ async def test_the_outside_check_goes_by_its_own(tmp_path, db):
         await found.look(checks(tmp_path, outside=state))
     [alert] = found.now()
     assert alert.sentence.startswith(
-        "StationPlay's apps can't reach it from outside at https://tv.example.com (proxy error)."
+        "tapiOca's apps can't reach it from outside at https://tv.example.com (proxy error)."
     )
     assert len(told.said) == 1
     await found.look(checks(tmp_path, outside=reach.UP))
     assert found.now() == [] and told.said[-1] == (
-        "StationPlay's apps can reach it from outside again, at https://tv.example.com.",
+        "tapiOca's apps can reach it from outside again, at https://tv.example.com.",
         "outside",
         "fixed",
     )
@@ -295,16 +295,16 @@ def test_whats_on_the_broken_files_tab_is_said_at_most_once_an_hour(db):
     first = alert.id
     # More within the hour: it says what it is now, but it's the same alert.
     now[0] = 1800.0
-    found.files([tia, (2_000, "file:205", "StationPlay found Northbound S2 E5 broken")])
+    found.files([tia, (2_000, "file:205", "tapiOca found Northbound S2 E5 broken")])
     [alert] = found.now()
     assert alert.id == first and len(told.said) == 1
     assert alert.sentence == (
-        "There are 2 files to look at on the Broken files tab: StationPlay found Northbound S2 "
+        "There are 2 files to look at on the Broken files tab: tapiOca found Northbound S2 "
         "E5 broken."
     )
     # An hour after it was said, what came since is said: again, with a new
     # ID (the old one isn't said to be fixed).
-    five = (2_000, "file:205", "StationPlay found Northbound S2 E5 broken")
+    five = (2_000, "file:205", "tapiOca found Northbound S2 E5 broken")
     now[0] = 3600.0
     found.files([tia, five])
     [alert] = found.now()
@@ -379,7 +379,7 @@ async def test_an_alert_still_going_after_a_restart_isnt_said_again(tmp_path, db
         await before.look(ctx)
     [going] = as_apps_see(before)
     assert len(told.said) == 1
-    # StationPlay starts again.
+    # tapiOca starts again.
     told = Told()
     after = Alerts(told, Database(db.path))  # type: ignore[arg-type]
     assert as_apps_see(after) == [going]
@@ -394,13 +394,11 @@ async def test_an_alert_still_going_after_a_restart_isnt_said_again(tmp_path, db
     await after.look(ctx)
     [fixed] = as_apps_see(after)
     assert fixed["id"] == going["id"] and fixed["fixed"] is not None
-    assert told.said == [
-        ("StationPlay can reach Plex at 192.168.1.10:32400 again.", "plex", "fixed")
-    ]
+    assert told.said == [("tapiOca can reach Plex at 192.168.1.10:32400 again.", "plex", "fixed")]
 
 
 async def test_one_fixed_while_stationplay_was_down_is_said_once_its_check_finds_it(tmp_path, db):
-    """The data folder fixed while StationPlay was stopped: said to be
+    """The data folder fixed while tapiOca was stopped: said to be
     fixed, once, as soon as its check (2 in a row) finds it. Those that
     can't be checked yet stay as they were: the clock while Plex can't be
     reached, a station until it plays, the outside check while it's still
@@ -429,7 +427,7 @@ async def test_one_fixed_while_stationplay_was_down_is_said_once_its_check_finds
     for _ in range(3):
         await after.look(ctx)
     assert {a.kind for a in after.now()} == {"clock", "outside", "station"}
-    assert told.said == [("StationPlay can write to its data folder again.", "data-write", "fixed")]
+    assert told.said == [("tapiOca can write to its data folder again.", "data-write", "fixed")]
     # Each of the rest, once its check can tell.
     after.station_played(station, 5, "Cartoon Classics")
     plex.down, plex.ahead = None, 5.0
@@ -515,9 +513,9 @@ def test_whats_on_the_broken_files_tab_after_a_restart(db, monkeypatch):
     before.files([tia])
     [first] = before.now()
     # Something new a second later, within the hour, so not said yet; then
-    # StationPlay starts again ten seconds later, its clock anew.
+    # tapiOca starts again ten seconds later, its clock anew.
     wall[0] += 1_000
-    five = (wall[0], "file:205", "StationPlay found Northbound S2 E5 broken")
+    five = (wall[0], "file:205", "tapiOca found Northbound S2 E5 broken")
     before.files([tia, five])
     wall[0] += 10_000
     told = Told()
@@ -589,7 +587,7 @@ def test_alerts_are_for_admins(app, monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     with TestClient(app) as home:
         ctx = app.state.ctx
-        ctx.alerts.start("backups", "StationPlay's backups are failing.")
+        ctx.alerts.start("backups", "tapiOca's backups are failing.")
         # Signing in off, at home: everyone is an Admin.
         assert len(home.get("/api/internal/alerts").json()["alerts"]) == 1
         assert home.post("/api/access/users", json=ADA).status_code == 201
@@ -624,21 +622,21 @@ def test_alerts_are_for_admins(app, monkeypatch, caplog):
         assert home.post("/api/backups").status_code == 201
         assert home.get("/api/status").json()["alerts"] == []
         lines = home.get("/api/logs").json()["text"]
-        assert "Alert: StationPlay's backups are failing: the last 2 tries didn't work." in lines
-        assert "Alert fixed: StationPlay made a backup again." in lines
+        assert "Alert: tapiOca's backups are failing: the last 2 tries didn't work." in lines
+        assert "Alert fixed: tapiOca made a backup again." in lines
 
 
 def test_after_a_restart_the_apps_and_the_page_see_the_same_alerts(app, tmp_path, monkeypatch):
-    """StationPlay stopped and started again: the same alerts, with the same
+    """tapiOca stopped and started again: the same alerts, with the same
     IDs, for the apps and the page's header; none sent anywhere again; and
     the Logs tab says which are still going."""
     sent: list[tuple[str, str, str]] = []
     monkeypatch.setattr(notify.Notify, "send", lambda self, *said, **_: sent.append(said))
     with TestClient(app) as home:
         ctx = app.state.ctx
-        home.portal.call(ctx.alerts.start, "backups", "StationPlay's backups are failing.")
-        home.portal.call(ctx.alerts.start, "plex", "StationPlay can't reach Plex.")
-        home.portal.call(ctx.alerts.fix, "plex", "StationPlay can reach Plex again.")
+        home.portal.call(ctx.alerts.start, "backups", "tapiOca's backups are failing.")
+        home.portal.call(ctx.alerts.start, "plex", "tapiOca can't reach Plex.")
+        home.portal.call(ctx.alerts.fix, "plex", "tapiOca can reach Plex again.")
         before = home.get("/api/internal/alerts").json()["alerts"]
         header = home.get("/api/status").json()["alerts"]
     assert len(before) == 2 and len(sent) == 3
@@ -653,7 +651,7 @@ def test_after_a_restart_the_apps_and_the_page_see_the_same_alerts(app, tmp_path
         logged = home.get("/api/logs").json()["entries"]
         assert [
             e["message"] for e in logged if e["time"] >= restarted and "Alert" in e["message"]
-        ] == ["Alert still going: StationPlay's backups are failing."]
+        ] == ["Alert still going: tapiOca's backups are failing."]
     assert len(sent) == 3
 
 
@@ -689,19 +687,19 @@ async def test_plain_text_and_json(tmp_path):
     sender = notifier(tmp_path, address)
     url = "https://ntfy.example.com/stationplay-xyz?auth=secret"
     sender.save(False, url, notify.TEXT)  # (saved: Last sent is kept only for a saved address)
-    sent = await sender.post(url, notify.TEXT, "StationPlay can't reach Plex.", "plex", "started")
+    sent = await sender.post(url, notify.TEXT, "tapiOca can't reach Plex.", "plex", "started")
     assert (sent.ok, sent.status) == (True, "200 OK")
     [asked] = address.asked
     assert (str(asked.url), asked.method, asked.content) == (
         url,
         "POST",
-        b"StationPlay can't reach Plex.",
+        b"tapiOca can't reach Plex.",
     )
-    assert asked.headers["title"] == "StationPlay"
+    assert asked.headers["title"] == "tapiOca"
     assert asked.headers["content-type"] == "text/plain; charset=utf-8"
     sent = await sender.post(url, notify.JSON, "Plex is back.", "plex", "fixed")
     assert json.loads(address.asked[1].content) == {
-        "title": "StationPlay", "message": "Plex is back.", "kind": "plex", "state": "fixed"
+        "title": "tapiOca", "message": "Plex is back.", "kind": "plex", "state": "fixed"
     }  # fmt: skip
     assert address.asked[1].headers["content-type"] == "application/json"
     assert sender.last == sent  # (kept for the page: its status, nothing of the answer)
@@ -733,13 +731,13 @@ async def test_discord(tmp_path, monkeypatch):
     monkeypatch.setattr(notify, "AGAIN_S", 0.0)
     discord = DiscordWebhook()
     sender = notifier(tmp_path, discord)
-    # Its own format: the message as its content, sent as StationPlay, and
+    # Its own format: the message as its content, sent as tapiOca, and
     # never pinging anyone (an alert can't @everyone).
-    sent = await sender.post(DISCORD_URL, notify.DISCORD, "StationPlay can't reach Plex.", "plex", "started")  # fmt: skip
+    sent = await sender.post(DISCORD_URL, notify.DISCORD, "tapiOca can't reach Plex.", "plex", "started")  # fmt: skip
     assert (sent.ok, sent.status) == (True, "204 No Content")
     assert json.loads(discord.asked[0].content) == {
-        "username": "StationPlay",
-        "content": "StationPlay can't reach Plex.",
+        "username": "tapiOca",
+        "content": "tapiOca can't reach Plex.",
         "allowed_mentions": {"parse": []},
         "flags": 4,  # (no link previews: the audit of 1.34.0)
     }
@@ -801,7 +799,7 @@ async def test_no_answer_in_time_one_more_try_and_no_redirects(tmp_path, monkeyp
     sent = await notifier(tmp_path, elsewhere).post(
         "https://ntfy.example.com/t", notify.TEXT, "x", "plex", "started"
     )
-    assert not sent.ok and "a redirect, which StationPlay doesn't follow" in sent.status
+    assert not sent.ok and "a redirect, which tapiOca doesn't follow" in sent.status
     assert [r.url.host for r in elsewhere.asked] == ["ntfy.example.com"] * 2
     failing = Address(answer=500)
     sent = await notifier(tmp_path, failing).post(
@@ -846,7 +844,7 @@ def test_notify_on_the_page(app, monkeypatch, caplog):
         assert tested["sent"]["ok"] and tested["last"]["test"]
         assert json.loads(address.asked[0].content)["kind"] == "test"
         # An alert starting goes there, in the background.
-        home.portal.call(ctx.alerts.start, "plex", "StationPlay can't reach Plex.")
+        home.portal.call(ctx.alerts.start, "plex", "tapiOca can't reach Plex.")
         for _ in range(50):
             if len(address.asked) == 2:
                 break
@@ -899,8 +897,8 @@ def test_a_failing_web_address_holds_nothing_up(app, monkeypatch):
 
 
 async def test_an_alert_the_web_address_never_took_is_sent_after_a_restart(tmp_path, db):
-    """The web address down (or StationPlay stopped before it was sent):
-    once StationPlay is back, and the address takes it, it's told, once.
+    """The web address down (or tapiOca stopped before it was sent):
+    once tapiOca is back, and the address takes it, it's told, once.
     A fix it never took is sent the same way."""
     plex = Plex()
     plex.down = 0
@@ -927,13 +925,11 @@ async def test_an_alert_the_web_address_never_took_is_sent_after_a_restart(tmp_p
     last = Alerts(told, Database(db.path))  # type: ignore[arg-type]
     await last.look(ctx)
     await last.look(ctx)
-    assert told.said == [
-        ("StationPlay can reach Plex at 192.168.1.10:32400 again.", "plex", "fixed")
-    ]
+    assert told.said == [("tapiOca can reach Plex at 192.168.1.10:32400 again.", "plex", "fixed")]
 
 
 async def test_alerts_from_long_ago_arent_brought_back(tmp_path, db, monkeypatch, caplog):
-    """Alerts kept by a StationPlay that hasn't run for a while (stopped for
+    """Alerts kept by a tapiOca that hasn't run for a while (stopped for
     hours, or an older version running meanwhile, which doesn't keep them)
     aren't brought back as still going, nor said to be fixed: anything
     still wrong is found, and said, afresh."""
@@ -978,8 +974,8 @@ def test_a_report_checked_when_the_alert_was_said_is_new_after_a_restart(db, mon
 
 
 async def test_what_wasnt_sent_when_stationplay_stopped_is_sent_after(tmp_path, db):
-    """StationPlay stopping while an alert waits to be sent (an update, say):
-    it's sent once StationPlay is back."""
+    """tapiOca stopping while an alert waits to be sent (an update, say):
+    it's sent once tapiOca is back."""
     sent: list[tuple] = []
 
     async def post(url, fmt, message, kind, state, test=False):
@@ -993,7 +989,7 @@ async def test_what_wasnt_sent_when_stationplay_stopped_is_sent_after(tmp_path, 
     before.backup_failed()
     before.backup_failed()
     [going] = before.now()
-    first.unsent()  # (StationPlay stops before it's sent)
+    first.unsent()  # (tapiOca stops before it's sent)
     again = Notify(Database(db.path))
     again.on, again.url = True, first.url
     again.post = post  # type: ignore[method-assign]

@@ -1,42 +1,42 @@
-"""Whether StationPlay's apps can reach it from outside your home, at the
+"""Whether tapiOca's apps can reach it from outside your home, at the
 address set for watching away from home (see away.py). The Access tab, the
 setup and the page's header show it, and an Admin alert says when it's down
 (see alerts.py): Reach.status says what it is, in a sentence, and since
 when.
 
-While watching away from home is on, StationPlay asks for itself at that
+While watching away from home is on, tapiOca asks for itself at that
 address, as an app away from home would: GET <address>/api/internal/reach,
 with a random value it waits a minute for at most, the certificate checked,
 no redirect followed, and 10 seconds at most. That address is open on both
 ports, to anyone (see access.py). For a value a check is waiting for, it
-answers that it's StationPlay, which port the request came in on, and
-whether it came over HTTPS (as the reverse proxy says), and StationPlay
+answers that it's tapiOca, which port the request came in on, and
+whether it came over HTTPS (as the reverse proxy says), and tapiOca
 notes that; for anything else, it's 404. So a check knows it reached this
-StationPlay, and how, not just that something answered.
+tapiOca, and how, not just that something answered.
 
-It checks a few seconds after StationPlay starts, at once when the setting
+It checks a few seconds after tapiOca starts, at once when the setting
 is saved, every 5 minutes, and when an Admin chooses Check now. A check
 finds one thing (a Finding): Ready (an https:// address reached the public
 port over HTTPS, with sign-in on; an http:// one, a VPN's or the home
-network's, reached StationPlay), or what's wrong: the reverse proxy points
+network's, reached tapiOca), or what's wrong: the reverse proxy points
 at the home port, which never asks for a password; not over HTTPS; sign-in
 is off; the name isn't found; the certificate; no HTTPS there; the proxy's
-own error (it couldn't reach StationPlay); something else answering; a
+own error (it couldn't reach tapiOca); something else answering; a
 redirect. Or it couldn't connect (or look up the name just then).
 
-Some of those are problems wherever the check comes from: StationPlay's
+Some of those are problems wherever the check comes from: tapiOca's
 own answer saying what's wrong, the proxy's error, a name that isn't found,
 a certificate for this very name that has expired (or isn't valid yet, or
-was revoked), and an https:// address on StationPlay's own port. The rest
+was revoked), and an https:// address on tapiOca's own port. The rest
 may be the home's router: many don't let devices at home use the home's own
 internet address (NAT loopback) and answer it themselves, with their own
 sign-in page, certificate or redirect, or not at all, while apps away from
 home still work. Those count only once a check from here has reached
-StationPlay (since it started), which shows the router lets it through. A
+tapiOca (since it started), which shows the router lets it through. A
 DNS override in the router, pointing the name at the reverse proxy's
-address at home, lets StationPlay check from here.
+address at home, lets tapiOca check from here.
 
-The apps have their say too: StationPlay notes when a signed-in app last
+The apps have their say too: tapiOca notes when a signed-in app last
 came in through the public port (access.py; main.py, for a station played
 there). From both, one status:
 
@@ -48,10 +48,10 @@ there). From both, one status:
   down        Two checks in a row, at least a minute apart, found a problem
               that counts.
   cant-check  It found what may be the router (or couldn't look up the
-              name), no check from here has reached StationPlay yet, and no
+              name), no check from here has reached tapiOca yet, and no
               app has come in lately: it can't tell from here.
 
-One problem alone never makes it down: StationPlay checks again a minute
+One problem alone never makes it down: tapiOca checks again a minute
 later. A line is logged when it goes down (with why) and when it's back,
 and once when it can't check from here: never one for each check.
 
@@ -93,7 +93,7 @@ log = logging.getLogger(__name__)
 WAIT_S = 10.0  # the longest a check waits for its answer
 VALUE_S = 60.0  # the longest a check's value is waited for
 VALUE_BYTES = 18
-FIRST_S = 5.0  # the first check, after StationPlay starts
+FIRST_S = 5.0  # the first check, after tapiOca starts
 EVERY_S = 300.0
 AGAIN_S = 60.0  # after a problem found once: checking again
 APPS_S = 15 * 60.0  # an app that came in this recently shows apps get in
@@ -126,7 +126,7 @@ UNKNOWN_ISSUER = frozenset({2, 20, 21, 27})
 class Finding:
     """What a check found: its kind (READY, or what's wrong), a sentence or
     two for the page, a few words for summaries, and whether this
-    StationPlay answered (which shows checks from here can reach it).
+    tapiOca answered (which shows checks from here can reach it).
 
     A problem is `sure` when it's one wherever the check comes from.
     Otherwise it may be the home's router answering for the outside address
@@ -143,7 +143,7 @@ class Finding:
 
 @dataclass(frozen=True)
 class Status:
-    """Whether StationPlay's apps can reach it from outside, as the page
+    """Whether tapiOca's apps can reach it from outside, as the page
     shows it (and Admin alerts go by)."""
 
     state: str  # OFF, CHECKING, UP, DOWN or CANT
@@ -170,7 +170,7 @@ class _Waiting:
 
 
 class Reach:
-    """Whether StationPlay's apps can reach it from outside (see the module's
+    """Whether tapiOca's apps can reach it from outside (see the module's
     notes): what the checks found, and the status from them and the apps."""
 
     # In tests, what answers at the address (see tests/conftest.py).
@@ -204,7 +204,7 @@ class Reach:
         self._checked_ms: int | None = None
         self._failures = 0  # checks in a row that found a problem
         self._failing_since = 0.0  # (the first of them, on the clock)
-        self._reached = False  # whether a check from here has reached StationPlay
+        self._reached = False  # whether a check from here has reached tapiOca
 
     # GET /api/internal/reach --------------------------------------------------
 
@@ -228,7 +228,7 @@ class Reach:
         self._wake_up()
 
     async def run_forever(self) -> None:
-        """Checks when one is due: FIRST_S after StationPlay starts, then
+        """Checks when one is due: FIRST_S after tapiOca starts, then
         every EVERY_S (AGAIN_S after a problem found once), and at once when
         the setting is saved."""
         self._loop, self._wake = asyncio.get_running_loop(), asyncio.Event()
@@ -243,7 +243,7 @@ class Reach:
             try:
                 await self.check_now()
             except Exception:
-                log.exception("Checking the address StationPlay's apps use away from home failed")
+                log.exception("Checking the address tapiOca's apps use away from home failed")
                 self._due = self.clock() + EVERY_S
 
     async def check_now(self) -> Status:
@@ -268,7 +268,7 @@ class Reach:
     def _record(self, finding: Finding) -> None:
         now = self.clock()
         # What may be the router counts only once a check from here has
-        # reached StationPlay: the router lets checks from here through, then.
+        # reached tapiOca: the router lets checks from here through, then.
         problem = finding.kind not in (READY, NO_LOOKUP) and (finding.sure or self._reached)
         self._reached = self._reached or finding.reached
         if problem and not self._failures:
@@ -323,10 +323,10 @@ class Reach:
             self._said_down = False
         elif state == DOWN and not self._said_down:
             self._said_down = True
-            log.warning("StationPlay's apps can't reach it from outside. %s", self._words()[0])
+            log.warning("tapiOca's apps can't reach it from outside. %s", self._words()[0])
         elif state == UP and self._said_down:
             self._said_down = False
-            log.info("StationPlay's apps can reach it from outside again, at %s", self._address)
+            log.info("tapiOca's apps can reach it from outside again, at %s", self._address)
         elif state == CANT and not self._said_cant:
             self._said_cant = True
             log.info("%s", self._words()[0])
@@ -356,7 +356,7 @@ class Reach:
         if state == OFF or not address:
             return "Watching away from home is off.", "Off"
         if latest is None:
-            return f"Checking that apps can reach StationPlay at {address}…", "Checking"
+            return f"Checking that apps can reach tapiOca at {address}…", "Checking"
         if state == CHECKING:
             return f"{latest.detail} Checking again in a minute to be sure.", "Checking"
         if state == UP and latest.kind == READY:
@@ -375,13 +375,13 @@ class Reach:
                     "your home's own internet address."
                 )
             return (
-                f"Apps away from home are reaching StationPlay. {from_here}",
+                f"Apps away from home are reaching tapiOca. {from_here}",
                 "Apps are getting in",
             )
         if state == DOWN and not latest.sure:
             return (
                 f"{latest.detail} Checks from here got through earlier, so this isn't your "
-                "router: apps away from home can't reach StationPlay either.",
+                "router: apps away from home can't reach tapiOca either.",
                 latest.short,
             )
         if state == DOWN:
@@ -391,7 +391,7 @@ class Reach:
     # What a check finds -------------------------------------------------------
 
     async def _look(self, address: str, value: str, waiting: _Waiting) -> Finding:
-        """Asks for this StationPlay at `address`, as an app away from home
+        """Asks for this tapiOca at `address`, as an app away from home
         would, and says what that found."""
         try:
             async with httpx.AsyncClient(
@@ -409,23 +409,23 @@ class Reach:
         except httpx.HTTPError as e:
             return self._failed(address, e)
         except (httpx.InvalidURL, ValueError):  # (a name it can't even ask for)
-            return _no_answer(f"StationPlay couldn't connect to {address}.")
+            return _no_answer(f"tapiOca couldn't connect to {address}.")
         if waiting.seen is not None and got.status_code == 200 and _from_stationplay(got):
             return await self._answered(address, *waiting.seen)
         return self._other(address, got)
 
     async def _answered(self, address: str, outside: bool, https: bool) -> Finding:
-        """What a check that reached this StationPlay found (`outside`:
+        """What a check that reached this tapiOca found (`outside`:
         through the public port; `https`: over HTTPS, as the proxy says)."""
         port, public = self.settings.port, self.settings.public_port
         secure = urlsplit(address).scheme == "https"
         if secure and not outside:
             detail = (
-                f"Warning: your reverse proxy passes {address} to port {port}, StationPlay's "
+                f"Warning: your reverse proxy passes {address} to port {port}, tapiOca's "
                 "home port. That's Plex's tuner, which never asks for a password, so it must "
                 "never be reached from the internet. "
                 + (
-                    f"Point the proxy at StationPlay's public port, {public}, instead."
+                    f"Point the proxy at tapiOca's public port, {public}, instead."
                     if public
                     else "Set PUBLIC_PORT (3311 in the YAML and Compose files), and point the "
                     "proxy at that port instead."
@@ -437,18 +437,18 @@ class Reach:
             if not outside:
                 detail = (
                     f"Warning: {address} doesn't use HTTPS, so apps' sign-ins would cross the "
-                    f"internet unencrypted, and it reaches port {port}, StationPlay's home port: "
+                    f"internet unencrypted, and it reaches port {port}, tapiOca's home port: "
                     "Plex's tuner, which never asks for a password. Use a reverse proxy with "
                     + (
-                        f"HTTPS that points at StationPlay's public port, {public}, "
+                        f"HTTPS that points at tapiOca's public port, {public}, "
                         if public
-                        else "HTTPS that points at StationPlay's public port (set PUBLIC_PORT), "
+                        else "HTTPS that points at tapiOca's public port (set PUBLIC_PORT), "
                     )
                     + "and its https:// address."
                 )
             elif not https:
                 detail = (
-                    f"Warning: {address} doesn't use HTTPS. StationPlay takes apps from the "
+                    f"Warning: {address} doesn't use HTTPS. tapiOca takes apps from the "
                     "internet only over HTTPS, so they can't sign in there. Use your reverse "
                     "proxy's https:// address instead."
                 )
@@ -460,33 +460,33 @@ class Reach:
             return Finding(NOT_HTTPS, detail, "Not over HTTPS", reached=True, sure=True)
         if outside and not https:
             detail = (
-                f"{address} reaches StationPlay's public port, but your reverse proxy doesn't "
-                "say the request came over HTTPS, so StationPlay turns apps away there. Have the "
+                f"{address} reaches tapiOca's public port, but your reverse proxy doesn't "
+                "say the request came over HTTPS, so tapiOca turns apps away there. Have the "
                 "proxy send the X-Forwarded-Proto header."
                 if secure
-                else f"{address} reaches StationPlay's public port, which takes apps only over "
+                else f"{address} reaches tapiOca's public port, which takes apps only over "
                 f"HTTPS. Through a VPN, use the home port instead: {_with_port(address, port)}."
             )
             return Finding(NOT_HTTPS, detail, "Not over HTTPS", reached=True, sure=True)
         if outside and not self.access.required:
             detail = (
-                f"{address} reaches StationPlay, but sign-in is off, so apps can't sign in "
+                f"{address} reaches tapiOca, but sign-in is off, so apps can't sign in "
                 "through the public port. Add a user on the Access tab."
             )
             return Finding(SIGN_IN_OFF, detail, "Sign-in is off", reached=True, sure=True)
-        detail = f"Ready. Apps away from home reach StationPlay at {address}" + (
+        detail = f"Ready. Apps away from home reach tapiOca at {address}" + (
             ", for your stations and Media." if self.media and self.media() else "."
         )
         return Finding(READY, detail, "Ready", reached=True)
 
     def _other(self, address: str, got: httpx.Response) -> Finding:
-        """What a check found when something other than this StationPlay
+        """What a check found when something other than this tapiOca
         answered."""
         said = f"{got.status_code} {got.reason_phrase}".strip()
         found = (
-            "answers with a page that isn't StationPlay's"
+            "answers with a page that isn't tapiOca's"
             if got.status_code == 200
-            else f"answers with {said} instead of StationPlay's answer"
+            else f"answers with {said} instead of tapiOca's answer"
         )
         if got.is_redirect:
             return _redirect(address, got)
@@ -495,25 +495,25 @@ class Reach:
             where = (
                 f"Check that it points at this server's public port, {public}."
                 if public
-                else "Check that it points at this server, at StationPlay's public port (set "
+                else "Check that it points at this server, at tapiOca's public port (set "
                 "PUBLIC_PORT: 3311 in the YAML and Compose files)."
             )
             detail = (
                 f"The reverse proxy at {address} answered with an error ({said}): it couldn't "
-                f"reach StationPlay. {where}"
+                f"reach tapiOca. {where}"
             )
             return Finding(PROXY_ERROR, detail, "Proxy error", sure=True)
         if got.status_code in (401, 403):
             detail = (
-                f"Something in front of StationPlay turned the check away at {address} "
+                f"Something in front of tapiOca turned the check away at {address} "
                 f"({said}), such as an access list or a sign-in in your reverse proxy. Apps "
-                "can't get past it: let this address through to StationPlay."
+                "can't get past it: let this address through to tapiOca."
             )
             return Finding(ELSEWHERE, detail, "Blocked", found=found)
-        what = "with a page that isn't StationPlay's" if got.status_code == 200 else said
+        what = "with a page that isn't tapiOca's" if got.status_code == 200 else said
         detail = (
-            f"Something other than this StationPlay answered at {address} ({what}). Check "
-            "that the address leads to this StationPlay, through your reverse proxy if you "
+            f"Something other than this tapiOca answered at {address} ({what}). Check "
+            "that the address leads to this tapiOca, through your reverse proxy if you "
             "use one."
         )
         return Finding(ELSEWHERE, detail, "Something else answered", found=found)
@@ -526,16 +526,16 @@ class Reach:
             if lookup.errno not in NOT_FOUND:
                 return Finding(
                     NO_LOOKUP,
-                    f"StationPlay couldn't look up {host} just now, so it can't check the "
+                    f"tapiOca couldn't look up {host} just now, so it can't check the "
                     "address from here.",
                     "Couldn't look up the name",
                 )
             if _local_name(host):
                 return Finding(
                     NO_LOOKUP,
-                    f"StationPlay couldn't look up {host}. Names like it, on a VPN (such as "
+                    f"tapiOca couldn't look up {host}. Names like it, on a VPN (such as "
                     "Tailscale's) or a home network, often work only on the devices there, so "
-                    "StationPlay can't check the address from here.",
+                    "tapiOca can't check the address from here.",
                     "Couldn't look up the name",
                 )
             detail = (
@@ -550,13 +550,13 @@ class Reach:
             detail = f"{address} doesn't answer over HTTPS. " + (
                 problem or "Check that the address leads to your reverse proxy."
             )
-            # (An https:// address on StationPlay's own port is wrong from anywhere.)
+            # (An https:// address on tapiOca's own port is wrong from anywhere.)
             found = "doesn't answer over HTTPS"
             return Finding(NO_HTTPS, detail, "No HTTPS there", sure=bool(problem), found=found)
         if _cause(e, ConnectionRefusedError) is not None:
             return _no_answer(f"Nothing answered at {address}: the connection was refused.")
         if isinstance(e, httpx.ConnectError):
-            return _no_answer(f"StationPlay couldn't connect to {address}.")
+            return _no_answer(f"tapiOca couldn't connect to {address}.")
         return _no_answer(f"{address} closed the connection without answering.")
 
 
@@ -570,14 +570,14 @@ def _cant_check(latest: Finding, address: str) -> str:
     if _looks_local(host):
         return (
             f"{found} That can be a real problem, or this server may not reach that address "
-            "itself, in which case apps on your VPN still work. StationPlay can't tell "
+            "itself, in which case apps on your VPN still work. tapiOca can't tell "
             f"which from here: to be sure, open {address} on a phone on the VPN, using "
             "mobile data."
         )
     maybe = (
         "That can be a real outage, or a router that doesn't let devices at home use your "
         "home's own internet address (called NAT loopback), in which case apps away from "
-        "home still work. StationPlay can't tell which from here."
+        "home still work. tapiOca can't tell which from here."
         if latest.kind == NO_CONNECT
         else "That's likely your router itself: many routers answer for your home's own "
         "internet address when it's used from inside your home, while apps away from home "
@@ -585,7 +585,7 @@ def _cant_check(latest: Finding, address: str) -> str:
     )
     return (
         f"{found} {maybe} To be sure, open {address} on a phone using mobile data, not "
-        "Wi-Fi. So StationPlay can check from here, add a DNS override in your router that "
+        "Wi-Fi. So tapiOca can check from here, add a DNS override in your router that "
         f"points {host} at your reverse proxy's address on your home network."
     )
 
@@ -643,15 +643,15 @@ def _certificate(address: str, host: str, unaccepted: ssl.SSLCertVerificationErr
 
 def _redirect(address: str, got: httpx.Response) -> Finding:
     """What a check found when it was sent somewhere else: where, and (when
-    it's StationPlay's own address there, over HTTPS) that the address
+    it's tapiOca's own address there, over HTTPS) that the address
     should be that one."""
     try:
         to = got.url.join(got.headers["location"])
         there = _origin(to)
     except (httpx.InvalidURL, ValueError):
         detail = (
-            f"{address} redirects somewhere else instead of reaching StationPlay. Apps can't "
-            "follow that: the address must reach StationPlay itself."
+            f"{address} redirects somewhere else instead of reaching tapiOca. Apps can't "
+            "follow that: the address must reach tapiOca itself."
         )
         return Finding(REDIRECT, detail, "Redirected", found="redirects somewhere else")
     if to.path == REACH and (to.scheme == "https" or urlsplit(address).scheme == "http"):
@@ -660,14 +660,14 @@ def _redirect(address: str, got: httpx.Response) -> Finding:
     else:
         shown = there + (to.path[:80] if to.path not in ("", "/") else "")
         detail = (
-            f"{address} redirects to {shown} instead of reaching StationPlay (a sign-in page, "
-            "perhaps). Apps can't follow that: the address must reach StationPlay itself."
+            f"{address} redirects to {shown} instead of reaching tapiOca (a sign-in page, "
+            "perhaps). Apps can't follow that: the address must reach tapiOca itself."
         )
     return Finding(REDIRECT, detail, "Redirected", found=f"redirects to {shown}")
 
 
 def _from_stationplay(got: httpx.Response) -> bool:
-    """Whether an answer is StationPlay's, from GET /api/internal/reach."""
+    """Whether an answer is tapiOca's, from GET /api/internal/reach."""
     try:
         body = got.json()
     except ValueError:

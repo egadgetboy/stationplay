@@ -1,16 +1,16 @@
 # Open-source notices
 
-StationPlay is built on the open-source work of others. This file lists the
-parts in StationPlay's Docker image that come from others, and their
+tapiOca is built on the open-source work of others. This file lists the
+parts in tapiOca's Docker image that come from others, and their
 licenses. Each part keeps its own license.
 
-## StationPlay
+## tapiOca
 
-Copyright © 2026 egadgetboy. StationPlay is licensed under the GNU Affero
+Copyright © 2026 egadgetboy. tapiOca is licensed under the GNU Affero
 General Public License, version 3 (AGPL-3.0). See the [LICENSE](LICENSE)
-file. Its source is at <https://github.com/egadgetboy/stationplay>.
+file. Its source is at <https://github.com/egadgetboy/tapioca-server>.
 
-Everything in the image that isn't listed below is StationPlay's own,
+Everything in the image that isn't listed below is tapiOca's own,
 under the AGPL.
 
 ## Where to find the exact versions
@@ -38,7 +38,7 @@ source package.
 - **What:** Debian's `ffmpeg` package (the `ffmpeg` and `ffprobe` programs)
   and the FFmpeg libraries it installs (`libavcodec`, `libavformat`,
   `libavfilter`, `libavutil`, `libswscale`, `libswresample` and others).
-  StationPlay runs these programs to do all its video work. It doesn't
+  tapiOca runs these programs to do all its video work. It doesn't
   change them.
 - **License:** Most of FFmpeg's code is under the GNU Lesser General Public
   License, version 2.1 or later (LGPL-2.1-or-later). Debian builds FFmpeg
@@ -52,12 +52,12 @@ source package.
   license, in its own `/usr/share/doc/<package>/copyright`, and listed in
   `third-party-packages.txt`.
 - **Source:** Debian's `ffmpeg` source package, at the version listed in
-  `third-party-packages.txt` (see above). From 1.34.0, StationPlay's
-  image is published (`ghcr.io/egadgetboy/stationplay`), and each release
-  carries `stationplay-<version>-source.tar`: the source of every GPL and
+  `third-party-packages.txt` (see above). From 1.34.0, tapiOca's
+  image is published (`ghcr.io/egadgetboy/tapioca-server`), and each release
+  carries `tapioca-<version>-source.tar`: the source of every GPL and
   LGPL package in its images, FFmpeg's among them, at the exact versions
   in them, as Debian publishes it. Each release also comes with
-  `stationplay-<version>-packages.txt` (and `-packages-arm64.txt`), the
+  `tapioca-<version>-packages.txt` (and `-packages-arm64.txt`), the
   packages in each image, each with a link to its source. An image you
   build yourself gets Debian's packages from Debian on the day it's built,
   and `third-party-packages.txt` in it lists them. FFmpeg's upstream
@@ -75,12 +75,26 @@ source package.
   Project Authors (<https://github.com/JulietaUla/Montserrat>). License:
   SIL Open Font License, version 1.1, in `app/assets/fonts/OFL.txt`.
 
-StationPlay's page uses no web fonts: it uses the fonts already on your
-device.
+- **Space Grotesk** (in `app/web/fonts/SpaceGrotesk/`), the page's text.
+  Copyright 2020 The Space Grotesk Project Authors
+  (<https://github.com/floriankarsten/space-grotesk>). License: SIL Open
+  Font License, version 1.1, in `app/web/fonts/SpaceGrotesk/OFL.txt`.
+- **Space Mono** (in `app/web/fonts/SpaceMono/`), the page's Station
+  numbers, times and logs. Copyright 2016 The Space Mono Project Authors
+  (<https://github.com/googlefonts/spacemono>). License: SIL Open Font
+  License, version 1.1, in `app/web/fonts/SpaceMono/OFL.txt`.
+- **Unbounded** (in `app/web/fonts/Unbounded/`), the page's big numbers;
+  tapiOca's logo is drawn from it, as outlines. Copyright 2022 The
+  Unbounded Project Authors (<https://github.com/googlefonts/unbounded>).
+  License: SIL Open Font License, version 1.1, in
+  `app/web/fonts/Unbounded/OFL.txt`.
+
+The page's three fonts come with tapiOca and are served by it: the page
+never fetches a font from anywhere else.
 
 ## Video drivers
 
-These are installed so StationPlay can use a GPU. They're optional: if one
+These are installed so tapiOca can use a GPU. They're optional: if one
 can't be installed, the image still builds.
 
 - **Mesa VA-API drivers** (Debian's `mesa-va-drivers`), for AMD GPUs.

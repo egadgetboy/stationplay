@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Attack test for StationPlay's server, to run before a release.
+"""Attack test for tapiOca's server, to run before a release.
 
-It starts StationPlay on two free ports of its own (a home-network port and
+It starts tapiOca on two free ports of its own (a home-network port and
 a public one, as a reverse proxy reaches), against the stand-in Plex the
 tests use, with an Admin, a User, a Kid on a limited Viewing Level, a
 station, a shared library, an app signed in and a linked device. Then, from
@@ -12,13 +12,13 @@ path traversal; oversized bodies; script in names; guessing or reusing keys,
 play addresses and reach nonces; reaching Media and stations a level hides;
 the sign-in, PIN and link-code limits; who a linked device lists (new
 people only on devices they sign in on, and Use for everyone: only for an
-Admin, from StationPlay's own page, only its two choices, never moving who
+Admin, from tapiOca's own page, only its two choices, never moving who
 can't sign in by name) and lists away from home; setting a PIN or
 changing a password from the apps (as an
 outsider, as someone else, an Admin's PIN, its format, the limits);
 Admin alerts and the web address they're sent to (only for Admins; only
 http and https, no redirects followed, never waited on); each person's
-languages (their own only, and only languages StationPlay knows); Media's
+languages (their own only, and only languages tapiOca knows); Media's
 addresses (every one refusing what a Kid's level hides, the same way, and
 taking only what's bounded); a movie in several files played as one
 (never what a level hides, its files never named, within its whole
@@ -46,7 +46,7 @@ It's a tool, not part of CI (the test suite covers these as unit tests). Run
 it from the repo root:  python -m tools.attack_check   (add -v to see every
 check, not only failures).
 
-It only ever talks to the StationPlay it starts here on localhost. It never
+It only ever talks to the tapiOca it starts here on localhost. It never
 contacts any real server.
 """
 
@@ -197,7 +197,7 @@ def _cf(address: str) -> dict[str, str]:
 
 
 async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) -> None:
-    # Set everything up from the home network, where StationPlay starts open.
+    # Set everything up from the home network, where tapiOca starts open.
     # Admin, User and Kid are signed in as apps (bearer tokens), so the
     # brute-force tests later don't spend the home address's password budget
     # on the setup calls.
@@ -658,7 +658,7 @@ async def _new_people_and_everyone(
     """New people show only on devices they sign in on: a device lists no one
     else, and no one else can be picked there by their id. Use for everyone
     (POST /api/access/devices/everyone): only an Admin, only from
-    StationPlay's own page, only its two choices; many at once leave everyone
+    tapiOca's own page, only its two choices; many at once leave everyone
     as one of them said; someone who can't sign in by name is never moved to
     Only devices they sign in on. It ends with everyone on every device at
     home, a household, for what's checked after."""
@@ -1111,7 +1111,7 @@ async def _languages(
 ) -> None:
     """PUT /api/internal/languages and /api/internal/items/{key}/languages:
     an outsider can't; one person's are never another's, whatever's sent;
-    only languages StationPlay knows; and only for what someone can see."""
+    only languages tapiOca knows; and only for what someone can see."""
     checks.section("Each person's languages")
     https = {"X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.90"}
     async with httpx.AsyncClient(base_url=net) as out:
@@ -1155,7 +1155,7 @@ async def _languages(
                   "another's languages never choose what someone plays",
                   f"got {played.status_code}")  # fmt: skip
 
-        # Only languages StationPlay knows, as codes; captions true or false.
+        # Only languages tapiOca knows, as codes; captions true or false.
         before = await mine(sam_h)
         for body in (
             {"audio": "klingon"}, {"audio": ""}, {"audio": "e" * 41}, {"audio": "<script>"},
@@ -1845,7 +1845,7 @@ def _files_like_ffmpeg(folder: Path) -> tuple[Path, Path, float]:
 
 
 class _Told:
-    """Stands in for the web address alerts go to, as StationPlay starts."""
+    """Stands in for the web address alerts go to, as tapiOca starts."""
 
     def __init__(self) -> None:
         self.said: list[tuple] = []
@@ -1939,7 +1939,7 @@ async def _tuner_access(checks: Checks, home: str, net: str, admin_h: dict, sam_
 
 
 async def _kept_alerts(checks: Checks, app, home: str, admin_h: dict) -> None:
-    """Admin alerts kept in the database, and StationPlay starting again on
+    """Admin alerts kept in the database, and tapiOca starting again on
     it (a second Alerts on the same database, as a restart makes)."""
     checks.section("Alerts kept across restarts")
     ctx = app.state.ctx
@@ -1991,7 +1991,7 @@ async def _kept_alerts(checks: Checks, app, home: str, admin_h: dict) -> None:
 
 
 def _restore_forged_backup(ctx) -> tuple[list, list, list]:
-    """A backup of StationPlay now (an alert going), with a forged alert
+    """A backup of tapiOca now (an alert going), with a forged alert
     added, restored into another data folder: what the alerts are once it
     starts there (listed, kept, sent)."""
     made = backups.make_backup(ctx)
@@ -2025,7 +2025,7 @@ def _restore_forged_backup(ctx) -> tuple[list, list, list]:
 
 
 def _drift(checks: Checks) -> None:
-    """The corner mark's drift is only numbers, worked out from StationPlay's
+    """The corner mark's drift is only numbers, worked out from tapiOca's
     clock: whatever that says (1970, before it, far ahead, a fraction of a
     second), what's drawn draws, odd station names included."""
     checks.section("The corner mark's drift")
@@ -2069,13 +2069,13 @@ async def _pin_limit(checks: Checks, app, home: str, device_key: str) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Attack test for StationPlay's server.")
+    parser = argparse.ArgumentParser(description="Attack test for tapiOca's server.")
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="show every check, not just failures"
     )
     args = parser.parse_args()
     checks = Checks(args.verbose)
-    print("Starting StationPlay on two local ports and attacking it…")
+    print("Starting tapiOca on two local ports and attacking it…")
     asyncio.run(run(checks))
     total = checks.passed + checks.failed
     print(

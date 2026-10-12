@@ -1,6 +1,6 @@
-"""StationPlay's API (/api/v1: the server, its stations and their guide,
+"""tapiOca's API (/api/v1: the server, its stations and their guide,
 documented in docs/api.md, with an OpenAPI spec; see api.py for the rest of
-it), and what StationPlay's own apps ask besides (/api/internal: signing in
+it), and what tapiOca's own apps ask besides (/api/internal: signing in
 and connection tests, documented for the apps alone in
 docs/internal-api.md). tests/test_app_api.py checks both documents against
 the server.
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
 
 VERSION = 1
 PREFIX = "/api/v1/"
-# What only StationPlay's own apps use: not part of the public API (no
+# What only tapiOca's own apps use: not part of the public API (no
 # OpenAPI, no promise it stays the same; see docs/internal-api.md).
 INTERNAL = "/api/internal/"
 HEADER = (b"stationplay-api", str(VERSION).encode())
@@ -163,7 +163,7 @@ class LinkCode(BaseModel):
 
 # A problem playing from the library sent without its playing's ID is about
 # what that device played last only if it happened this lately, and that
-# started before it did (as far as the device's clock and StationPlay's
+# started before it did (as far as the device's clock and tapiOca's
 # agree).
 LATELY_MS = 10 * 60_000
 CLOCKS_APART_MS = 60_000
@@ -196,7 +196,7 @@ class Problem(BaseModel):
     positionMs: int | None = Field(default=None, ge=0, le=7 * 86_400_000)
     # From 1.29.1: when it happened (ms), the app's journal before it (cut
     # to its newest lines: see problems.cleaned_journal), and how long
-    # trouble reaching StationPlay lasted (ms).
+    # trouble reaching tapiOca lasted (ms).
     at: int | None = None
     journal: str = ""
     lastedMs: int | None = None
@@ -221,16 +221,16 @@ def report_text(text: str) -> str:
 
 def app_label(app: str, device: str) -> str:
     """Which app, on what device, as the access log and the Access tab say:
-    "StationPlay for Roku on Living Room Roku"."""
+    "tapiOca for Roku on Living Room Roku"."""
     app, device = plain(app)[:APP_MAX], plain(device)[:APP_MAX]
     if app and device:
         return f"{app} on {device}"
-    return app or (f"A StationPlay app on {device}" if device else "A StationPlay app")
+    return app or (f"A tapiOca app on {device}" if device else "A tapiOca app")
 
 
 def in_sentence(label: str) -> str:
     """An app_label in the middle of a sentence."""
-    return "a" + label[1:] if label.startswith("A StationPlay app") else label
+    return "a" + label[1:] if label.startswith("A tapiOca app") else label
 
 
 def program(item: Item, start_ms: int, end_ms: int, special: str) -> dict[str, Any]:
@@ -279,9 +279,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         errors = list(e.errors())
         where = tuple(errors[0].get("loc", ())) if errors else ()
         if len(where) == 2 and where[0] in ("query", "path"):
-            detail = f"StationPlay didn't understand {where[1]!r} in that request"
+            detail = f"tapiOca didn't understand {where[1]!r} in that request"
         else:
-            detail = "StationPlay didn't understand that request"
+            detail = "tapiOca didn't understand that request"
         return JSONResponse({"detail": detail}, 400)
 
     @app.get(
@@ -324,7 +324,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     @app.post("/api/internal/sign-in")
     async def sign_in(body: AppSignIn, request: Request):
         if not ctx.access.required:
-            raise HTTPException(400, "Signing in to StationPlay is off, so there's no need to")
+            raise HTTPException(400, "Signing in to tapiOca is off, so there's no need to")
         known = ctx.access.known_device(body.device, body.name)
         try:
             user = await ctx.access.check_password(
@@ -339,7 +339,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if user is None:
             ctx.access.record(
                 logging.WARNING,
-                f"Failed sign-in as {body.name[:40]!r} in a StationPlay app, "
+                f"Failed sign-in as {body.name[:40]!r} in a tapiOca app, "
                 f"from {access.where(request.scope)}",
             )
             raise HTTPException(401, "That name or password isn't right")
@@ -379,7 +379,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     @app.post("/api/internal/link")
     async def link_start(body: LinkStart, request: Request):
         if not ctx.access.required:
-            raise HTTPException(400, "Signing in to StationPlay is off, so there's no need to")
+            raise HTTPException(400, "Signing in to tapiOca is off, so there's no need to")
         try:
             code, poll = ctx.links.start(
                 app_label(body.app, body.deviceName),
@@ -437,7 +437,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     def own_languages(user_id: int) -> dict[str, Any]:
         """Someone's own languages, for the apps' Options: with every
-        language StationPlay knows, to choose from."""
+        language tapiOca knows, to choose from."""
         own = ctx.languages.own(user_id)
         return {
             "audio": languages.as_json(own.audio),
@@ -471,15 +471,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     def own_app(request: Request) -> tuple[User, SignedIn]:
         """Who an app is signed in as, and its sign-in, for what someone
-        changes of their own in it. Not a browser's sign-in: StationPlay's
+        changes of their own in it. Not a browser's sign-in: tapiOca's
         page has its own."""
         if not ctx.access.required:
-            raise HTTPException(400, "Signing in to StationPlay is off, so there's no need to")
+            raise HTTPException(400, "Signing in to tapiOca is off, so there's no need to")
         user = access.signed_in(request)
         token = access.bearer(request.scope)
         found = ctx.db.session_user(access.session_hash(token), 0) if token and user else None
         if user is None or found is None or not found.app:
-            raise HTTPException(403, "Only StationPlay's apps can do that")
+            raise HTTPException(403, "Only tapiOca's apps can do that")
         return user, found
 
     @app.post("/api/internal/pin")
@@ -500,7 +500,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.post("/api/internal/password")
     async def own_password(body: PasswordChange, request: Request):
-        """Someone changes their own password in an app, as on StationPlay's
+        """Someone changes their own password in an app, as on tapiOca's
         page (see access.py): with their current one, within the same
         limits on wrong ones, unless an Admin turned that off for them (or
         they have none). Every other sign-in of theirs ends, as there; this
@@ -541,7 +541,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if user:
             ctx.access.record(
                 logging.INFO,
-                f"{user.name} signed out of a StationPlay app from {access.where(request.scope)}",
+                f"{user.name} signed out of a tapiOca app from {access.where(request.scope)}",
             )
         return {"ok": True}
 
@@ -549,10 +549,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     def this_device(request: Request) -> devices.Device:
         if not ctx.access.required:
-            raise HTTPException(400, "Signing in to StationPlay is off, so there's no need to")
+            raise HTTPException(400, "Signing in to tapiOca is off, so there's no need to")
         found = ctx.devices.device(request.headers.get(devices.DEVICE_HEADER))
         if found is None:
-            raise HTTPException(401, "This device isn't linked to StationPlay. Sign in again.")
+            raise HTTPException(401, "This device isn't linked to tapiOca. Sign in again.")
         return found
 
     def person_json(user: User) -> dict[str, Any]:
@@ -628,7 +628,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         device = this_device(request)
         user = access.signed_in(request)
         if user is None:
-            raise HTTPException(401, "Sign in to StationPlay")
+            raise HTTPException(401, "Sign in to tapiOca")
         ctx.devices.remove(device, user)
         token = access.bearer(request.scope)
         if token:
@@ -636,12 +636,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         ctx.access.record(logging.INFO, f"{user.name} took themselves off {device.name}")
         return {"ok": True}
 
-    # On StationPlay's page: entering an app's code, and the apps signed in.
+    # On tapiOca's page: entering an app's code, and the apps signed in.
 
     def linking(code: str, request: Request) -> tuple[User, links.Pending]:
         user = access.signed_in(request)
         if user is None:
-            raise HTTPException(400, "Signing in to StationPlay is off, so apps don't need a code")
+            raise HTTPException(400, "Signing in to tapiOca is off, so apps don't need a code")
         try:
             return user, ctx.links.find(code, user)
         except links.Refused as e:
@@ -705,7 +705,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     def away_key(request: Request) -> str | None:
         """The key of this app's own addresses (see away.py): from outside,
-        when watching away from home is on; at home, for StationPlay's own
+        when watching away from home is on; at home, for tapiOca's own
         apps whichever devices may use the tuner (so a signed-in app needn't
         be listed, and changing that never stops one: see tuner.py), and for
         an API token's script while only listed devices may. None
@@ -838,9 +838,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.post("/api/internal/speed-test")
     async def speed_tested(body: SpeedTested, request: Request):
-        """What an app found: kept for the Access tab, where StationPlay
+        """What an app found: kept for the Access tab, where tapiOca
         recommends limits from it. Where it ran (at home, or away from home
-        through the public port) is as StationPlay sees it."""
+        through the public port) is as tapiOca sees it."""
         user = access.signed_in(request)
         where = "away" if access.outside(request.scope) else "home"
         try:
@@ -866,7 +866,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     @app.get("/api/internal/alerts")
     async def alerts_now():
         """For Admins (anyone else is refused: see access.FOR_USERS): what
-        StationPlay finds wrong now, and what was fixed in the last day.
+        tapiOca finds wrong now, and what was fixed in the last day.
         Cheap to ask every few minutes."""
         return {"alerts": [a.as_dict() for a in ctx.alerts.listed()]}
 
@@ -876,7 +876,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.post("/api/internal/report")
     async def report(body: Report, request: Request):
-        """A report from an app, in the Logs tab (and StationPlay's log), for
+        """A report from an app, in the Logs tab (and tapiOca's log), for
         whoever is looking into a problem: what the app did lately, and on
         what device. One from each address every REPORT_EVERY_S at most."""
         now = time.monotonic()
@@ -931,7 +931,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             if session is not None and session.sign_in != sign_in:
                 session = None  # (only one's own)
         else:
-            # (One sent later, after trouble reaching StationPlay, may be about
+            # (One sent later, after trouble reaching tapiOca, may be about
             # something other than what the device has played since.)
             now = now_ms()
             happened = body.at if body.at is not None else now

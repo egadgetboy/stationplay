@@ -128,7 +128,7 @@ async def test_commercials_and_the_station_id_card_follow_each_program(tmp_path,
         tmp_path, plex, media_dir=str(tmp_path / "media")
     )
     try:
-        # (The commercials are found in the background as StationPlay starts:
+        # (The commercials are found in the background as tapiOca starts:
         # a station made before then has none until its next update.)
         async with httpx.AsyncClient(base_url=base) as client:
             for _ in range(100):

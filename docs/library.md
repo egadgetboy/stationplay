@@ -1,14 +1,14 @@
 # The library: design (Phase 1)
 
-StationPlay is moving from "built on Plex" to "built on a library." A
+tapiOca is moving from "built on Plex" to "built on a library." A
 library is either a Plex library, as now, or a folder of your own (later).
 This is the design for Phase 1: one library layer that everything reads
 through, with Plex as its first source. Nothing about the stations changes.
-The full product plan is in the document "StationPlay: the full plan."
+The full product plan is in the document "tapiOca: the full plan."
 
 ## Goals
 
-1. Every part of StationPlay that reads the media library reads it through
+1. Every part of tapiOca that reads the media library reads it through
    one layer, `app/library.py`, never through the Plex client directly.
 2. Plex is the first source behind that layer. Stations, their schedules,
    their stored data and every test behave exactly as before.
@@ -48,7 +48,7 @@ feature and block sources (JSON), `era_items` (rating, show and part keys),
 
 ## The layer
 
-`Library` is the only object the rest of StationPlay holds (`ctx.library`).
+`Library` is the only object the rest of tapiOca holds (`ctx.library`).
 It routes each call to the source that owns the key. For calls that span
 libraries (listing libraries, collections, change detection), it asks every
 source and combines the answers. Errors are `LibraryError` (Plex's
@@ -88,17 +88,17 @@ These stay on `ctx.plex`: `hdhr`, the guide refresh (`dvrs`,
 `reload_guide`), `sessions`, `accounts`, `plex_pass`, `stop_session` and
 `identity` for Plex's status line.
 
-## StationPlay's API, and the apps' own addresses
+## tapiOca's API, and the apps' own addresses
 
 There are two small, documented sets of addresses, built on what already
 exists:
 
-- **StationPlay's API**, under `/api/v1`, is for anyone's scripts and
+- **tapiOca's API**, under `/api/v1`, is for anyone's scripts and
   players as well as the apps. It covers the server, its stations and their
   guide, and a few Admin actions, with API tokens and an OpenAPI spec
   (`docs/api.md`).
 - **The apps' own addresses**, under `/api/internal`
-  (`docs/internal-api.md`), are what only StationPlay's apps use: signing
+  (`docs/internal-api.md`), are what only tapiOca's apps use: signing
   in, connection tests and Media. They can change along with the apps.
 
 In outline:
@@ -106,7 +106,7 @@ In outline:
 - `GET /api/v1/server` (open): name, version, API version, whether signing
   in is required, and the features this server has.
 - `POST /api/internal/sign-in`: takes a name and password and returns a
-  session token, for apps. StationPlay's page keeps using its cookie.
+  session token, for apps. tapiOca's page keeps using its cookie.
   `POST /api/internal/sign-out` ends the session. Apps send the token as
   `Authorization: Bearer <token>`. Sessions, the 30-day lifetime, signing
   out and the access log all work as before.

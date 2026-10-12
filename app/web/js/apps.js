@@ -16,7 +16,7 @@ async function loadLimits() {
 function renderLimits(got) {
   const body = $('#limitsBody');
   const pass = got.plexPass === true ? 'Plex reports that your server has it.'
-    : got.plexPass === false ? 'Plex reports that your server doesn’t have it, so StationPlay can’t stop anyone from watching.' : '';
+    : got.plexPass === false ? 'Plex reports that your server doesn’t have it, so tapiOca can’t stop anyone from watching.' : '';
   const on = h('input', { type: 'checkbox', checked: got.on });
   const editing = () => { body.dataset.editing = '1'; };
   on.addEventListener('input', editing);
@@ -54,13 +54,13 @@ function renderLimits(got) {
   } }, 'Save');
   const stops = got.stops.map(x => h('li', {}, `${x.name}, station ${x.station}, ${new Date(x.atMs).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`));
   body.replaceChildren(
-    h('p', { style: 'margin:0' }, 'Plex can’t hide a station from one person: every station appears in the guide for everyone with Live TV on your Plex server. With this on, StationPlay watches what Plex is playing. When Plex users tune in to a station blocked for them, Plex stops it within seconds and shows the message “This station isn’t available on your Plex account.” (if their Plex app shows messages). If they tune in again, it’s stopped again.'),
+    h('p', { style: 'margin:0' }, 'Plex can’t hide a station from one person: every station appears in the guide for everyone with Live TV on your Plex server. With this on, tapiOca watches what Plex is playing. When Plex users tune in to a station blocked for them, Plex stops it within seconds and shows the message “This station isn’t available on your Plex account.” (if their Plex app shows messages). If they tune in again, it’s stopped again.'),
     h('div', { class: 'limit-note' }, h('strong', {}, 'Requirements'),
       h('ul', {},
         h('li', {}, h('strong', {}, 'Plex Pass'), ' on the account that owns your Plex server. Stopping playback is a Plex Pass feature. ', pass),
         h('li', {}, h('strong', {}, 'Watching in Plex. '), 'Anyone watching in a Plex app is covered: you, your Plex Home members (including managed users), and friends you’ve shared Live TV with. Apps that use the playlist (M3U) aren’t covered.'),
         h('li', {}, h('strong', {}, 'A Plex user for each person. '), 'Everyone using the same Plex account counts as one user. To block a station for your kids, they need their own Plex Home user.'),
-        h('li', {}, 'StationPlay stops a stream only when it’s sure which station it is. If two stations air the exact same program at the same time, StationPlay can’t tell them apart, so it doesn’t stop either one.'))),
+        h('li', {}, 'tapiOca stops a stream only when it’s sure which station it is. If two stations air the exact same program at the same time, tapiOca can’t tell them apart, so it doesn’t stop either one.'))),
     h('label', {}, on, ' Stop Plex users from watching stations blocked for them'),
     ...(got.plexProblem ? [h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' ', got.plexProblem)] : []),
     ...(got.problem ? [h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' ', got.problem)] : []),
@@ -70,7 +70,7 @@ function renderLimits(got) {
 }
 // Tuner access (Access tab; see tuner.py) ----------------------------------------------
 // Which devices may use the tuner (what Plex, Jellyfin and other apps use), and
-// who did lately. Each change sends the whole of it, and what StationPlay
+// who did lately. Each change sends the whole of it, and what tapiOca
 // answers is shown. Only these devices with none listed would shut everything
 // out, so choosing it then saves nothing until a device is listed.
 const TUNER_NONE = 'List at least one device, or choose Plex server only.';
@@ -166,7 +166,7 @@ function renderTuner(got, said = '') {
     h('p', { style: 'margin:0' }, 'The tuner is what Plex, Jellyfin and other apps use: the tuner itself, the guide, the list of stations and the stations’ streams. These apps can’t sign in.'),
     h('div', { class: 'checks-col', style: 'margin:0', role: 'radiogroup', 'aria-label': 'Who can use the tuner' },
       choice('any', 'Any device on my home network', ''),
-      choice('only', 'Only these devices', 'StationPlay’s own apps, signed in, never need listing.')),
+      choice('only', 'Only these devices', 'tapiOca’s own apps, signed in, never need listing.')),
     // (With sign-in off, anyone at home can open this page and change it.)
     ...(only && !me.required ? [h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' ',
       'Sign-in is off, so anyone on your home network can open this page and change who can use the tuner. Add a user, above, to turn sign-in on.')] : []),
@@ -178,7 +178,7 @@ function renderTuner(got, said = '') {
       h('button', { type: 'button', class: 'btn', onclick: loadTuner }, 'Refresh')),
     recent);
 }
-// StationPlay's apps away from home --------------------------------------------------
+// tapiOca's apps away from home --------------------------------------------------
 // Watching away from home: its settings, in its panel on the Access tab and
 // in the setup (`id`: the address box's, for its label). `note` shows (or
 // clears) what's wrong with the saved address: a port it can't have.
@@ -193,19 +193,19 @@ function awayFields(got, onEdit, id) {
   note(got.on && got.portProblem);
   address.addEventListener('input', () => note(''));  // (it's about the address saved)
   const warnings = [];
-  if (!got.publicPort) warnings.push('PUBLIC_PORT isn’t set, so apps can reach StationPlay from outside only through a VPN.');
+  if (!got.publicPort) warnings.push('PUBLIC_PORT isn’t set, so apps can reach tapiOca from outside only through a VPN.');
   if (!me.required) warnings.push('Sign-in is off. Through the public port, apps must sign in, so add a user on the Access tab first.');
   return {
     nodes: [
-      h('p', { style: 'margin:0' }, 'With this on, StationPlay’s own apps can watch your stations away from home, and Media if you share it, as they do at home. Plex, Jellyfin and other apps don’t change: they use StationPlay on your home network only.'),
+      h('p', { style: 'margin:0' }, 'With this on, tapiOca’s own apps can watch your stations away from home, and Media if you share it, as they do at home. Plex, Jellyfin and other apps don’t change: they use tapiOca on your home network only.'),
       h('div', { class: 'limit-note' }, h('strong', {}, 'What it takes'),
         h('ul', {},
-          h('li', {}, h('strong', {}, 'A way in from outside. '), 'Either a VPN such as Tailscale or WireGuard on the phone or tablet (then the address below is your server’s VPN address, such as http://nas.your-tailnet.ts.net:3310), or the public port (PUBLIC_PORT) behind a reverse proxy with HTTPS. Not a Cloudflare Tunnel: Cloudflare’s free plan isn’t meant for video. The README’s “Reaching StationPlay from outside your home” explains each.'),
+          h('li', {}, h('strong', {}, 'A way in from outside. '), 'Either a VPN such as Tailscale or WireGuard on the phone or tablet (then the address below is your server’s VPN address, such as http://nas.your-tailnet.ts.net:3310), or the public port (PUBLIC_PORT) behind a reverse proxy with HTTPS. Not a Cloudflare Tunnel: Cloudflare’s free plan isn’t meant for video. The README’s “Reaching tapiOca from outside your home” explains each.'),
           h('li', {}, h('strong', {}, 'Signing in, through the public port. '), 'Each app that signs in gets a private address for its stations, and one for each title it plays from Media. They stop working as soon as that person signs out or is removed.'),
           h('li', {}, h('strong', {}, 'Upload speed. '), 'Each station watched away from home is sent over your home internet connection, at the picture size set under Picture and tuners on the Add to Plex tab, and so is Media, at the quality you choose on the Access tab.'))),
       ...warnings.map(w => h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' ', w)),
-      h('label', {}, on, ' Let StationPlay’s apps watch away from home'),
-      h('div', { class: 'field' }, h('label', { for: id }, 'The address apps reach StationPlay at from outside'), address,
+      h('label', {}, on, ' Let tapiOca’s apps watch away from home'),
+      h('div', { class: 'field' }, h('label', { for: id }, 'The address apps reach tapiOca at from outside'), address,
         h('span', { class: 'hint', id: `${id}Hint` }, 'With a reverse proxy, its https:// address alone, with no port. With a VPN, the server’s VPN address with its port, such as http://nas.your-tailnet.ts.net:3310.'),
         portNote),
     ],
@@ -213,7 +213,7 @@ function awayFields(got, onEdit, id) {
     note,
   };
 }
-// Whether StationPlay's apps can reach it from outside (see reach.py on the
+// Whether tapiOca's apps can reach it from outside (see reach.py on the
 // server), for Admins while watching away from home is on: the pill in the
 // header, the panel's summary, and the status on the Access tab and in the
 // setup. Painted again whenever it's said anew: with the page's status
@@ -251,7 +251,7 @@ $('#awayPill').addEventListener('click', () => {
   panel.open = true;
   panel.scrollIntoView({ block: 'start', behavior: 'smooth' });
 });
-// Admin alerts (see alerts.py on the server): what StationPlay finds wrong
+// Admin alerts (see alerts.py on the server): what tapiOca finds wrong
 // now, as the page's status says them (for Admins only), in a pill in the
 // header that opens a list of them.
 let alertsNow = [];
@@ -384,12 +384,12 @@ async function loadNotify() {
     loadNotify();
   } }, 'Save');
   body.replaceChildren(
-    h('p', { style: 'margin:0' }, 'StationPlay says when something needs a look: Plex can’t be reached, the data folder is nearly full or can’t be written to, a station keeps failing to start, backups fail, the clock is badly off, or StationPlay’s apps can’t reach it from outside. Each alert shows in the header and in the log below, once when it starts and again when it’s fixed. With this on, StationPlay also sends each one to up to 3 web addresses of yours, such as an ntfy topic on your phone, Gotify, a Home Assistant webhook, or a Discord or Slack webhook.'),
+    h('p', { style: 'margin:0' }, 'tapiOca says when something needs a look: Plex can’t be reached, the data folder is nearly full or can’t be written to, a station keeps failing to start, backups fail, the clock is badly off, or tapiOca’s apps can’t reach it from outside. Each alert shows in the header and in the log below, once when it starts and again when it’s fixed. With this on, tapiOca also sends each one to up to 3 web addresses of yours, such as an ntfy topic on your phone, Gotify, a Home Assistant webhook, or a Discord or Slack webhook.'),
     h('label', {}, on, ' Send each alert to the addresses below when it starts and when it’s fixed'),
     list,
     add,
-    h('p', { class: 'hint', id: 'notifyUrlHint', style: 'margin:0' }, 'Each alert goes to every address. One that fails doesn’t hold up the others. Only Admins see the addresses, and the log shows only their sites, as an address can carry a token. StationPlay waits 5 seconds for an answer, tries once more, and follows no redirects.'),
-    h('p', { class: 'hint', id: 'notifyFormatHint', style: 'margin:0' }, 'The ntfy or plain text format sends the alert as it is, titled StationPlay. JSON sends its title, message, kind, and state (started or fixed). Discord and Slack post it as a chat message. A Discord or Slack webhook’s address always uses its own format. Mattermost and Rocket.Chat take Slack’s format too.'),
+    h('p', { class: 'hint', id: 'notifyUrlHint', style: 'margin:0' }, 'Each alert goes to every address. One that fails doesn’t hold up the others. Only Admins see the addresses, and the log shows only their sites, as an address can carry a token. tapiOca waits 5 seconds for an answer, tries once more, and follows no redirects.'),
+    h('p', { class: 'hint', id: 'notifyFormatHint', style: 'margin:0' }, 'The ntfy or plain text format sends the alert as it is, titled tapiOca. JSON sends its title, message, kind, and state (started or fixed). Discord and Slack post it as a chat message. A Discord or Slack webhook’s address always uses its own format. Mattermost and Rocket.Chat take Slack’s format too.'),
     h('div', { class: 'scan-set' }, save, result));
 }
 function reachIcon(state) {
@@ -439,7 +439,7 @@ function reachStatus({ save = null, shown = () => false } = {}) {
     // (Text is set only when it changes: `what` is read out when it does.)
     const say = (el, text) => { if (el.textContent !== text) el.textContent = text; };
     if (!reach) {
-      say(what, 'Check now saves this, and checks that apps can reach StationPlay at that address.');
+      say(what, 'Check now saves this, and checks that apps can reach tapiOca at that address.');
       say(when, '');
       return;
     }
@@ -448,7 +448,7 @@ function reachStatus({ save = null, shown = () => false } = {}) {
       reach.checkedAt ? `Checked ${ago(reach.checkedAt)}` : 'Checking…',
       // (Only apps through the public port are seen; on a VPN, they're home.)
       awayNow.address.startsWith('https://')
-        ? reach.lastApp ? `An app last reached StationPlay from outside ${ago(reach.lastApp)}` : 'No app has reached StationPlay from outside since it started'
+        ? reach.lastApp ? `An app last reached tapiOca from outside ${ago(reach.lastApp)}` : 'No app has reached tapiOca from outside since it started'
         : '',
     ].filter(Boolean).join(' · '));
   };
@@ -474,7 +474,7 @@ async function loadAway() {
     catch (e) { result.textContent = e.message; return; }
     // (Saved all the same, with a port it can't have: said plainly.)
     if (saved.on && saved.portProblem) toast(`Saved, but ${lowerFirst(saved.portProblem)}`, true);
-    else toast(on ? 'Saved. StationPlay’s apps can watch away from home.' : 'Saved. Watching away from home is off.');
+    else toast(on ? 'Saved. tapiOca’s apps can watch away from home.' : 'Saved. Watching away from home is off.');
     delete body.dataset.editing;
     loadAway();
   } }, 'Save');
@@ -483,10 +483,10 @@ async function loadAway() {
     ...media.nodes,
     h('div', { class: 'scan-set' }, save, result),
     reachStatus(),
-    ...(got.on && got.apps ? [h('p', { class: 'muted small', style: 'margin:0' }, `${plural(got.apps, 'app')} signed in away from home since StationPlay started.`)] : []));
+    ...(got.on && got.apps ? [h('p', { class: 'muted small', style: 'margin:0' }, `${plural(got.apps, 'app')} signed in away from home since tapiOca started.`)] : []));
 }
 // Media away from home: Original, or up to a number of Mbps (see away.py on
-// the server), with the upload StationPlay's apps measured from outside
+// the server), with the upload tapiOca's apps measured from outside
 // beside it, as a guide. `value()`: null for Original, the number, or
 // undefined while the number won't do.
 function mediaAwayFields(got, onEdit) {
@@ -500,8 +500,8 @@ function mediaAwayFields(got, onEdit) {
   paint();
   const up = got.upload;
   const measured = up
-    ? `StationPlay’s apps measured your home’s upload from outside at ${up.mbps} Mbps (${shortDate(up.at)}, from ${up.device}). Everyone watching away from home shares it, stations too, so a cap well under it leaves room for others.`
-    : 'No connection test from outside yet. To run one, open Options in a StationPlay app on a phone using mobile data and choose Test the connection; its result shows here, as a guide.';
+    ? `tapiOca’s apps measured your home’s upload from outside at ${up.mbps} Mbps (${shortDate(up.at)}, from ${up.device}). Everyone watching away from home shares it, stations too, so a cap well under it leaves room for others.`
+    : 'No connection test from outside yet. To run one, open Options in a tapiOca app on a phone using mobile data and choose Test the connection; its result shows here, as a guide.';
   return {
     nodes: [
       h('div', { class: 'field' },
@@ -517,7 +517,7 @@ function mediaAwayFields(got, onEdit) {
     },
   };
 }
-// How many can watch at once in StationPlay's apps (see capacity.py) ---------------
+// How many can watch at once in tapiOca's apps (see capacity.py) ---------------
 const shortDate = ms => new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric' });
 async function loadAppLimits() {
   let got;
@@ -569,23 +569,23 @@ async function loadAppLimits() {
     ...got.tests.map(t => h('tr', {}, h('td', {}, new Date(t.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })),
       h('td', {}, t.where === 'away' ? 'Away from home' : 'At home'), h('td', {}, t.device + (t.user ? ` (${t.user})` : '')), h('td', {}, `${t.mbps} Mbps`)))) : null;
   body.replaceChildren(
-    h('p', { style: 'margin:0' }, 'Each device watching in StationPlay’s apps gets its own copy of the station: at home over your network, and away from home over your internet connection’s upload. A station still uses one tuner no matter how many people watch it, so these limits are about your network, not your server’s processor. Programs played from Media in the apps count too. Plex, Jellyfin and other apps aren’t counted here: they have limits of their own, and the tuners cover them.'),
-    h('p', { class: 'muted small', style: 'margin:0' }, `Watching in StationPlay’s apps now: ${plural(got.watching.devices, 'device')}${got.watching.away ? ` (${got.watching.away} away from home)` : ''}.`),
+    h('p', { style: 'margin:0' }, 'Each device watching in tapiOca’s apps gets its own copy of the station: at home over your network, and away from home over your internet connection’s upload. A station still uses one tuner no matter how many people watch it, so these limits are about your network, not your server’s processor. Programs played from Media in the apps count too. Plex, Jellyfin and other apps aren’t counted here: they have limits of their own, and the tuners cover them.'),
+    h('p', { class: 'muted small', style: 'margin:0' }, `Watching in tapiOca’s apps now: ${plural(got.watching.devices, 'device')}${got.watching.away ? ` (${got.watching.away} away from home)` : ''}.`),
     h('div', { class: 'scan-set' }, h('label', { for: 'appLimitDevices', style: 'min-width:220px' }, 'Devices watching at once'), devices),
     h('div', { class: 'scan-set' }, h('label', { for: 'appLimitAway', style: 'min-width:220px' }, 'Of those, away from home'), away),
-    h('p', { class: 'hint', style: 'margin:0' }, 'Leave a box empty for no limit. A device that’s already watching can always change stations. Any device beyond the limit sees a message such as: “An Admin has limited StationPlay to 5 devices watching at once, so it runs smoothly for everyone. Please try again later.”'),
+    h('p', { class: 'hint', style: 'margin:0' }, 'Leave a box empty for no limit. A device that’s already watching can always change stations. Any device beyond the limit sees a message such as: “An Admin has limited tapiOca to 5 devices watching at once, so it runs smoothly for everyone. Please try again later.”'),
     warnings,
-    h('div', { class: 'limit-note' }, h('strong', {}, 'What StationPlay recommends'),
+    h('div', { class: 'limit-note' }, h('strong', {}, 'What tapiOca recommends'),
       h('ul', {},
         h('li', {}, `Each device uses about ${got.eachMbps} Mbps (at ${got.picture}, the largest picture size your stations use).`),
         tested('home'), tested('away'),
-        h('li', {}, 'To run a test, open Options in a StationPlay app and choose Test the connection. To test away from home, run it on a phone using mobile data, or anywhere outside your home; this measures your home’s upload the way viewers away from home experience it. Test when your connection isn’t busy, and again from time to time. The fastest recent test is used.'))),
+        h('li', {}, 'To run a test, open Options in a tapiOca app and choose Test the connection. To test away from home, run it on a phone using mobile data, or anywhere outside your home; this measures your home’s upload the way viewers away from home experience it. Test when your connection isn’t busy, and again from time to time. The fastest recent test is used.'))),
     h('div', { class: 'scan-set' }, save, useBtn, result),
     ...(tests ? [h('div', {}, h('strong', {}, 'Recent connection tests'), tests)] : []));
   paint();
 }
-// Media in StationPlay's apps (see ondemand.py) --------------------------------------
-// Media in StationPlay's apps: its settings, in its panel on the
+// Media in tapiOca's apps (see ondemand.py) --------------------------------------
+// Media in tapiOca's apps: its settings, in its panel on the
 // Access tab and in the setup. `changed`: whether anything's been changed.
 function libraryFields(got, onEdit) {
   const boxes = new Map();
@@ -611,13 +611,13 @@ function libraryFields(got, onEdit) {
   const first = JSON.stringify(values());
   return {
     nodes: [
-      h('p', { style: 'margin:0' }, 'Choose the Media folders people can browse and watch on demand in StationPlay’s apps, beside your stations. None are shared until you choose. Stations don’t change, and neither do Plex, Jellyfin or other apps.'),
+      h('p', { style: 'margin:0' }, 'Choose the Media folders people can browse and watch on demand in tapiOca’s apps, beside your stations. None are shared until you choose. Stations don’t change, and neither do Plex, Jellyfin or other apps.'),
       h('div', { class: 'limit-note' }, h('strong', {}, 'How it works'),
         h('ul', {},
-          h('li', {}, h('strong', {}, 'The best picture and sound. '), 'A file plays as it is whenever the device can play it, including 4K and HDR. If it can’t, StationPlay makes a copy as it plays: repackaged, with the picture kept as it is (this costs next to nothing), or converted, with the picture made again (this takes a share of the server’s processor, so at most 3 at once; on a GPU it’s light on the processor, so up to 6). Converted copies are 1080p at most, and HDR is made ordinary.'),
+          h('li', {}, h('strong', {}, 'The best picture and sound. '), 'A file plays as it is whenever the device can play it, including 4K and HDR. If it can’t, tapiOca makes a copy as it plays: repackaged, with the picture kept as it is (this costs next to nothing), or converted, with the picture made again (this takes a share of the server’s processor, so at most 3 at once; on a GPU it’s light on the processor, so up to 6). Converted copies are 1080p at most, and HDR is made ordinary.'),
           h('li', {}, h('strong', {}, 'Each person’s own place. '), 'The Resume row, where each program picks up and what’s been watched are kept for each person who signs in (shared by everyone while sign-in is off).'),
-          h('li', {}, h('strong', {}, 'At home and away. '), 'Media can be watched on your home network, or through a VPN such as Tailscale or WireGuard. With StationPlay’s apps away from home turned on (above), it can also be watched through the public port, by people signed in, at the quality you choose there.'),
-          h('li', {}, h('strong', {}, 'Steady playing. '), 'The apps buffer ahead first. If playing still can’t keep up for a while, a short connection test says whether it’s the connection, StationPlay reading the file, or the device, and a smaller version of the title is used, as you choose below.'),
+          h('li', {}, h('strong', {}, 'At home and away. '), 'Media can be watched on your home network, or through a VPN such as Tailscale or WireGuard. With tapiOca’s apps away from home turned on (above), it can also be watched through the public port, by people signed in, at the quality you choose there.'),
+          h('li', {}, h('strong', {}, 'Steady playing. '), 'The apps buffer ahead first. If playing still can’t keep up for a while, a short connection test says whether it’s the connection, tapiOca reading the file, or the device, and a smaller version of the title is used, as you choose below.'),
           h('li', {}, 'Programs played this way count toward the limit on devices watching at once, set on the Access tab.'))),
       ...(got.problem ? [h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' ', got.problem)] : []),
       ...(choices.length ? [h('div', { class: 'arr-body', style: 'margin:0;gap:6px' }, ...choices)]
@@ -648,7 +648,7 @@ async function loadAppLibraries() {
     const chosen = { ...fields.values(), evenSound: even.checked };
     try { await api('/api/app-libraries', { method: 'PUT', body: chosen }); }
     catch (e) { result.textContent = e.message; return; }
-    toast(chosen.libraries.length ? 'Saved. StationPlay’s apps can show the Media folders you chose.' : 'Saved. StationPlay’s apps don’t show any Media folder.');
+    toast(chosen.libraries.length ? 'Saved. tapiOca’s apps can show the Media folders you chose.' : 'Saved. tapiOca’s apps don’t show any Media folder.');
     delete body.dataset.editing;
     loadAppLibraries();
   } }, 'Save');
@@ -658,7 +658,7 @@ async function loadAppLibraries() {
     h('div', { class: 'scan-set' }, save, result),
     ...(got.playing ? [h('p', { class: 'muted small', style: 'margin:0' }, `Playing from Media now: ${plural(got.playing, 'device')}.`)] : []));
 }
-// API tokens, for StationPlay's API (see api.py) ----------------------------------------
+// API tokens, for tapiOca's API (see api.py) ----------------------------------------
 const API_TOKEN_DAYS = [[30, 'In 30 days'], [90, 'In 90 days'], [365, 'In a year'], [0, 'Never']];
 async function loadApiTokens() {
   let got;
@@ -670,7 +670,7 @@ async function loadApiTokens() {
   if (body.dataset.editing) return;  // (not while one is being made, or shown)
   const editing = () => { body.dataset.editing = '1'; };
   const when = ms => new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
-  const intro = h('p', { style: 'margin:0' }, 'API tokens let your own scripts, home automation (such as Home Assistant) and other players use StationPlay’s API: its stations, guide and streams, and how it’s doing. An Admin token can also update a station from Plex, check a station’s files, refresh Plex’s guide, and make a backup. The README’s “StationPlay’s API” section explains how, and docs/api.md lists every address.');
+  const intro = h('p', { style: 'margin:0' }, 'API tokens let your own scripts, home automation (such as Home Assistant) and other players use tapiOca’s API: its stations, guide and streams, and how it’s doing. An Admin token can also update a station from Plex, check a station’s files, refresh Plex’s guide, and make a backup. The README’s “tapiOca’s API” section explains how, and docs/api.md lists every address.');
   if (!got.signIn) {
     body.replaceChildren(intro, h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' Sign-in is off, so the API needs no token on your network. API tokens come with sign-in: add a user above first.'));
     return;
@@ -711,7 +711,7 @@ async function loadApiTokens() {
     const done = h('button', { type: 'button', class: 'btn', onclick: () => { delete body.dataset.editing; loadApiTokens(); } }, 'Done');
     shown.replaceChildren(h('div', { class: 'limit-note' },
       h('strong', {}, `“${made.name}” is ready`),
-      h('p', { class: 'small', style: 'margin:4px 0' }, 'Copy it now: StationPlay keeps only a fingerprint of it, so it can’t show it again. Scripts send it in a header: ', h('code', {}, 'Authorization: Bearer <token>'), '.'),
+      h('p', { class: 'small', style: 'margin:4px 0' }, 'Copy it now: tapiOca keeps only a fingerprint of it, so it can’t show it again. Scripts send it in a header: ', h('code', {}, 'Authorization: Bearer <token>'), '.'),
       h('div', { class: 'copyrow' }, code, copy, done)));
     shown.hidden = false;
     form.hidden = true;
@@ -730,10 +730,10 @@ async function loadApiTokens() {
     h('div', { class: 'limit-note' }, h('strong', {}, 'How they work'),
       h('ul', {},
         h('li', {}, h('strong', {}, 'Viewer or Admin. '), 'A Viewer token only reads. An Admin token never does more than the Admin who made it can do now.'),
-        h('li', {}, h('strong', {}, 'Shown once. '), 'StationPlay keeps only a fingerprint of each token. If one is lost, revoke it and make another.'),
-        h('li', {}, h('strong', {}, 'The API only. '), 'A token can’t open this page or sign in to StationPlay’s apps. It stops working when it expires, when it’s revoked, or when the Admin who made it is removed.'))),
+        h('li', {}, h('strong', {}, 'Shown once. '), 'tapiOca keeps only a fingerprint of each token. If one is lost, revoke it and make another.'),
+        h('li', {}, h('strong', {}, 'The API only. '), 'A token can’t open this page or sign in to tapiOca’s apps. It stops working when it expires, when it’s revoked, or when the Admin who made it is removed.'))),
     ...(table ? [table] : [h('p', { class: 'muted small', style: 'margin:0' }, 'No API tokens yet.')]),
     form, shown, result,
     h('label', {}, outside, ' Accept API tokens from the internet'),
-    h('p', { class: 'hint', style: 'margin:0' }, 'Off by default. With it off, tokens work only on your home network, or through a VPN such as Tailscale or WireGuard (to StationPlay, a VPN is home). With it on, they also work through the public port, over HTTPS only.'));
+    h('p', { class: 'hint', style: 'margin:0' }, 'Off by default. With it off, tokens work only on your home network, or through a VPN such as Tailscale or WireGuard (to tapiOca, a VPN is home). With it on, they also work through the public port, over HTTPS only.'));
 }

@@ -1,4 +1,4 @@
-"""How many devices may watch through StationPlay's apps at once, and the
+"""How many devices may watch through tapiOca's apps at once, and the
 connection tests the apps run (capacity.py)."""
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ def test_one_more_device_is_turned_away(cap):
 
 def test_what_someone_over_a_limit_is_told():
     assert capacity.refused_because("devices", 5) == (
-        "An Admin has limited StationPlay to 5 devices watching at once, so it runs smoothly "
+        "An Admin has limited tapiOca to 5 devices watching at once, so it runs smoothly "
         "for everyone. Please try again later."
     )
     assert "to 1 device watching away from home at once" in capacity.refused_because("away", 1)
@@ -66,9 +66,9 @@ def test_what_someone_over_a_limit_is_told():
 
 def test_connection_tests_and_what_they_have_room_for(cap):
     now = 100 * DAY_MS
-    cap.record("away", 18.44, "StationPlay for Android on Pixel", "Pat", now - 3 * DAY_MS)
-    cap.record("away", 9.0, "StationPlay for Android on Pixel", "Pat", now)
-    cap.record("home", 240.0, "StationPlay for Android TV on Den", "", now)
+    cap.record("away", 18.44, "tapiOca for Android on Pixel", "Pat", now - 3 * DAY_MS)
+    cap.record("away", 9.0, "tapiOca for Android on Pixel", "Pat", now)
+    cap.record("home", 240.0, "tapiOca for Android TV on Den", "", now)
     cap.record("away", 400.0, "Old phone", "Sam", now - (capacity.TEST_DAYS + 1) * DAY_MS)
     # The fastest recent test counts (the slow one ran while the connection was busy).
     best = cap.best("away", now)
@@ -152,7 +152,7 @@ def test_the_access_tab_sets_the_limits_and_shows_the_tests(client, caplog):
     assert bad.status_code == 400 and "can't be higher" in bad.json()["detail"]
     saved = client.put("/api/app-limits", json={"devices": 6, "away": 2}).json()
     assert (saved["devices"], saved["away"]) == (6, 2)
-    assert "at once in StationPlay's apps: 6; away from home: 2" in caplog.text
+    assert "at once in tapiOca's apps: 6; away from home: 2" in caplog.text
 
     # A connection test: the data, then what the app found.
     data = client.get("/api/internal/speed-test?mb=3")
@@ -165,7 +165,7 @@ def test_the_access_tab_sets_the_limits_and_shows_the_tests(client, caplog):
         assert client.get(f"/api/internal/speed-test?mb={mb}").status_code == 400
     found = client.post(
         "/api/internal/speed-test",
-        json={"mbps": 87.5, "app": "StationPlay for Android", "deviceName": "Pixel"},
+        json={"mbps": 87.5, "app": "tapiOca for Android", "deviceName": "Pixel"},
     )
     assert found.json() == {"mbps": 87.5, "where": "home", "eachMbps": 4.0, "room": 15}
     assert client.post("/api/internal/speed-test", json={"mbps": -1}).status_code == 400
@@ -173,7 +173,7 @@ def test_the_access_tab_sets_the_limits_and_shows_the_tests(client, caplog):
     [test] = got["tests"]
     assert (test["where"], test["device"], test["mbps"]) == (
         "home",
-        "StationPlay for Android on Pixel",
+        "tapiOca for Android on Pixel",
         87.5,
     )
     assert got["room"]["home"]["devices"] == 15 and got["room"]["away"] is None

@@ -39,7 +39,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stationplay"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tapioca-server"
           version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' app/__init__.py)
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           amd=$(cat "$RUNNER_TEMP/made/digest-amd64.txt")
@@ -59,7 +59,7 @@ jobs:
           if [ "$inside" != "$want" ]; then
             echo "::error::The joined image isn't the two that were tested ($inside, not $want)"; exit 1
           fi
-          echo "$image@$joined" > "$RUNNER_TEMP/made/stationplay-$version-image.txt"
+          echo "$image@$joined" > "$RUNNER_TEMP/made/tapioca-$version-image.txt"
           rm "$RUNNER_TEMP/made/digest-amd64.txt" "$RUNNER_TEMP/made/digest-arm64.txt"
           echo "::notice::Tested and pushed: $image@$joined (amd64 $amd, arm64 $arm)"
       - uses: actions/upload-artifact@v4
@@ -153,10 +153,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/made"
           if [ "${{ matrix.arch }}" = amd64 ]; then
             docker run --rm -i stationplay:latest python - "$version" < tools/sbom.py \
-              > "$RUNNER_TEMP/made/stationplay-$version-packages.txt"
+              > "$RUNNER_TEMP/made/tapioca-$version-packages.txt"
           else
             docker run --rm -i stationplay:latest python - "$version" < tools/sbom.py \
-              > "$RUNNER_TEMP/made/stationplay-$version-packages-arm64.txt"
+              > "$RUNNER_TEMP/made/tapioca-$version-packages-arm64.txt"
           fi
           echo "::notice::$(grep -ch snapshot.debian.org "$RUNNER_TEMP"/made/*.txt) Debian packages listed"
       # The tested image itself, pushed by this commit (never built again:
@@ -168,7 +168,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stationplay"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tapioca-server"
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker tag stationplay:latest "$image:sha-$GITHUB_SHA-${{ matrix.arch }}"
           pushed=$(docker push "$image:sha-$GITHUB_SHA-${{ matrix.arch }}" | tee /dev/stderr)

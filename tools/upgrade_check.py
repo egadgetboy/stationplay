@@ -24,7 +24,7 @@ one on its data folder, then back again, and a fresh install.
    everyone, which keeps Kids as they were.
 4. Live alerts, kept across a restart (from 1.31.0): with Notify a web
    address on (to a stand-in here), the report becomes an alert, and
-   backups failing another. The report is dismissed and StationPlay
+   backups failing another. The report is dismissed and tapiOca
    stopped before its next look, and started again: both alerts are there
    at once with the same IDs, neither is sent again, and the one fixed
    while it was stopped is said to be, once, at its first look; the other
@@ -52,10 +52,10 @@ update says so in the log; and the release before reads the alert settings
 this version writes, a Slack first address and all (3, 4).
 
 It prints PASS or FAIL for each check (failures always; all with -v) and
-exits 1 if any failed. Each StationPlay it starts is on free ports of its
+exits 1 if any failed. Each tapiOca it starts is on free ports of its
 own, in a process group of its own, and only that group is stopped (by its
 PID); nothing else is touched. Its temporary folders are deleted after
-(--keep leaves them, with each StationPlay's output, for a look).
+(--keep leaves them, with each tapiOca's output, for a look).
 
 Run it from the repo root, with the tests' requirements installed:
 
@@ -103,13 +103,13 @@ USER = {"name": "Sam", "password": "staple battery horse", "role": "user"}
 KIDS = {"name": "Kids", "role": "user"}  # (no password, no PIN)
 NEW = {"name": "Bo", "password": "horse staple battery", "role": "user"}
 PASSCODE = "4321"
-APP = {"app": "StationPlay for Android", "deviceName": "Den"}
+APP = {"app": "tapiOca for Android", "deviceName": "Den"}
 STATION = {"number": 5, "name": "Upgrade TV", "sources": [{"type": "show", "ratingKey": "100"}]}
 SETTINGS = {"tuners": 3, "picture": "1080p"}
-START_S = 90.0  # how long a StationPlay may take to start (it tests ffmpeg first)
-# This checkout's StationPlay, run with a stand-in for GitHub (from 1.34.0:
+START_S = 90.0  # how long a tapiOca may take to start (it tests ffmpeg first)
+# This checkout's tapiOca, run with a stand-in for GitHub (from 1.34.0:
 # the update check, see releases.py): it notes each request in the file
-# named first, and answers that a newer StationPlay is out.
+# named first, and answers that a newer tapiOca is out.
 GITHUB_STAND_IN = """
 import runpy, sys
 import httpx
@@ -124,7 +124,7 @@ releases.Releases.transport = httpx.MockTransport(answer)
 runpy.run_module("app.main", run_name="__main__", alter_sys=True)
 """
 # The longest an alert is waited for: its checks look 20 seconds after
-# StationPlay starts, then every minute.
+# tapiOca starts, then every minute.
 ALERT_WAIT_S = 100.0
 
 
@@ -258,8 +258,8 @@ class StandInPlex:
         self.thread.join(10)
 
 
-class StationPlay:
-    """One StationPlay, from `code` (a folder holding app/), on `data`, in a
+class tapiOca:
+    """One tapiOca, from `code` (a folder holding app/), on `data`, in a
     process group of its own."""
 
     def __init__(self, code: Path, data: Path, plex: str, output: Path) -> None:
@@ -490,7 +490,7 @@ def new_people(checks: Checks, url: str, made: dict) -> dict:
     }
 
 
-def stopped(checks: Checks, sp: StationPlay, version: str) -> None:
+def stopped(checks: Checks, sp: tapiOca, version: str) -> None:
     """It stops when asked, its database closed (nothing left in its -wal).
     (Uvicorn raises SIGTERM again once it has shut down, as Docker expects.)"""
     code = sp.stop()
@@ -503,10 +503,10 @@ def stopped(checks: Checks, sp: StationPlay, version: str) -> None:
 def run(checks: Checks, before_tag: str, keep: bool) -> None:
     work = Path(tempfile.mkdtemp(prefix="upgrade-check-"))
     plex = StandInPlex()
-    running: list[StationPlay] = []
+    running: list[tapiOca] = []
 
-    def start(code: Path, data: Path, name: str) -> StationPlay | None:
-        sp = StationPlay(code, data, plex.url, work / f"{name}.log")
+    def start(code: Path, data: Path, name: str) -> tapiOca | None:
+        sp = tapiOca(code, data, plex.url, work / f"{name}.log")
         running.append(sp)
         if not checks.ok(sp.started(), f"{name} starts", f"see {work / f'{name}.log'}"):
             sp.stop()
@@ -545,7 +545,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         # taken from the code under test: a change changes_needed() misses
         # would otherwise pass with no copy.)
         changed = tables_of(data) != tables_before
-        checks.ok(bool(changes) == changed, "what StationPlay said it would change is what changed",
+        checks.ok(bool(changes) == changed, "what tapiOca said it would change is what changed",
                   (changes, changed))  # fmt: skip
         if changes or changed:
             checks.ok(len(copies) == 1, "the database was backed up before it was changed",
@@ -625,7 +625,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         checks.ok(logs.count("Alert still going: ") == 2, "the Logs tab says they're still going",
                   logs[-2000:])  # fmt: skip
         checks.ok(waited(lambda: alerts_of(sp.url, bearer)["files"]["fixed"] is not None),
-                  "the one fixed while StationPlay was stopped is fixed at its first look")  # fmt: skip
+                  "the one fixed while tapiOca was stopped is fixed at its first look")  # fmt: skip
         now = alerts_of(sp.url, bearer)
         checks.ok({k: a["id"] for k, a in now.items()} == live and now["backups"]["fixed"] is None,
                   "with its ID, and the other still live", now)  # fmt: skip
@@ -645,7 +645,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         stopped(checks, sp, __version__)
         # The broken-files list, as this version keeps it: the station's
         # program, and another version of it (Media's alone).
-        logging.disable(logging.WARNING)  # (what record() says, as it would in StationPlay's log)
+        logging.disable(logging.WARNING)  # (what record() says, as it would in tapiOca's log)
         listed = BrokenFiles(data / "broken-files.json")
         first = Item(0, 0, 22 * 60_000, "201", "episode", "Part 1", show_title="Upgrade Show",
                      show_key="100", season=1, episode=1, file_path="/tv/u1.mkv")  # fmt: skip

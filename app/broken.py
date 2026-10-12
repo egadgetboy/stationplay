@@ -5,7 +5,7 @@ list. A program on the list is never attempted again; its slots are filled
 by a replacement instead. Deleting an entry (in the web page, or by editing
 the file) puts the program back into rotation.
 
-One entry per file, whoever plays it: a station, or Media in StationPlay's
+One entry per file, whoever plays it: a station, or Media in tapiOca's
 apps. A file is known by its program's key, for the file a station plays
 (its library's first version of it), and by its key and the version's ID
 for any other version of it (see version_key): the same file is the same
@@ -33,9 +33,9 @@ from .ffmpeg import redact
 log = logging.getLogger(__name__)
 
 ABOUT = (
-    "Files StationPlay skips, on the stations and in Media, because they failed to play or "
+    "Files tapiOca skips, on the stations and in Media, because they failed to play or "
     "failed a file check. To put one back on the air, fix or replace its file, then delete "
-    "its entry here (or choose Retry on the Broken files tab). StationPlay also rechecks "
+    "its entry here (or choose Retry on the Broken files tab). tapiOca also rechecks "
     "this list on its own. An entry clears when Plex has the program again under a new key, "
     "when its file is missing (or it was removed from Plex) and neither a station nor Media "
     "has it anymore, when a new file for it passes the quick check, or when it now passes "

@@ -83,7 +83,7 @@ def write_png(path: Path, width: int, height: int) -> str:
 def test_a_square_logo_is_sized_as_it_always_was(tmp_path):
     assert ff.logo_box(str(LOGO_DIR / "classic-tv.png"), 94) == (94, 94)
     assert ff.logo_box(write_png(tmp_path / "s.png", 300, 300), 50) == (50, 50)
-    # Not a PNG StationPlay can read: as a square.
+    # Not a PNG tapiOca can read: as a square.
     assert ff.logo_box(str(tmp_path / "missing.png"), 50) == (50, 50)
     (tmp_path / "junk.png").write_bytes(b"not a picture at all, not even close")
     assert ff.logo_box(str(tmp_path / "junk.png"), 50) == (50, 50)

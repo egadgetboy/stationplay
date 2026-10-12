@@ -1,6 +1,6 @@
 // The setup's dialog and its steps.
 // The setup (see setup.py) -------------------------------------------------------------
-// For an Admin (or anyone, while signing in is off). When StationPlay is
+// For an Admin (or anyone, while signing in is off). When tapiOca is
 // new: every question, with checks that what's set up is working. After an
 // update that brings new or changed questions: just those, once (and the
 // checks, if something needs a look). And everything, whenever it's run
@@ -11,12 +11,12 @@ const SETUP_TITLES = {
   checks: 'Checking your server',
   playback: 'How stations play',
   newStation: 'New station settings',
-  signIn: 'Who can use StationPlay',
+  signIn: 'Who can use tapiOca',
   viewing: 'Who sees what',
   away: 'Watching away from home',
-  library: 'Media in StationPlay’s apps',
+  library: 'Media in tapiOca’s apps',
   fileChecks: 'Checking files',
-  plex: 'Adding StationPlay to Plex',
+  plex: 'Adding tapiOca to Plex',
   done: 'All set',
 };
 // What each check's state is called beside it (the dot's color says it too).
@@ -56,14 +56,14 @@ function checkRow(c) {
       ...c.lines.map(line => h('p', { class: 'small', style: 'margin:3px 0 0' }, line))));
 }
 const needsLook = c => c.state === 'bad' || c.state === 'warn';
-// Plex's terms, which StationPlay's own use of Plex goes by (see the README's
+// Plex's terms, which tapiOca's own use of Plex goes by (see the README's
 // What you need, and PRIVACY.md).
 const PERSONAL_USE = () => h('div', { class: 'limit-note' }, h('strong', {}, 'Plex’s terms. '),
-  'Plex’s terms license Plex Media Server for personal use, on hardware and storage you own. Use StationPlay with your Plex server as those terms allow. ',
+  'Plex’s terms license Plex Media Server for personal use, on hardware and storage you own. Use tapiOca with your Plex server as those terms allow. ',
   h('a', { href: 'https://www.plex.tv/about/privacy-legal/plex-terms-of-service/', target: '_blank', rel: 'noopener noreferrer' }, 'Plex’s terms'), ' · ',
-  h('a', { href: '/privacy', target: '_blank', rel: 'noopener noreferrer' }, 'StationPlay’s privacy notice'));
+  h('a', { href: '/privacy', target: '_blank', rel: 'noopener noreferrer' }, 'tapiOca’s privacy notice'));
 const SETUP_AGAIN = 'You can run setup again any time from the Add to Plex tab, or Setup at the foot of the page.';
-// `why`: "new" (a new StationPlay), "updated" (an update has new questions),
+// `why`: "new" (a new tapiOca), "updated" (an update has new questions),
 // or "again" (run again).
 async function showSetup(st, why) {
   const dlg = $('#setupDlg');
@@ -79,8 +79,8 @@ async function showSetup(st, why) {
   const title = h('h4', { class: 'wstep' });
   const body = h('div', { class: 'setup-page' });
   const intro = h('p', { style: 'margin:0' }, {
-    new: 'A few questions to set StationPlay up, and checks that everything is working. Each answer is saved when you go on to the next step, and you can change any of them later.',
-    updated: `${status?.version ? `StationPlay ${status.version}` : 'This version of StationPlay'} has ${st.pending.length === 1 ? 'a new question' : 'new questions'} for you${steps[0] === 'checks' ? ', and something on your server needs a look' : ''}. Everything else stays as you set it.`,
+    new: 'A few questions to set tapiOca up, and checks that everything is working. Each answer is saved when you go on to the next step, and you can change any of them later.',
+    updated: `${status?.version ? `tapiOca ${status.version}` : 'This version of tapiOca'} has ${st.pending.length === 1 ? 'a new question' : 'new questions'} for you${steps[0] === 'checks' ? ', and something on your server needs a look' : ''}. Everything else stays as you set it.`,
     again: 'Here’s everything, with your current answers. Change anything you like: each answer is saved when you go on to the next step.',
   }[why]);
   const said = h('span', { class: 'hint', role: 'alert' });
@@ -168,7 +168,7 @@ async function showSetup(st, why) {
       next.disabled = false;
     }
   }
-  $('#setupTitle').textContent = { new: 'Welcome to StationPlay', updated: 'What’s new in StationPlay', again: 'Setting up StationPlay' }[why];
+  $('#setupTitle').textContent = { new: 'Welcome to tapiOca', updated: 'What’s new in tapiOca', again: 'Setting up tapiOca' }[why];
   $('#setupBody').replaceChildren(intro, h('div', { class: 'setup-grid' }, nav, h('div', { class: 'setup-main' }, title, body)));
   $('#setupFoot').replaceChildren(later, h('div', { class: 'spacer' }), said, back, next);
   step = 0;
@@ -225,7 +225,7 @@ const SETUP_PAGES = {
     }
     paint(checks);
     return { node: h('div', { class: 'playback' },
-      h('p', { class: 'hint', style: 'margin:0' }, 'StationPlay checks that it can reach Plex and read your files, how it encodes video, its clock, and its backups. Anything marked Needs a look or Not working says what to do. After changing StationPlay’s app settings, restart it, then choose Check again.'),
+      h('p', { class: 'hint', style: 'margin:0' }, 'tapiOca checks that it can reach Plex and read your files, how it encodes video, its clock, and its backups. Anything marked Needs a look or Not working says what to do. After changing tapiOca’s app settings, restart it, then choose Check again.'),
       list,
       h('div', { class: 'row-btns' }, again)) };
   },
@@ -286,16 +286,16 @@ const SETUP_PAGES = {
     const adminPassword = h('input', { type: 'password', autocomplete: 'new-password', minlength: ACCESS.passwordMin, maxlength: ACCESS.passwordMax, 'aria-label': 'Password' });
     function paint() {
       if (me.required) {
-        who.replaceChildren(h('p', { style: 'margin:0' }, `Sign-in is on, so only people you add can use StationPlay${me.user ? ` (you’re signed in as ${me.user.name})` : ''}. Add or remove people on the Access tab.`));
+        who.replaceChildren(h('p', { style: 'margin:0' }, `Sign-in is on, so only people you add can use tapiOca${me.user ? ` (you’re signed in as ${me.user.name})` : ''}. Add or remove people on the Access tab.`));
         return;
       }
-      const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Who can use StationPlay' },
+      const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Who can use tapiOca' },
         h('button', { type: 'button', 'aria-pressed': String(signIn === 'off'), onclick: () => { signIn = 'off'; paint(); } }, 'Anyone on my network'),
         h('button', { type: 'button', 'aria-pressed': String(signIn === 'on'), onclick: () => { signIn = 'on'; paint(); } }, 'Only people who sign in'));
       who.replaceChildren(...[
         h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'Who'), h('div', { class: 'opt-ctl' }, seg,
           h('span', { class: 'hint' }, signIn === 'off'
-            ? 'Anyone on your network who can open this page can use StationPlay. From the internet, StationPlay always asks people to sign in. Either way, Plex decides who can watch in Plex.'
+            ? 'Anyone on your network who can open this page can use tapiOca. From the internet, tapiOca always asks people to sign in. Either way, Plex decides who can watch in Plex.'
             : 'Make yourself the first Admin now, and you’ll be signed in right away. On the Access tab, you can add other people as Admins, or as Users who can make and change only their own stations.'))),
         signIn === 'on' ? h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'Your name'), h('div', { class: 'opt-ctl' }, adminName)) : null,
         signIn === 'on' ? h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'Password'), h('div', { class: 'opt-ctl' }, adminPassword,
@@ -318,7 +318,7 @@ const SETUP_PAGES = {
   },
 
   async viewing() {
-    const intro = h('p', { class: 'hint', style: 'margin:0' }, 'A Viewing Level says what each person can see in StationPlay’s apps and on this page: movies and shows up to a rating, whether unrated ones are shown, and which Media folders. Everyone starts on Unrestricted, which shows everything. Teen, Kid and Young Child are there to start from: on the Access tab you can rename them, change them or remove them, and add levels of your own, such as “Adults” with no R-rated movies. Admins always see everything.');
+    const intro = h('p', { class: 'hint', style: 'margin:0' }, 'A Viewing Level says what each person can see in tapiOca’s apps and on this page: movies and shows up to a rating, whether unrated ones are shown, and which Media folders. Everyone starts on Unrestricted, which shows everything. Teen, Kid and Young Child are there to start from: on the Access tab you can rename them, change them or remove them, and add levels of your own, such as “Adults” with no R-rated movies. Admins always see everything.');
     const [users, view] = me.required
       ? await Promise.all([api('/api/access/users').catch(() => []), api('/api/access/viewing').catch(() => null)])
       : [[], null];
@@ -326,8 +326,8 @@ const SETUP_PAGES = {
     if (!view || !people.length) {
       return { node: h('div', { class: 'playback' }, intro,
         h('p', { style: 'margin:0' }, me.required
-          ? 'Everyone who signs in now is an Admin. When you add people on the Access tab, choose a Viewing Level for each there, and the devices they’re on. On a shared TV, StationPlay’s apps ask Who’s tuning in? The first time, each person signs in on it with their password or an invite code. After that, they pick themselves, with their PIN if they have one.'
-          : 'Viewing Levels come with signing in: choose Only people who sign in under Who can use StationPlay, then add people on the Access tab.')) };
+          ? 'Everyone who signs in now is an Admin. When you add people on the Access tab, choose a Viewing Level for each there, and the devices they’re on. On a shared TV, tapiOca’s apps ask Who’s tuning in? The first time, each person signs in on it with their password or an invite code. After that, they pick themselves, with their PIN if they have one.'
+          : 'Viewing Levels come with signing in: choose Only people who sign in under Who can use tapiOca, then add people on the Access tab.')) };
     }
     viewing = view;
     const picks = new Map();
@@ -391,7 +391,7 @@ const SETUP_PAGES = {
       h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'File checks'), h('div', { class: 'opt-ctl' },
         h('div', { class: 'scan-set' }, h('label', {}, scanOn, ' Deep scan every night from'), scanStart, h('span', {}, 'to'), scanEnd),
         h('span', { class: 'hint' }, 'New programs get a quick check within minutes of arriving. The deep scan plays every file all the way through, starting with what airs soonest, to find damage before it airs. It pauses while anyone is watching. Problems are listed on the Broken files tab, and other programs play in their place.'))),
-      h('p', { class: 'hint', style: 'margin:0' }, 'With Sonarr or Radarr, StationPlay can also ask them to replace a damaged file: set that up on the Broken files tab, under Replacing files with Sonarr and Radarr.')),
+      h('p', { class: 'hint', style: 'margin:0' }, 'With Sonarr or Radarr, tapiOca can also ask them to replace a damaged file: set that up on the Broken files tab, under Replacing files with Sonarr and Radarr.')),
     save: async () => {
       try { await api('/api/scan', { method: 'PUT', body: { on: scanOn.checked, start: scanStart.value, end: scanEnd.value } }); } catch (e) { return e.message; }
     } };
@@ -408,7 +408,7 @@ const SETUP_PAGES = {
     } }, 'Check again');
     function paint(got) {
       const dvr = got?.find(c => c.id === 'dvr');
-      where.replaceChildren(dvr ? checkRow(dvr) : h('p', { class: 'muted small', style: 'margin:0' }, got ? '' : 'Checking whether Plex has StationPlay…'));
+      where.replaceChildren(dvr ? checkRow(dvr) : h('p', { class: 'muted small', style: 'margin:0' }, got ? '' : 'Checking whether Plex has tapiOca…'));
     }
     paint(checks);
     const copyRow = (what, value) => h('div', { class: 'copyrow' }, h('span', { class: 'what' }, what), h('code', {}, value),
@@ -417,7 +417,7 @@ const SETUP_PAGES = {
       h('div', { class: 'row-btns', style: 'align-items:flex-start' }, h('div', { style: 'flex:1' }, where), again),
       h('ol', { class: 'steps' },
         h('li', {}, 'In Plex, open ', h('em', {}, 'Settings → Live TV & DVR → Set Up Plex DVR'), '.'),
-        h('li', {}, 'Choose ', h('em', {}, 'Don’t see your HDHomeRun device? Enter its network address manually'), ' (Plex can’t find StationPlay on its own) and enter the tuner address below.'),
+        h('li', {}, 'Choose ', h('em', {}, 'Don’t see your HDHomeRun device? Enter its network address manually'), ' (Plex can’t find tapiOca on its own) and enter the tuner address below.'),
         h('li', {}, 'When Plex asks for guide data, choose ', h('em', {}, 'Have an XMLTV guide on your server? Click here to use it'), ' and enter the guide address below.'),
         h('li', {}, 'Plex matches your stations automatically (it calls them channels). Each time you make a new station, choose ', h('em', {}, 'Scan for channels'), ' in Plex’s Live TV & DVR settings so Plex adds it.'),
         h('li', {}, 'Then choose Check again here.')),
@@ -464,8 +464,8 @@ const SETUP_PAGES = {
       look.length
         ? h('div', { class: 'playback' }, h('p', { style: 'margin:0' }, look.length === 1 ? 'One thing still needs a look:' : 'A few things still need a look:'), h('div', { class: 'setup-checks' }, ...look.map(checkRow)))
         : h('p', { style: 'margin:0' }, !checks ? 'That’s everything.'
-          : checks.some(c => c.state === 'wait') ? 'Everything StationPlay could check is working.' : 'Everything StationPlay checks is working.'),
-      h('label', {}, lookOut, ' Tell me when a new StationPlay is out'),
+          : checks.some(c => c.state === 'wait') ? 'Everything tapiOca could check is working.' : 'Everything tapiOca checks is working.'),
+      h('label', {}, lookOut, ' Tell me when a new tapiOca is out'),
       h('p', { class: 'hint', style: 'margin:0' }, `${UPDATE_PRIVACY} You can change this under New versions on the Add to Plex tab.`),
       h('p', { class: 'hint', style: 'margin:0' }, why === 'new' ? `Choose Finish, then New station to make your first one. ${SETUP_AGAIN}` : SETUP_AGAIN)) };
   },

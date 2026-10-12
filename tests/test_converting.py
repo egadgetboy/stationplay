@@ -1,4 +1,4 @@
-"""Copies StationPlay makes for a device that can't play a file as it is
+"""Copies tapiOca makes for a device that can't play a file as it is
 (converting.py, keyframes.py, and playing them through applibrary.py):
 where the pieces start, reading a file's keyframes from its index,
 repackaged and converted copies played from the start and from anywhere,
@@ -768,7 +768,7 @@ def test_even_sound_can_be_turned_off(app, caplog):
         off = home.put("/api/app-libraries", json={"libraries": ["1", "2"], "evenSound": False})
         assert off.status_code == 200 and off.json()["evenSound"] is False
         assert (
-            "Even sound for a show's episodes in StationPlay's apps: off (each episode's sound as "
+            "Even sound for a show's episodes in tapiOca's apps: off (each episode's sound as "
             "it is) (set by Pat)" in caplog.text
         )
         assert "even-sound" not in home.get("/api/v1/server").json()["features"]
@@ -859,7 +859,7 @@ def test_a_converted_copy_when_the_app_asks(app, library, tmp_path, caplog):
         # The app said its decoder failed, then asks for a converted copy.
         failure = "ERROR_CODE_DECODING_FAILED (MediaCodecVideoDecoderException: Decoder failed)"
         home.post("/api/internal/problem", json={"kind": "library-stopped", "title": "A Copy",
-                                                 "detail": failure, "app": "StationPlay for Android"})  # fmt: skip
+                                                 "detail": failure, "app": "tapiOca for Android"})  # fmt: skip
         played = home.post(
             "/api/internal/play",
             json={"key": "400", "device": surround, "convert": True, "startMs": 12_000,
@@ -956,8 +956,7 @@ def test_what_an_asked_for_copy_cant_be(app, caplog):
         assert dv.status_code == 422
         assert dv.json()["why"] == ["its Dolby Vision profile 5 picture"]
         assert dv.json()["detail"] == (
-            "StationPlay can't make a converted copy of this file (its Dolby Vision profile 5 "
-            "picture)."
+            "tapiOca can't make a converted copy of this file (its Dolby Vision profile 5 picture)."
         )
 
 
@@ -992,5 +991,5 @@ def test_devices_asking_at_the_same_moment_cant_all_get_past_the_limit(app):
 
     with TestClient(app) as home:
         home.put("/api/app-libraries", json={"libraries": ["2"]})
-        codes = home.portal.call(at_once)  # (on StationPlay's own loop)
+        codes = home.portal.call(at_once)  # (on tapiOca's own loop)
     assert sorted(codes) == [200] * applibrary.CONVERTING_MOST + [503] * 2

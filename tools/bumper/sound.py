@@ -35,7 +35,7 @@ SR = 48000
 LENGTHS = (3, 5, 10, 15)
 VARIANTS = 4
 OUT = Path(__file__).resolve().parents[2] / "app" / "assets" / "bumper"
-TARGET_LUFS = -24.0  # the same loudness StationPlay evens programs out to
+TARGET_LUFS = -24.0  # the same loudness tapiOca evens programs out to
 
 rng = np.random.default_rng(0)  # replaced per version
 

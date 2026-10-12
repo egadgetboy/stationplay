@@ -46,13 +46,13 @@ class Settings:
     plex_token: str = ""
     data_dir: Path = Path("/data")
     port: int = 3310
-    # The port the internet reaches StationPlay's page on, through a tunnel or
+    # The port the internet reaches tapiOca's page on, through a tunnel or
     # reverse proxy (0: none). See access.py: Plex's addresses aren't on it.
     public_port: int = 0
     # Advertised address for Plex. Normally worked out from the request,
     # so this only needs setting behind unusual proxies.
     base_url: str = ""
-    friendly_name: str = "StationPlay"
+    friendly_name: str = "tapiOca"
     # Settings older versions read from the environment, now set on the page
     # (see playback.py), which start from them if they're given: TUNER_COUNT
     # (0: not given), and the picture size VIDEO_HEIGHT said ("" if not).
@@ -81,7 +81,7 @@ class Settings:
     idle_grace_seconds: int = 20
     # The kind of install (STATIONPLAY_INSTALL: truenas, compose, unraid,
     # synology, docker-desktop or docker-run), for the steps the page gives
-    # to update StationPlay's image (see releases.py). "": not said.
+    # to update tapiOca's image (see releases.py). "": not said.
     install: str = ""
 
     @classmethod
@@ -93,7 +93,7 @@ class Settings:
             port=_int("PORT", 3310),
             public_port=_int("PUBLIC_PORT", 0),
             base_url=os.environ.get("BASE_URL", "").rstrip("/"),
-            friendly_name=os.environ.get("FRIENDLY_NAME", "StationPlay"),
+            friendly_name=os.environ.get("FRIENDLY_NAME", "tapiOca"),
             tuner_count=_int("TUNER_COUNT", 0),
             picture=_picture(os.environ.get("VIDEO_HEIGHT", "")),
             path_mappings=_path_mappings(os.environ.get("PATH_MAPPINGS", "")),

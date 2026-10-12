@@ -1,4 +1,4 @@
-"""Media in StationPlay's apps (see docs/on-demand.md): which Media folders
+"""Media in tapiOca's apps (see docs/on-demand.md): which Media folders
 (Plex's libraries) an Admin shares with them, what the apps are told about shows,
 movies and episodes, deciding whether a device can play a file as it is,
 play sessions, and where each person is in what they watch.
@@ -45,8 +45,8 @@ SLOW_DEFAULTS = {"home": "offer", "away": "switch"}
 # turns it off ("0").
 EVEN_META = "app_even_sound"
 LIBRARIES_MOST = 100
-NOT_SHARED = "That isn't in a Media folder shared with StationPlay's apps"
-UNREACHABLE = "StationPlay can't reach Plex right now. Try again in a moment."
+NOT_SHARED = "That isn't in a Media folder shared with tapiOca's apps"
+UNREACHABLE = "tapiOca can't reach Plex right now. Try again in a moment."
 
 # Requests to the library for the apps at once, at most (the rest wait).
 LIBRARY_AT_ONCE = 6
@@ -722,7 +722,7 @@ def device(
     hdr: Iterable[str],
     audio: Iterable[str],
 ) -> Device:
-    """A device's abilities, its names for things made StationPlay's."""
+    """A device's abilities, its names for things made tapiOca's."""
     most: dict[str, tuple[int, int, int]] = {}
     for codec, width, height, depth in video:
         name = catalog.video_codec(codec)
@@ -936,7 +936,7 @@ def version_labels(media: Iterable[Media]) -> dict[int, str]:
 
 def cant_play(why: list[str]) -> str:
     """What a device that can't play a file as it is is told, when its app
-    doesn't take the copies StationPlay makes."""
+    doesn't take the copies tapiOca makes."""
     return (
         f"This device can't play this file as it is ({and_list(why)}), and this app can't "
         "take a copy made for it. Update the app to play it."
@@ -1093,13 +1093,13 @@ class PlaySession:
     sign_in: str | None  # the sign-in's token hash (None while signing in is off)
     entry: Entry
     media: Media
-    path: str | None  # the file, where StationPlay can read it itself
+    path: str | None  # the file, where tapiOca can read it itself
     plex: str | None  # otherwise, where Plex streams it from
     client: str  # which device (as for stations' streams)
     away: bool  # (started through the public port: only then is it offered there)
     # Subtitle files of their own: track id -> (where they're fetched, codec).
     subtitles: dict[str, tuple[str, str]] = field(default_factory=dict)
-    # A copy StationPlay makes of it (converting.Copy), if it doesn't play
+    # A copy tapiOca makes of it (converting.Copy), if it doesn't play
     # as it is; and where the player starts it.
     copy: Any = None
     start_s: float = 0.0
@@ -1133,7 +1133,7 @@ class PlaySessions:
     """The programs being played in the apps. Each has an address of its own
     (a player can't sign in), which ends when the app says it stopped, when
     it's unused for SESSION_IDLE_S, when its sign-in ends, and when
-    StationPlay restarts. Nothing about them is kept on disk.
+    tapiOca restarts. Nothing about them is kept on disk.
 
     What's watched counts in the stats as it's played (`count`, every
     minute or so) and as each session ends, by `count_with` (see

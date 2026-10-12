@@ -1,5 +1,5 @@
 """A stand-in for more of the Plex API: what browsing and playing your
-library in StationPlay's apps asks (see ondemand.py). Built on FakePlex,
+library in tapiOca's apps asks (see ondemand.py). Built on FakePlex,
 which it leaves as it is."""
 
 from __future__ import annotations

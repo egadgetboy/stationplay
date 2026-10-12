@@ -35,7 +35,7 @@ document.querySelectorAll('[data-picture]').forEach(b => b.addEventListener('cli
 const SUBS_HINTS = {
   off: 'Programs play without subtitles.',
   forced: 'Only lines meant to be read, such as foreign-language dialogue in a movie, when the program has them.',
-  always: 'Full subtitles in StationPlay’s language setting (English by default), when the program has them.',
+  always: 'Full subtitles in tapiOca’s language setting (English by default), when the program has them.',
 };
 const SUBS_NOTE = 'Subtitles come from the program’s file or a subtitle file next to it. They’re burned into the picture, so viewers can’t turn them off.';
 let subs = 'off';
@@ -300,7 +300,7 @@ function setBreaks(n) {
     n && isAdmin() ? h('button', { type: 'button', class: 'linkbtn', onclick: lookAgain }, 'Check again') : '');
 }
 async function lookAgain() {
-  // After adding clips to the folders: StationPlay otherwise looks every hour.
+  // After adding clips to the folders: tapiOca otherwise looks every hour.
   try {
     status = { ...status, fillers: await api('/api/fillers/refresh', { method: 'POST' }) };
     setBreaks(breaks);
@@ -329,7 +329,7 @@ document.querySelectorAll('[data-sid]').forEach(b => b.addEventListener('click',
 }));
 document.querySelectorAll('[data-sidsound]').forEach(b => b.addEventListener('click', () => setIdSound(b.dataset.sidsound === 'on')));
 
-// The Intro Bumper: off, StationPlay's card (introLength seconds long), or a
+// The Intro Bumper: off, tapiOca's card (introLength seconds long), or a
 // video you uploaded (introVideo). The card's length is kept for a video too:
 // the card stands in if the video ever won't play.
 let introKind = 'card', introLength = 5, introSound = true, introVideo = '';
@@ -351,7 +351,7 @@ let bumpers = null;  // the videos you've uploaded, {id, name, seconds}, once lo
 const MAX_BUMPER_MB = 500;
 function introHintText() {
   const n = introLength, start = tuneIn === 'start';
-  if (introKind === 'video') return `When someone tunes in, your video plays first, then ${start ? 'the program from the very beginning' : 'the show. The show keeps its place in the schedule, so viewers join it as far in as the video is long'}. Upload any video up to 30 seconds long. StationPlay makes a copy at the stream’s size, with its volume matched to the programs.`;
+  if (introKind === 'video') return `When someone tunes in, your video plays first, then ${start ? 'the program from the very beginning' : 'the show. The show keeps its place in the schedule, so viewers join it as far in as the video is long'}. Upload any video up to 30 seconds long. tapiOca makes a copy at the stream’s size, with its volume matched to the programs.`;
   if (introKind === 'off') return start ? 'Tuning in goes straight to the program, from the beginning.' : 'Tuning in goes straight to the show.';
   const card = `When someone tunes in, a card shows the station’s logo, “You’re tuning in to” followed by its name, the description below, and what’s on, for ${n} seconds`;
   if (start) return `${card}${introSound ? ', with the sound of an old TV dial being turned' : ', silently'}. Then the program plays from its very first moment, so nothing is missed. (When viewers join in progress, the show’s own sound fades in during the last third of the bumper instead.)`;
@@ -668,7 +668,7 @@ function renderSelected() {
     ? `Picked: ${sources.length}${picksTotal()}` : 'Nothing picked yet — choose shows or movies above.';
   const remove = s => { sources = sources.filter(x => sourceKey(x) !== sourceKey(s)); renderSelected(); renderLibItems(); };
   box.replaceChildren(...sources.map(s => s.type === 'filter'
-    ? h('span', { class: 'sel filter', title: 'A filter. StationPlay keeps checking Plex for matches, and new matches are added automatically. Click to change it.' },
+    ? h('span', { class: 'sel filter', title: 'A filter. tapiOca keeps checking Plex for matches, and new matches are added automatically. Click to change it.' },
         h('span', { onclick: async () => { setPickMode('filter', false); if (await initFilter(s)) remove(s); } }, `⚲ ${s.title}`),
         h('button', { type: 'button', 'aria-label': `Remove ${s.title}`, onclick: () => remove(s) }, '×'))
     : s.type === 'collection'

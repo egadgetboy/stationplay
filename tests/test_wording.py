@@ -3,7 +3,7 @@
 
 It reads the docs (README, SECURITY.md, the open-source notices, docs/*.md,
 and the release notes from 1.33.0 on), the Unraid template's words (from
-1.34.0: its Overview and what it says of each setting), StationPlay's page
+1.34.0: its Overview and what it says of each setting), tapiOca's page
 (index.html and the strings in app/web/js) and the sentences in the
 server's Python (strings with a space in them, but not docstrings or SQL).
 Code isn't words: in Markdown, code spans, code blocks and link addresses
@@ -16,6 +16,14 @@ joined to a number for sound, such as "6-channel"), "passcode," "IPTV,"
 as ABC only in capitals). On the page and in the Python, it also fails on
 "library" or "libraries": the on-demand titles are "Media," and Plex's
 libraries are "Media folders."
+
+The brand (1.34.0, the owner's rename): it fails on "StationPlay", the
+old name, and on "Tapioca", "TAPIOCA" or "TapiOca" (it's always "tapiOca";
+lowercase "tapioca" in names and addresses). These match case and all, so
+the names kept for other programs (STATIONPLAY_INSTALL, stationplay.db;
+docs/notes/names-kept.md) and lowercase names (tapioca-server) never count.
+Release notes before 1.34.0 are published history: the brand rule skips
+them.
 
 A phrase in tests/wording_allowed.txt (with why, after a #) may hold a
 flagged word: it excuses only the words inside it, and each one has to
@@ -38,6 +46,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_FILE = Path(__file__).with_name("wording_allowed.txt")
 FIRST_NOTES = (1, 33, 0)  # older release notes are published history
+FIRST_BRAND_NOTES = (1, 34, 0)  # the first notes as tapiOca
 
 
 @dataclass
@@ -48,6 +57,7 @@ class Unit:
     line: int
     text: str
     page_or_code: bool = False  # the page, or the server's Python: "library" counts
+    brand: bool = True  # the brand rule applies (all but release notes before 1.34.0)
 
 
 @dataclass
@@ -97,6 +107,11 @@ _ANYWHERE = [
     re.compile(r"(?<!\w)(?:" + _words(*_NETWORKS) + r")(?!\w)", re.IGNORECASE),
 ]
 _LIBRARY = re.compile(r"(?<!\w)librar(?:y|ies)(?!\w)", re.IGNORECASE)
+# The brand: never the old name, and tapiOca only as it's written (case matters).
+_BRAND = [
+    re.compile(r"(?<!\w)StationPlay(?!\w)"),
+    re.compile(r"(?<!\w)(?:Tapioca|TAPIOCA|TapiOca)(?!\w)"),
+]
 
 
 def find_words(unit: Unit) -> list[tuple[int, int]]:
@@ -107,7 +122,8 @@ def find_words(unit: Unit) -> list[tuple[int, int]]:
         for m in _CHANNEL.finditer(text)
         if not _SOUND.search(text[max(0, m.start() - 2) : m.start()])
     ]
-    for pattern in _ANYWHERE + ([_LIBRARY] if unit.page_or_code else []):
+    patterns = _ANYWHERE + ([_LIBRARY] if unit.page_or_code else [])
+    for pattern in patterns + (_BRAND if unit.brand else []):
         found += [(m.start(), m.end()) for m in pattern.finditer(text)]
     return sorted(found)
 
@@ -221,7 +237,13 @@ def _rel(path: Path) -> str:
 
 def doc_units() -> list[Unit]:
     units = [
-        Unit(_rel(p), 1, markdown_text(p.read_text(encoding="utf-8"))) for p in markdown_files()
+        Unit(
+            _rel(p),
+            1,
+            markdown_text(p.read_text(encoding="utf-8")),
+            brand=p.parent.name != "releases" or _notes_version(p) >= FIRST_BRAND_NOTES,
+        )
+        for p in markdown_files()
     ]
     # The API's description: its prose, not its field names or addresses.
     spec_path = ROOT / "docs" / "openapi-v1.json"
@@ -580,10 +602,28 @@ def _said(text: str, page_or_code: bool = False, allowed: tuple[str, ...] = ()) 
         ("Like Cartoon\n Network or adult swim", ["Cartoon\n Network", "adult swim"]),
         ("a channel_id and user_channels", []),
         ("Your Media library", []),
+        # The brand (1.34.0)
+        ("StationPlay's page, StationPlays", ["StationPlay"]),
+        ("Tapioca, TAPIOCA or TapiOca", ["Tapioca", "TAPIOCA", "TapiOca"]),
+        ("tapiOca, tapioca-release and ghcr.io/egadgetboy/tapioca-server", []),
+        ("STATIONPLAY_INSTALL, stationplay.db and github.com/egadgetboy/tapioca-server", []),
     ],
 )
 def test_the_words_it_finds(text, words):
     assert _said(text) == words
+
+
+def test_the_brand_rule_skips_only_release_notes_before_tapioca():
+    said = "StationPlay 1.33.1 fixes it."
+    assert [h.word for h in scan([Unit("x", 1, said, brand=False)], [])] == []
+    assert [h.word for h in scan([Unit("x", 1, said)], [])] == ["StationPlay"]
+    old = {u.path for u in doc_units() if not u.brand}
+    assert "docs/releases/v1.33.0.md" in old
+    assert all(
+        p.startswith("docs/releases/v") and _notes_version(ROOT / p) < FIRST_BRAND_NOTES
+        for p in old
+    )
+    assert all(u.brand for u in page_units() + python_units())
 
 
 def test_library_counts_on_the_page_and_in_the_code():

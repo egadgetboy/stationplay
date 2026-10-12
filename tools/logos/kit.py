@@ -1,10 +1,10 @@
-"""The drawing kit for StationPlay's logo library: SVG helpers, and a
+"""The drawing kit for tapiOca's logo library: SVG helpers, and a
 renderer (Chromium, through Playwright) that turns each logo's SVG into a
 512x512 PNG with a clear background.
 
 Fonts are open-licensed (SIL Open Font License or Apache 2.0), installed
 from npm into node_modules/ here by `npm ci`; they're only used to draw the
-PNGs, which are what StationPlay ships.
+PNGs, which are what tapiOca ships.
 """
 
 from __future__ import annotations

@@ -1,5 +1,5 @@
-"""Each person's languages in StationPlay's apps: the sound and subtitles
-they want, kept by StationPlay so they follow them to every device (see
+"""Each person's languages in tapiOca's apps: the sound and subtitles
+they want, kept by tapiOca so they follow them to every device (see
 docs/internal-api.md, Languages).
 
 A person has their own: a sound language (none: each file's default track),
@@ -8,7 +8,7 @@ these `captions` and `captionLanguage`; `subtitles` says which of the
 three). From the player, they can choose otherwise for a show (the whole
 show: Sticky Audio and Sticky Subtitles, from 1.34.0), or for an episode or
 a movie alone. When an app plays an episode or a movie without saying which
-tracks (see applibrary.py), StationPlay chooses, each of the three on its
+tracks (see applibrary.py), tapiOca chooses, each of the three on its
 own: the episode's (or movie's) choice, else its show's, else the person's,
 else the file's default.
 
@@ -24,7 +24,7 @@ language, when the sound is in another; else as Off. Their language: their
 subtitles language, else the device's (as the app says it, playing). When
 the sound's language isn't known, a full track in their language the file
 has on (its default) shows. Automatic is only for an app that sends the
-device's language when it plays, as apps from StationPlay 1.34.0 do: for an
+device's language when it plays, as apps from tapiOca 1.34.0 do: for an
 older one, nothing changes from 1.33.1 (subtitles nothing turned on are
 off). A person's sound language is never taken as their language (the
 audit of 1.34.0: Japanese sound chosen gave Japanese subtitles on every
@@ -33,7 +33,7 @@ English movie).
 Languages are ISO 639-2 codes, as files carry them ("eng", "jpn"; for the
 few with two, the one files use: "fre", "ger"). Two-letter codes ("en",
 "pt-BR"), the other three-letter ones ("fra", "deu") and English names are
-taken as them. Kept by StationPlay user (0 while signing in is off, when
+taken as them. Kept by tapiOca user (0 while signing in is off, when
 everyone shares one), and never another's.
 """
 
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from .catalog import Entry, Media, Track
     from .db import Database
 
-# The languages StationPlay knows, by code, as people read them.
+# The languages tapiOca knows, by code, as people read them.
 NAMES = {
     "afr": "Afrikaans", "alb": "Albanian", "amh": "Amharic", "ara": "Arabic", "arm": "Armenian",
     "aze": "Azerbaijani", "baq": "Basque", "bel": "Belarusian", "ben": "Bengali",
@@ -112,7 +112,7 @@ KEPT = 5000  # choices for shows, episodes and movies kept for each person (the 
 
 def code(value: object) -> str | None:
     """A language as its code ("en", "en-US", "eng", "English": "eng"); None
-    if it isn't one StationPlay knows (or isn't a language: "und")."""
+    if it isn't one tapiOca knows (or isn't a language: "und")."""
     text = value.strip().casefold() if isinstance(value, str) else ""
     if not text or len(text) > LONGEST:
         return None
@@ -137,7 +137,7 @@ def as_json(language: str | None) -> dict[str, str] | None:
 
 
 def choices() -> list[dict[str, str]]:
-    """Every language StationPlay knows, A to Z by name, for the apps' Options."""
+    """Every language tapiOca knows, A to Z by name, for the apps' Options."""
     return sorted(
         ({"code": c, "name": n} for c, n in NAMES.items()), key=lambda x: x["name"].casefold()
     )
@@ -156,7 +156,7 @@ def changes(given: dict[str, Any], own: bool) -> dict[str, Any]:
     """What an app sent to change (`given`: audio, captions, subtitles and
     captionLanguage, as it sent them), as Languages.change takes it: each
     language a code (two-letter codes and the like made one), or None.
-    ValueError, with a sentence to show, for a language StationPlay doesn't
+    ValueError, with a sentence to show, for a language tapiOca doesn't
     know; and for a person's own (`own`), for captions that aren't true or
     false (for a show, an episode or a movie, null clears it), and
     subtitles that aren't automatic, on or off (only for a person's own,
@@ -170,7 +170,7 @@ def changes(given: dict[str, Any], own: bool) -> dict[str, Any]:
         if value is not None and found is None:
             shown = "".join(c for c in str(value) if c.isprintable())[:LONGEST]
             raise ValueError(
-                f"StationPlay doesn't know the language \u201c{shown}\u201d. Send its code, such "
+                f"tapiOca doesn't know the language \u201c{shown}\u201d. Send its code, such "
                 "as eng or jpn."
             )
         out[key] = found
@@ -388,12 +388,12 @@ class Languages:
         """What a person wants for an episode or a movie: each of the three
         from the most particular place it's chosen. `sent`: the device's
         language, as the app sent it playing (None: it sent none, as apps
-        before StationPlay 1.34.0 don't). Only then are subtitles nothing
+        before tapiOca 1.34.0 don't). Only then are subtitles nothing
         turned on or off Automatic, in the person's language (their
         subtitles language, else the device's); otherwise they're off, as
         in 1.33.1. None when nothing is chosen anywhere and the device's
         language isn't known (then nothing is chosen for them: the file
-        plays as it did before StationPlay 1.29.0)."""
+        plays as it did before tapiOca 1.29.0)."""
         device = code(sent) if sent is not None else None
         level = EPISODE_LEVEL if entry.kind == EPISODE else MOVIE_LEVEL
         places = [(entry.key, level)]
@@ -402,7 +402,7 @@ class Languages:
         places.append((OWN, YOURS))
         found = self.db.languages_of(user_id, [key for key, _ in places])
         if not found and device is None:
-            return None  # (as 1.33.1, with or without a language StationPlay doesn't know)
+            return None  # (as 1.33.1, with or without a language tapiOca doesn't know)
         said = [(found[key], where) for key, where in places if key in found]
 
         def first(field: str) -> tuple[Any, str]:

@@ -7,13 +7,13 @@ its own copy of the guide, downloaded about once a day, and changing what
 airs during the stretch that copy covers would make it wrong.
 
 So an update never changes anything already in a guide. Every hour
-StationPlay asks Plex whether anything changed (skipping the work when no
+tapiOca asks Plex whether anything changed (skipping the work when no
 library has changed) and gets the updated station ready. It then takes over
 at the next program break after a moment when no guide could disagree:
 
   * when Plex downloads the guide, the update is applied just before the
     guide is generated, starting at a break a minute or more later, so the
-    guide Plex receives already shows it. StationPlay asks Plex to reload
+    guide Plex receives already shows it. tapiOca asks Plex to reload
     its guide when it has an update ready, so this usually happens within
     the hour;
   * if Plex hasn't downloaded the guide for over a day (Live TV not set up,
@@ -21,7 +21,7 @@ at the next program break after a moment when no guide could disagree:
     out to anyone.
 
 Changes you make yourself (editing a station, Update now, Reshuffle) take
-effect at the next break at least a minute away; StationPlay then asks Plex
+effect at the next break at least a minute away; tapiOca then asks Plex
 to reload its guide straight away.
 
 An update that would take away more than half of a station's programs is
@@ -63,7 +63,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# What StationPlay's guide covers: the last two hours and the next two days.
+# What tapiOca's guide covers: the last two hours and the next two days.
 # Plex re-reads the guide about once a day (its "Guide refresh time"), so
 # the file covers two days; a shorter one would leave Plex's grid empty for
 # part of each day.
@@ -85,12 +85,12 @@ KEEP_PAST_MS = GUIDE_PAST_MS + 3600 * 1000
 # programs whose intro and credits it skips) are held.
 HOLD_FRACTION = 0.5
 HOLD_MIN_PROGRAMS = 10
-# StationPlay asks Plex to reload its guide at most this often on its own.
+# tapiOca asks Plex to reload its guide at most this often on its own.
 RELOAD_EVERY_MS = 30 * 60 * 1000
 # A guide download this soon after asking Plex for one is Plex's.
 ASKED_WINDOW_MS = 3 * 60 * 1000
 DVR_RECHECK_MS = 3600 * 1000
-# Looked for again sooner if Plex has no DVR for StationPlay yet.
+# Looked for again sooner if Plex has no DVR for tapiOca yet.
 DVR_MISSING_RECHECK_MS = 5 * 60 * 1000
 
 META_PUBLISHED_UNTIL = "guide_published_until"
@@ -819,7 +819,7 @@ class Updater:
     # Asking Plex to reload its guide ----------------------------------------
 
     async def find_dvr(self) -> str | None:
-        """Plex's DVR that uses this StationPlay, if there is one."""
+        """Plex's DVR that uses this tapiOca, if there is one."""
         now = now_ms()
         recheck = DVR_RECHECK_MS if self._dvr_key else DVR_MISSING_RECHECK_MS
         if now - self._dvr_checked_ms < recheck:
@@ -837,25 +837,25 @@ class Updater:
         self._dvr_checked_ms = now_ms()
         if mine and mine[0][1].get("status", "alive") == "alive":
             self._say_once(
-                "Found StationPlay's tuner in Plex's Live TV & DVR, so StationPlay will ask Plex "
+                "Found tapiOca's tuner in Plex's Live TV & DVR, so tapiOca will ask Plex "
                 "to refresh its guide when a station changes"
             )
         elif mine:
             self._say_once(
-                f"Plex's Live TV & DVR has StationPlay's tuner but can't reach it (Plex lists "
+                f"Plex's Live TV & DVR has tapiOca's tuner but can't reach it (Plex lists "
                 f"{_described(mine[0][1])})"
             )
         else:
             listed = "; ".join(_described(d) for _, d in devices) or "none"
             self._say_once(
-                f"Plex's Live TV & DVR doesn't list StationPlay's tuner ({self.ctx.device_id}). "
+                f"Plex's Live TV & DVR doesn't list tapiOca's tuner ({self.ctx.device_id}). "
                 f"Plex lists {listed}. Until it does, refresh the guide in Plex yourself after "
                 "you change a station"
             )
         return self._dvr_key
 
     def _is_mine(self, device: dict[str, Any]) -> bool:
-        """Whether a tuner in Plex's Live TV & DVR is this StationPlay. Plex
+        """Whether a tuner in Plex's Live TV & DVR is this tapiOca. Plex
         knows a tuner by the DeviceID it gave, in the tuner's uuid
         ("device://tv.plex.grabbers.hdhomerun/<DeviceID>")."""
         wanted = self.ctx.device_id.lower()
@@ -865,7 +865,7 @@ class Updater:
         )
 
     def _say_once(self, message: str) -> None:
-        """Logs what StationPlay found out about Plex's Live TV & DVR, when
+        """Logs what tapiOca found out about Plex's Live TV & DVR, when
         that's not what it found last time."""
         if message != self._dvr_said:
             self._dvr_said = message

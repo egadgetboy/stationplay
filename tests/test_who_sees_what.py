@@ -1,7 +1,7 @@
 """Who sees what, end to end (see docs/users.md): someone on the Kid Viewing
-Level never sees a TV-MA show or an R movie anywhere StationPlay lists or
+Level never sees a TV-MA show or an R movie anywhere tapiOca lists or
 plays things, a station with one program above their level is hidden from
-them unless an Admin allows it, and a StationPlay with no limits answers as
+them unless an Admin allows it, and a tapiOca with no limits answers as
 it always has."""
 
 from __future__ import annotations

@@ -1,11 +1,11 @@
-"""Alert notifications: StationPlay posts to up to 3 web addresses when an
+"""Alert notifications: tapiOca posts to up to 3 web addresses when an
 Admin alert starts and when it's fixed (see alerts.py), for ntfy, Gotify,
 Home Assistant, Discord, Slack and the like. An Admin's setting, off to
 start, on the Logs tab: one switch for them all, and a format for each.
 
-The addresses are the Admin's own: StationPlay sends only this there, and
+The addresses are the Admin's own: tapiOca sends only this there, and
 contacts nothing else on its own. Each is http or https only. For each one,
-StationPlay waits 5 seconds for an answer, tries once more when there's no
+tapiOca waits 5 seconds for an answer, tries once more when there's no
 good one, follows no redirect, and keeps nothing of the answer but its
 status (for the page's "Last sent", kept only for an address that's saved:
 a test of one typed but not saved keeps nothing). Sending never holds
@@ -21,9 +21,9 @@ so an address that's down never has the others told it again after a
 restart; it's untold when none takes it.
 
 Four formats: plain text (the message, with a Title header, as ntfy takes
-it); JSON, for Gotify, Home Assistant and others: {"title": "StationPlay",
+it); JSON, for Gotify, Home Assistant and others: {"title": "tapiOca",
 "message": "...", "kind": "...", "state": "started" or "fixed"}; Discord's
-own: {"username": "StationPlay", "content": "...", "allowed_mentions":
+own: {"username": "tapiOca", "content": "...", "allowed_mentions":
 {"parse": []}, "flags": 4} (the message with what Discord's markdown reads,
 such as ** or a link, written as text, so a station's name shows as it is;
 cut to Discord's 2000 characters; never pinging anyone; and no link
@@ -33,11 +33,11 @@ Rocket.Chat take too. A Discord webhook's address always gets Discord's
 format, and one on hooks.slack.com Slack's, whichever was chosen: they
 refuse the others (400 Bad Request).
 
-Kept as before 1.34.0, so an older StationPlay still notifies the first
+Kept as before 1.34.0, so an older tapiOca still notifies the first
 address: META ({"on", "url", "format"}: the switch and the first address)
 and LAST_META (how the first address's last message went). The others are
 kept apart: META_MORE ([{"url", "format"}]) and LAST_MORE ({url: how its
-last message went}). (An older StationPlay sends a first address set to
+last message went}). (An older tapiOca sends a first address set to
 Slack plain text.)
 """
 
@@ -75,7 +75,7 @@ FORMATS = (TEXT, JSON, DISCORD, SLACK)
 FORMAT_NAMES = {TEXT: "plain text", JSON: "JSON", DISCORD: "Discord", SLACK: "Slack"}
 CHOOSE_FORMAT = "Choose a format: ntfy or plain text, JSON, Discord or Slack."
 ADDRESSES_MOST = 3
-TOO_MANY = f"StationPlay can send alerts to {ADDRESSES_MOST} web addresses at most."
+TOO_MANY = f"tapiOca can send alerts to {ADDRESSES_MOST} web addresses at most."
 TWICE = "Each web address can be listed only once."
 # Discord: its webhooks' sites and addresses, and the longest message it takes.
 DISCORD_HOSTS = frozenset({
@@ -95,9 +95,9 @@ ADDRESS_MAX = 500
 WAIT_S = 5.0  # the longest an answer is waited for
 AGAIN_S = 2.0  # before the one more try
 WAITING_MOST = 50  # messages waiting to go, at most (more are left out, and said)
-TITLE = "StationPlay"
+TITLE = "tapiOca"
 STARTED, FIXED, TEST = "started", "fixed", "test"
-TEST_MESSAGE = "A test from StationPlay: its alerts will come here."
+TEST_MESSAGE = "A test from tapiOca: its alerts will come here."
 NOT_HTTP = (
     "Enter a web address that starts with http:// or https://, such as https://ntfy.sh/your-topic"
 )
@@ -201,7 +201,7 @@ def shown(url: str) -> str:
 class _Message:
     """One message on its way to every address, and what's said of it:
     `done` once any address takes it; `failed` if none does, or if
-    StationPlay stops before one does. (Left out of an address, as it's no
+    tapiOca stops before one does. (Left out of an address, as it's no
     longer one or too many wait there, counts neither way.)"""
 
     __slots__ = ("done", "failed", "kind", "left", "message", "missed", "over", "state")
@@ -231,7 +231,7 @@ class _Message:
                 self.failed()
 
     def stopped(self) -> None:
-        """StationPlay stops before any address took it."""
+        """tapiOca stops before any address took it."""
         if not self.over:
             self.over = True
             if self.failed is not None:
@@ -376,7 +376,7 @@ class Notify:
     ) -> None:
         """Sends a message to every address in the background, if it's on
         (never waiting: see run_forever, which sends them). `done` is called
-        once an address takes it; `failed`, if none does, or if StationPlay
+        once an address takes it; `failed`, if none does, or if tapiOca
         stops before one does (see unsent)."""
         if not (self.on and self.addresses()) or self._waiting is None:
             return
@@ -390,7 +390,7 @@ class Notify:
 
     async def run_forever(self) -> None:
         """Hands what's waiting to each address, which sends its own one at a
-        time, for as long as StationPlay runs."""
+        time, for as long as tapiOca runs."""
         self._waiting = asyncio.Queue(WAITING_MOST)
         try:
             while True:
@@ -450,7 +450,7 @@ class Notify:
             message.went(sent is not None and sent.ok)
 
     def unsent(self) -> None:
-        """As StationPlay stops: what no address took yet, being sent or
+        """As tapiOca stops: what no address took yet, being sent or
         still waiting, is said not to have been (each one's `failed`)."""
         left = list(self._sending.values())
         self._sending.clear()
@@ -542,7 +542,7 @@ class Notify:
             return Sent(at, why, False, test)
         said = f"{status} {reason}".strip()
         if 300 <= status < 400:
-            return Sent(at, f"{said}: a redirect, which StationPlay doesn't follow", False, test)
+            return Sent(at, f"{said}: a redirect, which tapiOca doesn't follow", False, test)
         return Sent(at, said, 200 <= status < 300, test)
 
 

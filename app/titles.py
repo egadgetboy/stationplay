@@ -99,7 +99,7 @@ class Titles:
         self.asker: Asker | None = None
         # Whether any level or person hides by tags (Viewing says): only then
         # are titles asked about for theirs. Titles kept without tags are
-        # asked about once from when that began (or StationPlay started).
+        # asked about once from when that began (or tapiOca started).
         self._want_tags = False
         self._tags_since_ms = _now()
         # (refresh_tags: every title asked about again since then; kept, so
@@ -192,7 +192,7 @@ class Titles:
         """Shows never asked about (or not lately), and movies whose library
         isn't known; and, while anyone is limited by tags, every show and
         movie whose tags aren't known and weren't asked for since that began
-        (or StationPlay started), or not since `refresh_tags`, or not in the
+        (or tapiOca started), or not since `refresh_tags`, or not in the
         last day: what `fill` asks Plex about, the longest waiting first."""
         if now is None:
             now = _now()

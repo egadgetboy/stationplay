@@ -1,4 +1,4 @@
-"""A quick check, before pushing to main: the tests that read StationPlay's
+"""A quick check, before pushing to main: the tests that read tapiOca's
 own files (the Dockerfile, the docs, a tool) find them in the image too.
 
 The image's tests run in the Dockerfile's test stage, which has only what

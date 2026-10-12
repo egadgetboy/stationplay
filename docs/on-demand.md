@@ -1,9 +1,9 @@
-# Media in StationPlay's apps: design (Phase 2)
+# Media in tapiOca's apps: design (Phase 2)
 
-Phase 2 lets StationPlay's own apps browse your shows and movies in Media
+Phase 2 lets tapiOca's own apps browse your shows and movies in Media
 and play them whenever you like, alongside the stations. This document
 covers the server's side. The full product plan is in the document
-"StationPlay: the full plan," and the library layer this builds on is in
+"tapiOca: the full plan," and the library layer this builds on is in
 `docs/library.md`.
 
 ## Goals
@@ -20,7 +20,7 @@ covers the server's side. The full product plan is in the document
    converting (1.24.0).
 4. **Each person's own place.** Where someone stopped, what they've watched
    and what's next are kept for each person.
-5. **Lean.** Plex stays the catalog (Phase 3 adds folders). StationPlay
+5. **Lean.** Plex stays the catalog (Phase 3 adds folders). tapiOca
    keeps only who watched what, and copies nothing else from Plex.
 
 ## Releases
@@ -45,7 +45,7 @@ covers the server's side. The full product plan is in the document
   is on, with the Admin's quality away from home (see Away from home). Even
   sound for a show's episodes (see Even sound).
 - **1.30.0.** Media made solid. Answers come within 8 seconds whatever
-  state Plex is in (see When Plex is slow or away). StationPlay sorts, pages
+  state Plex is in (see When Plex is slow or away). tapiOca sorts, pages
   and searches lists itself, ignoring case and accents (see Lists). Up next
   is decided in one place, and progress is kept in order (see Progress,
   resume and watched). Pictures are fetched once (ETags). A device plays
@@ -73,7 +73,7 @@ offers where the app is:
 
 ## Sharing Media folders
 
-The **Access** tab has **Media in StationPlay's apps** (named for the apps'
+The **Access** tab has **Media in tapiOca's apps** (named for the apps'
 Media section from 1.25.0): a checkbox for each Media folder of shows or
 movies in Plex. None is checked at first. The choice is kept in `meta` as
 `app_libraries` (a JSON list of Media folders' keys), and each change is written to
@@ -87,7 +87,7 @@ Users alike, and, while signing in is off, anyone on the home network.
 
 Every program, show and movie an app asks about must be in a shared
 Media folder. Plex reports which Media folder each is in (`librarySectionID`).
-StationPlay remembers the answer for each key (the 5,000 most recent),
+tapiOca remembers the answer for each key (the 5,000 most recent),
 filling it in as browsing lists things, so checking rarely costs a request.
 A key that isn't shared, or that Plex doesn't know, gets 404 with the same
 sentence either way, so guessing keys reveals nothing.
@@ -97,10 +97,10 @@ sentence either way, so guessing keys reveals nothing.
 No address for the apps waits long on Plex. Whatever a request needs from
 Media (details, a list, a picture, a show's episodes), it gets within
 8 seconds of first asking (`ondemand.LIBRARY_WAIT_S`), or it answers 503:
-"StationPlay can't reach Plex right now. Try again in a moment." That's well
+"tapiOca can't reach Plex right now. Try again in a moment." That's well
 before an app would give up waiting on its own.
 
-The same goes for an answer from Plex that StationPlay can't read (one that
+The same goes for an answer from Plex that tapiOca can't read (one that
 isn't JSON, or isn't what Plex should send). It's handled as Plex being
 away, never as a 500. A single show or movie in a list that can't be read is
 left out of the list. A field of the wrong type (a year that isn't a number,
@@ -131,7 +131,7 @@ browsing rarely asks Plex for them.
 
 ## Lists
 
-StationPlay sorts and searches the lists itself, from each Media folder's whole
+tapiOca sorts and searches the lists itself, from each Media folder's whole
 list of shows or movies. It fetches that list from Plex 500 at a time (all
 the rest at once after the first) and keeps it (`Whole` in `ondemand.py`).
 The list is kept unchanged for 2 minutes, then for as long as the Media folder's
@@ -141,9 +141,9 @@ At most 8 lists are kept, with 40,000 shows and movies among them. The
 episodes of the 50 shows asked about most recently, 40,000 episodes among
 them, are kept the same way.
 
-- **Sorting.** By title, StationPlay uses the sort title. Plex's
+- **Sorting.** By title, tapiOca uses the sort title. Plex's
   sort title leaves out a leading "The," "A" or "An." For a title without
-  one, StationPlay leaves those words out itself. Titles sort from their
+  one, tapiOca leaves those words out itself. Titles sort from their
   first letter or digit ("¡Tres Caminos!" with the Ts), ignoring case and
   accents, with numbers as numbers. "#" (digits, and anything but A to Z,
   such as another alphabet) comes first. Sorted by newest added or newest
@@ -223,7 +223,7 @@ from guesses:
   (`device.hls`). For an app that doesn't, or when no copy would show it
   right, the answer is 422 with a sentence saying why, such as "This device
   can't play this file as it is (its Dolby Vision profile 5 picture), and
-  StationPlay can't make a copy of it that the device can."
+  tapiOca can't make a copy of it that the device can."
 
 The answer is a play session:
 
@@ -247,11 +247,11 @@ or, while signing in is off, its address. Every refusal is a status with
 `/play/<session>/…` addresses need no sign-in, since a player can't sign
 in. The session ID, 32 random characters (192 bits, from `secrets`), is what
 lets the player in, as the `/hls/k/` keys do. The file comes from where
-StationPlay reads it for stations: straight from disk when it can see it,
+tapiOca reads it for stations: straight from disk when it can see it,
 otherwise from Plex. Range requests are answered either way, so players
 seek freely. `POST /play/<session>/leave` ends a session (the app stopped
 playing). A session also ends 4 hours after it was last used, when its
-sign-in ends, when its Media folder is no longer shared, and when StationPlay
+sign-in ends, when its Media folder is no longer shared, and when tapiOca
 restarts. Through the public port, only a session started there is offered
 (see Away from home).
 
@@ -259,7 +259,7 @@ A session counts as a device watching, for the Admin's limits (see
 `capacity.py`), from its start until 3 minutes after it was last heard from
 (a file request or a progress report). One more device than the limits
 allow gets 503 with `limit` and `most`, as for stations. A session also
-counts as someone watching for StationPlay's file checks, which wait while
+counts as someone watching for tapiOca's file checks, which wait while
 anyone watches a station or Media (see below).
 
 ## A movie in several files
@@ -269,7 +269,7 @@ Plex keeps some movies as several files, with one version stacked from them
 movie plays as one program, on the stations and in Media. Before, only its
 first file played, and on a station, black filled the rest of its time.
 
-- **Reading it.** Wherever StationPlay reads a version's file from Plex, it
+- **Reading it.** Wherever tapiOca reads a version's file from Plex, it
   keeps every file, in order, each with its own length, and the whole
   (`catalog.Media.parts`). Each length is Plex's, or where Plex doesn't
   give one, the file's own, found by opening it. A version in one file is
@@ -298,7 +298,7 @@ first file played, and on a station, black filled the rest of its time.
   starts there, without reading the files before it. Its `why` starts with
   "its 2 files, played as one".
 - **Why this way.** It's the only way that works for the apps at the time
-  (StationPlay for Android 0.3.2, Apple 0.2.0, Roku 0.5.0), which play one
+  (tapiOca for Android 0.3.2, Apple 0.2.0, Roku 0.5.0), which play one
   address. Their players already take copies, so they need nothing new.
   Repackaging keeps the picture unchanged, so a movie whose files are alike
   (nearly all) plays at its full quality, at almost no cost.
@@ -331,7 +331,7 @@ first file played, and on a station, black filled the rest of its time.
 
 From 1.30.0, Media's files go through the same process as the stations'
 (see `scanner.py`, `broken.py` and the README's Broken files list). What
-StationPlay's checks find is kept for each file, whoever plays it, on the
+tapiOca's checks find is kept for each file, whoever plays it, on the
 one Broken files list. A file found broken for a station is broken in Media
 too, and the other way around. A file checked for one isn't checked again
 for the other unless it changes. A program's other versions are separate
@@ -347,12 +347,12 @@ files on the list (by its key and the version's ID).
 - **Trouble isn't a verdict.** A copy that can't be made or stops, or an app
   reporting that something didn't play or stopped
   (`POST /api/internal/problem`, with its playing and position, from
-  1.30.0), puts that file at the front of the checks' queue. StationPlay
+  1.30.0), puts that file at the front of the checks' queue. tapiOca
   checks the stretch around where it happened, then runs the quick check.
-  Only what StationPlay finds puts a file on the list. Trouble caused by the
+  Only what tapiOca finds puts a file on the list. Trouble caused by the
   network or the app changes nothing.
 - **Listed files in Media.** A version found broken never plays. Another
-  version plays, if there's one StationPlay didn't find broken, and the play
+  version plays, if there's one tapiOca didn't find broken, and the play
   answer's `why` says so. With none, the answer is 422: "This one can't play
   right now. An Admin has been told." A damaged version plays, as before.
   An item's details show what was found in each version
@@ -360,7 +360,7 @@ files on the list (by its key and the version's ID).
 - **People's reports** (see `reports.py`, and "Reporting a problem" in
   `docs/internal-api.md`). People pick from a list on a movie's or an
   episode's page, in the player's menu, and in a station's player. What
-  StationPlay can check is checked at once. What it can't judge waits for
+  tapiOca can check is checked at once. What it can't judge waits for
   an Admin on the **Broken files** tab. A report never takes anything out of
   Media, or off the air, by itself.
 - **Replacing.** Sonarr and Radarr replace Media's files as they do the
@@ -393,7 +393,7 @@ doesn't list `library`.
   from home). **Original** plays each title as it would at home. **Up to**
   1 to 200 Mbps plays a version within the cap as it would at home (the
   best the device plays directly, as at home). With none within the cap,
-  StationPlay converts one down to fit: a converted copy whose picture and
+  tapiOca converts one down to fit: a converted copy whose picture and
   sound need no more than the cap (as `fit` makes one for a connection,
   without its headroom). Any copy converted away from home stays within the
   cap.
@@ -403,7 +403,7 @@ doesn't list `library`.
   held against it. The apps' own "can't keep up" handling still works on
   top of the cap.
 - **A guide for the cap.** Next to the setting, the **Access** tab shows the
-  upload speed StationPlay's apps measured with their connection tests from
+  upload speed tapiOca's apps measured with their connection tests from
   outside.
 - **Limits.** A device playing through the public port is counted by its
   app's own key, as its stations are, so apps behind one reverse proxy are
@@ -418,7 +418,7 @@ doesn't list `library`.
 
 ## Copies
 
-A device that can't play a file directly gets a copy that StationPlay makes
+A device that can't play a file directly gets a copy that tapiOca makes
 as it's played (`converting.py`). The copy is HLS. Its playlist lists the
 whole program from its start, in pieces of about 6 seconds, so the player
 shows the whole length and can seek anywhere.
@@ -428,7 +428,7 @@ One ffmpeg makes the pieces as they're asked for, from where the player is
 player and no further. Pieces are deleted behind the player and when the
 session ends. ffmpeg stops when nothing has asked for 2 minutes, and the
 pieces made are deleted when nothing has asked for 10 (an app gone without
-leaving; they're made again if it comes back). StationPlay checks this
+leaving; they're made again if it comes back). tapiOca checks this
 every minute. The session itself ends after 4 hours unused.
 
 - **Repackaged** when the device plays the picture unchanged and the pieces
@@ -464,12 +464,12 @@ every minute. The session itself ends after 4 hours unused.
   failed at, that's a strike against the GPU for copies. A stall isn't,
   since a slow disk stalls too. A copy made on the GPU without trouble from
   start to end clears the strikes. After 3 strikes in a row, copies are
-  converted on the processor until StationPlay restarts. The stations keep
+  converted on the processor until tapiOca restarts. The stations keep
   the GPU, since a copy's trouble there (a GPU out of encoding sessions,
   say) says nothing about theirs. While the GPU is being tested at startup,
   or once it's turned off, copies are converted on the processor.
 - **Pieces that line up.** ffmpeg writes one MPEG-TS stream with the
-  program's own times (offset by 10 seconds), and StationPlay cuts it into
+  program's own times (offset by 10 seconds), and tapiOca cuts it into
   the pieces itself at their keyframes. So pieces made by different runs
   line up exactly.
 - **Subtitles drawn in.** A picture track (PGS, VobSub) is laid over the
@@ -557,8 +557,8 @@ Then short tests find where the trouble is:
 - **The connection.** For a file not arriving in time, a 3-second connection
   test (`/api/internal/speed-test`) against what the file needs
   (`bitrateKbps` in the play answer) shows whether it's the connection.
-- **StationPlay.** A fast connection with the file itself arriving slower
-  than it needs (the player's own measure) means it's StationPlay reading
+- **tapiOca.** A fast connection with the file itself arriving slower
+  than it needs (the player's own measure) means it's tapiOca reading
   the file (its disk, or Plex).
 - **Anything else.** The tests don't show anything else, and nothing
   switches automatically for it.
@@ -626,7 +626,7 @@ progress (user_id, rating_key, show_key, position_ms, duration_ms,
   per show, up to 20, of what that person may see.
 - **Episodes in one file** (S01E01-E02). Plex lists each, and each plays the
   file. Where someone is in one, and whether it's watched, is saved for all
-  of them (those of its show's episodes StationPlay has at hand, so without
+  of them (those of its show's episodes tapiOca has at hand, so without
   asking Plex). Up next goes past them all.
 - **Reports in order.** An app numbers its reports in each playing
   (`sequence`, from 1.30.0). A report numbered no higher than the newest for
@@ -641,7 +641,7 @@ progress (user_id, rating_key, show_key, position_ms, duration_ms,
 - **Nothing goes to Plex.** Plex's own watched status is left alone, and
   what's watched in Plex's own players doesn't move anyone's place here
   (decided for 1.21.0, and again for 1.30.0). One Plex account can't stand
-  for several people in StationPlay. Sending it to Plex for one chosen
+  for several people in tapiOca. Sending it to Plex for one chosen
   person is a later option.
 - **Removing someone.** Removing a person removes their progress.
 
@@ -658,7 +658,7 @@ airing it right now.
 
 - No preview pictures or chapter pictures (the plan's decision).
 - No downloads.
-- Nothing is copied from Plex into StationPlay's database but keys (as
+- Nothing is copied from Plex into tapiOca's database but keys (as
   stations already keep).
 
 ## Order of work

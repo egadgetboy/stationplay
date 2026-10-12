@@ -1,9 +1,9 @@
 """Finding the actual file to play for a scheduled item.
 
 Plex reports each file's path as Plex's own container sees it (for example
-/data/media/TV/Show/S01E01.mkv). StationPlay usually sees the same files
+/data/media/TV/Show/S01E01.mkv). tapiOca usually sees the same files
 under a different path (its media folder, /media by default). Rather than
-make you configure the translation, StationPlay works it out: it looks for
+make you configure the translation, tapiOca works it out: it looks for
 the tail of Plex's path inside its media folder, and once it finds a file
 it remembers the mapping and uses it for everything else.
 """
@@ -75,7 +75,7 @@ class Candidate:
 # How long a check of the media share is waited for.
 SHARE_WAIT_S = 8.0
 # A check stuck this long (an hour) is said in the log, once: placing skips
-# waits for it until it comes back, or StationPlay restarts.
+# waits for it until it comes back, or tapiOca restarts.
 STUCK_SAID_AFTER_S = 3600.0
 
 
@@ -314,7 +314,7 @@ async def resolve_source(
             None,
             plex_file,
             size,
-            error="Plex can't be reached, and StationPlay can't see the file directly",
+            error="Plex can't be reached, and tapiOca can't see the file directly",
             transient=True,
         )
     return ResolvedSource(None, plex_file, size, error=f"file not found: {plex_file}", parts=parts)
@@ -329,7 +329,7 @@ async def readable(
 ) -> ResolvedSource:
     """Where a few seconds of `item`'s file can be read from now (to see
     where its picture cuts: see cuts.py), as Plex listed it just now:
-    straight from disk when StationPlay can see it, otherwise streamed from
+    straight from disk when tapiOca can see it, otherwise streamed from
     Plex. Plex isn't asked about it again, and it isn't counted as a file
     played on the status page. With `check`, a check of the share still
     stuck from before isn't joined by another (see ShareCheck)."""
@@ -359,7 +359,7 @@ async def _checked(candidates: list[Candidate], check: ShareCheck) -> tuple[Cand
             check.said = True
             log.warning(
                 "The media share hasn't answered for over an hour. Placing skipped intros and "
-                "credits waits until it does. Check the share, then restart StationPlay."
+                "credits waits until it does. Check the share, then restart tapiOca."
             )
         return None, True
     check.since, check.said = time.monotonic(), False
@@ -376,7 +376,7 @@ async def locate(
 ) -> ResolvedSource:
     """Where a file the library has now is read from (`media`: one version
     of program `key`'s file, or one of its files): straight from disk when
-    StationPlay can see it, otherwise streamed from the library."""
+    tapiOca can see it, otherwise streamed from the library."""
     if media.file:
         found, timed_out = await find_first(local_candidates(settings, access, media.file))
         if found:

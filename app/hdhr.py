@@ -18,6 +18,10 @@ from .db import Channel, Item
 from .logos import LIBRARY_VERSION
 from .schedule import StationSchedule
 
+# The tuner's maker, as Plex and other programs discover it: kept as it was
+# before the rename to tapiOca (docs/notes/names-kept.md).
+MANUFACTURER = "StationPlay"
+
 
 def device_id_valid(device_id: str) -> bool:
     """An eight-digit hex ID, the form HDHomeRun tuners use."""
@@ -37,7 +41,7 @@ def new_device_id() -> str:
 def discover(name: str, device_id: str, base_url: str, tuner_count: int) -> dict:
     return {
         "FriendlyName": name,
-        "Manufacturer": "StationPlay",
+        "Manufacturer": MANUFACTURER,
         "ManufacturerURL": base_url,
         "ModelNumber": "HDTC-2US",
         "FirmwareName": "hdhomeruntc_atsc",
@@ -78,7 +82,7 @@ def device_xml(name: str, device_id: str, base_url: str) -> str:
   <device>
     <deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>
     <friendlyName>{escape(name)}</friendlyName>
-    <manufacturer>StationPlay</manufacturer>
+    <manufacturer>{MANUFACTURER}</manufacturer>
     <modelName>HDTC-2US</modelName>
     <modelNumber>HDTC-2US</modelNumber>
     <serialNumber>{escape(device_id)}</serialNumber>
@@ -167,7 +171,7 @@ def xmltv(
     out = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<!DOCTYPE tv SYSTEM "xmltv.dtd">',
-        '<tv generator-info-name="StationPlay">',
+        '<tv generator-info-name="tapiOca">',
     ]
     for channel, _ in channels:
         out.append(f"  <channel id={quoteattr(str(channel.number))}>")

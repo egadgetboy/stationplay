@@ -1,10 +1,10 @@
 """Replacing broken files with Sonarr and Radarr: optional, and off unless
-it's set up on the Broken files tab. StationPlay itself only ever needs
+it's set up on the Broken files tab. tapiOca itself only ever needs
 Plex; this asks the apps you already use to fetch a better file.
 
 Each time the broken-files list is gone through (see jobs.py), for each
 file on it that's broken or damaged (not unsupported), whether a station
-plays it, Media in StationPlay's apps does, or both, of the kind they're to
+plays it, Media in tapiOca's apps does, or both, of the kind they're to
 replace (what(): broken or damaged files, missing ones, or both), that
 you've said to replace (when(): when you say so, with Replace on the list,
 unless you've chosen Automatically, when you can say Leave this one to me
@@ -31,7 +31,7 @@ unless the last one brought a new file, so three in about a day; when
 they're spent with nothing to show for it, it stays on the list, saying
 so, and nothing more is tried until you choose Try again. While the app is
 downloading, nothing else is done. When it has the new file, Plex is asked
-to look in that folder; StationPlay checks the new file like any new one,
+to look in that folder; tapiOca checks the new file like any new one,
 and the program comes off the list and is back on the air if it passes
 (jobs.py). If it doesn't, its release is blocklisted in turn; unless it has
 the same problem at the same places as the file it replaced (see
@@ -281,7 +281,7 @@ def tab_section(now: Setup, entry: dict[str, Any], used: bool) -> str:
 
 def needs_you_said(entry: dict[str, Any], name: str) -> tuple[int, str, str]:
     """An entry waiting for you (see tab_section), as an Admin's alert says
-    it (see alerts.py): (when, which, what), such as "StationPlay found
+    it (see alerts.py): (when, which, what), such as "tapiOca found
     Northbound S2 E5 broken" (`name`: the program, as the alert names it)."""
     state = entry.get("replace") or {}
     app = NAMES.get(str(state.get("app") or app_for(entry)), "Sonarr")
@@ -297,7 +297,7 @@ def needs_you_said(entry: dict[str, Any], name: str) -> tuple[int, str, str]:
         said = (
             f"{name}'s file{which} is missing"
             if missing(entry)
-            else f"StationPlay found {name} {entry.get('problem') or 'broken'}"
+            else f"tapiOca found {name} {entry.get('problem') or 'broken'}"
             + (f" in {part_words(*part)}" if part else "")
         )
     at = state.get("at") if state.get("state") in DONE else None
@@ -602,7 +602,7 @@ async def _one(
         # (One version of several: the app's file is another of them.)
         raise Cant(
             f"{arr.name}'s file for it is another of its versions, not the one found broken, so "
-            "StationPlay leaves this one to you"
+            "tapiOca leaves this one to you"
         )
     if have is not None:
         # A file Plex hasn't been seen to have: Plex is asked to look.
@@ -615,7 +615,7 @@ async def _one(
         await _nudge(ctx, state, now)
         return said(
             DOWNLOADED,
-            f"{arr.name} has {have['name']}. StationPlay will check it once Plex finds it.",
+            f"{arr.name} has {have['name']}. tapiOca will check it once Plex finds it.",
         )
     # No file: a search.
     if _may_try(tried, now):
@@ -651,7 +651,7 @@ def _waiting(arr: Arr, tried: dict[str, Any], now: int, said) -> dict[str, Any]:
         return said(
             SEARCHING,
             f"{arr.name} has searched {TRIES} times. If it hasn't found a file that plays by "
-            f"{_next_try(tried)}, StationPlay will stop trying",
+            f"{_next_try(tried)}, tapiOca will stop trying",
         )
     return said(
         SEARCHING,
@@ -725,7 +725,7 @@ async def _find(
 async def _monitored(arr: Arr, found: Found) -> None:
     """Cant unless the app is monitoring it: Sonarr the show and the
     episode (as its own searches require), Radarr the movie. Unmonitored is
-    how you tell them to leave something be; StationPlay does too."""
+    how you tell them to leave something be; tapiOca does too."""
     if arr.app == SONARR:
         show = await arr.show(found.parent)
         if show.get("monitored") is not True:
@@ -739,7 +739,7 @@ async def _monitored(arr: Arr, found: Found) -> None:
 
 def _unmonitored(arr: Arr, what: str) -> str:
     return (
-        f"{arr.name} isn't monitoring {what}, so StationPlay leaves it alone. To replace the "
+        f"{arr.name} isn't monitoring {what}, so tapiOca leaves it alone. To replace the "
         f"file, monitor {what} in {arr.name}, then choose Try again."
     )
 
@@ -903,7 +903,7 @@ def leave(ctx: AppContext, entry: dict[str, Any]) -> None:
     left.update(
         app=app,
         state=LEFT,
-        note=f"StationPlay won't ask {NAMES[app]} to replace it",
+        note=f"tapiOca won't ask {NAMES[app]} to replace it",
         at=now_ms(),
     )
     ctx.broken.replacing({file_key(entry): (entry.get("lastFailed"), left)})

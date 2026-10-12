@@ -137,7 +137,7 @@ def test_every_gpl_and_lgpl_package_s_source_is_wanted():
 
 def test_another_image_s_packages_add_their_own_sources():
     listed = (
-        "StationPlay 1.34.0: every package in the image that was tested\n"
+        "tapiOca 1.34.0: every package in the image that was tested\n"
         "bash 5.2.37-2: source bash 5.2.37-2, https://snapshot.debian.org/package/bash/5.2.37-2/\n"
         "libarmonly1 1.0-1: source armonly 1.0-1, https://snapshot.debian.org/package/armonly/1.0-1/\n"
         "fastapi 0.115.0: MIT, https://pypi.org/project/fastapi/0.115.0/\n"

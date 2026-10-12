@@ -11,11 +11,11 @@ async function loadScan() {
     st.checking ? ` Checking ${plural(st.checking, 'file')} someone had trouble with first.` : '',
     st.state === 'checking' ? h('span', { class: 'chip accent', style: 'margin-left:6px' }, 'checking now')
       : st.state === 'paused' ? h('span', { class: 'chip plain', style: 'margin-left:6px', title: 'File checks pause while anyone is watching, a station or Media, so what they watch keeps playing smoothly' }, 'paused while someone is watching') : '');
-  // Media: what's shared with StationPlay's apps (once its files are known).
+  // Media: what's shared with tapiOca's apps (once its files are known).
   const m = st.media;
   $('#scanMedia').hidden = !m;
   if (m) $('#scanMedia').replaceChildren(h('strong', {}, 'Media: '),
-    m.files != null ? `${m.quickChecked.toLocaleString()} of ${plural(m.files, 'file')} in the Media folders shared with StationPlay’s apps checked, ${m.deepScanned.toLocaleString()} scanned in full. ` : '',
+    m.files != null ? `${m.quickChecked.toLocaleString()} of ${plural(m.files, 'file')} in the Media folders shared with tapiOca’s apps checked, ${m.deepScanned.toLocaleString()} scanned in full. ` : '',
     'What’s newly added is checked within minutes. The rest is scanned overnight, after the stations’ programs: what people are watching first, then the most recently added.');
   // (The reports waiting on a check are shown afresh as it ends.)
   if (scanShown && scanShown.checking !== st.checking) loadBroken();

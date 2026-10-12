@@ -1,4 +1,4 @@
-"""What StationPlay's apps are shown about a library's shows, movies and
+"""What tapiOca's apps are shown about a library's shows, movies and
 episodes, whichever source it comes from (see docs/on-demand.md): a source
 turns its own data into these, as plex.to_entry does for Plex.
 

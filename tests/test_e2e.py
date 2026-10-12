@@ -265,7 +265,7 @@ async def test_channel_survives_bad_files_and_stays_on_schedule(server, tmp_path
     async with httpx.AsyncClient(base_url=base, timeout=30) as client:
         # Plex's side of the handshake
         discover = (await client.get("/discover.json")).json()
-        # (Twice StationPlay's 4: see playback.announced.)
+        # (Twice tapiOca's 4: see playback.announced.)
         assert discover["TunerCount"] == 8
         assert discover["LineupURL"] == f"{base}/lineup.json"
 
@@ -1202,7 +1202,7 @@ async def test_an_update_takes_over_seamlessly_while_watching(tmp_path, monkeypa
 
 
 async def test_a_hiccup_mid_program_resumes_the_same_program(tmp_path, media, monkeypatch, caplog):
-    """The share hangs once partway through an episode: StationPlay picks
+    """The share hangs once partway through an episode: tapiOca picks
     the same episode up again from where it stopped rather than skipping it,
     and doesn't blame the file."""
     from app import broadcaster

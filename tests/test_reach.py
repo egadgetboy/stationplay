@@ -1,5 +1,5 @@
-"""Whether StationPlay's apps can reach it from outside (see reach.py): the
-address StationPlay checks itself at, what a check finds, the status from
+"""Whether tapiOca's apps can reach it from outside (see reach.py): the
+address tapiOca checks itself at, what a check finds, the status from
 the checks and the apps, and where the page gets it."""
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ def answering(r: Reach, handler) -> None:
 
 
 def stationplay(r: Reach, *, outside: bool, https: bool):
-    """This StationPlay answering a check that came in through the public
+    """This tapiOca answering a check that came in through the public
     port (`outside`) or not, over HTTPS or not."""
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -119,12 +119,12 @@ def ready(r):
 FINDINGS = [
     # (the address, what answers there, the status's words, what its sentence says)
     ("https://tv.example.com", ready, "Ready",
-     ["Ready. Apps away from home reach StationPlay at https://tv.example.com."]),
+     ["Ready. Apps away from home reach tapiOca at https://tv.example.com."]),
     ("https://tv.example.com", lambda r: stationplay(r, outside=False, https=True), "Checking",
      ["Warning: your reverse proxy passes https://tv.example.com to port 3310", "home port",
       "never asks for a password", "public port, 8443"]),
     ("https://tv.example.com", lambda r: stationplay(r, outside=True, https=False), "Checking",
-     ["reaches StationPlay's public port", "X-Forwarded-Proto"]),
+     ["reaches tapiOca's public port", "X-Forwarded-Proto"]),
     ("http://tv.example.com", lambda r: stationplay(r, outside=True, https=False), "Checking",
      ["Warning: http://tv.example.com doesn't use HTTPS", "only over HTTPS"]),
     ("http://tv.example.com:8080", lambda r: stationplay(r, outside=False, https=False), "Checking",
@@ -153,13 +153,13 @@ FINDINGS = [
     ("https://tv.example.com", lambda r: fails(connect_error(), ssl.SSLCertVerificationError(
         1, "certificate verify failed: certificate has expired")),
      "Checking", ["has expired"]),
-    # StationPlay's own port with https:// is wrong wherever it's checked from.
+    # tapiOca's own port with https:// is wrong wherever it's checked from.
     ("https://tv.example.com:8443", lambda r: fails(connect_error(), ssl.SSLError(
         1, "[SSL: WRONG_VERSION_NUMBER] wrong version number")),
      "Checking", ["doesn't answer over HTTPS", "Leave the port out", "https://tv.example.com."]),
     ("https://tv.example.com", lambda r: answers(502), "Checking",
      ["The reverse proxy at https://tv.example.com answered with an error (502 Bad Gateway)",
-      "couldn't reach StationPlay", "public port, 8443"]),
+      "couldn't reach tapiOca", "public port, 8443"]),
     ("https://tv.example.com", lambda r: answers(504), "Checking", ["504 Gateway Timeout"]),
     ("https://tv.example.com", lambda r: answers(522), "Checking", ["error (522)"]),
     # What may be the router (see ROUTER_LIKE): nothing from here has worked,
@@ -209,25 +209,25 @@ ROUTER_LIKE = [
      ["isn't trusted: devices don't know who issued it"]),
     # Its sign-in page, or a warning page in its place.
     (lambda r: answers(200, html="<h1>A potential DNS Rebind attack has been detected.</h1>"),
-     "answers with a page that isn't StationPlay's",
-     ["Something other than this StationPlay answered", "a page that isn't StationPlay's"]),
+     "answers with a page that isn't tapiOca's",
+     ["Something other than this tapiOca answered", "a page that isn't tapiOca's"]),
     (lambda r: answers(403, html="<h1>Login</h1>"),
-     "answers with 403 Forbidden instead of StationPlay's answer",
+     "answers with 403 Forbidden instead of tapiOca's answer",
      ["turned the check away", "(403 Forbidden)", "access list"]),
-    (lambda r: answers(404), "answers with 404 Not Found instead of StationPlay's answer",
-     ["Something other than this StationPlay answered at https://tv.example.com (404 Not Found)"]),
-    # (Another StationPlay: it isn't waiting for this check.)
+    (lambda r: answers(404), "answers with 404 Not Found instead of tapiOca's answer",
+     ["Something other than this tapiOca answered at https://tv.example.com (404 Not Found)"]),
+    # (Another tapiOca: it isn't waiting for this check.)
     (lambda r: answers(200, json={"stationplay": True}),
-     "answers with a page that isn't StationPlay's",
-     ["Something other than this StationPlay answered"]),
+     "answers with a page that isn't tapiOca's",
+     ["Something other than this tapiOca answered"]),
     # A redirect to it, or to a sign-in page.
     (lambda r: answers(302, headers={"Location": "https://192.168.1.1/index.php"}),
      "redirects to https://192.168.1.1/index.php",
-     ["redirects to https://192.168.1.1/index.php instead of reaching StationPlay"]),
+     ["redirects to https://192.168.1.1/index.php instead of reaching tapiOca"]),
     (lambda r: answers(
         302, headers={"Location": "https://auth.example.com/login?rd=https%3A%2F%2Ftv"}),
      "redirects to https://auth.example.com/login",
-     ["redirects to https://auth.example.com/login instead of reaching StationPlay"]),
+     ["redirects to https://auth.example.com/login instead of reaching tapiOca"]),
     (lambda r: fails(connect_error(), ssl.SSLError(1, "[SSL: WRONG_VERSION_NUMBER] wrong version number")),
      "doesn't answer over HTTPS",
      ["doesn't answer over HTTPS", "Check that the address leads to your reverse proxy"]),
@@ -314,7 +314,7 @@ async def test_a_value_is_answered_only_while_its_check_waits():
         return httpx.Response(404)
 
     answering(r, late)
-    assert "Something other than this StationPlay answered" in (await r.check_now()).detail
+    assert "Something other than this tapiOca answered" in (await r.check_now()).detail
 
 
 # The status -----------------------------------------------------------------------
@@ -347,8 +347,8 @@ async def test_one_problem_isnt_down_two_a_minute_apart_are(caplog):
     assert back.state == "up" and back.since_ms >= down.since_ms
     lines = [(rec.levelname, rec.getMessage()) for rec in caplog.records]
     assert lines == [
-        ("WARNING", "StationPlay's apps can't reach it from outside. " + down.detail),
-        ("INFO", "StationPlay's apps can reach it from outside again, at https://tv.example.com"),
+        ("WARNING", "tapiOca's apps can't reach it from outside. " + down.detail),
+        ("INFO", "tapiOca's apps can reach it from outside again, at https://tv.example.com"),
     ]
 
 
@@ -429,7 +429,7 @@ async def test_an_app_that_came_in_lately_makes_it_up():
     r.access.app_outside_at = clock.now - 5 * 60  # type: ignore[attr-defined]
     up = await r.check_now()
     assert up.state == "up" and up.short == "Apps are getting in"
-    assert "Apps away from home are reaching StationPlay" in up.detail
+    assert "Apps away from home are reaching tapiOca" in up.detail
     assert abs(up.app_ms - (up.checked_ms - 5 * 60_000)) < 2000
     # 15 minutes after it, it's back to what checks from here can tell.
     clock.now += 10 * 60 + 1  # type: ignore[attr-defined]
@@ -532,7 +532,7 @@ def test_stationplay_answers_its_own_check_on_both_ports(app):
                 got = client.get(asked)
                 assert got.status_code == 404 and got.json() == {"detail": "Not Found"}
         assert internet.get("/api/v1/stations").status_code == 403
-        # Through a proxy that doesn't say HTTPS: StationPlay says what came.
+        # Through a proxy that doesn't say HTTPS: tapiOca says what came.
         proxy = Proxy(app, PUBLIC_PORT, https=False)
         ctx.reach.transport = proxy.transport
         on = home.put("/api/away", json={"on": True, "address": "https://tv.example.com"})

@@ -1,4 +1,4 @@
-"""Media in StationPlay's apps: the apps' own addresses for browsing
+"""Media in tapiOca's apps: the apps' own addresses for browsing
 and playing it (under /api/internal; see docs/on-demand.md, and
 docs/internal-api.md for the contract), the play sessions' own addresses,
 and the Access tab's setting.
@@ -67,9 +67,9 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-NONE_SHARED = "No Media folders are shared with StationPlay's apps"
+NONE_SHARED = "No Media folders are shared with tapiOca's apps"
 AWAY_OFF = (
-    "Media can be watched away from home once an Admin turns on StationPlay's apps "
+    "Media can be watched away from home once an Admin turns on tapiOca's apps "
     "away from home, on the Access tab."
 )
 PLAY_ENDED = "That program's address has ended. Choose it again to play it."
@@ -87,9 +87,9 @@ PAST_END = "That's past the end of this program"
 # past it is the end: watched).
 PAST_END_MS = 10 * 60_000
 UNREACHABLE_SAID_S = 60.0  # (the log says the library can't be reached once a minute, at most)
-NO_FILE = "StationPlay can't reach this program's file right now. Try again in a moment."
-COPY_FAILED = "StationPlay couldn't make this ready to play here. Try again, or choose another."
-# A program whose every version StationPlay found broken (see broken.py):
+NO_FILE = "tapiOca can't reach this program's file right now. Try again in a moment."
+COPY_FAILED = "tapiOca couldn't make this ready to play here. Try again, or choose another."
+# A program whose every version tapiOca found broken (see broken.py):
 # what the app is told. (The Broken files tab has it, for an Admin.)
 ON_THE_LIST = "This one can't play right now. An Admin has been told."
 KEYFRAMES_WAIT_S = 20.0  # reading a file's index, at most
@@ -104,7 +104,7 @@ STEP_S = 120.0
 CONVERTING_MOST = 3
 CONVERTING_MOST_GPU = 6
 BUSY_CONVERTING = (
-    "StationPlay is already converting as much as it can for other devices. Try again in a "
+    "tapiOca is already converting as much as it can for other devices. Try again in a "
     "little while."
 )
 
@@ -159,7 +159,7 @@ class PlayAsk(BaseModel):
     # decoder failed at the file; see play_copy).
     convert: bool = False
     # The device's language ("en-US"), for Automatic subtitles (from 1.34.0:
-    # see languages.py). One StationPlay doesn't know is none.
+    # see languages.py). One tapiOca doesn't know is none.
     language: str | None = Field(default=None, max_length=languages.LONGEST)
 
 
@@ -243,7 +243,7 @@ def details(e: Entry) -> dict:
 
 def versions(e: Entry, problems: dict[str, str] | None = None) -> list[dict]:
     """An episode's or movie's versions, the best first (see `versions` in
-    docs/internal-api.md); `problems`: what StationPlay found wrong with
+    docs/internal-api.md); `problems`: what tapiOca found wrong with
     each one's file, if anything ("broken" or "damaged", by its ID)."""
     best = ondemand.best_first(e.media)
     names = ondemand.version_labels(best)
@@ -469,7 +469,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     def proxy() -> httpx.AsyncClient:
         """The one client that fetches files and subtitles from Plex for
-        players (made when first needed; closed as StationPlay stops)."""
+        players (made when first needed; closed as tapiOca stops)."""
         if ctx.play_client is None:
             ctx.play_client = httpx.AsyncClient(
                 timeout=PROXY_TIMEOUT, transport=ctx.play_transport, follow_redirects=False
@@ -477,7 +477,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         return ctx.play_client
 
     def person(request: Request) -> tuple[int, str]:
-        """Who's asking: (their StationPlay user id, name); (0, "") while
+        """Who's asking: (their tapiOca user id, name); (0, "") while
         signing in is off."""
         user = access.signed_in(request)
         return (user.id, user.name) if user else (0, "")
@@ -519,7 +519,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         now = time.monotonic()
         if now - said_unreachable[0] >= UNREACHABLE_SAID_S:
             said_unreachable[0] = now
-            log.warning("A StationPlay app couldn't be shown Media (%s)", why)
+            log.warning("A tapiOca app couldn't be shown Media (%s)", why)
         return HTTPException(503, ondemand.UNREACHABLE)
 
     @contextlib.asynccontextmanager
@@ -555,7 +555,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         except (KeyError, TypeError, AttributeError, ValueError):
             # (What the library said couldn't be read: as though it were
             # away, rather than a stack trace for the app.)
-            log.exception("What Plex said for a StationPlay app couldn't be read")
+            log.exception("What Plex said for a tapiOca app couldn't be read")
             raise HTTPException(503, ondemand.UNREACHABLE) from None
         finally:
             titles_module.ensure_until.reset(until)
@@ -895,7 +895,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     # Playing ---------------------------------------------------------------
 
     def found_in(e: Entry) -> list[tuple[Media, str]]:
-        """The versions of a program whose files StationPlay found broken
+        """The versions of a program whose files tapiOca found broken
         (it can't play) or damaged (it plays, but breaks up in places): see
         broken.py. (Unsupported is the stations' alone: the apps play by
         what each device shows.)"""
@@ -919,7 +919,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         )
 
     async def source_of(e: Entry, media: Media) -> tuple[str | None, str | None]:
-        """Where a version's file is read from: (its path, where StationPlay
+        """Where a version's file is read from: (its path, where tapiOca
         can read it itself; otherwise Plex's address for it)."""
         path = None
         if media.file:
@@ -1129,7 +1129,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         does), and in a copy (`copy`), one inside the file too, as a copy
         holds none; in a copy that joins a version's several files
         (`joined`), any, as one of its own goes with one of them alone. Only
-        one StationPlay can draw: otherwise none."""
+        one tapiOca can draw: otherwise none."""
         found = picked.subtitle if picked else None
         if found is None or (not joined and found.codec in shows and (found.external or not copy)):
             return None
@@ -1167,7 +1167,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 return ["its subtitles (a picture subtitle file of its own)"]
             return Subtitles(stream=nth, image=True), None
         if not ctx.subtitling:
-            return ["its subtitles (StationPlay can't draw text subtitles)"]
+            return ["its subtitles (tapiOca can't draw text subtitles)"]
         if track.external:
             url = ctx.library.stream_url(e.key, f"/library/streams/{track.id}")
             return url if url is not None and track.id.isdigit() else ["its subtitles"]
@@ -1180,7 +1180,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         try:
             await asyncio.to_thread(job.target.parent.mkdir, parents=True, exist_ok=True)
         except OSError as ex:
-            log.warning("A copy for a StationPlay app couldn't be made (%s)", ex)
+            log.warning("A copy for a tapiOca app couldn't be made (%s)", ex)
             raise HTTPException(503, COPY_FAILED) from None
         return job.ready(), (None if job.target.exists() else subtitles.extract(settings, job))
 
@@ -1199,7 +1199,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         shows: frozenset[str] = frozenset(),
         passed_over: tuple[Media, ...] = (),
     ) -> Any:
-        """Playing a copy StationPlay makes (see converting.py), for a device
+        """Playing a copy tapiOca makes (see converting.py), for a device
         that can't play the file as it is, or for subtitles drawn in, a
         smaller picture made to fit, night mode's sound, or away from home,
         a file over the Admin's cap (`cap`, in kbps) converted down to fit
@@ -1212,7 +1212,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         `only_sound`: a version the device plays as it is, copied only for
         even sound: its picture kept as it is, and only its sound made. None
         (play it as it is, then) if its picture can't be kept.
-        `passed_over`: versions StationPlay found broken, never made a copy
+        `passed_over`: versions tapiOca found broken, never made a copy
         of.
 
         With the app's `convert` (its decoder failed at the file), the copy
@@ -1227,7 +1227,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         smaller = body.fit and body.maxKbps is not None
 
         def refuse(why: list[str]) -> JSONResponse:
-            log.info("StationPlay can't make a copy of %s for an app (%s)", describe(e),
+            log.info("tapiOca can't make a copy of %s for an app (%s)", describe(e),
                      ondemand.and_list(why))  # fmt: skip
             detail = cant_convert(why) if body.convert else cant_copy(why)
             return JSONResponse({"detail": detail, "why": why}, status_code=422)
@@ -1385,7 +1385,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         try:
             folder = await asyncio.to_thread(converting.new_folder)
         except OSError as ex:  # (the disk full, say)
-            log.warning("A copy for a StationPlay app couldn't be made (%s)", ex)
+            log.warning("A copy for a tapiOca app couldn't be made (%s)", ex)
             raise HTTPException(503, COPY_FAILED) from None
         # Converted at once, at most: counted after the last wait before this
         # one is, so devices asking at the same moment can't all get past it
@@ -1486,7 +1486,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         cap: int | None,
     ) -> str | None:
         """Why another version plays, when the one that would have (the one
-        asked for, or else the one chosen for the device) is one StationPlay
+        asked for, or else the one chosen for the device) is one tapiOca
         found broken; None when it isn't."""
         if not broken:
             return None
@@ -1497,8 +1497,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             return None
         name = ondemand.version_labels(best)[best.index(would)]
         log.info(
-            "%s: another version plays in StationPlay's apps, as StationPlay found the %s one "
-            "broken",
+            "%s: another version plays in tapiOca's apps, as tapiOca found the %s one broken",
             describe(e),
             name,
         )
@@ -1522,16 +1521,16 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(400, NOT_PLAYABLE)
         if not e.media:
             raise HTTPException(404, "This program has no file to play")
-        # What StationPlay found broken never plays: another version of it
+        # What tapiOca found broken never plays: another version of it
         # does, if there's one it didn't (and the answer says so).
         broken = tuple(m for m, problem in found_in(e) if problem == "broken")
         if len(broken) >= len(e.media):
             log.info(
-                "A StationPlay app asked to play %s, but StationPlay found its file broken (see "
+                "A tapiOca app asked to play %s, but tapiOca found its file broken (see "
                 "the Broken files tab)",
                 describe(e),
             )
-            why = ["StationPlay found its file broken"]
+            why = ["tapiOca found its file broken"]
             return JSONResponse({"detail": ON_THE_LIST, "why": why}, status_code=422)
         usable = replace(e, media=tuple(m for m in e.media if m not in broken)) if broken else e
         dev = ondemand.device(
@@ -1578,7 +1577,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if body.convert:
             if "ts" not in hls:
                 why = ["this app doesn't take copies"]
-                log.info("A StationPlay app asked for a converted copy of %s, but can't take one",
+                log.info("A tapiOca app asked for a converted copy of %s, but can't take one",
                          describe(e))  # fmt: skip
                 return JSONResponse({"detail": CANT_TAKE_COPY, "why": why}, status_code=422)
             converted = await play_copy(
@@ -1594,14 +1593,14 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             return with_instead(copied, instead)
         if media is None:
             log.info(
-                "A StationPlay app can't play %s as it is (%s)", describe(e), ondemand.and_list(why)
+                "A tapiOca app can't play %s as it is (%s)", describe(e), ondemand.and_list(why)
             )
             return JSONResponse({"detail": ondemand.cant_play(why), "why": why}, status_code=422)
         if capped and cap:
             # (An app that can't take a copy made to fit.)
             need = playing.mbps(ondemand.needs_kbps(media) or 0)
             why = [f"it needs {need}, more than the {playing.mbps(cap)} allowed away from home"]
-            log.info("A StationPlay app can't play %s away from home (%s)", describe(e), why[0])
+            log.info("A tapiOca app can't play %s away from home (%s)", describe(e), why[0])
             return JSONResponse({"detail": too_fast(need, cap), "why": why}, status_code=422)
         # (A subtitle inside the file, chosen for them, that the player shows
         # itself: a copy would hold none, so the file plays as it is.)
@@ -1893,7 +1892,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 after = ctx.shared.save_when_slow(body.whenSlow.home, body.whenSlow.away)
                 if after != before:
                     log.info(
-                        "When playing in StationPlay's apps can't keep up: at home, %s; away "
+                        "When playing in tapiOca's apps can't keep up: at home, %s; away "
                         "from home, %s",
                         _slow_words(after["home"]),
                         _slow_words(after["away"]),
@@ -1904,7 +1903,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if body.evenSound is not None and body.evenSound != ctx.shared.even_sound:
             ctx.shared.save_even_sound(body.evenSound)
             log.info(
-                "Even sound for a show's episodes in StationPlay's apps: %s%s",
+                "Even sound for a show's episodes in tapiOca's apps: %s%s",
                 "on" if body.evenSound else "off (each episode's sound as it is)",
                 f" (set by {who.name})" if who else "",
             )
@@ -1915,7 +1914,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             names = {}
         chosen = ", ".join(names.get(k, f"Media folder {k}") for k in keys) or "none"
         log.info(
-            "Media folders in StationPlay's apps: %s%s",
+            "Media folders in tapiOca's apps: %s%s",
             chosen,
             f" (set by {who.name})" if who else "",
         )
@@ -1957,17 +1956,17 @@ def chosen(picked: languages.Picked | None, sound: Track | None, shown: Track | 
 
 
 def cant_copy(why: list[str]) -> str:
-    """Why StationPlay can't make a copy for a device, in a sentence."""
+    """Why tapiOca can't make a copy for a device, in a sentence."""
     return (
-        f"This device can't play this file as it is ({ondemand.and_list(why)}), and StationPlay "
+        f"This device can't play this file as it is ({ondemand.and_list(why)}), and tapiOca "
         "can't make a copy of it that the device can."
     )
 
 
 def cant_convert(why: list[str]) -> str:
-    """Why StationPlay can't make the converted copy an app asked for, in a
+    """Why tapiOca can't make the converted copy an app asked for, in a
     sentence."""
-    return f"StationPlay can't make a converted copy of this file ({ondemand.and_list(why)})."
+    return f"tapiOca can't make a converted copy of this file ({ondemand.and_list(why)})."
 
 
 def too_fast(need: str, cap_kbps: int) -> str:

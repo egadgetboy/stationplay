@@ -1,6 +1,6 @@
 """Choosing and supervising GPU encoding.
 
-At startup, StationPlay looks for a usable GPU (NVIDIA first, then Intel or
+At startup, tapiOca looks for a usable GPU (NVIDIA first, then Intel or
 AMD via VA-API) and proves it works by encoding a short test clip with the
 exact command a real program uses. Until that test passes, and whenever the
 GPU misbehaves, everything is encoded on the CPU instead. A GPU problem
@@ -25,10 +25,10 @@ from .ffmpeg import CPU, Encoder
 log = logging.getLogger(__name__)
 
 # After this many programs in a row fail on the GPU but play fine on the
-# CPU, the GPU is switched off until StationPlay restarts.
+# CPU, the GPU is switched off until tapiOca restarts.
 GPU_STRIKES_LIMIT = 3
-# After this many copies for StationPlay's apps in a row fail on the GPU but
-# are made fine on the CPU, copies are converted on the CPU until StationPlay
+# After this many copies for tapiOca's apps in a row fail on the GPU but
+# are made fine on the CPU, copies are converted on the CPU until tapiOca
 # restarts. The stations keep the GPU: a copy's trouble there (a GPU that
 # runs out of sessions, say) never takes it from them.
 COPY_STRIKES_LIMIT = 3
@@ -62,7 +62,7 @@ def find_candidates(settings: Settings) -> tuple[list[Encoder], list[str]]:
                 candidates.append(Encoder("nvidia", settings.hw_device or None))
             elif mode in ("nvidia", "nvenc"):
                 notes.append(
-                    "StationPlay can't see an NVIDIA GPU. See the NVIDIA section of the README."
+                    "tapiOca can't see an NVIDIA GPU. See the NVIDIA section of the README."
                 )
         elif kind == "vaapi":
             nodes = (
@@ -73,7 +73,7 @@ def find_candidates(settings: Settings) -> tuple[list[Encoder], list[str]]:
             if not nodes:
                 if mode not in ("auto", "gpu"):
                     notes.append(
-                        "StationPlay can't see an Intel or AMD GPU because /dev/dri isn't "
+                        "tapiOca can't see an Intel or AMD GPU because /dev/dri isn't "
                         "passed to its container."
                     )
                 continue
@@ -89,9 +89,9 @@ def _permission_note(node: str) -> str:
     try:
         gid = os.stat(node).st_gid
     except OSError:
-        return f"StationPlay can't access {node}."
+        return f"tapiOca can't access {node}."
     return (
-        f"StationPlay isn't allowed to use {node}, which belongs to group {gid}. "
+        f"tapiOca isn't allowed to use {node}, which belongs to group {gid}. "
         f'Add "{gid}" under group_add in the app\'s YAML.'
     )
 
@@ -204,7 +204,7 @@ class GpuManager:
                 or (
                     "GPU encoding is turned off (HW_ACCEL=cpu)."
                     if MODES.get(mode) == ()
-                    else "StationPlay can't see a GPU."
+                    else "tapiOca can't see a GPU."
                 )
             )
             return
@@ -269,7 +269,7 @@ class GpuManager:
             self.state = "disabled"
             self.note = (
                 f"{self.active.label} was turned off after {self.strikes} programs in a row "
-                "failed on it but played fine on the CPU. Restart StationPlay to try it again."
+                "failed on it but played fine on the CPU. Restart tapiOca to try it again."
             )
             log.error(self.note)
             self.active = CPU
@@ -286,9 +286,9 @@ class GpuManager:
         if self.copy_strikes >= COPY_STRIKES_LIMIT and not self.copies_off and self.active.is_gpu:
             self.copies_off = True
             log.error(
-                "Copies for StationPlay's apps are converted on the CPU from now on: %d in a "
+                "Copies for tapiOca's apps are converted on the CPU from now on: %d in a "
                 "row failed on %s but were made fine on the CPU. Stations keep using it. "
-                "Restart StationPlay to try it again.",
+                "Restart tapiOca to try it again.",
                 self.copy_strikes,
                 self.active.label,
             )

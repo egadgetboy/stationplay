@@ -23,7 +23,7 @@ left from a run before is deleted first, and never counts as published);
 SHA256SUMS lists the image's digest for each tag and every file, signed
 like the zip; a version's tests passed only when both machines' Test steps
 did (the real jq, on GitHub's answers); the signing key is on disk only
-while signing; and the job runs only in StationPlay's own repository, with
+while signing; and the job runs only in tapiOca's own repository, with
 no credentials left in the checkout.
 """
 
@@ -103,7 +103,7 @@ case "$1" in
   inspect)
     if [ "$2" = --no-creds ]; then
       [ -e "$ASSETS/private" ] && { echo "unauthorized: authentication required" >&2; exit 1; }
-      echo '{"Name": "ghcr.io/egadgetboy/stationplay"}'
+      echo '{"Name": "ghcr.io/egadgetboy/tapioca-server"}'
     else
       cat "$ASSETS/manifest"
     fi ;;
@@ -148,7 +148,7 @@ def made_of() -> tuple[str, str]:
     assert upload, "image.yml keeps the package list as an artifact"
     name, path = upload.groups()
     assert path == "${{ runner.temp }}/made/"
-    made = re.search(r'> "\$RUNNER_TEMP/made/(stationplay-\$version-packages\.txt)"', text)
+    made = re.search(r'> "\$RUNNER_TEMP/made/(tapioca-\$version-packages\.txt)"', text)
     assert made, "image.yml writes the package list into that folder"
     return name, made.group(1).replace("$version", "<version>")
 
@@ -192,7 +192,7 @@ def run(tmp_path):
     def version(number: str) -> str:
         (work / "app" / "__init__.py").write_text(f'__version__ = "{number}"\n')
         git(work, "add", ".")
-        git(work, "commit", "-q", "-m", f"StationPlay {number}")
+        git(work, "commit", "-q", "-m", f"tapiOca {number}")
         commits[number] = git(work, "rev-parse", "HEAD")
         notes = work / "docs" / "releases" / f"v{number}.md"
         notes.write_text(f"---\ncommit: {commits[number]}\n---\n\nThe notes.\n")
@@ -211,7 +211,7 @@ def run(tmp_path):
             "ASSETS": str(assets),
             "ARTIFACT": artifact,
             "RUNNER_TEMP": str(tmp_path / "temp"),
-            "GITHUB_REPOSITORY": "egadgetboy/stationplay",
+            "GITHUB_REPOSITORY": "egadgetboy/tapioca-server",
             "GITHUB_REPOSITORY_OWNER": "EgadgetBoy",
             "GH_TOKEN": "x",
             "FIRST_PUBLIC": "1.32.0",
@@ -261,12 +261,12 @@ def image_run(
         folder = run.assets / f"made_{number}"
         folder.mkdir()
         (folder / run.listed.replace("<version>", version)).write_text(
-            f"StationPlay {version}: every package in the image that was tested\n"
+            f"tapiOca {version}: every package in the image that was tested\n"
         )
         if image:
-            (folder / f"stationplay-{version}-image.txt").write_text(PINNED + "\n")
-            (folder / f"stationplay-{version}-packages-arm64.txt").write_text(
-                f"StationPlay {version}: every package in the arm64 image that was tested\n"
+            (folder / f"tapioca-{version}-image.txt").write_text(PINNED + "\n")
+            (folder / f"tapioca-{version}-packages-arm64.txt").write_text(
+                f"tapiOca {version}: every package in the arm64 image that was tested\n"
             )
     (run.assets / "manifest").write_text(MANIFEST)
 
@@ -295,15 +295,15 @@ def test_a_tested_version_is_published_with_its_tested_package_list(run):
     assert len(made) == 1, said
     assert f"v1.32.1 --target {run.commits['1.32.1']}" in made[0]
     for name in (
-        "stationplay-1.32.1.zip",
+        "tapioca-1.32.1.zip",
         "stationplay.yaml",
         "docker-compose.yml",
-        "stationplay-1.32.1-packages.txt",
+        "tapioca-1.32.1-packages.txt",
     ):
         assert f"/{name}" in made[0], made[0]
     assert "gh run download 7 --name" in said  # (a run that tested it)
-    listed = run.temp / "v1.32.1" / "stationplay-1.32.1-packages.txt"
-    assert listed.read_text() == "StationPlay 1.32.1: every package in the image that was tested\n"
+    listed = run.temp / "v1.32.1" / "tapioca-1.32.1-packages.txt"
+    assert listed.read_text() == "tapiOca 1.32.1: every package in the image that was tested\n"
     # (Source only: no image built, pushed or pulled, and no image's source.)
     assert not docker(said) and "ghcr" not in said and "gpl-source" not in said
 
@@ -376,7 +376,7 @@ def test_the_artifact_release_yml_asks_for_is_the_one_image_yml_keeps():
 # From 1.34.0: the image, the sources and the signature -------------------------------------
 
 DIGEST = "sha256:" + hashlib.sha256(MANIFEST.encode()).hexdigest()
-PINNED = f"ghcr.io/egadgetboy/stationplay@{DIGEST}"
+PINNED = f"ghcr.io/egadgetboy/tapioca-server@{DIGEST}"
 
 
 def skopeo(said: str) -> list[str]:
@@ -392,19 +392,19 @@ def test_from_1_34_0_the_tested_image_gets_its_tags(run):
     # That very image (by digest), copied as it is, each tag checked.
     assert skopeo(said) == [
         f"skopeo copy --all --preserve-digests --quiet docker://{PINNED} "
-        f"docker://ghcr.io/egadgetboy/stationplay:{tag}"
+        f"docker://ghcr.io/egadgetboy/tapioca-server:{tag}"
         for tag in ("1.34.0", "1.34", "latest")
     ]
     assert said.count("skopeo inspect --raw") == 3 and "docker build" not in said
     made = [line for line in creates(said) if line.startswith("gh release create v1.34.0 ")]
     assert len(made) == 1, said
-    for name in ("stationplay-1.34.0-packages.txt", "stationplay-1.34.0-packages-arm64.txt",
-                 "stationplay-1.34.0-source.tar", "stationplay-1.34.0.zip"):  # fmt: skip
+    for name in ("tapioca-1.34.0-packages.txt", "tapioca-1.34.0-packages-arm64.txt",
+                 "tapioca-1.34.0-source.tar", "tapioca-1.34.0.zip"):  # fmt: skip
         assert f"/{name}" in made[0], made[0]
     # The source, fetched in the tested image, with the arm64 image's list.
     [fetch] = [line for line in said.splitlines() if line.startswith("docker run")]
     assert PINNED in fetch and "--all --also /in/arm64.txt" in fetch and "--user 0" in fetch
-    with tarfile.open(run.temp / "v1.34.0" / "stationplay-1.34.0-source.tar") as tar:
+    with tarfile.open(run.temp / "v1.34.0" / "tapioca-1.34.0-source.tar") as tar:
         assert "./ffmpeg_7.1.5-0+deb13u1.dsc" in tar.getnames()
     # (No key yet, before 1.35.0: published unsigned, and said.)
     assert ".zip.sig" not in made[0] and "zip isn't signed" in out
@@ -431,10 +431,10 @@ def test_signed_with_the_key_and_checked(run):
     image_run(run, 8, version="1.35.0")
     said, status, out = run(SIGNING_KEY="-----BEGIN OPENSSH PRIVATE KEY-----\nx\n")
     assert status == 0, said + out
-    assert "ssh-keygen -Y sign -q -f" in said and "-n stationplay-release" in said
-    assert "ssh-keygen -Y verify -f" in said and "-I stationplay-release" in said
+    assert "ssh-keygen -Y sign -q -f" in said and "-n tapioca-release" in said
+    assert "ssh-keygen -Y verify -f" in said and "-I tapioca-release" in said
     [made] = creates(said)
-    assert "/stationplay-1.35.0.zip.sig" in made
+    assert "/tapioca-1.35.0.zip.sig" in made
     # (The key is gone once it's done.)
     assert not (run.temp / "signing-key").exists()
 
@@ -496,7 +496,7 @@ def test_a_draft_first_then_its_tags_then_its_published(run):
     assert "--latest" not in draft  # (a draft can't be the latest release)
     [published] = publishes(said)
     assert published == "gh release edit v1.34.0 --draft=false --latest=true"
-    anyone = "skopeo inspect --no-creds docker://ghcr.io/egadgetboy/stationplay:1.34.0"
+    anyone = "skopeo inspect --no-creds docker://ghcr.io/egadgetboy/tapioca-server:1.34.0"
     assert anyone in said.splitlines()
     assert (at(said, "gh release create") < at(said, "skopeo copy") < at(said, anyone)
             < at(said, "gh release edit"))  # fmt: skip
@@ -529,7 +529,7 @@ def test_an_image_only_signed_in_people_can_pull_isn_t_published(run):
     said, status, out = run()
     assert status == 1 and not publishes(said)
     assert ("v1.34.0 isn't published: its image can't be pulled without signing in to GitHub. "
-            "StationPlay's package must be public") in out  # fmt: skip
+            "tapiOca's package must be public") in out  # fmt: skip
     assert not re.search(r"\b(401|403)\b", out)
 
 
@@ -540,19 +540,19 @@ def test_sha256sums_lists_the_image_for_each_tag_and_every_file_signed(run):
     said, status, out = run(SIGNING_KEY="-----BEGIN OPENSSH PRIVATE KEY-----\nx\n")
     assert status == 0, said + out
     folder = run.temp / "v1.35.0"
-    names = ["stationplay-1.35.0.zip", "stationplay.yaml", "docker-compose.yml",
-             "stationplay-1.35.0-packages.txt", "stationplay-1.35.0-packages-arm64.txt",
-             "stationplay-1.35.0-source.tar"]  # fmt: skip
+    names = ["tapioca-1.35.0.zip", "stationplay.yaml", "docker-compose.yml",
+             "tapioca-1.35.0-packages.txt", "tapioca-1.35.0-packages-arm64.txt",
+             "tapioca-1.35.0-source.tar"]  # fmt: skip
     lines = (folder / "SHA256SUMS").read_text().splitlines()
     for name in names:
         assert f"{hashlib.sha256((folder / name).read_bytes()).hexdigest()}  {name}" in lines
     for tag in ("1.35.0", "1.35", "latest"):
-        assert f"{DIGEST.removeprefix('sha256:')}  ghcr.io/egadgetboy/stationplay:{tag}" in lines
+        assert f"{DIGEST.removeprefix('sha256:')}  ghcr.io/egadgetboy/tapioca-server:{tag}" in lines
     assert len(lines) == len(names) + 3
     # Signed as the zip is, and both with the release.
-    assert f"-n stationplay-release {folder / 'SHA256SUMS'}" in said
+    assert f"-n tapioca-release {folder / 'SHA256SUMS'}" in said
     [draft] = creates(said)
-    for name in ("SHA256SUMS", "SHA256SUMS.sig", "stationplay-1.35.0.zip.sig"):
+    for name in ("SHA256SUMS", "SHA256SUMS.sig", "tapioca-1.35.0.zip.sig"):
         assert f"/{name}" in draft, draft
 
 
@@ -565,7 +565,7 @@ def test_sha256sums_comes_with_every_release(run):
     [draft] = creates(said)
     assert "/SHA256SUMS" in draft and "SHA256SUMS.sig" not in draft
     sums = (run.temp / "v1.32.1" / "SHA256SUMS").read_text()
-    assert "stationplay-1.32.1.zip" in sums and "ghcr.io" not in sums
+    assert "tapioca-1.32.1.zip" in sums and "ghcr.io" not in sums
 
 
 @pytest.mark.parametrize(
@@ -610,7 +610,7 @@ def test_the_signing_key_is_on_disk_only_while_signing(run):
 def test_the_job_runs_only_in_stationplay_s_repository_with_no_credentials_kept():
     text = WORKFLOW.read_text()
     job = text[text.index("  publish:\n") :]
-    assert re.search(r"^    if: github\.repository == 'egadgetboy/stationplay'$", job, re.M)
+    assert re.search(r"^    if: github\.repository == 'egadgetboy/tapioca-server'$", job, re.M)
     checkout = re.search(r"- uses: actions/checkout@\S+\n((?:\s{8,}\S.*\n)+)", job)
     assert checkout and re.search(r"^\s+persist-credentials: false$", checkout.group(1), re.M)
     # (No environment: making one changes the repository's settings, which

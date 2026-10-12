@@ -118,7 +118,7 @@ def test_when_the_sounds_language_isnt_known_the_file_says(chosen):
 
 def test_your_language_unknown_with_something_chosen(chosen):
     chosen.change(1, "100", {"audio": "jpn"})
-    # (The device's language sent, but not one StationPlay knows.)
+    # (The device's language sent, but not one tapiOca knows.)
     assert picked(chosen.wanted(1, EP, "Klingon")) == (
         None, "Japanese, kept for this show by Sticky Audio", "No subtitles: your language isn't known"
     )  # fmt: skip
@@ -253,7 +253,7 @@ def test_the_apps_choose_automatic_on_or_off_and_send_the_devices_language(app):
         }  # fmt: skip
         # Without it (an older app), as before.
         assert play(home, "201", sam)["chosen"] is None
-        # A language StationPlay doesn't know is no language.
+        # A language tapiOca doesn't know is no language.
         assert play(home, "201", sam, language="Klingon")["chosen"] is None
         assert home.post("/api/internal/play", headers=sam,
                          json={"key": "201", "device": TV, "language": "e" * 41}

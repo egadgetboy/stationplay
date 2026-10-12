@@ -1,4 +1,4 @@
-"""Copies of a program that StationPlay makes for a device that can't play
+"""Copies of a program that tapiOca makes for a device that can't play
 its file as it is (see docs/on-demand.md): **repackaged**, the picture kept
 as it is in a new package, the sound converted where the device needs it;
 or **converted**, the picture made into H.264 too (smaller, ordinary rather
@@ -10,7 +10,7 @@ A copy is HLS: a playlist listing the whole program from its start, in
 pieces of about PIECE_S seconds, so the player shows its whole length and
 seeks anywhere. The pieces are made as they're asked for, by one ffmpeg at a
 time, from where the player is; a jump far ahead or back starts it again
-there. ffmpeg writes one MPEG-TS stream, and StationPlay cuts it into the
+there. ffmpeg writes one MPEG-TS stream, and tapiOca cuts it into the
 pieces itself, at the keyframes the playlist says each piece starts on: a
 repackaged picture's own keyframes (read from the file's index: see
 keyframes.py), or for a converted one, keyframes made every PIECE_S seconds.
@@ -880,7 +880,7 @@ class Copy:
         self.failures += 1
         self.failed_at = time.monotonic()
         if self.failures == 1:
-            log.warning("Making a copy for a StationPlay app stopped (%s)", why)
+            log.warning("Making a copy for a tapiOca app stopped (%s)", why)
         if self.trouble is not None:
             starts = self.plan.starts
             piece = min(max(run.first, run.newest + 1), len(starts) - 1)
@@ -888,7 +888,7 @@ class Copy:
         if self.failures >= FAILURES_MOST:
             self.broken = True
             log.warning(
-                "StationPlay gave up making a copy for an app after %d tries (%s)",
+                "tapiOca gave up making a copy for an app after %d tries (%s)",
                 self.failures,
                 why,
             )

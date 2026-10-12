@@ -121,14 +121,14 @@ def test_what_can_be_checked_is_checked_at_once(app, caplog):
         [one] = row["reports"]
         assert (one["who"], one["label"], one["positionMs"]) == ("Tia", "No sound", 754_000)
         assert one["how"] == {"method": "as it is", "audio": "English · AAC · 5.1"}
-        assert one["device"] == "A StationPlay app"
+        assert one["device"] == "A tapiOca app"
         # It found nothing: the report waits, saying so, for an Admin to
         # dismiss. Nothing came off the air.
-        ctx.scanner._done_with(target, sc.NOTHING, "StationPlay gave it the quick check, and "
+        ctx.scanner._done_with(target, sc.NOTHING, "tapiOca gave it the quick check, and "
                                "found nothing wrong.")  # fmt: skip
         [row] = admin.get("/api/reports").json()["reports"]
         assert row["state"] == "nothing" and row["needs"] and row["actions"] == ["dismiss"]
-        assert row["notes"] == ["StationPlay gave it the quick check, and found nothing wrong."]
+        assert row["notes"] == ["tapiOca gave it the quick check, and found nothing wrong."]
         assert ctx.broken.keys() == set()
         assert admin.get("/api/status").json()["filesCount"] == 1
         assert admin.post("/api/reports/202/dismiss").status_code == 200
@@ -197,7 +197,7 @@ def test_what_a_machine_cant_judge_waits_for_an_admin(app):
         ]
         assert two["state"] == "waiting" and two["needs"]
         assert two["actions"] == ["replace", "better", "dismiss"] and two["arr"] is None
-        # Beside each, what StationPlay can tell.
+        # Beside each, what tapiOca can tell.
         assert two["facts"] == ["Its sound: English"]
         assert rows["205"]["facts"] == [
             "It runs 22 min; the show's other episodes run about 44 min"

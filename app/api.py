@@ -1,11 +1,11 @@
-"""StationPlay's API, version 1 (/api/v1): for anyone's scripts, home
+"""tapiOca's API, version 1 (/api/v1): for anyone's scripts, home
 automation and apps, documented in docs/api.md with an OpenAPI spec
 (docs/openapi-v1.json, served at /api/v1/openapi.json), which the tests
 check against the server.
 
 Reading needs a Viewer API token (or any sign-in); doing needs an Admin one
 (see access.py). While signing in is off, nothing needs a token on the home
-network, as with the rest of StationPlay.
+network, as with the rest of tapiOca.
 
 Version 1 is a stable contract: it only grows. New fields and addresses may
 be added; nothing is renamed, removed or changed in meaning. A change that
@@ -13,7 +13,7 @@ would break a client becomes version 2, served beside version 1, which is
 then marked with Deprecation and Sunset headers (DEPRECATED) for at least
 six months before it goes.
 
-What only StationPlay's own apps use is under /api/internal instead (see
+What only tapiOca's own apps use is under /api/internal instead (see
 appapi.py and applibrary.py): not part of this API, and free to change.
 """
 
@@ -43,8 +43,8 @@ SPEC_PATH = "/api/v1/openapi.json"
 DEPRECATED: dict[str, tuple[str, str]] = {}
 ADMIN_TAG = "Admin"
 DESCRIPTION = (
-    "StationPlay's API: the server, its stations, their guide and streams, and things an "
-    "Admin can have it do. Send an API token (made on StationPlay's Access tab) as "
+    "tapiOca's API: the server, its stations, their guide and streams, and things an "
+    "Admin can have it do. Send an API token (made on tapiOca's Access tab) as "
     "`Authorization: Bearer <token>`: a Viewer token reads, an Admin token also does what's "
     "marked Admin. Version 1 only grows; see docs/api.md."
 )
@@ -60,7 +60,7 @@ class _Shape(BaseModel):
 class Server(_Shape):
     name: str = Field(description="The server's name, as set when it was set up")
     id: str = Field(description="The server's own ID, the same for as long as it's set up")
-    version: str = Field(description="StationPlay's version, such as 1.22.0")
+    version: str = Field(description="tapiOca's version, such as 1.22.0")
     api: int = Field(description="The newest API version this server answers (1)")
     signIn: bool = Field(description="Whether requests need a token (signing in is on)")
     notSetUp: str | None = Field(
@@ -70,7 +70,7 @@ class Server(_Shape):
         description="Whether this request came from the internet (the public port)"
     )
     awayAddress: str | None = Field(
-        description="Where StationPlay's apps reach it from outside, when that's on"
+        description="Where tapiOca's apps reach it from outside, when that's on"
     )
     features: list[str] = Field(
         description="What it offers here, by name: `hls`, `speed-test`, `away`, `library`, "
@@ -114,7 +114,7 @@ class Station(_Shape):
     colors: Colors = Field(description="Colors from its logo, as its Intro Bumper uses them")
     hls: str = Field(
         description="Where to play it (HLS): an address on the server. From the internet (with "
-        "watching away from home on), or at home for StationPlay's own apps, or for any token "
+        "watching away from home on), or at home for tapiOca's own apps, or for any token "
         "while only listed devices may use the tuner (from 1.32.0), an address of the token's "
         "own, which needs no token itself"
     )
@@ -147,7 +147,7 @@ class Playing(_Shape):
 
 
 class Status(_Shape):
-    version: str = Field(description="StationPlay's version")
+    version: str = Field(description="tapiOca's version")
     plexConnected: bool = Field(description="Whether Plex answers")
     tuners: int = Field(description="How many stations can play at once")
     playing: list[Playing] = Field(description="The stations playing now")
@@ -213,7 +213,7 @@ def routes(app: FastAPI, ctx: AppContext, actions: Actions) -> None:
         "/api/v1/status",
         response_model=Status,
         operation_id="getStatus",
-        summary="How StationPlay is doing",
+        summary="How tapiOca is doing",
         description="Whether Plex answers, how many tuners there are, and what's playing.",
     )
     async def status():
@@ -279,7 +279,7 @@ def routes(app: FastAPI, ctx: AppContext, actions: Actions) -> None:
         dependencies=actions.asking_plex,
         tags=[ADMIN_TAG],
         summary="Ask Plex to refresh its guide",
-        description="As StationPlay does by itself after a change. Admin.",
+        description="As tapiOca does by itself after a change. Admin.",
     )
     async def refresh_guide():
         return {"refreshed": await actions.refresh_guide()}
@@ -290,8 +290,8 @@ def routes(app: FastAPI, ctx: AppContext, actions: Actions) -> None:
         operation_id="makeBackup",
         status_code=201,
         tags=[ADMIN_TAG],
-        summary="Back StationPlay up now",
-        description="Makes a backup, as StationPlay does every night. Admin.",
+        summary="Back tapiOca up now",
+        description="Makes a backup, as tapiOca does every night. Admin.",
     )
     async def backup():
         return {"name": await actions.backup()}
@@ -351,7 +351,7 @@ def spec(app: FastAPI) -> dict[str, Any]:
     the token they take."""
     v1 = [r for r in app.routes if getattr(r, "path", "").startswith(PREFIX)]
     out = get_openapi(
-        title="StationPlay API",
+        title="tapiOca API",
         version="1",
         description=DESCRIPTION,
         routes=v1,
@@ -363,7 +363,7 @@ def spec(app: FastAPI) -> dict[str, Any]:
         "token": {
             "type": "http",
             "scheme": "bearer",
-            "description": "An API token from the Access tab (or a StationPlay app's sign-in)",
+            "description": "An API token from the Access tab (or a tapiOca app's sign-in)",
         }
     }
     out["security"] = [{"token": []}]

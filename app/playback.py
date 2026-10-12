@@ -11,12 +11,12 @@ ordinary (ff.to_sdr).
 What new stations start with: their picture size, and the other settings in
 NEW_STATION_CHOICES, as chosen in the welcome (or db.NEW_STATION's).
 
-Tuners: StationPlay plays at most `tuners` different stations at once,
+Tuners: tapiOca plays at most `tuners` different stations at once,
 across Plex and every other app, since each is converted as it plays;
 everyone watching one station shares its stream. Plex is told of more
 tuners than that (announced), since it may count each person watching a
-station as one. So when all of StationPlay's are in use, someone tuning in
-to another station gets StationPlay's own card saying so (busy_stream),
+station as one. So when all of tapiOca's are in use, someone tuning in
+to another station gets tapiOca's own card saying so (busy_stream),
 rather than Plex's error.
 """
 
@@ -50,7 +50,7 @@ META_NEW_STATION = "new_station"  # what new stations start with, as chosen (JSO
 # The welcome that came before the setup (until 1.22.3): the version of it
 # last seen, which the setup reads once, to know what's been answered (see
 # setup.start). "1": 1.14's; "2": 1.15's, with what new stations start with,
-# who can use StationPlay, and the overnight file checks; "3": with which
+# who can use tapiOca, and the overnight file checks; "3": with which
 # corner.
 META_WELCOMED = "welcomed"
 WELCOME = "3"
@@ -169,7 +169,7 @@ def start(db: Database, settings: Settings) -> None:
         db.set_meta(META_TUNERS, str(max(1, min(MOST_TUNERS, settings.tuner_count or TUNERS))))
     elif settings.tuner_count and str(settings.tuner_count) != db.get_meta(META_TUNERS):
         log.warning(
-            "TUNER_COUNT (%d) is no longer used. Set the number of tuners on StationPlay's "
+            "TUNER_COUNT (%d) is no longer used. Set the number of tuners on tapiOca's "
             "Add to Plex tab (currently %s).",
             settings.tuner_count,
             db.get_meta(META_TUNERS),
@@ -189,7 +189,7 @@ def start(db: Database, settings: Settings) -> None:
 
 
 def announced(tuners: int) -> int:
-    """How many tuners Plex is told of: more than StationPlay plays at once,
+    """How many tuners Plex is told of: more than tapiOca plays at once,
     so Plex lets it say when they're all in use (and in case Plex counts
     each person watching one station as a tuner)."""
     return max(tuners + 1, 2 * tuners)
@@ -239,8 +239,8 @@ def busy_lines(tuners: int, numbers: list[int]) -> list[str]:
         on = f"Stations {', '.join(map(str, numbers[:-1]))} and {numbers[-1]}"
     return [
         "All tuners in use",
-        f"StationPlay can play only {tuners} {'station' if tuners == 1 else 'stations'} at a time",
-        f"On now: {on}. Try again soon, or ask whoever runs StationPlay to add more tuners.",
+        f"tapiOca can play only {tuners} {'station' if tuners == 1 else 'stations'} at a time",
+        f"On now: {on}. Try again soon, or ask whoever runs tapiOca to add more tuners.",
     ]
 
 

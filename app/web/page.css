@@ -1,22 +1,39 @@
 /* The page's styles. */
+/* tapiOca's fonts, served by tapiOca itself (never from anywhere else; see
+   THIRD_PARTY_NOTICES.md): Space Grotesk for text, Space Mono for Station
+   numbers, logs and technical labels, and Unbounded only for big numbers,
+   20px and up. */
+@font-face { font-family: "Space Grotesk"; font-weight: 400; font-display: swap; src: url(/fonts/SpaceGrotesk/SpaceGrotesk-Regular.woff2) format("woff2"); }
+@font-face { font-family: "Space Grotesk"; font-weight: 500; font-display: swap; src: url(/fonts/SpaceGrotesk/SpaceGrotesk-Medium.woff2) format("woff2"); }
+@font-face { font-family: "Space Grotesk"; font-weight: 700; font-display: swap; src: url(/fonts/SpaceGrotesk/SpaceGrotesk-Bold.woff2) format("woff2"); }
+@font-face { font-family: "Space Mono"; font-weight: 400; font-display: swap; src: url(/fonts/SpaceMono/SpaceMono-Regular.woff2) format("woff2"); }
+@font-face { font-family: "Space Mono"; font-weight: 700; font-display: swap; src: url(/fonts/SpaceMono/SpaceMono-Bold.woff2) format("woff2"); }
+@font-face { font-family: "Unbounded"; font-weight: 400; font-display: swap; src: url(/fonts/Unbounded/Unbounded-Regular.woff2) format("woff2"); }
+@font-face { font-family: "Unbounded"; font-weight: 700; font-display: swap; src: url(/fonts/Unbounded/Unbounded-Bold.woff2) format("woff2"); }
+/* The colors are the brand kit's (its tokens.css), in the page's own names:
+   light here, dark below. Signal Teal (#00bfa6) is the one accent: on light,
+   Teal Ink (#00796b) for text, links and focus, and Signal Teal only as a
+   fill, always with Ink (#0a0a0a) on it, never white. Errors, warnings and
+   Broken Files are Danger. No gold, amber or orange anywhere. */
 :root {
-  --bg: #f4f2ee;
-  --panel: #ffffff;
-  --panel-2: #f8f6f2;
-  --ink: #1c2229;
-  --ink-2: #56606b;
-  --ink-3: #8a929b;
-  --line: #e3dfd8;
-  --accent: #0b7a6e;  /* StationPlay's teal (checked against the background) */
-  --accent-ink: #ffffff;
-  --accent-soft: #ddf1ed;
-  --warn: #9a5b00;
-  --good: #2f7d4f;
-  --good-soft: #e3f2e8;
-  --bad: #b3402f;
-  --bad-soft: #f8e4e0;
-  --shadow: 0 1px 2px rgba(20, 24, 30, .06), 0 2px 8px rgba(20, 24, 30, .05);
-  /* Corners, the same throughout (as in StationPlay's apps): a rectangle
+  --bg: #ffffff;
+  --panel: #f4f4f4;
+  --panel-2: #ffffff;
+  --ink: #0a0a0a;
+  --ink-2: #4a4a4a;
+  --ink-3: #6b6b6b;
+  --line: #dcdcdc;
+  --accent: #00796b;  /* text, links, borders and focus (Teal Ink) */
+  --accent-fill: #00bfa6;  /* buttons and highlights (Signal Teal), under --accent-ink */
+  --accent-ink: #0a0a0a;
+  --accent-soft: #e0f7f4;
+  --warn: #c62828;
+  --good: #00796b;
+  --good-soft: #e0f7f4;
+  --bad: #c62828;
+  --bad-soft: #f9e9e9;
+  --shadow: 0 1px 2px rgba(10, 10, 10, .06), 0 2px 8px rgba(10, 10, 10, .05);
+  /* Corners, the same throughout (as in tapiOca's apps): a rectangle
      (a poster or picture, a panel, a button, a field, a dialog) is rounded
      as the apps' posters are on a phone or tablet; a pill (a chip, the
      header's, a setting's choices) is round at its ends; a small badge is
@@ -25,9 +42,10 @@
   --radius: 10px;
   --radius-small: 6px;
   --pill: 999px;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --bar: #0b7a6e;  /* the Stats tab's bars: one hue, checked against the panel */
-  --brand: #0ea609;  /* the logo's green */
+  --ui: "Space Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "Space Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --display: "Unbounded", system-ui, sans-serif;
+  --bar: #00796b;  /* the Stats tab's bars: one hue, checked against the panel */
 }
 /* Dark follows the device, unless this browser is set to Light or Dark
    (Appearance, at the foot of the page). */
@@ -35,49 +53,51 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;  /* (the browser's own parts too: a time field's clock) */
-    --bg: #11161b;
-    --panel: #182028;
-    --panel-2: #1d2630;
-    --ink: #e9ecef;
-    --ink-2: #aab3bc;
-    --ink-3: #75808b;
-    --line: #28333e;
-    --accent: #1fb5a3;
-    --accent-ink: #04201c;
-    --accent-soft: #133331;
-    --warn: #e9a43f;
-    --good: #6cc592;
-    --good-soft: #193326;
-    --bad: #f08a78;
-    --bad-soft: #3a1f1b;
+    --bg: #0a0a0a;
+    --panel: #161616;
+    --panel-2: #202020;
+    --ink: #ffffff;
+    --ink-2: #bdbdbd;
+    --ink-3: #8a8a8a;
+    --line: #2e2e2e;
+    --accent: #00bfa6;
+    --accent-fill: #00bfa6;
+    --accent-ink: #0a0a0a;
+    --accent-soft: #0d2e29;
+    --warn: #ff6b5b;
+    --good: #00bfa6;
+    --good-soft: #0d2e29;
+    --bad: #ff6b5b;
+    --bad-soft: #361c19;
     --shadow: 0 1px 2px rgba(0, 0, 0, .3);
-    --bar: #1a9c8d;
+    --bar: #00bfa6;
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #11161b;
-  --panel: #182028;
-  --panel-2: #1d2630;
-  --ink: #e9ecef;
-  --ink-2: #aab3bc;
-  --ink-3: #75808b;
-  --line: #28333e;
-  --accent: #1fb5a3;
-  --accent-ink: #04201c;
-  --accent-soft: #133331;
-  --warn: #e9a43f;
-  --good: #6cc592;
-  --good-soft: #193326;
-  --bad: #f08a78;
-  --bad-soft: #3a1f1b;
+  --bg: #0a0a0a;
+  --panel: #161616;
+  --panel-2: #202020;
+  --ink: #ffffff;
+  --ink-2: #bdbdbd;
+  --ink-3: #8a8a8a;
+  --line: #2e2e2e;
+  --accent: #00bfa6;
+  --accent-fill: #00bfa6;
+  --accent-ink: #0a0a0a;
+  --accent-soft: #0d2e29;
+  --warn: #ff6b5b;
+  --good: #00bfa6;
+  --good-soft: #0d2e29;
+  --bad: #ff6b5b;
+  --bad-soft: #361c19;
   --shadow: 0 1px 2px rgba(0, 0, 0, .3);
-  --bar: #1a9c8d;
+  --bar: #00bfa6;
 }
 * { box-sizing: border-box; }
 body {
   margin: 0; background: var(--bg); color: var(--ink);
-  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 15px/1.45 var(--ui);
 }
 button, input, select { font: inherit; color: inherit; }
 a { color: var(--accent); }
@@ -88,10 +108,11 @@ header.top {
   padding: 20px 0 12px;
 }
 .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
-.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); }
-.brand .mark { height: 34px; width: auto; flex: none; }
-.brand .word { height: 17px; width: auto; flex: none; }
-@media (max-width: 420px) { .brand .mark { height: 30px; } .brand .word { height: 15px; } }
+/* tapiOca's wordmark: never under 80px wide, with at least half its ring's
+   width (about 0.36 of its height) clear around it. */
+.brand { display: flex; align-items: center; color: var(--ink); }
+.brand .word { height: 26px; width: auto; flex: none; display: block; }
+@media (max-width: 420px) { .brand .word { height: 24px; } }
 .spacer { flex: 1; }
 .pill {
   display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
@@ -101,10 +122,10 @@ header.top {
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); }
 .dot.ok { background: var(--good); }
 .dot.bad { background: var(--bad); }
-.dot.live { background: #e0463a; box-shadow: 0 0 0 3px rgba(224,70,58,.18); }
-.dot.warn { background: #e0a040; box-shadow: 0 0 0 3px rgba(224,160,64,.25); }
-.dot.accent { background: var(--accent); }
-/* Away from home: for Admins, while it's on, whether StationPlay's apps can
+.dot.live { background: var(--accent-fill); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-fill) 22%, transparent); }
+.dot.warn { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 25%, transparent); }
+.dot.accent { background: var(--accent-fill); }
+/* Away from home: for Admins, while it's on, whether tapiOca's apps can
    reach it from outside (it opens its panel on the Access tab). On a
    phone, just its dot and "Away". */
 .pill.away { cursor: pointer; color: var(--ink); }
@@ -155,9 +176,9 @@ header.top {
 }
 .coffee:hover { color: var(--ink); border-color: var(--accent); }
 .coffee:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* (Its own colors, the same in light and dark.) */
-.coffee .cup { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: #ffdd00; flex: none; }
-.coffee .cup svg { width: 15px; height: 15px; fill: #0d0c22; }
+/* (In tapiOca's teal, with Ink on it.) */
+.coffee .cup { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--accent-fill); flex: none; }
+.coffee .cup svg { width: 15px; height: 15px; fill: var(--accent-ink); }
 /* Just the cup, when the tabs wouldn't all fit beside its words (see fitCoffee). */
 .coffee.compact { padding: 4px; }
 .coffee.compact .label { display: none; }
@@ -178,7 +199,7 @@ header.top {
   font-size: 14px; white-space: nowrap; text-decoration: none;
 }
 .btn:hover { background: var(--panel-2); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.btn.primary { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--accent-ink); font-weight: 600; }
 .btn.primary:hover { filter: brightness(1.05); }
 .btn.danger { color: var(--bad); }
 .btn.ghost { border-color: transparent; background: transparent; }
@@ -203,7 +224,7 @@ header.top {
 .channel { display: grid; grid-template-columns: 72px 1fr; gap: 16px; padding: 16px; }
 .chnum {
   width: 72px; height: 72px; border-radius: var(--radius); display: grid; place-items: center;
-  background: var(--ink); color: var(--bg); font-weight: 800; font-size: 28px; letter-spacing: -.02em;
+  background: var(--ink); color: var(--bg); font-family: var(--mono); font-weight: 700; font-size: 28px; letter-spacing: -.02em;
   font-variant-numeric: tabular-nums;
 }
 .chname { font-weight: 650; font-size: 17px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -218,9 +239,9 @@ header.top {
 /* How far into its program a station is: a thin line, and a mark where it is now
    (in the text color, so it stands out from the teal). */
 .bar { position: relative; height: 2px; background: var(--line); border-radius: var(--pill); margin: 9px 0 7px; max-width: 420px; }
-.bar > span { position: relative; display: block; height: 100%; background: var(--accent); border-radius: var(--pill); }
+.bar > span { position: relative; display: block; height: 100%; background: var(--accent-fill); border-radius: var(--pill); }
 .bar > span.at::after { content: ''; position: absolute; right: -1px; top: -4px; width: 2px; height: 10px; border-radius: var(--pill); background: var(--ink); }
-/* And where the program ends: a mark like it, in orange (inside the line,
+/* And where the program ends: a mark like it, in --warn (inside the line,
    so it never sticks out). As the program reaches its last moments, the
    mark turns red with a short glow. It starts at the time the page gives
    it (--arrive, from now: below zero if it's past), so it turns once, on
@@ -381,7 +402,7 @@ select { max-width: 100%; }  /* (never wider than its box, even one as wide as i
 input:focus, select:focus, .btn:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .seg { display: inline-flex; justify-self: start; border: 1px solid var(--line); border-radius: var(--pill); overflow: hidden; }
 .seg button { border: 0; background: var(--panel-2); padding: 8px 14px; cursor: pointer; }
-.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.seg button[aria-pressed="true"] { background: var(--accent-fill); color: var(--accent-ink); font-weight: 600; }
 .picker { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .picker-tools { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr) auto; gap: 8px; padding: 10px; background: var(--panel-2); border-bottom: 1px solid var(--line); }
 @media (max-width: 560px) {
@@ -399,7 +420,7 @@ input:focus, select:focus, .btn:focus-visible, .tab:focus-visible { outline: 2px
   width: 32px; height: 48px; flex: none; border-radius: var(--radius); object-fit: cover;
   background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line);
 }
-.pick.all .poster { background: var(--accent); opacity: .35; box-shadow: none; }
+.pick.all .poster { background: var(--accent-fill); opacity: .35; box-shadow: none; }
 /* Zoomed in: larger posters, and rows to match. */
 #libItems.zoom-2 .pick .poster { width: 64px; height: 96px; }
 #libItems.zoom-3 .pick .poster { width: 120px; height: 180px; }
@@ -475,7 +496,7 @@ input:focus, select:focus, .btn:focus-visible, .tab:focus-visible { outline: 2px
 .block-shows { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .block-shows .hint { flex: 1 1 160px; min-width: 0; }
 /* Choosing a block's shows with the station's picker. */
-.picking { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 10px; border-radius: var(--radius); background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.picking { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 10px; border-radius: var(--radius); background: var(--accent-fill); color: var(--accent-ink); font-weight: 600; }
 .picking span { flex: 1 1 200px; min-width: 0; }
 @media (max-width: 480px) {
   .opt { grid-template-columns: minmax(0, 1fr); }
@@ -490,16 +511,16 @@ input:focus, select:focus, .btn:focus-visible, .tab:focus-visible { outline: 2px
 .guide-list { display: grid; }
 .gitem { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); align-items: baseline; }
 .gitem .what { font-weight: 600; }
-.gitem .label { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); font-weight: 700; }
+.gitem .label { font-family: var(--mono); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); font-weight: 700; }
 
 .toast {
   position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--bg);
   padding: 10px 16px; border-radius: var(--radius); box-shadow: 0 8px 30px rgba(0,0,0,.25); z-index: 10; max-width: calc(100vw - 32px);
 }
-.toast.error { background: var(--bad); color: #fff; }
+.toast.error { background: var(--bad); }  /* (the page's background color on it: never white on Danger) */
 .toast .undo { margin-left: 14px; background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
 [hidden] { display: none !important; }
-/* More above, more below (see core.js): a chevron, as StationPlay's apps
+/* More above, more below (see core.js): a chevron, as tapiOca's apps
    draw it, on a short fade into the background at that edge, over a box
    that scrolls, or at the window's edges for the page itself. Only drawn:
    never clicked, tapped or focused. A box that has them keeps what's
@@ -531,7 +552,7 @@ html, .dlg-body, .logs, .journal, .picker-list, .fbox, #fMatches { scroll-paddin
 @media (max-width: 560px) { .chart, .chart img { width: 48px; height: 48px; } }
 .logo-choice { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .logo-choice img, .logo-num { width: 64px; height: 64px; border-radius: var(--radius); }
-.logo-num { display: grid; place-items: center; background: #1d2a36; color: #fff; font-weight: 800; font-size: 26px; }
+.logo-num { display: grid; place-items: center; background: #0a0a0a; color: #fff; font-family: var(--mono); font-weight: 700; font-size: 26px; }
 /* A logo in its own shape (a show's or movie's, from Plex: often white
    lettering) is shown whole, on the dark of a TV picture. Every logo is
    rounded as a picture is (which shows on one that fills its square, such
@@ -563,7 +584,7 @@ table.stats .station img.shaped { padding: 2px; }
 /* Filters */
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chipbtn { border: 1px solid var(--line); background: var(--panel-2); border-radius: var(--pill); padding: 4px 11px; cursor: pointer; font-size: 13px; }
-.chipbtn[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+.chipbtn[aria-pressed="true"] { background: var(--accent-fill); color: var(--accent-ink); border-color: var(--accent-fill); font-weight: 600; }
 .fbox { padding: 12px; display: grid; gap: 14px; max-height: 340px; overflow: auto; }
 .fbox .field > label .hint { font-weight: 400; }
 .ffields { display: grid; gap: 14px; }
@@ -579,7 +600,7 @@ table.stats .station img.shaped { padding: 2px; }
 .choice input:disabled + span { opacity: .55; }
 .linkbtn { background: none; border: 0; padding: 0 0 0 6px; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }
 .mark-preview { position: relative; width: 100%; max-width: 360px; aspect-ratio: 16 / 9; border-radius: var(--radius); overflow: hidden;
-  background: linear-gradient(135deg, #3b6ea5 0%, #7aa35a 45%, #d9a441 75%, #b5523b 100%); flex: none; }
+  background: linear-gradient(135deg, #1f3b57 0%, #2f6f73 45%, #5d6b78 75%, #2b2f38 100%); flex: none; }
 .mark-preview img, .mark-preview span { position: absolute; pointer-events: none; }
 .intro-preview { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 #fDescription { width: 100%; }
@@ -612,7 +633,7 @@ table.stats .station img.shaped { padding: 2px; }
 .limit-stations label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .limit-note { margin: 0; padding: 10px 12px; border-radius: var(--radius); background: var(--panel-2); }
 .limit-note ul { margin: 6px 0 0; padding-left: 20px; }
-/* Whether StationPlay's apps can reach it from outside: an icon, what it
+/* Whether tapiOca's apps can reach it from outside: an icon, what it
    is, when it was checked, and Check now (the Access tab, and the setup). */
 .reach { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 4px 10px; align-items: start; padding: 10px 12px; border-radius: var(--radius); background: var(--panel-2); border: 1px solid var(--line); }
 .reach.down { background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
@@ -638,9 +659,8 @@ table.stats .station img.shaped { padding: 2px; }
 /* Signing in */
 #signinView { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 16px; }
 .signin { width: min(380px, 100%); padding: 24px; display: grid; gap: 14px; }
-.brand.stacked { flex-direction: column; gap: 14px; margin: 4px 0 10px; }
-.brand.stacked .mark { height: 76px; }
-.brand.stacked .word { height: 21px; }
+.brand.stacked { flex-direction: column; margin: 6px 0 16px; }
+.brand.stacked .word { height: 40px; }
 .userpill { cursor: pointer; }
 .roles { display: grid; gap: 8px; margin: 0; }
 .roles dt { font-weight: 650; }
@@ -675,7 +695,7 @@ table.users .own-password:has(input:disabled) { cursor: default; }
 /* Stats */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .tile { padding: 14px 16px; }
-.tile .v { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.tile .v { font-family: var(--display); font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
 .tile .k { font-size: 13px; color: var(--ink-2); }
 table.stats td.num, table.stats th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 table.stats .station { display: flex; align-items: center; gap: 10px; }
@@ -802,8 +822,8 @@ table.now tr:last-child td { border-bottom: 0; }
   }
 }
 
-/* A new StationPlay is out (updates.js): for Admins, above the tabs. */
-.update-banner { margin: 0 0 14px; display: grid; gap: 8px; border-color: var(--brand); }
+/* A new tapiOca is out (updates.js): for Admins, above the tabs. */
+.update-banner { margin: 0 0 14px; display: grid; gap: 8px; border-color: var(--accent); }
 .update-banner p { margin: 0; }
 .update-banner .update-steps { display: grid; gap: 4px; }
 .update-banner .copyrow code { flex: 1 1 260px; overflow-wrap: anywhere; }

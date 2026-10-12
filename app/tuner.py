@@ -1,4 +1,4 @@
-"""Tuner access: which devices may use StationPlay's tuner.
+"""Tuner access: which devices may use tapiOca's tuner.
 
 The tuner is what Plex, Jellyfin and other apps use, and none of them can
 sign in: the HDHomeRun tuner itself (discover.json, lineup.json and the
@@ -12,7 +12,7 @@ chooses, on the Access tab:
   * Only these devices: only the addresses listed. **Plex server only**
     lists Plex's own address with one click.
 
-StationPlay's own apps, signed in, never need listing: each signed-in app at
+tapiOca's own apps, signed in, never need listing: each signed-in app at
 home gets its stations at an address of its own (see away.py's keys), as it
 does away from home, whichever is chosen, so changing it never stops one.
 With signing in off, an app is a device like any other.
@@ -22,7 +22,7 @@ what it called itself, what it asked for, when, and whether it was
 refused), each refused one with **Allow**. A refused request is logged in
 plain words (once an hour for each address, ten addresses an hour at most),
 and while only listed devices may use it, the Access tab warns when Plex
-can't (Plex in Docker often reaches StationPlay from the Docker network's
+can't (Plex in Docker often reaches tapiOca from the Docker network's
 address, not the server's).
 
 Anything can call itself Plex. So Plex's address is PLEX_URL's when Plex
@@ -123,7 +123,7 @@ def named(user_agent: str) -> str:
     for word, name in (
         ("plexmediaserver", PLEX), ("plex", "Plex"), ("jellyfin", "Jellyfin"), ("emby", "Emby"),
         ("vlc", "VLC"), ("kodi", "Kodi"), ("channels", "Channels"), ("lavf", "FFmpeg"),
-        ("stationplay", "StationPlay"),
+        ("stationplay", "tapiOca"),
     ):  # fmt: skip
         if word in lowered:
             return name
@@ -238,13 +238,13 @@ class TunerAccess:
         addresses = self.plex_addresses()
         if not addresses and self.only:
             raise ValueError(
-                "StationPlay doesn't know Plex's address yet. If Plex was turned away, choose "
+                "tapiOca doesn't know Plex's address yet. If Plex was turned away, choose "
                 "Allow beside it under Recent tuner connections."
             )
         if not addresses:
             raise ValueError(
-                "StationPlay doesn't know Plex's address yet. Open Live TV & DVR in Plex "
-                "(so it uses StationPlay's tuner), then try again."
+                "tapiOca doesn't know Plex's address yet. Open Live TV & DVR in Plex "
+                "(so it uses tapiOca's tuner), then try again."
             )
         self.save(True, [(a, PLEX) for a in addresses])
 
@@ -278,13 +278,13 @@ class TunerAccess:
                 if now - self._said_more >= LOGGED_AGAIN_S:
                     self._said_more = now
                     log.warning(
-                        "Turned more devices away from StationPlay's tuner this hour. Recent "
+                        "Turned more devices away from tapiOca's tuner this hour. Recent "
                         "tuner connections, on the Access tab, lists them."
                     )
                 return
             self._logged[address] = now
             log.warning(
-                "Turned away %s%s, which asked StationPlay's tuner for %s. Only the devices "
+                "Turned away %s%s, which asked tapiOca's tuner for %s. Only the devices "
                 "listed under Tuner access may use it: to let this one, choose Allow beside it "
                 "on the Access tab.",
                 address,
@@ -340,7 +340,7 @@ class TunerAccess:
         if not shut_out:
             return ""
         return (
-            f"Plex uses StationPlay's tuner from {', '.join(shut_out)}, which isn't on the list, "
+            f"Plex uses tapiOca's tuner from {', '.join(shut_out)}, which isn't on the list, "
             "so Plex can't show your stations. Allow it below."
         )
 

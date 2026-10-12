@@ -1,11 +1,11 @@
-"""The source of the GPL and LGPL packages in a StationPlay image, at the
+"""The source of the GPL and LGPL packages in a tapiOca image, at the
 exact versions in it: Debian's source packages (each one's .dsc and the
 files it names), downloaded into a folder.
 
 With --all, every source package that an installed package whose copyright
 file names the GPL, the LGPL or the AGPL (any version) is built from; a
 package without a copyright file counts too, as it can't be told. With
---also <list> too (another image's stationplay-<version>-packages.txt, such
+--also <list> too (another image's tapioca-<version>-packages.txt, such
 as the arm64 image's), the source of each package in that list that isn't
 installed here at that very version, whatever its license (a source in both
 images at different versions is fetched at each). Without --all, only

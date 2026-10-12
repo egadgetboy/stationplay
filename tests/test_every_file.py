@@ -1,5 +1,5 @@
 """One process for every file (1.30.0): what the checks find is kept per
-file, whoever plays it, a station or Media in StationPlay's apps; the
+file, whoever plays it, a station or Media in tapiOca's apps; the
 checks reach what's shared for Media, in one queue; and nothing is checked
 while anyone watches, a station or Media."""
 

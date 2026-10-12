@@ -1,9 +1,9 @@
-"""How much StationPlay's apps take on at once, so the server stays steady:
+"""How much tapiOca's apps take on at once, so the server stays steady:
 the limits an Admin sets (devices watching at once, and of those, how many
-away from home), the connection tests the apps run, and what StationPlay
+away from home), the connection tests the apps run, and what tapiOca
 recommends from those tests.
 
-Each device watching through StationPlay's apps (or another player using
+Each device watching through tapiOca's apps (or another player using
 the HLS addresses) gets its own copy of the station's stream: at home over
 the home network, and away from home over the home internet connection's
 upload. However many watch, a station still takes just one tuner (see
@@ -12,9 +12,9 @@ about the network. Plex, Jellyfin and other apps aren't counted here: they
 have limits of their own, and the tuners cover them.
 
 The server can't measure its own internet upload without a speed-test
-service somewhere else, and StationPlay depends on no outside service. So
+service somewhere else, and tapiOca depends on no outside service. So
 the apps measure it, the way viewers use it: an app times data sent to it
-by StationPlay (GET /api/internal/speed-test) and says what it found. From away
+by tapiOca (GET /api/internal/speed-test) and says what it found. From away
 from home, that's the upload as a viewer away from home gets it.
 
 A device already watching may always change station (it's still one
@@ -66,7 +66,7 @@ class Limits:
 
 @dataclass
 class ConnectionTest:
-    """A connection test an app ran: how fast StationPlay's data reached it."""
+    """A connection test an app ran: how fast tapiOca's data reached it."""
 
     where: str  # "home" or "away"
     mbps: float
@@ -103,7 +103,7 @@ def refused_because(limit: str, most: int) -> str:
     """What someone over a limit is told."""
     where = " away from home" if limit == "away" else ""
     return (
-        f"An Admin has limited StationPlay to {devices(most)} watching{where} at once, "
+        f"An Admin has limited tapiOca to {devices(most)} watching{where} at once, "
         "so it runs smoothly for everyone. Please try again later."
     )
 
@@ -173,7 +173,7 @@ class Capacity:
         if where not in WHERE:
             raise ValueError(f"where must be one of {', '.join(WHERE)}")
         if not 0 < mbps <= FASTEST_MBPS:
-            raise ValueError("That isn't a speed StationPlay can accept")
+            raise ValueError("That isn't a speed tapiOca can accept")
         test = ConnectionTest(where, round(mbps, 1), now_ms, device, user)
         self._tests = [test, *self._tests][:TESTS_KEPT]
         self.db.set_meta(META_TESTS, json.dumps([asdict(t) for t in self._tests]))

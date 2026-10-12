@@ -4,7 +4,7 @@ for someone (see docs/users.md).
 Every user has a Viewing Level (Unrestricted unless an Admin chooses
 another): the oldest age their movies and their TV may be rated for,
 whether unrated titles are shown, and which libraries they can see.
-Unrestricted, with no limits, comes with StationPlay and stays as it is;
+Unrestricted, with no limits, comes with tapiOca and stays as it is;
 so do Teen, Kid and Young Child, to start from, which an Admin can rename,
 change or remove like the levels they add. Admins see everything, as does
 everyone while signing in is off.
@@ -59,7 +59,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("stationplay.viewing")
 
 UNRESTRICTED, TEEN, KID, YOUNG_CHILD = "unrestricted", "teen", "kid", "young-child"
-# The levels StationPlay comes with: (builtin, name, movies' age, TV's age,
+# The levels tapiOca comes with: (builtin, name, movies' age, TV's age,
 # unrated shown). Unrestricted is always there, and stays as it is; the
 # others are made once, the first time, as a start.
 BUILT_IN = (
@@ -332,7 +332,7 @@ class Level:
         if self.allows_reach(reach):
             return None
         if not reach.known:
-            return "StationPlay is still asking Plex about the ratings of what it plays"
+            return "tapiOca is still asking Plex about the ratings of what it plays"
         if self.libraries is not None and not reach.libraries <= self.libraries:
             return f"It plays programs from a Media folder {self.name} doesn’t include"
         if self.movie_age is not None and (reach.movie_age or 0) > self.movie_age:
@@ -367,7 +367,7 @@ def blocked_why(blocks: Blocks, reach: Reach, which: str) -> str | None:
     if met is None:
         return None
     if met == "unknown":
-        return "StationPlay is still asking Plex about the genres and tags of what it plays"
+        return "tapiOca is still asking Plex about the genres and tags of what it plays"
     name = blocks.named(met, reach)
     if met == "title":
         return f"It plays {name or 'a title'}, {which}"
@@ -518,7 +518,7 @@ class Viewing:
                 continue  # (Teen and the others only the first time: they can be removed)
             # (An Admin's own level may already have the name.)
             while name.casefold() in names:
-                name += " (StationPlay)"
+                name += " (tapiOca)"
             self.db.add_level(name, movie_age, tv_age, unrated, None, builtin)
             names.add(name.casefold())
 
@@ -596,7 +596,7 @@ class Viewing:
             if len(libraries) > 200:
                 raise ValueError("That's too many Media folders")
         if level_id is None and len(self._levels) >= LEVELS_MOST:
-            raise ValueError(f"StationPlay keeps at most {LEVELS_MOST} Viewing Levels")
+            raise ValueError(f"tapiOca keeps at most {LEVELS_MOST} Viewing Levels")
         if level_id is not None and level_id not in self._levels:
             raise ValueError("That Viewing Level has been removed")
         if level_id is not None and self._levels[level_id].builtin == UNRESTRICTED:

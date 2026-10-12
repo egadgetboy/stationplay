@@ -1,8 +1,8 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "StationPlay API",
-    "description": "StationPlay's API: the server, its stations, their guide and streams, and things an Admin can have it do. Send an API token (made on StationPlay's Access tab) as `Authorization: Bearer <token>`: a Viewer token reads, an Admin token also does what's marked Admin. Version 1 only grows; see docs/api.md.",
+    "title": "tapiOca API",
+    "description": "tapiOca's API: the server, its stations, their guide and streams, and things an Admin can have it do. Send an API token (made on tapiOca's Access tab) as `Authorization: Bearer <token>`: a Viewer token reads, an Admin token also does what's marked Admin. Version 1 only grows; see docs/api.md.",
     "version": "1",
     "license": {
       "name": "AGPL-3.0-only"
@@ -157,7 +157,7 @@
     },
     "/api/v1/status": {
       "get": {
-        "summary": "How StationPlay is doing",
+        "summary": "How tapiOca is doing",
         "description": "Whether Plex answers, how many tuners there are, and what's playing.",
         "operationId": "getStatus",
         "responses": {
@@ -417,7 +417,7 @@
           "Admin"
         ],
         "summary": "Ask Plex to refresh its guide",
-        "description": "As StationPlay does by itself after a change. Admin.",
+        "description": "As tapiOca does by itself after a change. Admin.",
         "operationId": "refreshGuide",
         "responses": {
           "200": {
@@ -458,8 +458,8 @@
         "tags": [
           "Admin"
         ],
-        "summary": "Back StationPlay up now",
-        "description": "Makes a backup, as StationPlay does every night. Admin.",
+        "summary": "Back tapiOca up now",
+        "description": "Makes a backup, as tapiOca does every night. Admin.",
         "operationId": "makeBackup",
         "responses": {
           "201": {
@@ -786,7 +786,7 @@
           "version": {
             "type": "string",
             "title": "Version",
-            "description": "StationPlay's version, such as 1.22.0"
+            "description": "tapiOca's version, such as 1.22.0"
           },
           "api": {
             "type": "integer",
@@ -825,7 +825,7 @@
               }
             ],
             "title": "Awayaddress",
-            "description": "Where StationPlay's apps reach it from outside, when that's on"
+            "description": "Where tapiOca's apps reach it from outside, when that's on"
           },
           "features": {
             "items": {
@@ -876,7 +876,7 @@
           "hls": {
             "type": "string",
             "title": "Hls",
-            "description": "Where to play it (HLS): an address on the server. From the internet (with watching away from home on), or at home for StationPlay's own apps, or for any token while only listed devices may use the tuner (from 1.32.0), an address of the token's own, which needs no token itself"
+            "description": "Where to play it (HLS): an address on the server. From the internet (with watching away from home on), or at home for tapiOca's own apps, or for any token while only listed devices may use the tuner (from 1.32.0), an address of the token's own, which needs no token itself"
           },
           "nightHls": {
             "type": "string",
@@ -942,7 +942,7 @@
           "version": {
             "type": "string",
             "title": "Version",
-            "description": "StationPlay's version"
+            "description": "tapiOca's version"
           },
           "plexConnected": {
             "type": "boolean",
@@ -1009,7 +1009,7 @@
       "token": {
         "type": "http",
         "scheme": "bearer",
-        "description": "An API token from the Access tab (or a StationPlay app's sign-in)"
+        "description": "An API token from the Access tab (or a tapiOca app's sign-in)"
       }
     }
   },

@@ -89,7 +89,7 @@ def decade_of(folder: str, path: str) -> int | None:
 
 def clip_at(kind: str, path: str) -> Clip | None:
     """A clip as its path says it is, before the folders have been looked
-    in (as StationPlay starts): in a `kind` folder (`commercials` or
+    in (as tapiOca starts): in a `kind` folder (`commercials` or
     `trailers`, the first in its path), and its decade by the folders
     between; None if it isn't in one."""
     parts = path.replace("\\", "/").split("/")[:-1]
@@ -163,8 +163,8 @@ class FillerLibrary:
     async def ready(self) -> None:
         """Makes sure the folders have been looked in (or tried) once, waiting
         for a look already under way: a station made while the first one
-        (as StationPlay starts) is still going would otherwise get no
-        commercials or trailers until StationPlay next checks Plex for
+        (as tapiOca starts) is still going would otherwise get no
+        commercials or trailers until tapiOca next checks Plex for
         updates."""
         if not self._tried:
             await self.refresh()

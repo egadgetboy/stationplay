@@ -223,7 +223,7 @@ class MarkerFinder:
         self.db = db
         self.library = library
         # Where programs' pictures cut near their markers (see cuts.py), once
-        # StationPlay has set it up: the markers move there.
+        # tapiOca has set it up: the markers move there.
         self.cuts: Any = None
         # Programs (by rating key) whose markers from Plex, as Plex gave
         # them when last asked, give something to skip.

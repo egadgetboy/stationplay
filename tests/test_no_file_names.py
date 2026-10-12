@@ -1,4 +1,4 @@
-"""Nothing StationPlay's apps receive names a file or a folder: not play
+"""Nothing tapiOca's apps receive names a file or a folder: not play
 answers, item details, versions, tracks, problems echoed back, alerts or
 errors, nor what's inside a copy or a station's stream. (An Admin's page and
 the log may name them. A file played as it is is the file, as it is.)"""

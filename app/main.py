@@ -133,7 +133,7 @@ WEB_DIR = Path(__file__).parent / "web"
 # The open-source notices, beside LICENSE (in the image, too: see Dockerfile).
 NOTICES = Path(__file__).parent.parent / "THIRD_PARTY_NOTICES.md"
 PRIVACY = Path(__file__).parent.parent / "PRIVACY.md"
-# StationPlay's own guide covers the same two days as Plex's.
+# tapiOca's own guide covers the same two days as Plex's.
 STATION_GUIDE_MAX_HOURS = GUIDE_FUTURE_MS / 3_600_000
 SOURCE_TYPES = ("show", "movie", "section", "filter", "collection")
 NAME_MAX = 60  # the longest a station's name can be
@@ -155,7 +155,7 @@ FILTER_EXCLUDE_MAX = 20_000
 THEME_COOKIE = "stationplay_theme"
 THEMES = ("light", "dark")
 # What the page may load and run: its own scripts (by the nonce each time it's
-# sent), from StationPlay only, and never inside another site's page.
+# sent), from tapiOca only, and never inside another site's page.
 PAGE_POLICY = (
     "default-src 'self'; script-src 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; "
     "img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; "
@@ -420,7 +420,7 @@ class LimitsIn(BaseModel):
 
 
 class AppLimitsIn(BaseModel):
-    """How many devices may watch through StationPlay's apps at once, and
+    """How many devices may watch through tapiOca's apps at once, and
     of those, away from home (0: no limit; see capacity.py)."""
 
     devices: int
@@ -460,7 +460,7 @@ class AppContext:
     device_id: str
     gpu: GpuManager
     broadcasters: dict[int, Broadcaster] = field(default_factory=dict)
-    # Stations being sent to StationPlay's apps (see hls.py), and whose app
+    # Stations being sent to tapiOca's apps (see hls.py), and whose app
     # is at each address (see playing.py).
     hls_streams: hls.HlsStreams = field(default_factory=hls.HlsStreams)
     apps: playing.Apps = field(default_factory=playing.Apps)
@@ -509,11 +509,11 @@ class AppContext:
     bumpers: BumperLibrary = field(init=False)  # Intro Bumpers you've uploaded
     access: access.Access = field(init=False)  # who can sign in
     devices: devices.Devices = field(init=False)  # the apps linked, and their pickers
-    away: away.Away = field(init=False)  # StationPlay's apps away from home
+    away: away.Away = field(init=False)  # tapiOca's apps away from home
     tuner: TunerAccess = field(init=False)  # which devices may use the tuner
     reach: reach.Reach = field(init=False)  # whether they can reach it from outside
     capacity: capacity.Capacity = field(init=False)  # how many apps may watch at once
-    # Your library in StationPlay's apps (see ondemand.py): which libraries
+    # Your library in tapiOca's apps (see ondemand.py): which libraries
     # are shared with them, what they're shown, what's playing, pictures.
     shared: ondemand.Shared = field(init=False)
     catalog: ondemand.Catalog = field(init=False)
@@ -540,7 +540,7 @@ class AppContext:
     reports: reports.Reports = field(init=False)
 
     def restart(self) -> None:
-        """Stops StationPlay; Docker starts it again."""
+        """Stops tapiOca; Docker starts it again."""
         os.kill(os.getpid(), signal.SIGTERM)
 
     def __post_init__(self) -> None:
@@ -595,7 +595,7 @@ class AppContext:
         return self.shared.on and (not outside or (self.away.on and self.access.required))
 
     def app_watchers(self) -> dict[str, bool]:
-        """The devices watching in StationPlay's apps now, stations and the
+        """The devices watching in tapiOca's apps now, stations and the
         library alike: which -> whether it's away from home."""
         watching = dict(self.hls_streams.watchers())
         for client, away_ in self.plays.watching().items():
@@ -731,7 +731,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        log.info("StationPlay %s is starting", __version__)
+        log.info("tapiOca %s is starting", __version__)
         playback.start(ctx.db, settings)
         setup.start(
             ctx.db,
@@ -754,7 +754,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         ctx.subtitling = problem is None
         if problem:
             log.warning(
-                "StationPlay can't draw subtitles, so programs will play without them (%s)",
+                "tapiOca can't draw subtitles, so programs will play without them (%s)",
                 problem,
             )
         ctx.gpu.start()
@@ -795,13 +795,13 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         await step("saving the alerts not sent yet", ctx.notify.unsent)
         await step(
             "ending the apps' streams",
-            lambda: ctx.hls_streams.stop_all("StationPlay is shutting down"),
+            lambda: ctx.hls_streams.stop_all("tapiOca is shutting down"),
         )
         await step("ending what plays", ctx.plays.end_all)
         for b in list(ctx.broadcasters.values()):
             await step(
                 f"ending {playing.station(b._number, b._name, mid=True)}",
-                functools.partial(b.stop, "StationPlay is shutting down"),
+                functools.partial(b.stop, "tapiOca is shutting down"),
             )
         # (After what matters more, as it can wait a moment for a file being opened.)
         await step("saving where pictures cut", ctx.markers.cuts.close)
@@ -818,9 +818,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         logging.getLogger(noisy).setLevel(logging.WARNING)
     try:
         if backups.apply_staged_restore(settings.data_dir):
-            log.warning("StationPlay started from the backup you restored")
+            log.warning("tapiOca started from the backup you restored")
     except Exception:
-        log.exception("Couldn't restore the backup, so StationPlay is keeping its current settings")
+        log.exception("Couldn't restore the backup, so tapiOca is keeping its current settings")
     try:
         backups.before_update(settings.data_dir)
     except backups.CantBackUp as e:
@@ -844,7 +844,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     ctx.access.reset_if_asked(settings.data_dir)
     ctx.access.forget_old_sessions()
     app = FastAPI(
-        title="StationPlay", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+        title="tapiOca", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
     )
     app.state.ctx = ctx
     # Signing in, if it's on: in front of everything else (see access.py).
@@ -855,7 +855,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     viewing.routes(app, ctx)  # (who sees what: Viewing Levels)
     cliprules.routes(app, ctx)  # (and commercials and trailers' ratings)
     devices.routes(app, ctx)  # (linked devices, and their pickers)
-    appapi.routes(app, ctx)  # (for StationPlay's apps)
+    appapi.routes(app, ctx)  # (for tapiOca's apps)
     applibrary.routes(app, ctx)  # (your library in them)
     reports.routes(app, ctx)  # (people's reports, from them)
     stats.routes(app, ctx)
@@ -883,7 +883,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         return channel
 
     def base_url(request: Request) -> str:
-        """The address Plex reaches StationPlay at: as the request was made,
+        """The address Plex reaches tapiOca at: as the request was made,
         unless BASE_URL says. (From the internet, where it can't be told, the
         Add to Plex tab shows where to put your NAS's address in.)"""
         if settings.base_url:
@@ -1011,7 +1011,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             headers={"Cache-Control": "no-cache, no-store", "Connection": "close"},
         )
 
-    # StationPlay's apps (and AirPlay and Chromecast): stations as HLS ---------
+    # tapiOca's apps (and AirPlay and Chromecast): stations as HLS ---------
 
     async def hls_playlist_for(
         number: int,
@@ -1140,7 +1140,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         user = ctx.away.user_of(key, recheck=recheck, outside=access.outside(request.scope))
         if user is None:
             raise HTTPException(
-                404, "That stream address has ended. Ask StationPlay for its stations again."
+                404, "That stream address has ended. Ask tapiOca for its stations again."
             )
         channel = ctx.db.get_channel_by_number(number)
         if channel is not None and not ctx.sees_station(user, channel.id):
@@ -1159,7 +1159,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     def watching_away(key: str, user: User, number: int, request: Request) -> None:
         """A playlist asked for at an app's own address: logged (once an
         hour) away from home, and through the public port, proof that apps
-        reach StationPlay from outside (see reach.py)."""
+        reach tapiOca from outside (see reach.py)."""
         if ctx.away.is_home(key):
             return  # (at home, as at its home address)
         channel = ctx.db.get_channel_by_number(number)
@@ -1238,7 +1238,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     def all_tuners_in_use(channel: Channel, on_now: list[int], client: str) -> Response:
         """Someone tuned in to `channel` while every tuner is in use: a card
-        saying so (for a while), so they know it's StationPlay's limit."""
+        saying so (for a while), so they know it's tapiOca's limit."""
         tuners = playback.load(ctx.db).tuners
         log.warning(
             "No tuners are free (%d in use, for stations %s), so viewer %s got the "
@@ -1253,7 +1253,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             if now - began > playback.BUSY_S + 30:
                 del busy_cards[card]
         if len(busy_cards) >= playback.BUSY_AT_ONCE:
-            raise HTTPException(503, "All of StationPlay's tuners are in use")
+            raise HTTPException(503, "All of tapiOca's tuners are in use")
         card = secrets.token_hex(8)
         busy_cards[card] = now
         logo = ctx.logos.path(channel.logo) if channel.logo else None
@@ -1375,7 +1375,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         return UPLOAD_PREFIX + hashlib.sha1(url.encode()).hexdigest()[:10]
 
     async def plex_logo(rating_key: str) -> tuple[str, str, bytes] | None:
-        """(title, Plex's address, the logo as StationPlay keeps it) for a
+        """(title, Plex's address, the logo as tapiOca keeps it) for a
         show or movie with a logo in Plex; None if it has none."""
         if not rating_key.isdigit():
             return None
@@ -1557,12 +1557,36 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             WEB_DIR / request.url.path.lstrip("/"), headers={"Cache-Control": "max-age=86400"}
         )
 
+    @app.get("/favicon.svg")
+    @app.get("/favicon.ico")
+    async def favicon(request: Request):
+        """tapiOca's mark in a browser's tab: the SVG one, and the ICO for
+        browsers that don't take an SVG."""
+        svg = request.url.path.endswith(".svg")
+        return FileResponse(
+            WEB_DIR / request.url.path.lstrip("/"),
+            media_type="image/svg+xml" if svg else "image/x-icon",
+            headers={"Cache-Control": "max-age=86400"},
+        )
+
+    @app.get("/fonts/{name:path}")
+    async def page_font(name: str):
+        """The page's fonts (access.FONT_FILES), and nothing else, from
+        tapiOca itself."""
+        if name not in access.FONT_FILES:
+            raise HTTPException(404)
+        return FileResponse(
+            WEB_DIR / "fonts" / name,
+            media_type="font/woff2",
+            headers={"Cache-Control": "max-age=86400"},
+        )
+
     @app.get("/manifest.webmanifest")
     async def web_app():
         """What a browser needs to install the page as an app (added to a
         phone's home screen, or installed on a computer), which opens in a
         window of its own. There's no service worker: the page is always the
-        one StationPlay serves now."""
+        one tapiOca serves now."""
         return FileResponse(
             WEB_DIR / "manifest.webmanifest",
             media_type="application/manifest+json",
@@ -1571,7 +1595,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.get("/open-source-notices")
     async def open_source_notices():
-        """The open-source notices of what StationPlay is built from
+        """The open-source notices of what tapiOca is built from
         (THIRD_PARTY_NOTICES.md, beside LICENSE), as plain text: the link
         beside Source at the foot of the page."""
         if not NOTICES.is_file():
@@ -1580,7 +1604,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.get("/privacy")
     async def privacy():
-        """StationPlay's privacy notice (PRIVACY.md, beside LICENSE), as
+        """tapiOca's privacy notice (PRIVACY.md, beside LICENSE), as
         plain text: the link at the foot of the page."""
         if not PRIVACY.is_file():
             raise HTTPException(404)
@@ -1589,7 +1613,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     @app.get("/web/{name:path}")
     async def page_file(name: str, v: str = ""):
         """The page's own styles and scripts (access.PAGE_FILES), and nothing
-        else. Each is asked for with StationPlay's version, so a new release's
+        else. Each is asked for with tapiOca's version, so a new release's
         are never stale, and kept as long as a browser likes."""
         if name not in access.PAGE_FILES or v != __version__:
             raise HTTPException(404)
@@ -1641,7 +1665,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         )
 
     async def plex_status(find_dvr: bool = True) -> dict:
-        """Whether Plex answers; and (find_dvr) looks for StationPlay's tuner
+        """Whether Plex answers; and (find_dvr) looks for tapiOca's tuner
         in Plex, for the Add to Plex tab."""
         if not ctx.plex.configured:
             return {"configured": False, "ok": False, "error": "PLEX_URL and PLEX_TOKEN aren't set"}
@@ -1710,7 +1734,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             # For the header's alerts (see alerts.py): those now.
             "alerts": [a.as_dict() for a in ctx.alerts.now()],
             # For the header's "Away from home": while it's on, whether apps
-            # can reach StationPlay from outside (see reach.py).
+            # can reach tapiOca from outside (see reach.py).
             "away": {
                 "on": True,
                 "address": ctx.away.address,
@@ -1941,7 +1965,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         check_logo(body.logo)
         if body.introVideo and ctx.bumpers.get(body.introVideo) is None:
             # (Unless it's the one the station has, even if it's gone missing:
-            # it plays StationPlay's own bumper until you choose another.)
+            # it plays tapiOca's own bumper until you choose another.)
             current = ctx.db.get_channel(channel_id) if channel_id is not None else None
             if current is None or current.intro_video != body.introVideo:
                 raise HTTPException(
@@ -2669,7 +2693,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.get("/api/problems")
     async def recent_problems(days: int = 7):
-        """What StationPlay's apps ran into lately (see problems.py), for the
+        """What tapiOca's apps ran into lately (see problems.py), for the
         Logs tab: each problem, how often, and on what kinds of device."""
         names = {u.id: u.name for u in ctx.db.users()}
         return ctx.problems.summary(max(1, min(days, problems.KEEP_DAYS)), names)
@@ -2713,7 +2737,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 "room and can be written to.",
             ) from None
         ctx.alerts.backup_made()
-        log.info("Backed up StationPlay to %s", path.name)
+        log.info("Backed up tapiOca to %s", path.name)
         return {"name": path.name}
 
     @app.get("/api/backups/{name}")
@@ -2728,7 +2752,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     @app.post("/api/restore")
     async def restore(request: Request, opening: bool = False):
         """Restores a backup (the request's body): it's checked and set aside,
-        then StationPlay restarts and puts it in place on the way up. A backup
+        then tapiOca restarts and puts it in place on the way up. A backup
         with no users would turn signing in off, so restoring one while it's
         on needs `opening` (409 without)."""
         async with restores.turn():
@@ -2736,7 +2760,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             async for chunk in request.stream():
                 data += chunk
                 if len(data) > backups.MAX_UPLOAD:
-                    raise HTTPException(413, "That file is too big to be a StationPlay backup")
+                    raise HTTPException(413, "That file is too big to be a tapiOca backup")
             try:
                 found = await asyncio.to_thread(
                     backups.stage_restore, settings.data_dir, bytes(data)
@@ -2750,7 +2774,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                     raise HTTPException(
                         409,
                         "That backup has no users, so restoring it turns off sign-in. Anyone "
-                        "who can reach StationPlay can use it until you add a user again.",
+                        "who can reach tapiOca can use it until you add a user again.",
                     )
                 problem = await prepare_staged()
                 if problem:
@@ -2760,7 +2784,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 backups.discard_restore(settings.data_dir)
                 raise
         log.warning(
-            "Restarting StationPlay to restore a backup with %d stations",
+            "Restarting tapiOca to restore a backup with %d stations",
             found["stations"],
         )
         restarts.add(asyncio.create_task(restart_soon()))
@@ -2768,9 +2792,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     async def prepare_staged() -> str | None:
         """Makes a backup set aside to be restored fit to put in place, or
-        says why it isn't: it must hold only what StationPlay itself would
+        says why it isn't: it must hold only what tapiOca itself would
         have made. Its stations' names are made plain, and its logos are made
-        again (as an uploaded one is), so only pictures StationPlay drew are
+        again (as an uploaded one is), so only pictures tapiOca drew are
         ever put in place."""
         try:
             stations = await asyncio.to_thread(backups.tidy_staged_stations, settings.data_dir)
@@ -2798,12 +2822,12 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     restarts: set[asyncio.Task] = set()
 
     async def restart_soon() -> None:
-        """Restarts StationPlay once the reply has gone. Streams are ended
+        """Restarts tapiOca once the reply has gone. Streams are ended
         first: the web server waits for open connections before it stops,
         and a stream never ends by itself."""
         await asyncio.sleep(1.0)
         for b in list(ctx.broadcasters.values()):
-            await b.stop("StationPlay is restarting to restore a backup")
+            await b.stop("tapiOca is restarting to restore a backup")
         ctx.restart()
 
     # Checking files ------------------------------------------------------------
@@ -2872,7 +2896,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     async def setup_checks(offset: int | None = None, zone: str = ""):
         """Whether what's set up is working. `offset` and `zone`: the
         browser's clock (minutes ahead of UTC, and its time zone's name), to
-        compare StationPlay's with."""
+        compare tapiOca's with."""
         if offset is not None and not -1080 <= offset <= 1080:
             offset = None
         plex_state, present = await asyncio.gather(plex_status(), media_dir_present())
@@ -2907,7 +2931,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         ctx.db.set_meta(META_SPEED_TEST, json.dumps(tested))
         return playback_json()
 
-    # How many of StationPlay's apps may watch at once (see capacity.py) ----
+    # How many of tapiOca's apps may watch at once (see capacity.py) ----
 
     def app_limits_json() -> dict:
         now = now_ms()
@@ -2945,7 +2969,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         if after != before:
             user = access.signed_in(request)
             log.info(
-                "Devices that can watch at once in StationPlay's apps: %s; away from home: %s%s",
+                "Devices that can watch at once in tapiOca's apps: %s; away from home: %s%s",
                 after.devices or "no limit",
                 after.away or "no limit",
                 f" (set by {user.name})" if user else "",
@@ -3063,8 +3087,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         async with ctx.list_lock:  # (not while the list's being gone through)
             replacing.leave(ctx, entry)
         log.info(
-            "%s: marked \"I'll handle it\", so StationPlay won't ask Sonarr or Radarr to "
-            "replace it",
+            "%s: marked \"I'll handle it\", so tapiOca won't ask Sonarr or Radarr to replace it",
             replacing.entry_label(entry),
         )
         return Response(status_code=204)
@@ -3127,7 +3150,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.post("/api/arr/test")
     async def arr_test(body: ArrIn):
-        """Whether StationPlay can reach Sonarr or Radarr with these (or the
+        """Whether tapiOca can reach Sonarr or Radarr with these (or the
         saved address and key)."""
         saved = replacing.settings(ctx.db)[body.app]
         try:
@@ -3214,7 +3237,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 )
         return said
 
-    # StationPlay's own new versions: the update check (see releases.py) ------
+    # tapiOca's own new versions: the update check (see releases.py) ------
 
     @app.get("/api/updates")
     async def updates_get():
@@ -3222,12 +3245,12 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.put("/api/updates")
     async def updates_save(body: UpdateCheckIn, request: Request):
-        """An Admin's answer: whether StationPlay asks GitHub once a day."""
+        """An Admin's answer: whether tapiOca asks GitHub once a day."""
         ctx.releases.save(body.on)
         who = access.signed_in(request)
         log.info(
             "The update check: %s%s",
-            "on (StationPlay asks GitHub once a day whether a new version is out)"
+            "on (tapiOca asks GitHub once a day whether a new version is out)"
             if body.on
             else "off",
             f" (set by {who.name})" if who else "",
@@ -3286,7 +3309,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             raise HTTPException(400, str(e)) from None
         return {**notify_json(), "sent": sent.as_dict()}
 
-    # StationPlay's apps away from home (see away.py) ----------------------
+    # tapiOca's apps away from home (see away.py) ----------------------
 
     def away_json() -> dict:
         # (The fastest recent connection test from outside: the home's upload,
@@ -3297,11 +3320,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             "address": ctx.away.address,
             "publicPort": settings.public_port,
             "apps": ctx.away.apps,
-            # An https:// address on StationPlay's own port: saved, but it
+            # An https:// address on tapiOca's own port: saved, but it
             # can't work (see away.port_problem); null otherwise.
             "portProblem": away.port_problem(ctx.away.address, settings.port, settings.public_port)
             or None,
-            # Whether apps can reach StationPlay there (see reach.py).
+            # Whether apps can reach tapiOca there (see reach.py).
             "reach": ctx.reach.status().as_dict(),
             # Media away from home: up to this many Mbps (null: Original).
             "mediaMbps": ctx.away.media_mbps,
@@ -3330,15 +3353,15 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         ctx.reach.saved()  # (checked at once)
         ctx.access.record(
             logging.INFO,
-            f"Watching away from home in StationPlay's apps is on, at {ctx.away.address}"
+            f"Watching away from home in tapiOca's apps is on, at {ctx.away.address}"
             if ctx.away.on
-            else "Watching away from home in StationPlay's apps is off",
+            else "Watching away from home in tapiOca's apps is off",
         )
         if ctx.away.media_mbps != cap_was:
             who = access.signed_in(request)
             ctx.access.record(
                 logging.INFO,
-                "Media away from home in StationPlay's apps: "
+                "Media away from home in tapiOca's apps: "
                 + (f"up to {ctx.away.media_mbps} Mbps" if ctx.away.media_mbps else "Original")
                 + (f" (set by {who.name})" if who else ""),
             )
@@ -3389,7 +3412,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.post("/api/away/check")
     async def away_check():
-        """Check now: whether apps can reach StationPlay at the address set,
+        """Check now: whether apps can reach tapiOca at the address set,
         checked now."""
         if not ctx.away.on:
             raise HTTPException(400, "Watching away from home is off, so there's nothing to check")
@@ -3397,9 +3420,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.get(access.REACH)
     async def reach_answer(request: Request):
-        """StationPlay checking that apps can reach it from outside (see
+        """tapiOca checking that apps can reach it from outside (see
         reach.py): for the value a check is waiting for, that it's
-        StationPlay, which port the request came in on, and whether it came
+        tapiOca, which port the request came in on, and whether it came
         over HTTPS; for anything else, 404."""
         outside, https = access.outside(request.scope), access.over_https(request.scope)
         if not ctx.reach.answer(request.query_params.get("n", ""), outside, https):
@@ -3413,7 +3436,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             return JSONResponse({"files": []})
         return FileResponse(path, filename="broken-files.json", media_type="application/json")
 
-    # StationPlay's API (see api.py): what an Admin's token can have it do, as
+    # tapiOca's API (see api.py): what an Admin's token can have it do, as
     # the page does it.
 
     async def api_status() -> dict[str, Any]:
@@ -3674,7 +3697,7 @@ async def render_icon(settings: Settings, text: str) -> bytes | None:
 
 
 def data_dir_problem(data_dir: Path) -> str | None:
-    """None if StationPlay can write to its data folder, otherwise what's
+    """None if tapiOca can write to its data folder, otherwise what's
     wrong and how to fix it."""
     user = f"{os.getuid()}:{os.getgid()}"
     fix = (
@@ -3687,8 +3710,10 @@ def data_dir_problem(data_dir: Path) -> str | None:
         probe.write_text("ok\n")
         probe.unlink()
     except OSError as e:
-        return f"StationPlay runs as user {user} and can't write to {data_dir} ({e.strerror or e}). {fix}"
-    # (The reset-access file only has to exist: StationPlay deletes it, which
+        return (
+            f"tapiOca runs as user {user} and can't write to {data_dir} ({e.strerror or e}). {fix}"
+        )
+    # (The reset-access file only has to exist: tapiOca deletes it, which
     # the folder's write test above already covers, whoever made it.)
     locked = [
         p.name
@@ -3696,9 +3721,7 @@ def data_dir_problem(data_dir: Path) -> str | None:
         if p.is_file() and p.name != access.RESET_FILE and not os.access(p, os.W_OK)
     ]
     if locked:
-        return (
-            f"StationPlay runs as user {user} and can't change {', '.join(sorted(locked))}. {fix}"
-        )
+        return f"tapiOca runs as user {user} and can't change {', '.join(sorted(locked))}. {fix}"
     return None
 
 
@@ -3724,7 +3747,7 @@ def main() -> None:
             def end_streams() -> None:
                 for b in list(app.state.ctx.broadcasters.values()):
                     for viewer in list(b.viewers):
-                        viewer.close("StationPlay is stopping")
+                        viewer.close("tapiOca is stopping")
 
             # This runs as a signal handler: do it from the event loop.
             with contextlib.suppress(RuntimeError):
@@ -3747,17 +3770,17 @@ def main() -> None:
         # says: wrong passwords are counted by address (see access.py).
         proxy_headers=False,
     )
-    # With a public port, both from one StationPlay: which one a request came
+    # With a public port, both from one tapiOca: which one a request came
     # in on is what tells it whether it's from the internet (see access.py).
     ports = [settings.port, *([settings.public_port] if settings.public_port else [])]
     try:
         sockets = [socket.create_server(("0.0.0.0", port)) for port in ports]
     except OSError as e:
-        log.error("StationPlay can't listen on port %s: %s", " or ".join(map(str, ports)), e)
+        log.error("tapiOca can't listen on port %s: %s", " or ".join(map(str, ports)), e)
         raise SystemExit(1) from None
     if settings.public_port:
         log.info(
-            "Also serving StationPlay's page on port %d for the internet (without the Plex "
+            "Also serving tapiOca's page on port %d for the internet (without the Plex "
             "tuner endpoints)",
             settings.public_port,
         )

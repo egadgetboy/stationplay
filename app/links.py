@@ -2,7 +2,7 @@
 handy keyboard): no password typed on a remote, or sent by the TV.
 
 The app asks for a code and shows it (with where to enter it: the page's
-/link). Someone signed in on StationPlay's page enters the code, sees which
+/link). Someone signed in on tapiOca's page enters the code, sees which
 app on which device it is, and links it to their account. The app, which has
 been checking every few seconds with a secret only it holds (`poll`), then
 gets its own sign-in, as if that person had signed in on it.

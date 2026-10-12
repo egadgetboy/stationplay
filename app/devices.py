@@ -1,9 +1,9 @@
 """Linked devices, and the "Who's tuning in?" picker on them (see
 docs/users.md).
 
-A device is one of StationPlay's apps on a TV, phone or tablet. It's linked
+A device is one of tapiOca's apps on a TV, phone or tablet. It's linked
 once, by someone signing in on it (with their password, or a code entered on
-StationPlay's page), and keeps a long-lived key, kept here only as a hash; an
+tapiOca's page), and keeps a long-lived key, kept here only as a hash; an
 Admin can unlink it on the Access tab, which signs it out at once. Whoever
 is using it picks themselves from its picker, and gets a sign-in on that
 device that lasts a day from when it was last used (picking again starts a
@@ -88,11 +88,11 @@ ADMIN_KEEPS_PIN = (
 )
 PIN_ONLY = (
     "Your PIN is how you sign in, as you don't have a password, so you can't remove it "
-    "here. An Admin can, on StationPlay's Access tab."
+    "here. An Admin can, on tapiOca's Access tab."
 )
 NO_SECRET = (
     "You don't have a password or a PIN, so only an Admin can give you a PIN, on "
-    "StationPlay's Access tab."
+    "tapiOca's Access tab."
 )
 PICKED_UNLOCKED = "To set a PIN, sign in on this device with your password or an invite code first."
 
@@ -153,7 +153,7 @@ class Devices:
         key (shown once)."""
         key = secrets.token_urlsafe(KEY_BYTES)
         now = _now()
-        name = plain(name)[:NAME_MOST] or "A StationPlay app"
+        name = plain(name)[:NAME_MOST] or "A tapiOca app"
         device_id = self.db.add_linked_device(access.session_hash(key), name, now, by.name, by.id)
         return Device(device_id, name, now, now, by.name, by.id), key
 
@@ -362,7 +362,7 @@ class Devices:
     async def check_pin(self, user: User, pin: str) -> None:
         """Whether `pin` is `user`'s: Refused if it isn't, or after too many
         wrong ones (PIN_TRIES, then PIN_WAIT_S, on every device and on
-        StationPlay's page alike)."""
+        tapiOca's page alike)."""
         await self._check_pin(user, pin)
 
     async def _check_pin(self, user: User, pin: str) -> None:

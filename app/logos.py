@@ -1,4 +1,4 @@
-"""Station logos: StationPlay's own library (drawn by tools/logos/build.py),
+"""Station logos: tapiOca's own library (drawn by tools/logos/build.py),
 and your own: ones you upload, and shows' and movies' logos from Plex."""
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ NUMBERED = range(1, 51)
 # at random either).
 COLLECTION_LOGO = "collection"
 UNREADABLE = (
-    "StationPlay can't read that picture. Use a PNG, JPEG, WebP, GIF, or BMP (under 40 megapixels)."
+    "tapiOca can't read that picture. Use a PNG, JPEG, WebP, GIF, or BMP (under 40 megapixels)."
 )
 
 
@@ -132,7 +132,7 @@ class LogoLibrary:
         return self.keep(png, name_from_file(name, "My logo"))
 
     def keep(self, png: bytes, name: str, logo_id: str | None = None) -> dict:
-        """Keeps a PNG StationPlay made as one of your logos, called `name`;
+        """Keeps a PNG tapiOca made as one of your logos, called `name`;
         returns its catalog entry. With `logo_id` (one that's always the same
         for the same picture), a logo you have already is just returned."""
         if self.uploads is None or self.db is None:
@@ -171,7 +171,7 @@ class LogoLibrary:
 async def to_logo_png(data: bytes, ffmpeg_path: str) -> bytes:
     """A PNG, JPEG, WebP, GIF or BMP picture as a logo: a SIZE x SIZE PNG,
     fitted in and centred on a transparent background. Re-drawing it means
-    only a clean PNG StationPlay made is ever kept."""
+    only a clean PNG tapiOca made is ever kept."""
     fit = (
         f"scale={SIZE}:{SIZE}:force_original_aspect_ratio=decrease:flags=lanczos,"
         f"format=rgba,pad={SIZE}:{SIZE}:(ow-iw)/2:(oh-ih)/2:color=0x00000000"
@@ -267,7 +267,7 @@ async def _ffmpeg(args: list[str], data: bytes) -> tuple[int, bytes, bytes]:
             stderr=asyncio.subprocess.PIPE,
         )
     except OSError as e:
-        raise LogoError(f"StationPlay couldn't start ffmpeg to read that picture ({e})") from None
+        raise LogoError(f"tapiOca couldn't start ffmpeg to read that picture ({e})") from None
     try:
         out, said = await asyncio.wait_for(proc.communicate(data), 30)
     except TimeoutError:

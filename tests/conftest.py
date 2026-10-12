@@ -27,7 +27,7 @@ def no_background_alert_checks(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def no_checks_over_the_internet(monkeypatch):
-    """StationPlay's checks of the address its apps use from outside (see
+    """tapiOca's checks of the address its apps use from outside (see
     reach.py) never leave the machine in tests: nothing answers them, unless
     a test says what does (Reach.transport)."""
 

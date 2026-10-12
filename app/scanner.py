@@ -1,5 +1,5 @@
 """Checking files for problems before anyone plays them: the stations'
-programs, and what's shared for Media in StationPlay's apps (the libraries
+programs, and what's shared for Media in tapiOca's apps (the libraries
 an Admin shared with them). One record per file, whoever plays it (see
 broken.version_key): a file checked for a station isn't checked again for
 Media, or the other way around, unless it changes.
@@ -16,7 +16,7 @@ this order:
      a person's report. The stretch of it where that happened is decoded as
      the deep scan decodes, then it gets the quick check (and for a report
      that says where, the deep scan, if those find nothing). Only what
-     StationPlay finds puts it on the list: trouble that was the network's
+     tapiOca finds puts it on the list: trouble that was the network's
      or the app's changes nothing about the file.
   3. Arrival check: a program new to a station (or whose file changed),
      then what's newly added to a library shared for Media, gets a quick
@@ -29,7 +29,7 @@ this order:
      one.)
   5. Overnight deep scan: in a window you choose (1-6 AM unless you change
      it), files are decoded in full, picture and sound, timed the way
-     StationPlay plays them: the stations' programs first, whatever airs
+     tapiOca plays them: the stations' programs first, whatever airs
      soonest first; then Media's: what's in someone's Continue Watching,
      the next episode of a show someone is watching, then the rest by most
      recently added (each with its quick check first, if it hasn't had
@@ -38,7 +38,7 @@ this order:
      changes.
 
 What counts is what stops a program airing whole and as it should. What
-StationPlay plays through without anyone minding (a pause, a file a few
+tapiOca plays through without anyone minding (a pause, a file a few
 seconds short of its length, a decoder's complaint about nothing seen or
 heard) doesn't.
 
@@ -150,7 +150,7 @@ CLOSING_SOUND_S = 20.0
 # only mean it hasn't looked yet.
 CREDITS_PENDING_S = 2 * 86_400
 # The deep scan has the picture come out at this many frames a second, as
-# StationPlay plays it (at a steady rate), so how far it went is its frames.
+# tapiOca plays it (at a steady rate), so how far it went is its frames.
 PICTURE_RATE = 10
 # Programs are quick-checked again after this long.
 RECHECK_S = 7 * 24 * 3600
@@ -626,7 +626,7 @@ def _time(said: str) -> float | None:
 
 
 def _analysis(sound: bool) -> list[str]:
-    """What the deep scan has ffmpeg do besides decoding, as StationPlay
+    """What the deep scan has ffmpeg do besides decoding, as tapiOca
     plays a program: the picture at a steady rate (so how far it went is
     its frames counted), and the sound kept in step with it (silence where
     the file has none) and padded to the picture's end. It notes black
@@ -1129,7 +1129,7 @@ def _credits_in(
             ctx.settings, ctx.library, item.rating_key, resolved.parts, ctx.media_access
         )
         if starts is None:
-            raise Unknown("StationPlay couldn't tell where this file starts in the program")
+            raise Unknown("tapiOca couldn't tell where this file starts in the program")
         return [(a - starts[n], b - starts[n]) for a, b in rolls if b > starts[n]]
 
     return credits
@@ -1886,7 +1886,7 @@ class Scanner:
             # one, so trouble the apps send can't crowd out people's reports.)
             dropped = next((t for t in self._targets if not t.reports), self._targets[0])
             self._done_with(
-                dropped, COULDNT, "StationPlay had too many files to check at once, so it let "
+                dropped, COULDNT, "tapiOca had too many files to check at once, so it let "
                 "this one go."
             )  # fmt: skip
         self._save_targets()
@@ -1909,7 +1909,7 @@ class Scanner:
             self.on_checked(target.reports, outcome, note)
         if outcome == NOTHING:
             log.info(
-                "%s: StationPlay found nothing wrong with its file (%s), so it stays as it is",
+                "%s: tapiOca found nothing wrong with its file (%s), so it stays as it is",
                 _target_label(target),
                 target.why,
             )
@@ -1919,7 +1919,7 @@ class Scanner:
         TARGET_TRIES times in all."""
         target.tries += 1
         if target.tries >= TARGET_TRIES:
-            self._done_with(target, COULDNT, f"StationPlay couldn't check its file ({why}).")
+            self._done_with(target, COULDNT, f"tapiOca couldn't check its file ({why}).")
             return
         target.wait_until = time.time() + min(
             SKIPPED_RETRY_MOST_S, SKIPPED_RETRY_S * 2 ** (target.tries - 1)
@@ -1928,7 +1928,7 @@ class Scanner:
 
     async def _targeted(self, target: Target) -> None:
         """Checks a file someone had trouble with, a stage at a time (see
-        Target), until what StationPlay finds says what's to be done."""
+        Target), until what tapiOca finds says what's to be done."""
         ctx = self.ctx
         try:
             entry = await asyncio.wait_for(ctx.library.entry(target.rating_key, details=True), 30)
@@ -2598,7 +2598,7 @@ def _target_label(target: Target) -> str:
 
 def _nothing_found(target: Target) -> str:
     """What a target's check did, finding nothing, as its reports say it:
-    "StationPlay checked it from 12:11 to 13:11, then gave it the quick
+    "tapiOca checked it from 12:11 to 13:11, then gave it the quick
     check and the deep scan, and found nothing wrong."."""
     stretches = [r for r in target.ran if r.startswith("from ")]
     checks = [r for r in target.ran if not r.startswith("from ")]
@@ -2606,7 +2606,7 @@ def _nothing_found(target: Target) -> str:
     if checks:
         gave = f"gave it {' and '.join(checks)}"
         did = f"{did}, then {gave}" if did else gave
-    return f"StationPlay {did or 'checked it'}, and found nothing wrong."
+    return f"tapiOca {did or 'checked it'}, and found nothing wrong."
 
 
 def _judged_again(entry: dict) -> bool:

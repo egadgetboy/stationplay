@@ -1,23 +1,23 @@
 """People's reports of problems in what they watch (from 1.30.0): picked
-from a list in StationPlay's apps, never typed, about an episode or a movie
+from a list in tapiOca's apps, never typed, about an episode or a movie
 (from its page, or the player's menu) or what's on a station now (from the
-station's player). StationPlay knows who sent each one, and on what device,
+station's player). tapiOca knows who sent each one, and on what device,
 from the app's sign-in.
 
 The choices come from here (GET /api/internal/report-choices), so they can
 change without an app update. What a report does depends on what it says:
 
-  * What StationPlay can check (no picture, the picture breaking up, no
+  * What tapiOca can check (no picture, the picture breaking up, no
     sound, the sound cutting out, stopping before the end, not playing):
     its file is checked at once, at the front of the queue (see
     scanner.Target): around where it happened first, then the quick check,
     then the deep scan if those find nothing and the report said where.
     Found: the file goes on the list, and is replaced as an Admin has that
     set. Not found: the report waits on the Broken files tab, saying
-    StationPlay found nothing wrong, for an Admin to dismiss.
+    tapiOca found nothing wrong, for an Admin to dismiss.
   * What a machine can't judge (the sound out of sync, the wrong language,
     the wrong episode or movie, poor picture quality, subtitles):
-    StationPlay says what it can tell beside it (the file's sound
+    tapiOca says what it can tell beside it (the file's sound
     languages, its length against the show's other episodes', its
     picture's size, its subtitles), and it waits for an Admin: Replace
     (Sonarr or Radarr, blocklisting its release, as for a broken file), Find
@@ -82,7 +82,7 @@ CHOICES = (
     ("wrong-details", "Details", "Wrong title, details or artwork"),
 )
 LABELS = {choice: label for choice, _, label in CHOICES}
-# What StationPlay checks; what waits for an Admin; details, for the library.
+# What tapiOca checks; what waits for an Admin; details, for the library.
 CHECKED = frozenset(
     {"no-picture", "picture-breaks", "no-sound", "sound-cuts", "stops-early", "wont-play"}
 )
@@ -100,7 +100,7 @@ ONE_OF_THEM = "Send the key of what you're watching, or its station, not both"
 NO_STATION = "There's no such station"
 NOTHING_ON = "Nothing's on that station right now"
 # (For an Admin, on the Broken files tab.)
-UNREACHABLE_PLEX = "StationPlay can't reach Plex right now"
+UNREACHABLE_PLEX = "tapiOca can't reach Plex right now"
 # The limits: one a day per person per program; this many a day per person.
 A_DAY = 10
 KEEP_DAYS = 90
@@ -153,7 +153,7 @@ class Report:
     position_ms: int | None
     how: dict[str, Any]  # how it was playing (see describe_how)
     program: dict[str, Any]  # show, title, season, episode, year, showKey, library
-    facts: list[str]  # what StationPlay could tell about it (see facts_about)
+    facts: list[str]  # what tapiOca could tell about it (see facts_about)
     state: str
     note: str = ""
     done_ms: int | None = None
@@ -201,7 +201,7 @@ def _report(row: Any) -> Report:
     )  # fmt: skip
 
 
-# What StationPlay can tell beside a report ------------------------------------------------
+# What tapiOca can tell beside a report ------------------------------------------------
 
 
 def describe_how(
@@ -235,7 +235,7 @@ def describe_how(
 
 
 def facts_about(choice: str, entry: Entry, media: Media | None, others: list[Entry]) -> list[str]:
-    """What StationPlay can tell about what a person reported, for an Admin
+    """What tapiOca can tell about what a person reported, for an Admin
     to judge it by (`others`: the show's other episodes, for its length)."""
     if media is None:
         return []
@@ -372,7 +372,7 @@ class Reports:
     def needing(self) -> list[tuple[int, str, str]]:
         """What needs an Admin on the Broken files tab, as the alert says it
         (see alerts.py): (when, what it is, what to say) for each report row
-        waiting for them, and each file StationPlay found that does (see
+        waiting for them, and each file tapiOca found that does (see
         replacing.tab_section)."""
         out = []
         for row in self.rows():
@@ -435,7 +435,7 @@ class Reports:
         (see scanner.Target)."""
         done = outcome in (FOUND, GONE)
         if outcome == KEPT:
-            note = f"StationPlay found what's wrong ({note}), but you put it back on the air."
+            note = f"tapiOca found what's wrong ({note}), but you put it back on the air."
         elif outcome == GONE:
             note = "It's no longer in Plex."
         now = int(time.time() * 1000)
@@ -471,11 +471,11 @@ class Reports:
 
     def _to_judge(self, key: str) -> list[Report]:
         """A program's reports waiting for an Admin's Replace or Find a
-        better copy (what StationPlay can't judge), the oldest first."""
+        better copy (what tapiOca can't judge), the oldest first."""
         reports = [r for r in self._open_of(key) if r.state == WAITING and r.choice in LOOKED]
         if not reports:
             raise HTTPException(
-                400, "Only a report of what StationPlay can't judge waits for this choice"
+                400, "Only a report of what tapiOca can't judge waits for this choice"
             )
         return reports
 

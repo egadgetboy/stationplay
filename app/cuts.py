@@ -114,7 +114,7 @@ LEFT_FOR_S = 24 * 3600.0
 # up to PAUSE_MAX_S) before trying again.
 PAUSE_S = 300.0
 PAUSE_MAX_S = 3600.0
-# As StationPlay stops, what's being read is waited for this long at most.
+# As tapiOca stops, what's being read is waited for this long at most.
 CLOSE_WAIT_S = 2.0
 # Many stations made at once (smart stations, several collections): their
 # programs go first, but none is waited for (each would wait in turn).
@@ -504,7 +504,7 @@ class CutFinder:
 
     def _write(self, changes: int, text: str) -> None:
         """Writes `text`, what was found as of `changes`, unless the file
-        already has something newer (a save under way as StationPlay
+        already has something newer (a save under way as tapiOca
         stops)."""
         with self._writing:
             if changes > self._written:
@@ -528,14 +528,14 @@ class CutFinder:
             self._saved_at = time.monotonic()
 
     def cancel(self) -> None:
-        """Stops looking at once (StationPlay is stopping), without waiting
+        """Stops looking at once (tapiOca is stopping), without waiting
         (close, later, waits a moment and saves)."""
         for task in (self._worker, self._saver):
             if task is not None and not task.done():
                 task.cancel()
 
     async def close(self) -> None:
-        """Stops looking as StationPlay stops: what's being read stops with
+        """Stops looking as tapiOca stops: what's being read stops with
         it (waited for CLOSE_WAIT_S at most), and what's new is saved."""
         going = [t for t in (self._worker, self._saver) if t is not None and not t.done()]
         for task in going:
@@ -545,7 +545,7 @@ class CutFinder:
         self.stop()
 
     def stop(self) -> None:
-        """Stops looking (StationPlay is stopping), and saves what's new."""
+        """Stops looking (tapiOca is stopping), and saves what's new."""
         for task in (self._worker, self._saver):
             if task is not None and not task.done():
                 task.cancel()

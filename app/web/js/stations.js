@@ -42,7 +42,7 @@ function renderChannels() {
   if (!shown.length) {
     box.replaceChildren(h('div', { class: 'panel empty' },
       h('h3', {}, 'No stations yet'),
-      h('p', { class: 'muted' }, 'Pick some shows or movies from Plex, and StationPlay turns them into a station that plays around the clock.'),
+      h('p', { class: 'muted' }, 'Pick some shows or movies from Plex, and tapiOca turns them into a station that plays around the clock.'),
       h('button', { class: 'btn primary', onclick: () => openEditor() }, 'Create your first station')));
     return;
   }
@@ -175,8 +175,8 @@ function stationDetails(ch, check, now) {
       text(ASPECT_TEXT[ch.aspectMode] || ''),
       ch.skipIntros ? text(ch.trimmedCount ? `skips intros & credits (${ch.trimmedCount.toLocaleString()} of ${ch.itemCount.toLocaleString()})` : 'no intros or credits found yet',
         ch.trimmedCount
-          ? `Plex has found intros or credits in ${ch.trimmedCount} of this station’s ${ch.itemCount} programs, and StationPlay skips them. The rest play in full.`
-          : 'Plex hasn’t found intros or credits in any of this station’s programs yet. Turn on intro and credits detection in Plex, under Settings → Library. StationPlay picks them up within a few hours.')
+          ? `Plex has found intros or credits in ${ch.trimmedCount} of this station’s ${ch.itemCount} programs, and tapiOca skips them. The rest play in full.`
+          : 'Plex hasn’t found intros or credits in any of this station’s programs yet. Turn on intro and credits detection in Plex, under Settings → Library. tapiOca picks them up within a few hours.')
         : text('plays intros & credits'),
       ch.mostlyOneShow ? text('mostly one show', 'One show makes up most of this station, so shuffle will sometimes play it three or more times in a row. Add more shows to avoid that.') : null),
     ...row('Specials',
@@ -210,12 +210,12 @@ function stationDetails(ch, check, now) {
 }
 // Who made a station and when, at the top right of its card: "Made by Pat",
 // "Oct 3, 2026" (or "Made Oct 3, 2026" when who isn't known; "before" for a
-// station made before StationPlay kept the date).
+// station made before tapiOca kept the date).
 function madeText(ch) {
   if (!ch.createdAt && !ch.madeBy) return null;
   const made = new Date(ch.createdAt);
   const day = ch.createdAt ? `${ch.createdExact ? '' : 'on or before '}${made.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' })}` : '';
-  const title = ch.createdAt ? (ch.createdExact ? `Made ${made.toLocaleString()}` : 'Made before StationPlay recorded creation dates. It was on the air by this date.') : '';
+  const title = ch.createdAt ? (ch.createdExact ? `Made ${made.toLocaleString()}` : 'Made before tapiOca recorded creation dates. It was on the air by this date.') : '';
   return h('span', { class: 'made', title },
     ch.madeBy ? h('span', {}, `Made by ${ch.madeBy}`) : null,
     day ? h('span', {}, ch.madeBy ? day : `Made ${day}`) : null);

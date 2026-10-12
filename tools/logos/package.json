@@ -1,7 +1,7 @@
 {
   "name": "stationplay-logo-fonts",
   "private": true,
-  "description": "Open-licensed fonts (SIL OFL / Apache 2.0) used only to draw StationPlay's logo library.",
+  "description": "Open-licensed fonts (SIL OFL / Apache 2.0) used only to draw tapiOca's logo library.",
   "dependencies": {
     "@fontsource/abril-fatface": "5.3.0",
     "@fontsource/alfa-slab-one": "5.3.0",

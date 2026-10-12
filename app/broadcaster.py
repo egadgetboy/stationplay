@@ -120,7 +120,7 @@ PICTURE_CACHE_SIZE = 5000
 # How long drawing an Intro Bumper or Station ID card may take, at most,
 # before a plain card is used.
 DRAW_TIMEOUT_S = 10.0
-# The Intro Bumper's length when StationPlay's stands in for your own video.
+# The Intro Bumper's length when tapiOca's stands in for your own video.
 DEFAULT_INTRO_S = 5
 # Tuning in from the beginning goes back at most this far (a longer program
 # that began earlier is joined where it is): the schedule that far back is
@@ -170,7 +170,7 @@ def now_ms() -> int:
 class Viewer:
     """One connected client. Chunks are queued for it by the broadcaster.
     `counted`: whether its viewing counts in the stats as it ends (not the
-    HLS stream StationPlay's apps share, whose apps count one by one: see
+    HLS stream tapiOca's apps share, whose apps count one by one: see
     hls.py). `client` and `agent`: where it's watching from, and its player
     (for the Stats tab's Watching now)."""
 
@@ -183,7 +183,7 @@ class Viewer:
         self.queue: asyncio.Queue[bytes | None] = asyncio.Queue()
         self.queued_bytes = 0
         self.closed = False
-        # Why StationPlay ended this viewer's stream, if it did.
+        # Why tapiOca ended this viewer's stream, if it did.
         self.ended_because: str | None = None
 
     def push(self, chunk: bytes) -> None:
@@ -879,7 +879,7 @@ class Broadcaster:
         kind = COMMERCIALS if slot.item.kind == "episode" else TRAILERS
         clip = ctx.fillers.known(path)
         if clip is None and not ctx.fillers.refreshed_ms:
-            # (As StationPlay starts, before the folders have been looked in:
+            # (As tapiOca starts, before the folders have been looked in:
             # by the folder it's in, rather than a plain card for every clip.)
             clip = clip_at(kind, path)
         if clip is None:
@@ -1052,12 +1052,12 @@ class Broadcaster:
         self, channel: Channel, ts: float, burst: float
     ) -> PlayResult | None:
         """The station's Intro Bumper when it's a video you uploaded; None if
-        that's gone or won't play, so StationPlay's own plays instead. (It's
-        a copy StationPlay made, so what's in it is known.)"""
+        that's gone or won't play, so tapiOca's own plays instead. (It's
+        a copy tapiOca made, so what's in it is known.)"""
         bumper = await asyncio.to_thread(self.ctx.bumpers.get, channel.intro_video)
         if bumper is None:
             log.warning(
-                "%s: its Intro Bumper video is missing, so StationPlay's own bumper plays "
+                "%s: its Intro Bumper video is missing, so tapiOca's own bumper plays "
                 "instead. Choose another video in the station's settings.",
                 self._named(),
             )
@@ -1077,8 +1077,7 @@ class Broadcaster:
         if result.completed or result.stopped or result.next_ts is not None:
             return result
         log.warning(
-            "%s: its Intro Bumper video %r wouldn't play, so StationPlay's own bumper plays "
-            "instead",
+            "%s: its Intro Bumper video %r wouldn't play, so tapiOca's own bumper plays instead",
             self._named(),
             bumper.name,
         )
@@ -1648,7 +1647,7 @@ class Broadcaster:
                     if not length:
                         return failed(
                             Failure(
-                                "StationPlay couldn't tell how long it is", got.resolved.plex_file,
+                                "tapiOca couldn't tell how long it is", got.resolved.plex_file,
                                 got.resolved.size, opening=True, part=(n + 1, of),
                             )
                         )  # fmt: skip
