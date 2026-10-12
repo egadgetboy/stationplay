@@ -1,8 +1,8 @@
 <p align="center"><img src="docs/logo.svg" alt="tapiOca: Stations &amp; Media" width="360"></p>
 
 > [!WARNING]
-> ## tapiOca is in ALPHA
-> It works, but it's far from finished. Features are still being added and changed, some of what this README describes hasn't shipped yet, and things may break between versions. **For testing only. Don't rely on it for anything yet.** Back up your data folder before you update.
+> ## tapiOca is in BETA
+> Features are still being added and changed. Some of what this README describes hasn't shipped yet, and things may break between versions. **For testing only.**
 
 # tapiOca: Stations & Media
 
@@ -427,7 +427,7 @@ Channels DVR and VLC accept the playlist address, `http://<server-ip>:3310/stati
 
 ### tapiOca's own apps
 
-**tapiOca for Android** is in private testing, in alpha like tapiOca itself. It isn't in any app store yet. The Apple app and the Roku app are coming. The apps connect directly to your tapiOca server, so you can watch your stations without Plex Pass or any other app.
+**tapiOca for Android** is in private testing. It isn't in any app store yet. The Apple app and the Roku app are coming. The apps connect directly to your tapiOca server, so you can watch your stations without Plex Pass or any other app.
 
 - **Platforms.** In private testing: Android phones and tablets, Google TV and Android TV, in tapiOca for Android. Coming: iPhone, iPad and Apple TV, and Roku.
 - **A guide for every screen.** On a TV, you browse it with your remote. On a phone, you see every station at a glance and swipe through the hours. On a tablet, the selected program and a live picture sit above the guide.

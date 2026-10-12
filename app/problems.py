@@ -360,8 +360,14 @@ class Problems:
             why = f": {detail}" if detail and not unreachable else ""
             on = device_kind(fields["app"], fields["version"], fields["device"])
             named = f" ({fields['device_name']})" if fields["device_name"] else ""
-            # (Sent later, as an app does once it can: when it happened.)
-            when = f" ({ago((now_ms - at) / 1000)})" if now_ms - at >= 90_000 else ""
+            # (Sent later, as an app does once it can: when it happened, and
+            # why it's only said now. The owner, October 12: "(28 hours ago)"
+            # alone read as if it had just happened.)
+            when = (
+                f" (this happened {ago((now_ms - at) / 1000)}; the app could only tell tapiOca now)"
+                if now_ms - at >= 90_000
+                else ""
+            )
             log.warning("Problem in %s%s: %s%s%s", on, named, what, why, when)
 
     def journal(self, problem_id: int) -> dict[str, Any] | None:

@@ -157,7 +157,7 @@ def test_problems_sent_later_go_by_when_they_happened(app, caplog):
         order = [p["title"] for p in tv.get("/api/problems").json()["problems"]]
         assert order.index("Newest") < order.index("Older")
         assert "Problem in tapiOca for Android 0.9.0 on Pixel 8, Android 15 (Den): Older " \
-               "didn't play (3 hours ago)" in caplog.text  # fmt: skip
+               "didn't play (this happened 3 hours ago; the app could only tell tapiOca now)" in caplog.text  # fmt: skip
         # The same one again within 10 minutes of when it happened counts on its row,
         # whenever it's sent; further apart, it's another.
         sent(tv, kind="library-failed", title="Older", at=now - 3 * 3_600_000 - 5 * 60_000)
@@ -242,7 +242,8 @@ def test_trouble_reaching_stationplay_reads_plainly(app, caplog):
         assert row["station"] is None and row["means"] == [problems.TROUBLES[0][1]]
         assert (
             "Problem in tapiOca for Android 0.9.0 on Pixel 8, Android 15 (Den): Den couldn't "
-            "reach tapiOca for 12 minutes · No network on this device (20 minutes ago)"
+            "reach tapiOca for 12 minutes · No network on this device (this happened 20 minutes ago; the app could only tell "
+            "tapiOca now)"
         ) in caplog.text
         # As tapiOca for Android says it, how long in its detail: read from there.
         detail = "StationPlay didn't answer for 1 hr 5 min. The device was on Wi-Fi."

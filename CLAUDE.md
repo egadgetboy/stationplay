@@ -24,8 +24,7 @@ follow them in every change.
   (the owner, October 12): **tapiOca**, always a lowercase t and a capital O,
   even at the start of a sentence (never "Tapioca", "TAPIOCA" or "TapiOca");
   the full name is **"tapiOca: Stations & Media"**; lowercase **tapioca** for
-  new identifiers. Names other programs match (STATIONPLAY_*, the
-  StationPlay-API header, cookies, the database, the container name, Plex's
+  new identifiers. Names other programs match (the StationPlay-API header, cookies, the database, the container name, Plex's
   tuner and guide IDs and more) keep their old names: see
   docs/notes/names-kept.md. The brand kit is in the apps repo, at
   brand/tapioca-brand-kit.
@@ -38,7 +37,8 @@ follow them in every change.
 - **Opt-in features, a lean server:** no new dependencies; what an app can
   do itself lives in the app.
 - **No real file names or paths** in anything the apps receive.
-- tapiOca stays labeled **alpha** until the apps launch. No web client
+- tapiOca is labeled **beta** (the owner, October 12; alpha before) until the
+  apps launch. No web client
   for watching, no DVR.
 - **Personal use, on hardware you own** (the owner, October 12): the README
   and first-run setup's Plex step say tapiOca works with your own Plex
