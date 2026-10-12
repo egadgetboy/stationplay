@@ -4,8 +4,14 @@
 # commit and the release, with the release's files built from that commit:
 # stationplay-<version>.zip (unzipping to src), stationplay.yaml and
 # docker-compose.yml, and its image (ghcr.io/<you>/stationplay:<version>,
-# and :latest for the newest). A release already published is left as it
-# is. The newest version is marked the latest release.
+# and :latest for the newest). With them, what the image is made of:
+# stationplay-<version>-packages.txt (every package in it, at its exact
+# version, with where its source is kept: tools/sbom.py) and
+# stationplay-<version>-gpl-source.tar (FFmpeg's, x264's and x265's source,
+# at the versions in the image, which the GPL asks to go with them:
+# tools/gpl_source.sh). A release already published is left as it is, but
+# one without those two files gets them, from its own image. The newest
+# version is marked the latest release.
 #
 # Versions before FIRST_PUBLIC are never published: StationPlay's public
 # releases here start with 1.32.0 (the repository was started afresh then).
@@ -63,6 +69,16 @@ jobs:
           versions=$(ls docs/releases/v*.md 2>/dev/null | sed 's|.*/v\(.*\)\.md|\1|' | sort -V || true)
           newest=$(tail -1 <<< "$versions")
           refused=0
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stationplay"
+          # What an image is made of, beside the release ($1: its version,
+          # $2: the image, $3: the folder they go in).
+          # (One chain, so a step that fails stops it wherever it's called.)
+          made_of() {
+            docker run --rm -i "$2" python - "$1" < tools/sbom.py > "$3/stationplay-$1-packages.txt" \
+              && mkdir -p "$3/gpl" \
+              && docker run --rm -i --user 0 -v "$3/gpl:/out" "$2" sh -s < tools/gpl_source.sh \
+              && tar -cf "$3/stationplay-$1-gpl-source.tar" -C "$3/gpl" .
+          }
           for version in $versions; do
             tag="v$version"
             file="docs/releases/$tag.md"
@@ -71,7 +87,20 @@ jobs:
               continue
             fi
             if grep -qxF "$tag" <<< "$published"; then
-              echo "$tag: already published"
+              if gh release view "$tag" --json assets --jq '.assets[].name' | grep -qx "stationplay-$version-gpl-source.tar"; then
+                echo "$tag: already published"
+              else
+                # (Published before releases carried them: from its own image.)
+                out="$RUNNER_TEMP/$tag"
+                mkdir -p "$out"
+                if docker pull --quiet "$image:$version" && made_of "$version" "$image:$version" "$out"; then
+                  gh release upload "$tag" "$out/stationplay-$version-packages.txt" "$out/stationplay-$version-gpl-source.tar"
+                  echo "::notice::$tag: now with what its image is made of"
+                else
+                  echo "::error::$tag: what its image is made of couldn't be added (see above)"
+                  refused=1
+                fi
+              fi
               continue
             fi
             commit=$(sed -n '2s/^commit: \([0-9a-f]\{40\}\)$/\1/p' "$file")
@@ -135,10 +164,11 @@ jobs:
             latest=false
             if [ "$version" = "$newest" ]; then latest=true; fi
             # Its image first, built from that commit as the image workflow
-            # tested it: if it can't be pushed, nothing is published, and the
-            # next run tries again (a release is never left without its image).
-            image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stationplay"
+            # tested it, with what it's made of: if any of it can't be made or
+            # pushed, nothing is published, and the next run tries again (a
+            # release is never left without its image or its source).
             git archive --format=tar "$commit" | docker build --quiet --tag "$image:$version" -
+            made_of "$version" "$image:$version" "$out"
             docker push --quiet "$image:$version"
             if [ "$latest" = true ]; then
               docker tag "$image:$version" "$image:latest"
@@ -146,7 +176,8 @@ jobs:
             fi
             gh release create "$tag" --target "$commit" --title "StationPlay $version" \
               --notes-file "$out/notes.md" --latest="$latest" \
-              "$out/stationplay-$version.zip" "$out/stationplay.yaml" "$out/docker-compose.yml"
+              "$out/stationplay-$version.zip" "$out/stationplay.yaml" "$out/docker-compose.yml" \
+              "$out/stationplay-$version-packages.txt" "$out/stationplay-$version-gpl-source.tar"
             echo "::notice::Published $tag"
           done
           exit "$refused"

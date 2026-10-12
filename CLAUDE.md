@@ -58,6 +58,7 @@ follow them in every change.
   then the full suite once; real FFmpeg streaming for playback; Playwright
   at 390, 768 and 1440 wide, light and dark, for page changes;
   `python tools/upgrade_check.py --from <previous release's commit>`;
+  `python tools/image_check.py` before every push to main, about 3 minutes;
   `python -m tools.attack_check`); a `cold-auditor` audit; clean up; notes;
   a report.
 - Any database change on upgrade is preceded by an automatic backup

@@ -1,0 +1,123 @@
+"""The quick image check (tools/image_check.py): it lays a project out as
+its image's test stage has it, as Docker does, so a test reading a file the
+image hasn't got fails in minutes, not 40 minutes into the image workflow
+(as 1.32.0's first image run did)."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+try:
+    import image_check
+finally:
+    sys.path.pop(0)
+
+DOCKERFILE = """\
+FROM python:3.13-slim AS stationplay
+WORKDIR /opt/stationplay
+COPY requirements.txt .
+COPY app ./app
+COPY LICENSE NOTICES.md ./
+COPY --from=builder /x /y
+
+FROM stationplay AS test
+COPY pytest.ini Dockerfile \\
+     ./
+COPY docs ./docs
+COPY tools/one.py ./tools/
+COPY tools/logos/letters.py ./tools/logos/
+COPY tests ./tests
+
+FROM stationplay
+"""
+
+IGNORE = """\
+__pycache__/
+*.ts
+data/
+# (only these tools are for the tests)
+tools/*
+!tools/one.py
+!tools/logos/letters.py
+"""
+
+
+def project(root: Path) -> Path:
+    files = {
+        "Dockerfile": DOCKERFILE,
+        ".dockerignore": IGNORE,
+        "requirements.txt": "fastapi\n",
+        "pytest.ini": "[pytest]\n",
+        "LICENSE": "AGPL\n",
+        "NOTICES.md": "notices\n",
+        "README.md": "not in the image\n",
+        "a.ts": "left out at the top\n",
+        "app/main.py": "x = 1\n",
+        "app/web/a.ts": "kept: *.ts is only the top folder's\n",
+        "app/__pycache__/main.cpython-313.pyc": "",
+        "docs/api.md": "api\n",
+        "tools/one.py": "one\n",
+        "tools/two.py": "not in the image\n",
+        "tools/logos/letters.py": "letters\n",
+        "tools/logos/kit.py": "not in the image\n",
+        "tests/test_a.py": "def test_a():\n    pass\n",
+        "data/stationplay.db": "",
+    }
+    for name, text in files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text)
+    return root
+
+
+def test_each_stage_has_its_copies_and_its_bases(tmp_path):
+    stages = image_check.stages(DOCKERFILE)
+    assert stages["stationplay"] == [
+        (["requirements.txt"], "."),
+        (["app"], "./app"),
+        (["LICENSE", "NOTICES.md"], "./"),
+    ]  # (not the copy from another stage)
+    assert stages["test"][0] == (["pytest.ini", "Dockerfile"], "./")
+    test = image_check.copies_for(DOCKERFILE, "test")
+    assert test[:3] == stages["stationplay"] and test[3:] == stages["test"]
+
+
+def test_dockerignore_works_as_docker_s_does():
+    rules = image_check._parse_ignore(IGNORE)
+    assert image_check.ignored(rules, "tools/two.py")
+    assert not image_check.ignored(rules, "tools/one.py")
+    assert image_check.ignored(rules, "tools/logos/kit.py")
+    assert not image_check.ignored(rules, "tools/logos/letters.py")
+    assert image_check.ignored(rules, "data/stationplay.db")
+    assert image_check.ignored(rules, "a.ts") and not image_check.ignored(rules, "app/web/a.ts")
+    assert not image_check.ignored(rules, "docs/api.md")
+
+
+def test_a_project_is_laid_out_as_its_image_has_it(tmp_path):
+    root = project(tmp_path / "project")
+    into = tmp_path / "image"
+    laid = image_check.lay_out(root, into)
+    assert sorted(laid) == [
+        "Dockerfile", "LICENSE", "NOTICES.md", "app/main.py", "app/web/a.ts", "docs/api.md",
+        "pytest.ini", "requirements.txt", "tests/test_a.py", "tools/logos/letters.py",
+        "tools/one.py",
+    ]  # fmt: skip
+    assert (into / "tools" / "one.py").read_text() == "one\n"
+    assert not (into / "README.md").exists() and not (into / "tools" / "two.py").exists()
+
+
+def test_the_tests_it_runs_are_those_reaching_outside_their_folder(tmp_path):
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_inside.py").write_text("FAKE = Path(__file__).with_name('x.py')\n")
+    (tests / "test_root.py").write_text("ROOT = Path(__file__).resolve().parent.parent\n")
+    (tests / "test_tools.py").write_text("sys.path.insert(0, str(Path(__file__).parents[1]))\n")
+    (tests / "helper.py").write_text("ROOT = Path(__file__).parents[1]\n")
+    assert image_check.reaching_out(tests) == ["tests/test_root.py", "tests/test_tools.py"]
+
+
+def test_stationplay_s_own_check_runs_this_file_too():
+    """(This file reads tools/, so the image's test stage must have it.)"""
+    here = Path(__file__)
+    assert f"tests/{here.name}" in image_check.reaching_out(here.parent)

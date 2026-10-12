@@ -30,6 +30,38 @@ jobs:
           if [ "${tested#"$shipped "}" = "$tested" ]; then
             echo "::error::The test stage isn't built on the image that's published"; exit 1
           fi
+      # First, every test collected, and the tests that read the project's
+      # own files run (a few minutes): a file the image hasn't got stops it
+      # here, not 40 minutes in. tools/image_check.py runs the same before
+      # each push, without Docker.
+      - name: Quick check
+        timeout-minutes: 15
+        run: |
+          set -o pipefail
+          said() {
+            grep -E "^(FAILED|ERROR) " "$1" | head -9 | cut -c1-1600 | sed 's/^/::error::/'
+            why=$(grep -E "^E   " "$1" | head -40 | cut -c1-300 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
+            [ -n "$why" ] && echo "::error title=Why::$why"
+            exit 1
+          }
+          docker run --rm -e COLUMNS=400 stationplay:test \
+            python -m pytest -q -p no:cacheprovider --collect-only > "$RUNNER_TEMP/collected.txt" 2>&1 \
+            || { tail -40 "$RUNNER_TEMP/collected.txt"; said "$RUNNER_TEMP/collected.txt"; }
+          tail -1 "$RUNNER_TEMP/collected.txt"
+          docker run --rm --init -e COLUMNS=400 stationplay:test \
+            python -m pytest -q -p no:cacheprovider $(python3 tools/image_check.py --list) 2>&1 \
+            | tee "$RUNNER_TEMP/quick.txt" || said "$RUNNER_TEMP/quick.txt"
+      # What the image is made of, as release.yml adds it to each release
+      # (tools/sbom.py, tools/gpl_source.sh): made here too, so a release
+      # never finds out first that it can't be.
+      - name: Made of
+        timeout-minutes: 10
+        run: |
+          docker run --rm -i stationplay:latest python - test < tools/sbom.py > "$RUNNER_TEMP/packages.txt"
+          echo "::notice::$(grep -c snapshot.debian.org "$RUNNER_TEMP/packages.txt") Debian packages listed"
+          mkdir -p "$RUNNER_TEMP/gpl"
+          docker run --rm -i --user 0 -v "$RUNNER_TEMP/gpl:/out" stationplay:latest sh -s < tools/gpl_source.sh
+          ls -l "$RUNNER_TEMP/gpl"
       # release.yml publishes a version only once this step has passed on
       # its commit (or a later one with nothing but release notes since):
       # keep its name.

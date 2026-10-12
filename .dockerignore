@@ -4,8 +4,10 @@ __pycache__/
 .github/
 *.ts
 data/
-# (tests/ and these two tools are for the Dockerfile's test stage alone: what
+# (tests/ and these tools are for the Dockerfile's test stage alone: what
 # ships is app/ and requirements.txt.)
 tools/*
 !tools/openapi_spec.py
 !tools/logos/letters.py
+!tools/image_check.py
+!tools/sbom.py
