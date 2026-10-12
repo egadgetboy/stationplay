@@ -603,11 +603,13 @@ def test_no_style_makes_the_name_capitals():
         for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)
         if re.search(r"text-transform:\s*(uppercase|capitalize)", body)
     )
-    assert capitals == sorted([
-        "th",
-        "table.now td.now-how::before, table.now td.now-app::before",
-        ".problem-means .label",
-    ])
+    assert capitals == sorted(
+        [
+            "th",
+            "table.now td.now-how::before, table.now td.now-app::before",
+            ".problem-means .label",
+        ]
+    )
     for name in ("index.html", *(f for f in PAGE_FILES if f != "page.css")):
         page = (WEB_DIR / name).read_text(encoding="utf-8")
         found = re.findall(r"text-?[tT]ransform:\s*'?(\w+)", page)
