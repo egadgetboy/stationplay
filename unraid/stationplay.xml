@@ -9,12 +9,12 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/egadgetboy/stationplay/issues</Support>
   <Project>https://github.com/egadgetboy/stationplay</Project>
-  <Overview>StationPlay makes custom, always-on TV stations in Plex, built from your own movies and shows, with a program guide. It works with your own Plex Media Server, on hardware you own. Watching in Plex needs Plex Pass. Self-hosted, free and open source (GNU AGPL v3). StationPlay is in alpha: for testing only.</Overview>
+  <Overview>StationPlay makes custom, always-on TV stations in Plex, built from your own movies and shows, with a program guide. It works with your own Plex Media Server, which Plex's terms license for personal use, on hardware and storage you own. Watching in Plex needs Plex Pass. Self-hosted, free and open source (GNU AGPL v3). StationPlay is in alpha: for testing only.</Overview>
   <Category>MediaServer:Video</Category>
   <WebUI>http://[IP]:[PORT:3310]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/egadgetboy/stationplay/main/unraid/stationplay.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/egadgetboy/stationplay/main/app/web/icon-512.png</Icon>
-  <ExtraParams>--init --user 99:100 --security-opt no-new-privileges:true --cap-drop ALL</ExtraParams>
+  <ExtraParams>--init --restart unless-stopped --user 99:100 --security-opt no-new-privileges:true --cap-drop ALL --log-opt max-size=10m --log-opt max-file=3</ExtraParams>
   <PostArgs/>
   <CPUset/>
   <DateInstalled/>
@@ -29,6 +29,7 @@
   <Config Name="PLEX_TOKEN" Target="PLEX_TOKEN" Default="" Mode="" Description="Your Plex token (README: Finding your Plex token). Keep it private: it gives full access to your Plex server." Type="Variable" Display="always" Required="true" Mask="true"/>
   <Config Name="TZ" Target="TZ" Default="America/Chicago" Mode="" Description="Your time zone, such as America/Chicago." Type="Variable" Display="always" Required="true" Mask="false">America/Chicago</Config>
   <Config Name="PUBLIC_PORT" Target="PUBLIC_PORT" Default="3311" Mode="" Description="The port for the page from the internet, inside the container. It must differ from 3310. Remove it if you remove that port." Type="Variable" Display="always" Required="false" Mask="false">3311</Config>
+  <Config Name="PORT" Target="PORT" Default="3310" Mode="" Description="The port for Plex and your home network, inside the container. Leave it as 3310." Type="Variable" Display="advanced" Required="false" Mask="false">3310</Config>
   <Config Name="MEDIA_DIR" Target="MEDIA_DIR" Default="/media" Mode="" Description="Where your media is, inside the container. Leave it as /media." Type="Variable" Display="advanced" Required="false" Mask="false">/media</Config>
   <Config Name="HW_ACCEL" Target="HW_ACCEL" Default="auto" Mode="" Description="auto = use a GPU if one passes a test encode, otherwise the CPU. Other values: intel, amd, nvidia, cpu." Type="Variable" Display="always" Required="false" Mask="false">auto</Config>
   <Config Name="STATIONPLAY_INSTALL" Target="STATIONPLAY_INSTALL" Default="unraid" Mode="" Description="How the page says to update (README: Updating). Leave it as unraid." Type="Variable" Display="advanced" Required="false" Mask="false">unraid</Config>

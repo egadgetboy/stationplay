@@ -390,7 +390,7 @@ class NotifyAddressIn(BaseModel):
 
 
 class UpdateCheckIn(BaseModel):
-    """The update check (see releases.py): on or off."""
+    """The update check (see releases.py): an Admin's answer, on or off."""
 
     on: StrictBool
 
@@ -564,7 +564,10 @@ class AppContext:
         self.problems = problems.Problems(self.db)
         self.languages = languages.Languages(self.db)
         self.notify = notify.Notify(self.db)
-        self.releases = releases.Releases(self.db, self.settings.install)
+        # (Nothing asked of GitHub until setup is done: see releases.py.)
+        self.releases = releases.Releases(
+            self.db, self.settings.install, set_up=lambda: not setup.pending(self.db)
+        )
         self.alerts = alerts.Alerts(self.notify, self.db)
         self.access.judge_watching_by(self.viewing.watches_only)
         self.updater = Updater(self)
@@ -737,6 +740,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             ctx.shared.on,
             any(u.role != access.ADMIN for u in ctx.db.users()),
         )
+        releases.note_version(ctx.db, setup.state(ctx.db, len(ctx.db.list_channels()))["fresh"])
         await asyncio.to_thread(prepare_schedules)
         problem = await tone_mapping_problem(settings)
         ctx.tone_mapping = problem is None
@@ -3218,6 +3222,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.put("/api/updates")
     async def updates_save(body: UpdateCheckIn, request: Request):
+        """An Admin's answer: whether StationPlay asks GitHub once a day."""
         ctx.releases.save(body.on)
         who = access.signed_in(request)
         log.info(
@@ -3231,9 +3236,15 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.post("/api/updates/check")
     async def updates_check():
-        if not ctx.releases.on:
-            raise HTTPException(400, "Turn on the update check first")
-        await ctx.releases.check_now()
+        try:
+            await ctx.releases.check_now()
+        except releases.NotAsked:
+            raise HTTPException(
+                400,
+                "Turn on the update check first"
+                if ctx.releases.on is not True
+                else "Finish setup first: choose Run setup again on the Add to Plex tab",
+            ) from None
         return ctx.releases.as_json()
 
     @app.get("/api/notify")
@@ -3270,7 +3281,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             which = body.which or 0
             url = saved[which][0] if which < len(saved) else ""
         try:
-            sent = await ctx.notify.test(url, body.format, body.which)
+            sent = await ctx.notify.test(url, body.format)
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
         return {**notify_json(), "sent": sent.as_dict()}

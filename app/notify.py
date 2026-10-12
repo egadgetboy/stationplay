@@ -7,12 +7,14 @@ The addresses are the Admin's own: StationPlay sends only this there, and
 contacts nothing else on its own. Each is http or https only. For each one,
 StationPlay waits 5 seconds for an answer, tries once more when there's no
 good one, follows no redirect, and keeps nothing of the answer but its
-status (for the page's "Last sent"). Sending never holds anything else up:
-each message goes to every address, in the background, and each address
-gets its messages one at a time, on its own, so one that fails (or is slow)
-never holds up or changes the others. The addresses are shown to Admins
-only, and never written to the logs whole (they can carry a token): only
-their hosts are.
+status (for the page's "Last sent", kept only for an address that's saved:
+a test of one typed but not saved keeps nothing). Sending never holds
+anything else up: each message goes to every address, in the background,
+and each address gets its messages one at a time, in a line of its own, by
+the address, so one that fails (or is slow) never holds up or changes the
+others, even as the list changes. The addresses are shown to Admins only,
+and never written to the logs whole (they can carry a token): only their
+hosts are.
 
 An alert counts as told (see alerts.py's untold) once any address takes it,
 so an address that's down never has the others told it again after a
@@ -22,8 +24,10 @@ Four formats: plain text (the message, with a Title header, as ntfy takes
 it); JSON, for Gotify, Home Assistant and others: {"title": "StationPlay",
 "message": "...", "kind": "...", "state": "started" or "fixed"}; Discord's
 own: {"username": "StationPlay", "content": "...", "allowed_mentions":
-{"parse": []}} (the message cut to Discord's 2000 characters, and never
-pinging anyone); and Slack's: {"text": "..."} (with &, < and > written the
+{"parse": []}, "flags": 4} (the message with what Discord's markdown reads,
+such as ** or a link, written as text, so a station's name shows as it is;
+cut to Discord's 2000 characters; never pinging anyone; and no link
+previews, flag 4); and Slack's: {"text": "..."} (with &, < and > written the
 way Slack asks, so it never pings anyone either), which Mattermost and
 Rocket.Chat take too. A Discord webhook's address always gets Discord's
 format, and one on hooks.slack.com Slack's, whichever was chosen: they
@@ -80,6 +84,12 @@ DISCORD_HOSTS = frozenset({
 })  # fmt: skip
 DISCORD_PATH = re.compile(r"/api/(?:v\d+/)?webhooks/")
 DISCORD_MOST = 2000
+DISCORD_NO_PREVIEWS = 4  # (Discord's SUPPRESS_EMBEDS flag)
+# What Discord's markdown reads: bold and the like, masked links, quotes,
+# headings, lists, mentions and spoilers. (A web address is left as it is, so
+# it still works, up to the first of them in it.)
+DISCORD_MARKDOWN = re.compile(r"([\\*_`~|>\[\]()#<@\-])")
+DISCORD_LINK = re.compile(r"https?://[^\s<>*_~`|()\[\]\\]+")
 SLACK_HOSTS = frozenset({"hooks.slack.com"})  # (Slack's incoming webhooks)
 ADDRESS_MAX = 500
 WAIT_S = 5.0  # the longest an answer is waited for
@@ -160,6 +170,23 @@ def slack_text(message: str) -> str:
     return message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def discord_text(message: str) -> str:
+    """A message as Discord shows it as it is: each character its markdown
+    reads written as itself (with a \\ before it), but for web addresses,
+    cut to Discord's 2000 characters, never in the middle of one so
+    written."""
+    parts, at = [], 0
+    for link in DISCORD_LINK.finditer(message):
+        parts += [DISCORD_MARKDOWN.sub(r"\\\1", message[at : link.start()]), link.group(0)]
+        at = link.end()
+    text = "".join([*parts, DISCORD_MARKDOWN.sub(r"\\\1", message[at:])])
+    if len(text) > DISCORD_MOST:
+        text = text[:DISCORD_MOST]
+        if (len(text) - len(text.rstrip("\\"))) % 2:
+            text = text[:-1]  # (half of one written as itself)
+    return text
+
+
 def shown(url: str) -> str:
     """An address as the log may show it: its scheme and host, never the
     rest (a path or query can carry a token)."""
@@ -232,11 +259,14 @@ class Notify:
         )
         self.more: list[tuple[str, str]] = self._saved_more()
         self._waiting: asyncio.Queue[_Message] | None = None
-        # Each address's own: what waits to go there, what's being sent now,
-        # and whether its being too full was said (by its place on the list).
-        self._queues: list[asyncio.Queue[tuple[str, _Message]]] = []
-        self._sending: list[_Message | None] = [None] * ADDRESSES_MOST
-        self._said_full = [False] * (ADDRESSES_MOST + 1)  # (the last: _waiting's)
+        self._waiting_full = False  # (said once)
+        # Each address's own, by the address (never its place on the list,
+        # which changes): what waits to go there, what sends it, what's
+        # being sent there now, and whether its being too full was said.
+        self._queues: dict[str, asyncio.Queue[_Message]] = {}
+        self._senders: dict[str, asyncio.Task[None]] = {}
+        self._sending: dict[str, _Message] = {}
+        self._said_full: set[str] = set()
 
     def _saved_more(self) -> list[tuple[str, str]]:
         """The other addresses, as kept (any that won't do left out)."""
@@ -352,60 +382,69 @@ class Notify:
             return
         try:
             self._waiting.put_nowait(_Message(message, kind, state, done, failed))
-            self._said_full[-1] = False
+            self._waiting_full = False
         except asyncio.QueueFull:
-            if not self._said_full[-1]:
-                self._said_full[-1] = True
+            if not self._waiting_full:
+                self._waiting_full = True
                 log.warning("Too many alerts are waiting to go out, so some were left out")
 
     async def run_forever(self) -> None:
         """Hands what's waiting to each address, which sends its own one at a
         time, for as long as StationPlay runs."""
         self._waiting = asyncio.Queue(WAITING_MOST)
-        self._queues = [asyncio.Queue(WAITING_MOST) for _ in range(ADDRESSES_MOST)]
-        sending = [asyncio.create_task(self._send_forever(n)) for n in range(ADDRESSES_MOST)]
         try:
             while True:
                 self._hand_out(await self._waiting.get())
         finally:
-            for task in sending:
+            for task in self._senders.values():
                 task.cancel()
+            self._senders.clear()
 
     def _hand_out(self, message: _Message) -> None:
-        """A message, to each address's own line (one too full leaves it out)."""
+        """A message, to each address's own line (one too full leaves it
+        out); and a line no longer needed, gone."""
+        listed = [url for url, _ in (self.addresses() if self.on else [])]
+        for url in [u for u in self._queues if u not in listed]:
+            if self._queues[url].empty() and url not in self._sending:
+                self._senders.pop(url).cancel()
+                del self._queues[url]
+                self._said_full.discard(url)
         going = []
-        for n, (url, _) in enumerate(self.addresses() if self.on else []):
-            if self._queues[n].full():
-                if not self._said_full[n]:
-                    self._said_full[n] = True
+        for url in listed:
+            if url not in self._queues:
+                self._queues[url] = asyncio.Queue(WAITING_MOST)
+                self._senders[url] = asyncio.create_task(self._send_forever(url))
+            if self._queues[url].full():
+                if url not in self._said_full:
+                    self._said_full.add(url)
                     log.warning(
                         "Too many alerts are waiting to go to %s, so some were left out",
                         shown(url),
                     )
                 continue
-            self._said_full[n] = False
-            going.append((n, url))
+            self._said_full.discard(url)
+            going.append(url)
         message.left = len(going)
-        for n, url in going:
-            self._queues[n].put_nowait((url, message))
+        for url in going:
+            self._queues[url].put_nowait(message)
 
-    async def _send_forever(self, n: int) -> None:
-        """Sends what waits for the address in place `n`, one at a time."""
-        waiting = self._queues[n]
+    async def _send_forever(self, url: str) -> None:
+        """Sends what waits for one address, one at a time."""
+        waiting = self._queues[url]
         while True:
-            url, message = await waiting.get()
+            message = await waiting.get()
             fmt = dict(self.addresses()).get(url)
             if not self.on or fmt is None:
                 message.went(None)  # (turned off, or that address removed, meanwhile)
                 continue
-            self._sending[n] = message
+            self._sending[url] = message
             try:
                 sent = await self.post(url, fmt, message.message, message.kind, message.state)
             except Exception:
                 log.exception("Notifying %s failed", shown(url))
                 sent = None
             finally:
-                self._sending[n] = None
+                self._sending.pop(url, None)
             if sent is not None and not sent.ok:
                 log.warning("Couldn't notify %s of an alert: %s", shown(url), sent.status)
             message.went(sent is not None and sent.ok)
@@ -413,48 +452,46 @@ class Notify:
     def unsent(self) -> None:
         """As StationPlay stops: what no address took yet, being sent or
         still waiting, is said not to have been (each one's `failed`)."""
-        left = [m for m in self._sending if m is not None]
-        self._sending = [None] * ADDRESSES_MOST
+        left = list(self._sending.values())
+        self._sending.clear()
         while self._waiting is not None and not self._waiting.empty():
             left.append(self._waiting.get_nowait())
-        for waiting in self._queues:
+        for waiting in self._queues.values():
             while not waiting.empty():
-                left.append(waiting.get_nowait()[1])
+                left.append(waiting.get_nowait())
         for message in left:
             message.stopped()
 
-    async def test(self, url: str, fmt: str, which: int | None = None) -> Sent:
+    async def test(self, url: str, fmt: str) -> Sent:
         """Send a test: a message to `url` in `fmt`, now (the page waits for
-        it). `which`: its place on the page's list (0 for the first), for
-        where its "Last sent" is kept; by default, by the address."""
+        it). Its "Last sent" is kept with that address if it's saved (the
+        first, or another, by the address, wherever it was typed on the
+        page); for one not saved, nothing is kept."""
         if fmt not in FORMATS:
             raise ValueError(CHOOSE_FORMAT)
         url = check_address(url)
-        first = not self._is_more(url) if which is None else which == 0
-        return await self._post(url, fmt, TEST_MESSAGE, TEST, STARTED, True, first)
-
-    def _is_more(self, url: str) -> bool:
-        return url != self.url and any(url == u for u, _ in self.more)
+        return await self._post(url, fmt, TEST_MESSAGE, TEST, STARTED, True)
 
     async def post(
         self, url: str, fmt: str, message: str, kind: str, state: str, test: bool = False
     ) -> Sent:
         """Posts one message, trying once more if it doesn't go through, and
-        keeps how it went."""
-        return await self._post(url, fmt, message, kind, state, test, not self._is_more(url))
+        keeps how it went (see test)."""
+        return await self._post(url, fmt, message, kind, state, test)
 
     async def _post(
-        self, url: str, fmt: str, message: str, kind: str, state: str, test: bool, first: bool
+        self, url: str, fmt: str, message: str, kind: str, state: str, test: bool
     ) -> Sent:
         sent = await self._post_once(url, fmt, message, kind, state, test)
         if not sent.ok:
             await asyncio.sleep(AGAIN_S)
             sent = await self._post_once(url, fmt, message, kind, state, test)
-        if first:
+        # (Kept only for a saved address, matched by the address: the first's
+        # where 1.33.x keeps it, the others' apart.)
+        if self.url and url == self.url:
             self.db.set_meta(LAST_META, json.dumps(sent.as_dict()))
-        else:
-            # (Only the addresses on the list now, and this one, are kept.)
-            now = {u for u, _ in self.more} | {url}
+        elif any(url == u for u, _ in self.more):
+            now = {u for u, _ in self.more}
             lasts = {u: got for u, got in self._more_last().items() if u in now}
             lasts[url] = sent.as_dict()
             self.db.set_meta(LAST_MORE, json.dumps(lasts))
@@ -468,8 +505,9 @@ class Notify:
         if fmt == DISCORD:
             body: dict[str, Any] = {
                 "username": TITLE,
-                "content": message[:DISCORD_MOST],
+                "content": discord_text(message),
                 "allowed_mentions": {"parse": []},
+                "flags": DISCORD_NO_PREVIEWS,
             }
             content = json.dumps(body).encode()
             headers["Content-Type"] = "application/json"

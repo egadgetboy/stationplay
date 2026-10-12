@@ -430,10 +430,12 @@ const SETUP_PAGES = {
   async done({ checks, why }) {
     const look = (checks || []).filter(needsLook);
     // What's set now, in a few words each.
-    const [pb, away, libs, scan, view] = await Promise.all([
+    const [pb, away, libs, scan, view, upd] = await Promise.all([
       api('/api/playback'), api('/api/away'), api('/api/app-libraries').catch(() => null), api('/api/scan'),
       me.required ? api('/api/access/viewing').catch(() => null) : null,
+      api('/api/updates').catch(() => null),
     ]);
+    if (upd) updates = upd;
     setAway(away);
     const limited = view ? Object.values(view.users).filter(u => { const lv = view.levels.find(l => l.id === u.level); return (lv && levelLimited(lv)) || hidesCount(u.own?.blocks) > 0 || u.ownUnreadable; }).length : 0;
     const shared = libs ? libs.libraries.filter(l => libs.shared.includes(l.key)).map(l => l.title) : [];
@@ -446,18 +448,25 @@ const SETUP_PAGES = {
       ['library', shared.length ? `Shared: ${shared.join(', ')}` : 'Not shared'],
       ['fileChecks', w.on ? `Deep scan every night from ${clock(w.start)} to ${clock(w.end)}` : 'Quick checks only (the deep scan is off)'],
     ];
-    return { node: h('div', { class: 'playback' },
+    // The update check (see updates.js), asked here: never ticked until an
+    // Admin ticks it. Left unticked when setup's finished, that's No.
+    const lookOut = h('input', { type: 'checkbox', checked: updates?.on === true, onchange: async e => {
+      try { updates = await api('/api/updates', { method: 'PUT', body: { on: e.target.checked } }); }
+      catch (err) { e.target.checked = !e.target.checked; toast(err.message, true); }
+    } });
+    return { save: async () => {
+      if (updates && updates.on === null) {
+        try { updates = await api('/api/updates', { method: 'PUT', body: { on: lookOut.checked } }); } catch {}
+      }
+      loadUpdates();
+    }, node: h('div', { class: 'playback' },
       h('dl', { class: 'details', style: 'margin:0;font-size:14px' }, ...set.flatMap(([what, value]) => [h('dt', {}, SETUP_TITLES[what]), h('dd', {}, value)])),
       look.length
         ? h('div', { class: 'playback' }, h('p', { style: 'margin:0' }, look.length === 1 ? 'One thing still needs a look:' : 'A few things still need a look:'), h('div', { class: 'setup-checks' }, ...look.map(checkRow)))
         : h('p', { style: 'margin:0' }, !checks ? 'That’s everything.'
           : checks.some(c => c.state === 'wait') ? 'Everything StationPlay could check is working.' : 'Everything StationPlay checks is working.'),
-      // The update check (see updates.js), offered here, on to start.
-      h('label', {}, h('input', { type: 'checkbox', checked: !updates || updates.on, onchange: async e => {
-        try { updates = await api('/api/updates', { method: 'PUT', body: { on: e.target.checked } }); }
-        catch (err) { e.target.checked = !e.target.checked; toast(err.message, true); }
-      } }), ' Tell me when a new StationPlay is out'),
-      h('p', { class: 'hint', style: 'margin:0' }, 'StationPlay asks GitHub once a day, sending only its version. You can change this under New versions on the Add to Plex tab.'),
+      h('label', {}, lookOut, ' Tell me when a new StationPlay is out'),
+      h('p', { class: 'hint', style: 'margin:0' }, `${UPDATE_PRIVACY} You can change this under New versions on the Add to Plex tab.`),
       h('p', { class: 'hint', style: 'margin:0' }, why === 'new' ? `Choose Finish, then New station to make your first one. ${SETUP_AGAIN}` : SETUP_AGAIN)) };
   },
 };

@@ -688,6 +688,7 @@ async def test_plain_text_and_json(tmp_path):
     address = Address()
     sender = notifier(tmp_path, address)
     url = "https://ntfy.example.com/stationplay-xyz?auth=secret"
+    sender.save(False, url, notify.TEXT)  # (saved: Last sent is kept only for a saved address)
     sent = await sender.post(url, notify.TEXT, "StationPlay can't reach Plex.", "plex", "started")
     assert (sent.ok, sent.status) == (True, "200 OK")
     [asked] = address.asked
@@ -740,6 +741,7 @@ async def test_discord(tmp_path, monkeypatch):
         "username": "StationPlay",
         "content": "StationPlay can't reach Plex.",
         "allowed_mentions": {"parse": []},
+        "flags": 4,  # (no link previews: the audit of 1.34.0)
     }
     # A Discord webhook gets Discord's format whatever was chosen (plain text
     # and JSON both got 400 Bad Request: the owner's report), and a message

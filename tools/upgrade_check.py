@@ -45,6 +45,12 @@ one on its data folder, then back again, and a fresh install.
 6. A fresh install of this checkout: it starts, takes its first Admin, and
    makes no copy; new people show only on devices they sign in on.
 
+From 1.34.0: this checkout's update check never reaches GitHub here (a
+stand-in answers, and notes each time it's asked), and must ask nothing
+at all, as no Admin answers whether it may; the first start after the
+update says so in the log; and the release before reads the alert settings
+this version writes, a Slack first address and all (3, 4).
+
 It prints PASS or FAIL for each check (failures always; all with -v) and
 exits 1 if any failed. Each StationPlay it starts is on free ports of its
 own, in a process group of its own, and only that group is stopped (by its
@@ -101,6 +107,22 @@ APP = {"app": "StationPlay for Android", "deviceName": "Den"}
 STATION = {"number": 5, "name": "Upgrade TV", "sources": [{"type": "show", "ratingKey": "100"}]}
 SETTINGS = {"tuners": 3, "picture": "1080p"}
 START_S = 90.0  # how long a StationPlay may take to start (it tests ffmpeg first)
+# This checkout's StationPlay, run with a stand-in for GitHub (from 1.34.0:
+# the update check, see releases.py): it notes each request in the file
+# named first, and answers that a newer StationPlay is out.
+GITHUB_STAND_IN = """
+import runpy, sys
+import httpx
+from app import releases
+asked = sys.argv.pop(1)
+def answer(request):
+    with open(asked, "a") as noted:
+        noted.write(str(request.url) + "\\n")
+    return httpx.Response(200, json={"tag_name": "v99.0.0",
+                                     "html_url": releases.RELEASES + "/tag/v99.0.0"})
+releases.Releases.transport = httpx.MockTransport(answer)
+runpy.run_module("app.main", run_name="__main__", alter_sys=True)
+"""
 # The longest an alert is waited for: its checks look 20 seconds after
 # StationPlay starts, then every minute.
 ALERT_WAIT_S = 100.0
@@ -181,6 +203,7 @@ class StandInPlex:
 
     def __init__(self) -> None:
         self.notified: list[dict] = []
+        self.slacked: list[str] = []
         self.fp = FakePlex()
         self.fp.add_show("100", "Upgrade Show")
         for n in (1, 2):
@@ -205,8 +228,13 @@ class StandInPlex:
             body += message.get("body", b"")
             if not message.get("more_body"):
                 break
-        if scope["path"] == "/notify":
-            self.notified.append(json.loads(body))
+        if scope["path"] in ("/notify", "/slack"):
+            # (/slack: a first address in Slack's format, which a release
+            # before 1.34.0 sends as plain text.)
+            if scope["path"] == "/notify":
+                self.notified.append(json.loads(body))
+            else:
+                self.slacked.append(body.decode(errors="replace"))
             await send({"type": "http.response.start", "status": 200, "headers": []})
             await send({"type": "http.response.body", "body": b""})
             return
@@ -236,6 +264,8 @@ class StationPlay:
 
     def __init__(self, code: Path, data: Path, plex: str, output: Path) -> None:
         self.data = data
+        # (This checkout's update check asks the stand-in, never GitHub.)
+        self.github = output.with_suffix(".github")
         self.port = free_port()
         self.url = f"http://127.0.0.1:{self.port}"
         env = {
@@ -245,10 +275,17 @@ class StationPlay:
         for name in ("PUBLIC_PORT", "PYTHONPATH", "BASE_URL"):  # (this one's own, only)
             env.pop(name, None)
         self.output = output.open("ab")
+        command = [sys.executable, "-m", "app.main"]
+        if code == ROOT and version_of(__version__) >= (1, 34, 0):
+            command = [sys.executable, "-c", GITHUB_STAND_IN, str(self.github)]
         self.proc = subprocess.Popen(
-            [sys.executable, "-m", "app.main"], cwd=code, env=env, stdout=self.output,
-            stderr=subprocess.STDOUT, start_new_session=True,
+            command, cwd=code, env=env, stdout=self.output, stderr=subprocess.STDOUT,
+            start_new_session=True,
         )  # fmt: skip
+
+    def asked_github(self) -> list[str]:
+        """What the update check asked (of the stand-in)."""
+        return self.github.read_text().split() if self.github.exists() else []
 
     def started(self) -> bool:
         deadline = time.monotonic() + START_S
@@ -521,6 +558,13 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                       copies)  # fmt: skip
         if version_of(before) < (1, 30, 3):
             checks.ok("a new table, alerts" in logs, "(for the alerts it now keeps)")
+        if version_of(__version__) >= (1, 34, 0):
+            said = page.get("/api/updates").json()
+            checks.ok(said.get("on") is None, "the update check waits for an Admin's answer",
+                      said)  # fmt: skip
+            since = (f"Updated from {before} to {__version__}" if version_of(before) >= (1, 34, 0)
+                     else f"Updated to {__version__} from an earlier version")  # fmt: skip
+            checks.ok(logs.count(since) == 1, "the log says it was updated, once", since)
         if version_of(__version__) >= (1, 33, 0):
             # (From 1.33.0: what a level and a person hide by what titles are,
             # and the clip folders' ratings, so the release before is started
@@ -592,6 +636,12 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         # (With no copy to put back, the release before finds what's changed
         # since, and the app's sign-in from just now.)
         since = {**new_people(checks, sp.url, made), "bearer": bearer}
+        if version_of(__version__) >= (1, 34, 0):
+            # Alerts to a first address in Slack's format (from 1.34.0), and another.
+            slack = {"on": True, "url": f"{plex.url}/slack", "format": "slack",
+                     "more": [{"url": f"{plex.url}/notify", "format": "json"}]}  # fmt: skip
+            checks.ok(page.put("/api/notify", json=slack).status_code == 200,
+                      "alerts go to a first address in Slack's format, and another")  # fmt: skip
         stopped(checks, sp, __version__)
         # The broken-files list, as this version keeps it: the station's
         # program, and another version of it (Media's alone).
@@ -627,6 +677,12 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                   == (before, ADMIN["name"], [(STATION["number"], STATION["name"])]),
                   "it starts, the Admin still signed in, the station there",
                   (server["version"], me, stations))  # fmt: skip
+        if version_of(__version__) >= (1, 34, 0) and version_of(before) < (1, 34, 0):
+            got = page.get("/api/notify").json()
+            checks.ok((got.get("on"), got.get("url"), got.get("format"))
+                      == (True, f"{plex.url}/slack", "text"),
+                      "it reads the alert settings this version wrote: on, with the first "
+                      "address (in plain text, as it has no Slack format)", got)  # fmt: skip
         changed = page.put(f"/api/access/levels/{made['teen']}", json={
             "name": "Teen", "movieAge": 13, "tvAge": 14, "unrated": False})  # fmt: skip
         checks.ok(changed.status_code == 200, "a level can still be changed", changed.text[:200])
@@ -705,7 +761,14 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         choices = page.get("/api/internal/report-choices").json().get("choices") or []
         checks.ok(len(choices) == 12, "people can report problems", choices)
         checks.ok(not list(fresh.glob("backups/before-*")), "no copy is made of a new database")
+        if version_of(__version__) >= (1, 34, 0):
+            said = page.get("/api/updates").json()
+            checks.ok(said.get("on") is None and said.get("ask") is False,
+                      "the update check waits for setup, and an Admin's answer", said)  # fmt: skip
         stopped(checks, sp, __version__)
+        asked = [url for one in running for url in one.asked_github()]
+        checks.ok(not asked, "the update check asked GitHub nothing, as no Admin said it may",
+                  asked)  # fmt: skip
     finally:
         for sp in running:
             sp.stop()

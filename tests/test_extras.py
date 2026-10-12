@@ -342,14 +342,17 @@ def test_the_page_can_show_the_version(client):
     root = Path(__file__).parents[1]
     project = tomllib.loads((root / "pyproject.toml").read_text())
     assert project["project"]["version"] == __version__  # one version everywhere
-    # (TrueNAS and Docker Compose use the newest published image, fetched
-    # whenever the app is saved or started: the owner's decision U2, from
-    # 1.34.0, which replaced building it from the version's source.)
+    # (TrueNAS and Docker Compose use the newest published image: the
+    # owner's decision U2, from 1.34.0, which replaced building it from the
+    # version's source. It's fetched when it isn't there and as each install
+    # updates, never as StationPlay starts, which mustn't need the internet:
+    # the audit of 1.34.0 changed U2's pull_policy from always to missing,
+    # for the owner to confirm.)
     for name in ("stationplay.yaml", "docker-compose.yml"):
         text = (root / name).read_text()
         images = re.findall(r"^\s*image: (\S+)", text, re.M)
         assert images == ["ghcr.io/egadgetboy/stationplay:latest"], name
-        assert re.search(r"^\s*pull_policy: always\b", text, re.M), name
+        assert re.findall(r"^\s*pull_policy: (\S+)", text, re.M) == ["missing"], name
         assert not re.search(r"^\s*build:", text, re.M), name
 
 

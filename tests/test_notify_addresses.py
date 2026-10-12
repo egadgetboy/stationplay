@@ -2,13 +2,21 @@
 each message goes to every address, and one failing or slow never holds up
 or changes the others; Slack's format; the setting kept so an older
 StationPlay still notifies the first address; the API's `more`; and the log
-naming only hosts."""
+naming only hosts.
+
+The audit of 1.34.0: only saved addresses keep a Last sent (a test of one
+typed but not saved keeps nothing), matched by the address, not its place
+on the page; each address's line of messages is its own, by the address,
+so one moving on the list never puts another behind its backlog; Discord's
+markdown in what's sent is written as text, with no link previews; and
+1.33.1 reads what 1.34.0 saves."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import re
 import time
 
 import httpx
@@ -125,8 +133,10 @@ async def test_three_addresses_each_get_every_message(db):
         task.cancel()
     assert ntfy.asked[0].content == b"Plex & co: <!channel> can't be reached."
     assert ntfy.asked[0].headers["title"] == "StationPlay"
+    # Discord's: as it is, its markdown written as text (see
+    # test_discord_shows_a_station_s_name_as_it_is).
     assert json.loads(discord.asked[0].content)["content"] == (
-        "Plex & co: <!channel> can't be reached."
+        "Plex & co: \\<!channel\\> can't be reached."
     )
     # Slack's format: its text, with &, < and > as Slack asks (never a ping).
     assert json.loads(slack.asked[0].content) == {
@@ -325,13 +335,15 @@ async def test_where_last_sent_is_kept_as_the_list_changes(db, monkeypatch):
     sender = Notify(db)
     sender.transport = Hosts(ntfy_example_com=Address(), gotify_example_com=Address(500)).transport
     sender.save(True, NTFY, notify.TEXT, [(GOTIFY, notify.JSON)])
-    first = await sender.test(NTFY, notify.TEXT, 0)
-    second = await sender.test(GOTIFY, notify.JSON, 1)
+    first = await sender.test(NTFY, notify.TEXT)
+    second = await sender.test(GOTIFY, notify.JSON)
     assert (sender.last, sender.last_of(GOTIFY)) == (first, second)
-    # A test of an address typed in the second place, not saved yet, is
-    # kept apart from the first's.
-    typed = await sender.test("https://ntfy.example.com/other", notify.TEXT, 1)
-    assert sender.last == first and sender.last_of("https://ntfy.example.com/other") == typed
+    # A test of an address typed, not saved: nothing kept of it, neither
+    # its address nor how it went (it may never be saved).
+    typed = await sender.test("https://ntfy.example.com/other", notify.TEXT)
+    assert typed.ok and sender.last == first and sender.last_of(GOTIFY) == second
+    assert sender.last_of("https://ntfy.example.com/other") is None
+    assert "other" not in (db.get_meta(notify.LAST_MORE) + db.get_meta(notify.LAST_META))
     # Swapped: each keeps its own.
     sender.save(True, GOTIFY, notify.JSON, [(NTFY, notify.TEXT)])
     assert (sender.last, sender.last_of(NTFY)) == (second, first)
@@ -468,3 +480,129 @@ async def test_turned_off_or_removed_meanwhile_is_neither(db):
         task.cancel()
     assert len(quick.asked) == 2  # (Two never went)
     assert (first.done, first.failed, second.done, second.failed) == (1, 0, 0, 0)
+
+
+def test_a_test_s_last_sent_is_kept_with_its_saved_address_whatever_its_place(app, monkeypatch):
+    """(The audit of 1.34.0: a test was kept by its place on the page, so
+    the second address, tested from the first place, became the first's
+    Last sent; and one typed in place 2 or 3, never saved, was kept.)"""
+    monkeypatch.setattr(notify, "AGAIN_S", 0.0)
+    ntfy, gotify = Address(), Address()
+    with TestClient(app) as home:
+        ctx = app.state.ctx
+        ctx.notify.transport = Hosts(ntfy_example_com=ntfy, gotify_example_com=gotify).transport
+        saved = home.put("/api/notify", json={"on": True, "url": NTFY, "format": "text",
+                                              "more": [{"url": GOTIFY, "format": "json"}]})  # fmt: skip
+        assert saved.status_code == 200, saved.text
+        tested = home.post("/api/notify/test",
+                           json={"url": GOTIFY, "format": "json", "which": 0}).json()  # fmt: skip
+        assert tested["sent"]["ok"] and tested["last"] is None
+        assert tested["more"][0]["last"]["ok"] and len(gotify.asked) == 1
+        typed = "https://ntfy.example.com/typed-secret-topic"
+        tested = home.post("/api/notify/test",
+                           json={"url": typed, "format": "text", "which": 1}).json()  # fmt: skip
+        assert tested["sent"]["ok"] and tested["last"] is None
+        assert "typed-secret" not in json.dumps(tested)
+        assert "typed-secret" not in ctx.db.get_meta(notify.LAST_MORE)
+
+
+async def test_moving_on_the_list_never_puts_one_behind_another_s_backlog(db, monkeypatch):
+    """Each address's messages wait in a line of its own, kept by its
+    address: when the list changes, a message never waits behind another
+    address's, and each address still gets its own one at a time."""
+    monkeypatch.setattr(notify, "WAIT_S", 3.0)
+    monkeypatch.setattr(notify, "AGAIN_S", 0.0)
+    slow, quick = Address(wait_s=0.5), Address()
+    sender = Notify(db)
+    sender.transport = Hosts(ntfy_example_com=slow, gotify_example_com=quick).transport
+    sender.save(True, NTFY, notify.TEXT, [(GOTIFY, notify.JSON)])
+    task = await running(sender)
+    try:
+        for n in range(3):
+            sender.send(f"Station {n} keeps failing.", "station", "started")
+        assert await until(lambda: len(quick.asked) == 3, 1.0)
+        # The quick one moves up, the slow one (two still waiting) down.
+        sender.save(True, GOTIFY, notify.JSON, [(NTFY, notify.TEXT)])
+        began = time.monotonic()
+        sender.send("Plex is back.", "plex", "fixed")
+        assert await until(lambda: len(quick.asked) == 4, 1.0)
+        assert time.monotonic() - began < 0.4
+        assert await until(lambda: len(slow.asked) == 4, 4.0)
+    finally:
+        task.cancel()
+    # (The slow one's, one at a time: its four in the order sent.)
+    said = [r.content.decode() for r in slow.asked]
+    assert said == [*(f"Station {n} keeps failing." for n in range(3)), "Plex is back."]
+
+
+async def test_discord_shows_a_station_s_name_as_it_is(db, monkeypatch):
+    """Discord reads markdown, links and mentions in what it's sent: a
+    station named with them is written as text there, and no link preview
+    is shown. The other formats send it as it is."""
+    monkeypatch.setattr(notify, "AGAIN_S", 0.0)
+    discord, ntfy = DiscordWebhook(), Address()
+    sender = Notify(db)
+    sender.transport = Hosts(discord_com=discord, ntfy_example_com=ntfy).transport
+    name = "**Late** _Night_ [Free](https://example.com) `x` > #1 ~~old~~ ||s|| <@123> \\ -"
+    message = f"Station 7, {name} keeps failing to start."
+    assert (await sender.post(DISCORD, notify.DISCORD, message, "station", "started")).ok
+    body = json.loads(discord.asked[0].content)
+    assert body["flags"] == 4  # (Discord's SUPPRESS_EMBEDS: no previews)
+    content = body["content"]
+    special = set("\\*_`~|>[]()#<@-")
+    assert not special & set(re.sub(r"\\.", "", content)), content
+    assert re.sub(r"\\(.)", r"\1", content) == message  # (shown as it was)
+    # Cut to Discord's 2000 characters, never in the middle of one written as text.
+    assert (await sender.post(DISCORD, notify.DISCORD, "*" * 1500, "station", "started")).ok
+    long = json.loads(discord.asked[-1].content)["content"]
+    assert len(long) <= 2000 and not re.search(r"(?<!\\)(\\\\)*\\$", long)
+    assert (await sender.post(NTFY, notify.TEXT, message, "station", "started")).ok
+    assert ntfy.asked[0].content.decode() == message
+
+
+def read_as_1_33_1(db: Database) -> tuple:
+    """What 1.33.1 reads of the alert setting, as its notify.py does (its
+    Notify's __init__ and last, at f131b2c): on, the address, the format (one
+    it doesn't know, such as Slack's, as plain text; a Discord webhook's
+    always Discord's), and how the last message went."""
+    try:
+        saved = json.loads(db.get_meta("notify", "") or "{}")
+    except ValueError:
+        saved = {}
+    saved = saved if isinstance(saved, dict) else {}
+    on = saved.get("on") is True
+    url = str(saved.get("url") or "")
+    fmt = saved["format"] if saved.get("format") in ("text", "json", "discord") else "text"
+    fmt = "discord" if notify.is_discord(url) else fmt
+    try:
+        got = json.loads(db.get_meta("notify_last", "") or "null")
+        last = (int(got["at"]), str(got["status"]), bool(got["ok"]), bool(got["test"]))
+    except (ValueError, TypeError, KeyError):
+        last = None
+    return on, url, fmt, last
+
+
+@pytest.mark.parametrize(
+    ("first", "fmt", "as_1_33_1"),
+    [(NTFY, notify.JSON, "json"), (DISCORD, notify.TEXT, "discord"),
+     (SLACK, notify.TEXT, "text"), ("https://chat.example.com/hooks/x", notify.SLACK, "text")],
+)  # fmt: skip
+async def test_1_33_1_reads_what_1_34_0_saves(db, monkeypatch, first, fmt, as_1_33_1):
+    """Rolled back to 1.33.1, the first address goes on, with how its last
+    message went. (1.33.1 has no Slack format: it sends a Slack address
+    plain text, which the notes say.)"""
+    monkeypatch.setattr(notify, "AGAIN_S", 0.0)
+    sender = Notify(db)
+    sender.transport = Hosts(
+        ntfy_example_com=Address(), discord_com=DiscordWebhook(),
+        hooks_slack_com=SlackWebhook(), chat_example_com=SlackWebhook(), gotify_example_com=Address(),
+    ).transport  # fmt: skip
+    sender.save(True, first, fmt, [(GOTIFY, notify.JSON)])
+    sent = await sender.test(first, fmt)
+    await sender.test(GOTIFY, notify.JSON)
+    assert read_as_1_33_1(db) == (
+        True, first, as_1_33_1, (sent.at_ms, sent.status, sent.ok, sent.test)
+    )  # fmt: skip
+    # Off, and the others gone: as 1.33.1 had it.
+    sender.save(False, first, fmt, [])
+    assert read_as_1_33_1(db)[:3] == (False, first, as_1_33_1)

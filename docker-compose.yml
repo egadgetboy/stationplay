@@ -11,13 +11,13 @@
 #   2. Change the lines marked  <- CHANGE, and set STATIONPLAY_INSTALL.
 #   3. In that folder:  docker compose up -d
 #
-# To update: in that folder,  docker compose pull && docker compose up -d
-# (StationPlay's page says when a new version is out, and how.)
+# To update: in that folder,  docker compose up -d --pull always
+# (StationPlay's page can tell you when a new version is out, and how.)
 
 services:
   stationplay:
     image: ghcr.io/egadgetboy/stationplay:latest       # the newest release; :1.34 or :1.34.0 stays on one
-    pull_policy: always                                # the newest image whenever it's started with up
+    pull_policy: missing                               # fetched only when it isn't here: starting never needs the internet
     container_name: stationplay
     restart: unless-stopped
     init: true

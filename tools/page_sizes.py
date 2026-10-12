@@ -60,6 +60,7 @@ from app.broadcaster import Viewer  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.db import Database, Item  # noqa: E402
 from app.plex import PlexClient  # noqa: E402
+from app.releases import META as UPDATE_CHECK  # noqa: E402
 from app.releases import RELEASES  # noqa: E402
 from tests.fakeplex_library import LibraryPlex  # noqa: E402
 from tests.helpers import Proxy  # noqa: E402
@@ -231,10 +232,12 @@ class Running:
             settings, PlexClient("http://plex.test", "token", transport=plex.transport())
         )
         self.ctx = self.app.state.ctx
-        # (The update check finds a newer StationPlay here, never asking GitHub.)
+        # (The update check finds a newer StationPlay here, `newest`, never
+        # asking GitHub.)
+        self.newest = NEWER
         self.ctx.releases.transport = httpx.MockTransport(
             lambda request: httpx.Response(200, json={
-                "tag_name": f"v{NEWER}", "html_url": f"{RELEASES}/tag/v{NEWER}"})
+                "tag_name": f"v{self.newest}", "html_url": f"{RELEASES}/tag/v{self.newest}"})
         )  # fmt: skip
         self.ctx.play_transport = plex.transport()
         config = uvicorn.Config(self.app, log_level="warning", lifespan="on", proxy_headers=False)
@@ -254,6 +257,22 @@ class Running:
             return do()
 
         return asyncio.run_coroutine_threadsafe(done(), self.loop).result(30)
+
+    def newest_out(self, version: str) -> None:
+        """The stand-in for GitHub says `version` is out, and the update
+        check has looked."""
+        self.newest = version
+        asyncio.run_coroutine_threadsafe(self.ctx.releases.check(), self.loop).result(30)
+
+    def unanswered(self) -> None:
+        """As a StationPlay updated from before 1.34.0: no Admin has said
+        whether the update check may look."""
+
+        def forget() -> None:
+            self.ctx.db.set_meta(UPDATE_CHECK, "")
+            self.ctx.releases.on = None
+
+        self.call(forget)
 
     def stop(self) -> None:
         self.server.should_exit = True
@@ -418,8 +437,10 @@ def fill(sp: Running, data: Path) -> None:
             "containers": ["mkv", "mp4"], "hdr": [], "audio": ["aac", "ac3"], "hls": ["ts"],
             "video": [{"codec": "h264", "width": 3840, "height": 2160, "bitDepth": 8}]}}))  # fmt: skip
 
-        # A newer StationPlay is out (see Running), on Docker Compose.
+        # A newer StationPlay is out (see Running), on Docker Compose, and
+        # the Admin said yes to the update check.
         ctx.releases.install = "compose"
+        ok(home.put("/api/updates", json={"on": True}))
         ok(home.post("/api/updates/check"))
 
         # Tuner access: any device on the home network, with two devices listed.
@@ -1112,7 +1133,7 @@ def signin_by_pin(page: Page, look: Look) -> None:
     look("signin-pin")
 
 
-def admin_views(page: Page, look: Look, only: set[str] | None) -> None:
+def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> None:
     """What an Admin sees: every tab, and every dialog and panel they open."""
 
     def wanted(name: str) -> bool:
@@ -1181,6 +1202,9 @@ def admin_views(page: Page, look: Look, only: set[str] | None) -> None:
         link_code(page, look)
         close_dialogs(page)
     if wanted("setup"):
+        # (As if no Admin had said whether the update check may look: its
+        # box in the last step isn't ticked.)
+        sp.unanswered()
         page.evaluate("() => runSetup()")
         page.wait_for_selector("#setupDlg[open] .setup-check, #setupDlg[open] .playback")
         page.wait_for_timeout(1500)
@@ -1210,24 +1234,55 @@ def admin_views(page: Page, look: Look, only: set[str] | None) -> None:
         # (On a phone, some step runs past the screen: its arrows were checked.)
         if (page.viewport_size or {}).get("width", 0) <= 430:
             look.expect("setup on a phone: a step that runs past the screen", bool(ran_on), True)
+        look.expect(
+            "setup's last step: the update check isn't ticked before an Admin answers",
+            page.is_checked("#setupBody label:has-text('Tell me when a new StationPlay') input"),
+            False,
+        )
         close_dialogs(page)
+        sp.call(lambda: sp.ctx.releases.save(True))  # (as it was, for the other views)
         short_dialog(page, look)
     if wanted("addtoplex"):
         tab(page, "setup")
         look("addtoplex", full=True)
-        # The banner a newer StationPlay brings (hidden, as Not now, in the
-        # other views): what it says, and Not now hiding it.
+        # The question a StationPlay updated from before 1.34.0 asks once,
+        # then Yes: the New versions panel shows the answer, and the banner a
+        # newer StationPlay brings (hidden, as Not now, in the other views)
+        # shows what it says; Not now hides it, for that version only.
+        sp.unanswered()
         page.evaluate(f"() => {{ localStorage.removeItem('{NOT_NOW}'); return loadUpdates(); }}")
-        page.wait_for_selector("#updateBanner:not([hidden])")
+        page.wait_for_selector("#updateBanner:not([hidden]) button:has-text('Yes, tell me')")
+        page.evaluate("() => window.scrollTo(0, 0)")
+        look.expect("the update check's question",
+                    page.inner_text("#updateBanner .update-title strong"),
+                    "Should StationPlay tell you when a new version is out?")  # fmt: skip
+        look.expect("New versions, before an answer: not ticked", page.is_checked("#updateCheckOn"),
+                    False)  # fmt: skip
+        look("update-question")
+        page.click("#updateBanner button:has-text('Yes, tell me')")
+        page.wait_for_selector("#updateBanner .update-title strong:has-text('is available')")
+        look.expect("Yes: New versions shows it", page.is_checked("#updateCheckOn"), True)
         page.evaluate("() => window.scrollTo(0, 0)")
         look.expect("the update banner", page.inner_text("#updateBanner .update-title strong"),
                     f"StationPlay {NEWER} is available.")  # fmt: skip
-        look.expect("the update banner's command",
-                    page.inner_text("#updateBanner code"),
-                    "docker compose pull && docker compose up -d")  # fmt: skip
+        look.expect("the update banner's steps", page.inner_text("#updateBanner .update-steps p"),
+                    "To update with Docker Compose:")  # fmt: skip
+        look.expect("the update banner's command", page.inner_text("#updateBanner code"),
+                    "docker compose up -d --pull always")  # fmt: skip
         look("update-banner")
         page.click("#updateBanner button:has-text('Not now')")
         look.expect("Not now hides the banner", page.is_hidden("#updateBanner"), True)
+        sp.newest_out("9.1.0")
+        page.evaluate("() => loadUpdates()")
+        page.wait_for_selector("#updateBanner:not([hidden])")
+        look.expect("Not now is for that version only: a newer one shows the banner again",
+                    page.inner_text("#updateBanner .update-title strong"),
+                    "StationPlay 9.1.0 is available.")  # fmt: skip
+        # (As it was, for the other views.)
+        sp.newest_out(NEWER)
+        page.evaluate(
+            f"() => {{ localStorage.setItem('{NOT_NOW}', '{NEWER}'); return loadUpdates(); }}"
+        )
     if wanted("access"):
         tab(page, "access")
         look("access", full=True)
@@ -1438,7 +1493,7 @@ def main() -> None:
                             page.wait_for_timeout(900)
                             look = Look(page, folder, f"{person}-{theme}", size in touch, said)
                             if person == "admin":
-                                admin_views(page, look, only)
+                                admin_views(page, look, only, sp)
                             elif person == "user":
                                 user_views(page, look, only)
                             elif person == "signin-pin":

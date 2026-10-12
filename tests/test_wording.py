@@ -2,11 +2,12 @@
 "channel," and keeps the plan's legal care.
 
 It reads the docs (README, SECURITY.md, the open-source notices, docs/*.md,
-and the release notes from 1.33.0 on), StationPlay's page (index.html and
-the strings in app/web/js) and the sentences in the server's Python (strings
-with a space in them, but not docstrings or SQL). Code isn't words: in
-Markdown, code spans, code blocks and link addresses are skipped, and only
-the descriptions in openapi-v1.json are read.
+and the release notes from 1.33.0 on), the Unraid template's words (from
+1.34.0: its Overview and what it says of each setting), StationPlay's page
+(index.html and the strings in app/web/js) and the sentences in the
+server's Python (strings with a space in them, but not docstrings or SQL).
+Code isn't words: in Markdown, code spans, code blocks and link addresses
+are skipped, and only the descriptions in openapi-v1.json are read.
 
 Words are matched whole, ignoring case, so "record" never matches "cord".
 It fails on "channel" or "channels" (not inside a longer word, and not
@@ -26,6 +27,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path
@@ -239,6 +241,16 @@ def doc_units() -> list[Unit]:
                 walk(value)
 
     walk(json.loads(raw))
+    # Unraid's templates: what Unraid shows of them.
+    for xml in sorted((ROOT / "unraid").glob("*.xml")):
+        raw = xml.read_text(encoding="utf-8")
+        for element in ET.fromstring(raw).iter():
+            said = [element.text if element.tag in ("Overview", "Requires") else None,
+                    element.get("Name"), element.get("Description")]  # fmt: skip
+            for text in filter(None, said):
+                at = raw.find(text[:60].replace("&", "&amp;").replace("'", "&apos;"))
+                line = raw.count("\n", 0, at) + 1 if at >= 0 else 1
+                units.append(Unit(_rel(xml), line, text))
     return units
 
 
@@ -532,6 +544,7 @@ def test_it_reads_every_kind_of_text():
         "app/web/index.html",
         "app/web/js/access.js",
         "app/main.py",
+        "unraid/stationplay.xml",  # (the audit of 1.34.0)
     ):
         assert expected in paths, expected
     assert not any(p.startswith("docs/releases/v1.32") for p in paths)

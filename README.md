@@ -10,7 +10,7 @@ StationPlay turns your own movies and shows in Plex into always-on TV stations. 
 
 Plex sees StationPlay as an HDHomeRun network tuner, so your stations show up in Plex's **Live TV** guide on every Plex app. Jellyfin, Emby, Kodi and other apps on your home network can watch them too.
 
-StationPlay is free, open source and self-hosted (see [License](#license)). It runs in Docker on your own hardware and gets everything from your Plex server. It needs no outside accounts or cloud services. The only thing it looks up on its own is whether a new version is out: once a day it asks GitHub, sending only its version, and an Admin can turn that off (see [Updating](#updating)).
+StationPlay is free, open source and self-hosted (see [License](#license)). It runs in Docker on your own hardware and gets everything from your Plex server. It needs no outside accounts or cloud services. It can tell you when a new version is out, if an Admin says yes: once a day it asks GitHub, which sees your server's internet address, as any website does (see [Updating](#updating)).
 
 If you find it useful, you can [buy me a coffee](https://buymeacoffee.com/egadgetboy).
 
@@ -53,7 +53,7 @@ You need just one file, which tells Docker how to run StationPlay:
 | `docker-compose.yml` | The app definition for Docker Compose, for everything else. |
 | `unraid/stationplay.xml` | A template for Unraid's Docker tab. It's in the repo's `unraid` folder. |
 
-Download the first two from the [latest release](https://github.com/egadgetboy/stationplay/releases/latest), under **Assets**. Both ask for `:latest`, the newest release, with `pull_policy: always`, so Docker fetches the newest image each time you update (see [Updating](#updating)). Each also sets `STATIONPLAY_INSTALL`, which tells StationPlay's page how your kind of install updates. The steps below say what to set it to.
+Download the first two from the [latest release](https://github.com/egadgetboy/stationplay/releases/latest), under **Assets**. Both ask for `:latest`, the newest release. Docker downloads it when you install, and again only when you update (see [Updating](#updating)), so StationPlay never needs the internet to start. Each also sets `STATIONPLAY_INSTALL`, which tells StationPlay's page how your kind of install updates. The steps below say what to set it to.
 
 To build the image yourself instead, see [Building from source](#building-from-source).
 
@@ -132,7 +132,7 @@ Requires DSM 7.2 or later with **Container Manager** (from Package Center).
 4. Edit `docker-compose.yml` in File Station or a text editor. Set `user: "1026:100"` (your numbers), set `STATIONPLAY_INSTALL` to `"synology"`, and change the other lines marked `<- CHANGE`. Your media folder is usually under `/volume1/`, such as `/volume1/video`.
 5. In **Container Manager**, open **Project** and choose **Create**. Name it `stationplay`, choose `/volume1/docker/stationplay` as its path, and use the `docker-compose.yml` that's there. Finish, and Container Manager downloads the image and starts StationPlay.
 
-   If you'd rather use SSH, run `sudo docker compose up -d` in that folder instead. Then update over SSH too, and set `STATIONPLAY_INSTALL` to `"compose"`.
+   If you'd rather use SSH, run `sudo docker compose up -d` in that folder instead. Either way, StationPlay updates over SSH (see [Updating](#updating)).
 
 Intel-based Synology models with built-in graphics can use the GPU. Uncomment the Intel/AMD lines (see [GPU encoding](#gpu-encoding)).
 
@@ -278,7 +278,7 @@ Put `PUBLIC_PORT` behind a Cloudflare Tunnel or a reverse proxy with HTTPS. [Rea
 
 ## Updating
 
-**StationPlay's page tells you when a new version is out.** Admins see a banner at the top: "StationPlay 1.35.0 is available." It shows the step for your kind of install (from `STATIONPLAY_INSTALL`), with **What's new** (the release's notes), **Back up now**, **All the steps** (this section) and **Not now**, which hides the banner for that version in this browser. StationPlay never downloads or updates anything by itself.
+**StationPlay's page can tell you when a new version is out,** if an Admin says yes (see **The update check** below). Admins then see a banner at the top: "StationPlay 1.35.0 is available." It shows the steps for your kind of install (from `STATIONPLAY_INSTALL`), with **What's new** (the release's notes), **Back up now**, **All the steps** (this section) and **Not now**, which hides the banner for that version in this browser. StationPlay never downloads or updates anything by itself.
 
 Your stations, settings, logos, Intro Bumper videos and Broken files list live in the `data` folder, so updates keep them. Existing stations keep their settings. New defaults apply only to stations you make afterward. The version you're running is shown at the bottom of StationPlay's page.
 
@@ -286,17 +286,18 @@ Your stations, settings, logos, Intro Bumper videos and Broken files list live i
 
 | Install | To update |
 |---|---|
-| TrueNAS SCALE | In TrueNAS, open **Apps**, then StationPlay. If it offers **Update**, choose it. If it doesn't, choose **Edit**, then **Save**: TrueNAS fetches the newest image. *(To be confirmed by the owner: TrueNAS's docs say it watches custom apps' images and offers Update, but not whether that covers a new image under the same tag, or whether Edit, then Save fetches it.)* |
-| Docker Compose | In the folder with StationPlay's `docker-compose.yml`, run `docker compose pull && docker compose up -d`. |
-| Docker Desktop | In a terminal, in the folder with StationPlay's `docker-compose.yml`, run `docker compose pull && docker compose up -d`. |
-| Unraid | On Unraid's **Docker** tab, StationPlay shows an update: choose **apply update**. |
-| Synology | In **Container Manager**, open **Project**, then StationPlay's project. Choose **Stop**, then **Build**: Container Manager fetches the newest image and starts it. *(To be confirmed by the owner: these steps come from a guide outside Synology.)* |
+| TrueNAS SCALE | In TrueNAS, open **Apps**, then StationPlay. If it offers **Update**, choose it. If it doesn't, open **System**, then **Shell**, and run `sudo docker pull ghcr.io/egadgetboy/stationplay:latest`. Then open StationPlay in **Apps**, and choose **Edit**, then **Save**. These TrueNAS steps haven't been confirmed yet. If StationPlay still shows the old version afterward, see [Troubleshooting](#troubleshooting). |
+| Docker Compose | In the folder with StationPlay's `docker-compose.yml`, run `docker compose up -d --pull always`. |
+| Docker Desktop | In a terminal (PowerShell on Windows), in the folder with StationPlay's `docker-compose.yml`, run `docker compose up -d --pull always`. |
+| Unraid | On Unraid's **Docker** tab, choose **Check for Updates**. When StationPlay shows an update, choose **apply update**. |
+| Synology | Connect over SSH, go to StationPlay's folder (such as `/volume1/docker/stationplay`), and run `sudo docker compose up -d --pull always`. Container Manager's own way (open **Project**, choose StationPlay's project, then **Stop** and **Build**) hasn't been confirmed yet to fetch the newest image, so these steps haven't been confirmed yet either way. |
 | docker run | Fetch the newest image, then remove the container and start it again with the same `docker run` command as before (see [docker run](#docker-run)). |
 
-For `docker run`, that's:
+For `docker run`, that's these two commands:
 
 ```
-docker pull ghcr.io/egadgetboy/stationplay:latest && docker stop stationplay && docker rm stationplay
+docker pull ghcr.io/egadgetboy/stationplay:latest
+docker rm -f stationplay
 ```
 
 then your `docker run` command. Removing the container keeps your data, because it's in the `data` folder.
@@ -308,22 +309,21 @@ then your `docker run` command. Removing the container keeps your data, because 
 
 The update steps above then fetch only what that tag allows. Change it back to `:latest` to follow every release again. Images are published from 1.34.0 on.
 
-**The update check.** Once a day, StationPlay asks GitHub's list of StationPlay's releases whether a newer version is out. It sends only its version. It's on to start, and first-time setup offers it in its last step. An Admin can turn it on or off under **New versions** on the **Add to Plex** tab (**Tell me when a new StationPlay is out**), where **Check now** looks right away. When it's off, StationPlay doesn't contact GitHub.
+**The update check.** If an Admin says yes, StationPlay asks GitHub once a day whether a newer version is out. GitHub sees your server's internet address when it asks, as any website does. StationPlay sends only its version. It asks nothing until an Admin answers: first-time setup asks in its last step, and the page asks once after an update from before 1.34.0. Until then, and while it's off, StationPlay doesn't contact GitHub. An Admin can change the answer under **New versions** on the **Add to Plex** tab (**Tell me when a new StationPlay is out**), where **Check now** looks right away.
 
 **A database copy before each change.** Starting with 1.29.1, before an update changes StationPlay's database, StationPlay copies it, sign-ins included, to `data/backups` as `before-<version>-<date>.db` (such as `before-1.29.1-20261009-153000.db`). It notes this on the **Logs** tab, then makes the change. The newest 3 copies are kept. If it can't make the copy (because the disk is full, for example), it changes nothing and stops. Its log (`docker logs stationplay`, or the app's logs on TrueNAS) shows why. Make room, then start it again.
 
 ### Switching to the published image
 
-Before 1.34.0, StationPlay was built on your own machine from the release's zip. From 1.34.0, it comes as a ready-made image. If you built it before, switch once:
+Before 1.34.0, StationPlay was built on your own machine from the release's zip. From 1.34.0 on, it comes as a ready-made image. If you built it before, switch once:
 
 1. **Make a backup.** On the **Add to Plex** tab, choose **Download a backup**.
 2. **Edit your YAML or compose file.** On TrueNAS, open **Apps**, then StationPlay, and choose **Edit**. Then:
    - Delete the `build:` block: the `build:` line and the lines indented under it (`context:` and `dockerfile:`).
    - Change `image:` to `ghcr.io/egadgetboy/stationplay:latest`.
-   - Add `pull_policy: always` on the next line, lined up with `image:`.
-   - Add `STATIONPLAY_INSTALL` under `environment:`, set to how you installed: `"truenas"`, `"compose"`, `"unraid"`, `"synology"` or `"docker-desktop"` (see [Updating](#updating)).
+   - Add `STATIONPLAY_INSTALL` under `environment:`, set to how you update (see [Updating](#updating)). On TrueNAS, set it to `"truenas"`. With Docker Compose on Linux, set it to `"compose"`, and with Docker Desktop, `"docker-desktop"`. On Synology, set it to `"synology"`: you installed it over SSH, and it updates that way. On Unraid, set it to `"compose"`: you installed it with the Compose Manager plugin, and it updates with `docker compose`.
 3. **Leave everything else as it is:** your Plex token, folders, user, ports and GPU lines.
-4. **Save it in TrueNAS,** or run `docker compose up -d` in the compose file's folder.
+4. **Save it in TrueNAS,** or run `docker compose up -d` in the compose file's folder. On Synology, connect over SSH and run `sudo docker compose up -d` there.
 
 The top of the file then looks like this:
 
@@ -331,7 +331,6 @@ The top of the file then looks like this:
 services:
   stationplay:
     image: ghcr.io/egadgetboy/stationplay:latest
-    pull_policy: always
     container_name: stationplay
     ...
     environment:
@@ -354,7 +353,7 @@ To go back to the version you had before an update:
    sudo rm -f stationplay.db-wal stationplay.db-shm
    ```
    Use your own folder and the copy's name. Using `cp` over the old file keeps its owner, so StationPlay can still write to it.
-3. **Ask for the previous version's image.** Change the end of `image:` from `:latest` to that version, such as `ghcr.io/egadgetboy/stationplay:1.34.0`, and start it. On TrueNAS, edit the app and save it, then start it if it doesn't start by itself. With Docker Compose, run `docker compose up -d`. On Unraid, edit the container's **Repository** and apply. On Synology, edit the project's `docker-compose.yml`, then **Build**. With docker run, run `docker rm stationplay`, then your `docker run` command with that version at the end.
+3. **Ask for the previous version's image.** Change the end of `image:` from `:latest` to that version, such as `ghcr.io/egadgetboy/stationplay:1.34.0`, and start it. On TrueNAS, edit the app and save it, then start it if it doesn't start by itself. With Docker Compose, run `docker compose up -d`. On Unraid, edit the container's **Repository** and apply. On Synology, edit `docker-compose.yml`, then connect over SSH and run `sudo docker compose up -d` in its folder. With docker run, run `docker rm stationplay`, then your `docker run` command with that version at the end.
 
 It stays on that version until you change `image:` back to `:latest`. Images are published from 1.34.0 on. To go back to an earlier version, build it from its zip (see [Building from source](#building-from-source)).
 
@@ -583,7 +582,7 @@ The first time an Admin opens StationPlay's page, the setup asks a few questions
 7. **Media in StationPlay's apps:** which Media folders the apps can browse and play in Media (see [StationPlay's own apps](#stationplays-own-apps)).
 8. **Checking files:** when the overnight deep scan runs.
 9. **Adding StationPlay to Plex:** the steps in Plex, the addresses to enter there, and whether Plex has StationPlay yet.
-10. **All set:** your current settings, and anything that still needs attention. It also offers the update check, which tells you when a new StationPlay is out (see [Updating](#updating)).
+10. **All set:** your current settings, and anything that still needs attention. It also asks whether StationPlay should tell you when a new version is out (see [Updating](#updating)). The box is never ticked for you, and leaving it unticked is No.
 
 To open the setup at any time, choose **Run setup again** on the **Add to Plex** tab, or **Setup** at the bottom of the page. Your current answers are filled in. The setup is the only place to change the settings for new stations. Everything else can also be changed on its own tab.
 
@@ -1246,7 +1245,7 @@ Alerts are kept in StationPlay's database, so a restart doesn't repeat them. An 
 - **The app keeps restarting, and the log says it can't write to `/data`.** The data folder isn't owned by the user StationPlay runs as. The message shows the `chown` command to run. Fill in your data folder's path, run it, then restart the app.
 - **The app won't start, and mentions `/dev/dri`.** The GPU lines are in the YAML, but the server has no Intel/AMD graphics. Remove the `devices:` and `group_add:` lines.
 - **Docker says port 3310 or 3311 "is already allocated" or "address already in use".** Another app on the server uses that port. Change only the first number of the port line (for example, `"3320:3310"`). Then use the new port in every address: in your browser, and in Plex or your other apps.
-- **After updating, the page still shows the old version.** Docker didn't fetch the newest image. Check that `image:` ends in `:latest` (`:1.34` or `:1.34.0` stays on that version) and that `pull_policy: always` is there. Then follow [Updating](#updating) again: on TrueNAS, edit the app and save it; with Compose, run `docker compose pull && docker compose up -d`.
+- **After updating, the page still shows the old version.** Docker didn't fetch the newest image, or didn't start StationPlay from it. Check that `image:` ends in `:latest` (`:1.34` or `:1.34.0` stays on that version). Then fetch it yourself: on TrueNAS, in **System**, then **Shell**, run `sudo docker pull ghcr.io/egadgetboy/stationplay:latest`, then edit the app and save it; with Compose, run `docker compose up -d --pull always` (with `sudo` first on Synology).
 - **Docker says there's "no matching manifest" for your system.** The image is for 64-bit machines only: x86-64 (Intel/AMD) and ARM64. On a Raspberry Pi, use a 64-bit OS.
 - **The page shows "Plex: PLEX_URL and PLEX_TOKEN aren't set"** or **"Plex didn't accept the token in PLEX_TOKEN".** Fix those two settings. Users (not Admins) see only "Plex: not connected". If Plex runs in Docker on the same machine, use the machine's network IP in `PLEX_URL`, not `localhost`.
 
@@ -1323,14 +1322,17 @@ The tests need ffmpeg on the `PATH`. The HDR and real-world tests also need ffmp
 
 It uses its own ports, stops only what it started, and cleans up afterward. `--from v1.28.1` starts from another release, and `-v` shows every check.
 
-**Releases.** Each release's notes are in `docs/releases/v<version>.md`. Their first lines name the commit of that version (`commit: <its full ID>`), which must be a commit `main` was tested at (for a merge, the merge commit). `.github/workflows/release.yml` runs each time the image workflow finishes on `main`. For each version not yet published, it checks that the commit is on `main`, is that version, and passed the image workflow's tests on both machines (on that commit, or on a later one that changed only release notes). Then it publishes the release on GitHub:
+**Releases.** Each release's notes are in `docs/releases/v<version>.md`. Their first lines name the commit of that version (`commit: <its full ID>`), which must be a commit `main` was tested at (for a merge, the merge commit). `.github/workflows/release.yml` runs each time the image workflow finishes on `main`. For each version not yet published, it checks that the commit is on `main`, is that version, and passed the image workflow's tests on both machines (on that commit, or on a later one that changed only release notes). Then it makes the release on GitHub, first as a draft:
 
 - **The tag** at that commit, and the notes.
 - **The files built from that commit:** `stationplay-<version>.zip`, `stationplay.yaml` and `docker-compose.yml`.
 - **Two lists of packages:** `stationplay-<version>-packages.txt` (amd64) and `stationplay-<version>-packages-arm64.txt`. Each lists every package in the image that was tested (the tests' own additions aside), at its exact version, with a link to its source. The image workflow run that tested the commit makes them after its tests and keeps them with the run for 90 days. Without them, nothing is published, and the release run says to re-run that image run.
 - **`stationplay-<version>-source.tar`:** the source of every GPL and LGPL package in the images, as Debian publishes it, fetched from inside the tested image. If any of it can't be fetched, nothing is published, and the run says which.
-- **`stationplay-<version>.zip.sig`:** the zip's signature (see [Checking a release's signature](#checking-a-releases-signature)). From 1.35.0, a release isn't published without it. Before then, a zip that can't be signed is published unsigned, with a warning on the run.
-- **The image's tags.** The image the run tested (both machines' images, joined, by digest) gets `:<version>`, `:<major.minor>` if it's the newest of that minor version, and `:latest` if it's the newest release. Each tag is copied onto that very image, never built again, and checked to be it.
+- **`SHA256SUMS`:** the SHA-256 of each of the release's files, and the image's digest for each of its tags.
+- **`stationplay-<version>.zip.sig` and `SHA256SUMS.sig`:** their signatures (see [Checking a release's signature](#checking-a-releases-signature)). From 1.35.0, a release isn't published without them. Before then, files that can't be signed are published unsigned, with a warning on the run.
+- **The image's tags,** once the draft is made. The image the run tested (both machines' images, joined, by digest) gets `:<version>`, `:<major.minor>` if it's the newest of that minor version, and `:latest` if it's the newest release. Each tag is copied onto that very image, never built again, and checked to be it.
+
+Then the draft is published, once anyone can pull the image without signing in: the `stationplay` package on GitHub must be public, or the run says so and publishes nothing. A draft left by a run that stopped partway is deleted, and the release made again. The workflow runs only in this repository, not in forks.
 
 A version whose tests are still running waits for them, and one whose tests failed isn't published; the run says why in one line. Push and test each version's commit before the next one's. Versions before 1.34.0 were source only: no image was published for them, and each person's build got Debian's packages from Debian. Public releases here start with 1.32.0.
 
@@ -1371,6 +1373,8 @@ ssh-keygen -Y verify -f allowed_signers -I stationplay-release -n stationplay-re
 ```
 
 It says `Good "stationplay-release" signature` when the zip is exactly what was published. From 1.35.0, every release's zip is signed. Before then, a zip may have been published without one.
+
+`SHA256SUMS` comes with each release from 1.34.0 on, signed the same way (`SHA256SUMS.sig`). Check it as you checked the zip, with `SHA256SUMS` and `SHA256SUMS.sig` in place of the zip and its signature. Then `sha256sum -c --ignore-missing SHA256SUMS` checks the release's files you have. Its last lines give the image's digest for each tag, such as `ghcr.io/egadgetboy/stationplay:1.34.0`: `docker pull ghcr.io/egadgetboy/stationplay@sha256:<that digest>` fetches exactly that image.
 
 ### The logo library
 

@@ -12,14 +12,13 @@
 #
 # Paths are case-sensitive: StationPlay and stationplay are different folders.
 #
-# To update: when StationPlay's page says a new version is out, open Apps,
-# then StationPlay, and choose Update if TrueNAS offers it; if it doesn't,
-# choose Edit, then Save (pull_policy: always fetches the newest image).
+# To update: follow the steps StationPlay's page gives when a new version
+# is out, or the README's Updating section.
 
 services:
   stationplay:
     image: ghcr.io/egadgetboy/stationplay:latest     # the newest release; :1.34 or :1.34.0 stays on one
-    pull_policy: always                              # the newest image whenever the app is saved or updated
+    pull_policy: missing                             # fetched only when it isn't here: starting never needs the internet
     container_name: stationplay
     restart: unless-stopped
     init: true
