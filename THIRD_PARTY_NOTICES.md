@@ -52,13 +52,16 @@ source package.
   license, in its own `/usr/share/doc/<package>/copyright`, and listed in
   `third-party-packages.txt`.
 - **Source:** Debian's `ffmpeg` source package, at the version listed in
-  `third-party-packages.txt` (see above). Each StationPlay release on
-  GitHub, from 1.32.1 (and 1.32.0, added since), comes with
-  `stationplay-<version>-gpl-source.tar`: Debian's source packages for
-  FFmpeg, x264 and x265, at the exact versions in that release's image. It
-  also comes with `stationplay-<version>-packages.txt`, listing every
-  package in the image at its exact version, with where its source is
-  kept. FFmpeg's upstream project is at <https://ffmpeg.org>.
+  `third-party-packages.txt` (see above). Since 1.32.0, each release on
+  GitHub comes with `stationplay-<version>-gpl-source.tar`: Debian's source
+  packages for FFmpeg, x264 and x265, at the exact versions in that
+  release's published image. It also comes with
+  `stationplay-<version>-packages.txt`, which lists every package in that
+  image at its exact version, with a link to its source: every other
+  package's source is there. An image built from the release's zip gets
+  Debian's packages as they are on the day it's built, which
+  `third-party-packages.txt` in it lists. FFmpeg's upstream project is at
+  <https://ffmpeg.org>.
 
 ## Fonts
 

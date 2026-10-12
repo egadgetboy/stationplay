@@ -65,6 +65,7 @@ def test_the_list_names_every_package_and_the_release_s_files():
         "1.32.1",
         sbom.debian_rows(LISTING),
         [("fastapi", "0.115.0", "MIT")],
+        "3.13.16",
     )
     assert text.startswith("StationPlay 1.32.1: every package in its image\n")
     assert "Debian packages (3)" in text and "Python packages (1)" in text
@@ -74,3 +75,8 @@ def test_the_list_names_every_package_and_the_release_s_files():
     ) in text
     assert "fastapi 0.115.0: MIT, https://pypi.org/project/fastapi/0.115.0/" in text
     assert "stationplay-1.32.1-gpl-source.tar" in text and "stationplay-1.32.1.zip" in text
+    # (The audit of 1.32.1: Python itself is in neither dpkg's list nor pip's.)
+    assert (
+        "Python 3.13.16 (the python image's own, under the PSF license), "
+        "https://www.python.org/ftp/python/3.13.16/Python-3.13.16.tgz"
+    ) in text

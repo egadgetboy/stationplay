@@ -16,6 +16,7 @@ nothing more):
 
 from __future__ import annotations
 
+import platform
 import subprocess
 import sys
 from importlib import metadata
@@ -71,7 +72,10 @@ def snapshot(source: str, version: str) -> str:
 
 
 def report(
-    version: str, debian: list[tuple[str, str, str, str]], python: list[tuple[str, str, str]]
+    version: str,
+    debian: list[tuple[str, str, str, str]],
+    python: list[tuple[str, str, str]],
+    python_version: str = "",
 ) -> str:
     lines = [
         f"StationPlay {version}: every package in its image",
@@ -81,12 +85,22 @@ def report(
         "license is in the image, in /usr/share/doc/<package>/copyright. FFmpeg's,",
         "x264's and x265's source is also in this release's",
         f"stationplay-{version}-gpl-source.tar. StationPlay's own source is",
-        f"stationplay-{version}.zip, under the AGPL.",
+        f"stationplay-{version}.zip, under the AGPL. This is the published",
+        "image's list: an image built from the zip gets Debian's packages as",
+        "they are on the day it's built.",
         "",
         f"Debian packages ({len(debian)})",
         "",
     ]
     lines += [f"{n} {v}: source {s} {sv}, {snapshot(s, sv)}" for n, v, s, sv in debian]
+    if python_version:
+        lines += [
+            "",
+            "Python itself",
+            "",
+            f"Python {python_version} (the python image's own, under the PSF license), "
+            f"https://www.python.org/ftp/python/{python_version}/Python-{python_version}.tgz",
+        ]
     lines += ["", f"Python packages ({len(python)})", ""]
     lines += [f"{n} {v}: {lic}, https://pypi.org/project/{n}/{v}/" for n, v, lic in python]
     return "\n".join(lines) + "\n"
@@ -97,7 +111,8 @@ def main() -> int:
     listing = subprocess.run(
         ["dpkg-query", "-W", "-f", DPKG_FORMAT], capture_output=True, text=True, check=True
     ).stdout
-    sys.stdout.write(report(version, debian_rows(listing), python_rows(metadata.distributions())))
+    rows = python_rows(metadata.distributions())
+    sys.stdout.write(report(version, debian_rows(listing), rows, platform.python_version()))
     return 0
 
 

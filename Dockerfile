@@ -69,10 +69,11 @@ FROM stationplay AS test
 RUN pip install --no-cache-dir pytest==9.1.1 pytest-asyncio==1.4.0
 COPY pytest.ini pyproject.toml stationplay.yaml docker-compose.yml Dockerfile ./
 COPY docs ./docs
-COPY tools/openapi_spec.py tools/image_check.py tools/sbom.py ./tools/
+COPY tools/openapi_spec.py tools/image_check.py tools/sbom.py tools/gpl_source.py ./tools/
 COPY tools/logos/letters.py ./tools/logos/
+COPY .github/workflows/release.yml ./.github/workflows/
 COPY tests ./tests
-RUN chmod -R a+rX pytest.ini pyproject.toml stationplay.yaml docker-compose.yml Dockerfile docs tools tests
+RUN chmod -R a+rX pytest.ini pyproject.toml stationplay.yaml docker-compose.yml Dockerfile .github docs tools tests
 USER 1000:1000
 HEALTHCHECK NONE
 CMD ["python", "-m", "pytest", "-v", "-p", "no:cacheprovider", "-rfE"]

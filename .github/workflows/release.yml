@@ -9,7 +9,7 @@
 # version, with where its source is kept: tools/sbom.py) and
 # stationplay-<version>-gpl-source.tar (FFmpeg's, x264's and x265's source,
 # at the versions in the image, which the GPL asks to go with them:
-# tools/gpl_source.sh). A release already published is left as it is, but
+# tools/gpl_source.py). A release already published is left as it is, but
 # one without those two files gets them, from its own image. The newest
 # version is marked the latest release.
 #
@@ -74,10 +74,11 @@ jobs:
           # $2: the image, $3: the folder they go in).
           # (One chain, so a step that fails stops it wherever it's called.)
           made_of() {
+            local folder="stationplay-$1-gpl-source"
             docker run --rm -i "$2" python - "$1" < tools/sbom.py > "$3/stationplay-$1-packages.txt" \
-              && mkdir -p "$3/gpl" \
-              && docker run --rm -i --user 0 -v "$3/gpl:/out" "$2" sh -s < tools/gpl_source.sh \
-              && tar -cf "$3/stationplay-$1-gpl-source.tar" -C "$3/gpl" .
+              && rm -rf "$3/$folder" && mkdir -p "$3/$folder" \
+              && docker run --rm -i --user 0 -v "$3/$folder:/out" "$2" python - < tools/gpl_source.py \
+              && tar -cf "$3/$folder.tar" -C "$3" "$folder"
           }
           for version in $versions; do
             tag="v$version"
@@ -87,14 +88,22 @@ jobs:
               continue
             fi
             if grep -qxF "$tag" <<< "$published"; then
-              if gh release view "$tag" --json assets --jq '.assets[].name' | grep -qx "stationplay-$version-gpl-source.tar"; then
+              # (Its files' names whole first: a grep that stops at a match
+              # mustn't make the listing fail, and a listing that fails
+              # mustn't look like a release without them.)
+              if ! names=$(gh release view "$tag" --json assets --jq '.assets[].name'); then
+                echo "::error::$tag: its files couldn't be listed"
+                refused=1
+              elif grep -qxF "stationplay-$version-gpl-source.tar" <<< "$names"; then
                 echo "$tag: already published"
               else
-                # (Published before releases carried them: from its own image.)
+                # (Published before releases carried them: from its own image.
+                # --clobber, so one half-uploaded before is replaced.)
                 out="$RUNNER_TEMP/$tag"
                 mkdir -p "$out"
-                if docker pull --quiet "$image:$version" && made_of "$version" "$image:$version" "$out"; then
-                  gh release upload "$tag" "$out/stationplay-$version-packages.txt" "$out/stationplay-$version-gpl-source.tar"
+                if docker pull --quiet "$image:$version" && made_of "$version" "$image:$version" "$out" \
+                  && gh release upload --clobber "$tag" "$out/stationplay-$version-packages.txt" \
+                    "$out/stationplay-$version-gpl-source.tar"; then
                   echo "::notice::$tag: now with what its image is made of"
                 else
                   echo "::error::$tag: what its image is made of couldn't be added (see above)"

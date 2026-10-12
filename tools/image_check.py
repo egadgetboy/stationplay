@@ -28,8 +28,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 # A test reaches outside the tests folder this way (Path(__file__).parents[1],
-# ROOT = ....parent.parent, WEB_DIR.parent.parent).
-REACHES_OUT = re.compile(r"parent\.parent|parents\[")
+# ROOT = ....parent.parent, WEB_DIR.parent.parent, dirname(dirname(__file__)),
+# HERE / ".."). (Not "../" in a string: the tests try those as attacks.)
+REACHES_OUT = re.compile(
+    r"parent\.parent|parents\[|dirname\(\s*(os\.path\.)?dirname\(|/\s*\"\.\.\""
+)
 SKIPPED = ("__pycache__", ".pytest_cache")
 
 
@@ -120,9 +123,23 @@ def ignored(rules: list[tuple[bool, list[str]]], relative: str) -> bool:
     return out
 
 
-def lay_out(root: Path, into: Path, stage: str = "test") -> list[str]:
+def tracked(root: Path) -> set[str] | None:
+    """The files git has (committed or added), as the image workflow's
+    checkout has them; None if root isn't a git checkout."""
+    try:
+        listed = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z"], capture_output=True, check=True
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return {name for name in listed.decode().split("\0") if name}
+
+
+def lay_out(root: Path, into: Path, stage: str = "test", only: set[str] | None = None) -> list[str]:
     """Copies what `stage` of root's Dockerfile has into `into`, as the
-    image has it in its working folder; the files, relative to `into`."""
+    image has it in its working folder; the files, relative to `into`.
+    `only`: the files there are (git's), so one never added isn't laid out,
+    as the image workflow's checkout wouldn't have it."""
     dockerfile = (root / "Dockerfile").read_text()
     ignore = root / ".dockerignore"
     rules = _parse_ignore(ignore.read_text()) if ignore.is_file() else []
@@ -140,6 +157,7 @@ def lay_out(root: Path, into: Path, stage: str = "test") -> list[str]:
                     ignored(rules, relative)
                     or any(s in f.parts for s in SKIPPED)
                     or f.suffix == ".pyc"
+                    or (only is not None and relative not in only)
                 ):
                     continue
                 if start.is_file():
@@ -169,7 +187,7 @@ def main() -> int:
         return 0
     with tempfile.TemporaryDirectory(prefix="stationplay-image-") as folder:
         laid_out = Path(folder)
-        lay_out(ROOT, laid_out)
+        lay_out(ROOT, laid_out, only=tracked(ROOT))
         pytest = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
         print("Collecting every test, laid out as in the image…", flush=True)
         collected = subprocess.run(

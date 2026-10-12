@@ -121,3 +121,25 @@ def test_stationplay_s_own_check_runs_this_file_too():
     """(This file reads tools/, so the image's test stage must have it.)"""
     here = Path(__file__)
     assert f"tests/{here.name}" in image_check.reaching_out(here.parent)
+
+
+def test_a_file_git_hasn_t_got_isn_t_laid_out(tmp_path):
+    """The audit of 1.32.1: the check copied the working folder, so a file a
+    test reads that was never added to git passed here and failed in the
+    image workflow, whose checkout hasn't got it."""
+    root = project(tmp_path / "project")
+    every = image_check.lay_out(root, tmp_path / "all")
+    added = {"Dockerfile", "requirements.txt", "app/main.py", "tests/test_a.py"}
+    some = image_check.lay_out(root, tmp_path / "some", only=added)
+    assert "docs/api.md" in every and "docs/api.md" not in some
+    assert sorted(some) == ["Dockerfile", "app/main.py", "requirements.txt", "tests/test_a.py"]
+    assert image_check.tracked(tmp_path / "not-a-checkout") is None
+
+
+def test_other_ways_of_reaching_outside_count_too(tmp_path):
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_dirname.py").write_text("HERE = os.path.dirname(os.path.dirname(__file__))\n")
+    (tests / "test_dots.py").write_text('DOCS = HERE / ".." / "docs"\n')
+    (tests / "test_attack.py").write_text('BAD = {"ratingKey": "../../accounts"}\n')
+    assert image_check.reaching_out(tests) == ["tests/test_dirname.py", "tests/test_dots.py"]
