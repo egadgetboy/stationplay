@@ -544,6 +544,7 @@ class User:
     no_pin: bool = False  # they chose to have no PIN, so they're not asked for one again
     own_password: bool = True  # they may change their own password (an Admin always may)
     can_report: bool = True  # they may report problems from the apps (see reports.py)
+    signed_in_from: str = ""  # the address they last signed in from (see access.address); "": never
 
 
 @dataclass(frozen=True)
@@ -749,6 +750,8 @@ _ADDED_COLUMNS = (
     ("users", "level_id", "INTEGER REFERENCES levels(id) ON DELETE SET NULL"),
     ("users", "pin", "TEXT NOT NULL DEFAULT ''"),
     ("users", "show_on", "TEXT NOT NULL DEFAULT ''"),
+    # Where they last signed in from, as the access log has it (from 1.34.0).
+    ("users", "signed_in_from", "TEXT NOT NULL DEFAULT ''"),
     # ...and which linked device a sign-in was made on, from its picker.
     ("sessions", "device_id", "INTEGER REFERENCES linked_devices(id) ON DELETE CASCADE"),
     # Added in 1.26: when someone last used a browser that's signed in (see
@@ -1913,10 +1916,11 @@ class Database:
         app: str = "",
         device_id: int | None = None,
         unlocked: bool = False,
+        where: str = "",
     ) -> None:
         """Signs a browser (or `app`, one of StationPlay's; on a linked
         device, from its picker: `device_id`, and `unlocked` when picked
-        without a PIN) in as a user, keeping only their `keep` newest sign-ins
+        without a PIN) in as a user, from `where` (an address), keeping only their `keep` newest sign-ins
         (the rest are signed out). On a linked device, whoever was signed in
         there before is signed out."""
         with self._lock, self._conn:
@@ -1933,7 +1937,10 @@ class Database:
                 "LIMIT ?)",
                 (user_id, user_id, keep),
             )
-            self._conn.execute("UPDATE users SET signed_in_ms = ? WHERE id = ?", (now, user_id))
+            self._conn.execute(
+                "UPDATE users SET signed_in_ms = ?, signed_in_from = ? WHERE id = ?",
+                (now, where, user_id),
+            )
 
     def session_user(self, token_hash: str, since_ms: int) -> SignedIn | None:
         """Who's signed in with this token, if they were seen since `since_ms`,
@@ -2740,7 +2747,7 @@ def _user(row: sqlite3.Row) -> User:
         row["id"], row["name"], row["role"], row["created_ms"], row["signed_in_ms"],
         row["max_stations"], row["level_id"], bool(row["pin"]), row["show_on"],
         bool(row["password"]), bool(row["no_pin"]), bool(row["own_password"]),
-        bool(row["can_report"]),
+        bool(row["can_report"]), row["signed_in_from"],
     )  # fmt: skip
 
 
