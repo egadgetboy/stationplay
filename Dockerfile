@@ -73,12 +73,14 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 COPY pytest.ini pyproject.toml stationplay.yaml docker-compose.yml Dockerfile ./
+# (What people read, for the wording scan.)
+COPY README.md SECURITY.md ./
 COPY docs ./docs
 COPY tools/openapi_spec.py tools/image_check.py tools/sbom.py tools/gpl_source.py ./tools/
 COPY tools/logos/letters.py ./tools/logos/
 COPY .github/workflows/release.yml .github/workflows/image.yml ./.github/workflows/
 COPY tests ./tests
-RUN chmod -R a+rX pytest.ini pyproject.toml stationplay.yaml docker-compose.yml Dockerfile .github docs tools tests
+RUN chmod -R a+rX pytest.ini pyproject.toml stationplay.yaml docker-compose.yml Dockerfile README.md SECURITY.md .github docs tools tests
 USER 1000:1000
 HEALTHCHECK NONE
 CMD ["python", "-m", "pytest", "-v", "-p", "no:cacheprovider", "-rfE"]
