@@ -117,6 +117,41 @@ def switching() -> str:
     ]
 
 
+def section(start: str, end: str) -> str:
+    text = README.read_text()
+    return text[text.index(f"\n{start}\n") : text.index(f"\n{end}\n")]
+
+
+def test_the_readme_s_rollback_steps_work_in_powershell():
+    """Docker Desktop on Windows runs PowerShell, which hasn't got && and
+    whose cp and rm don't take -f the same way: the copy and delete have
+    PowerShell forms (the audit of 1.34.0)."""
+    said = section("### Rolling back", "## Watch your stations")
+    assert "&&" not in said
+    assert "Copy-Item" in said
+    assert "Remove-Item" in said and "-ErrorAction SilentlyContinue" in said
+    assert "PowerShell" in said
+
+
+def test_the_readme_on_building_and_checking_releases():
+    """(The audit of 1.34.0.)"""
+    building = section("### Building from source", "### Checking a release's signature")
+    # Older zips had the old name, and TrueNAS and Synology need sudo.
+    assert "`stationplay-<version>.zip`" in building
+    assert "sudo docker build" in building
+    signing = section("### Checking a release's signature", "### The logo library")
+    assert "1.35.0" not in signing and "without one" not in signing
+    assert "From 1.34.0 on, every release's zip and its `SHA256SUMS` are signed." in signing
+    # The package to make public is the image's.
+    assert "the `tapioca-server` package on GitHub must be public" in README.read_text()
+    # docker run: the public port only for those who used it.
+    switching_ = switching()
+    assert "Leave out `-p 3311:3311` and `-e PUBLIC_PORT=3311`" in switching_
+    # Older Synology systems have docker-compose, with a hyphen.
+    synology = section("### Synology", "### Unraid")
+    assert "`docker-compose`" in synology
+
+
 def test_the_readme_s_update_steps():
     said = updating()
     # PowerShell (Docker Desktop on Windows) hasn't got &&.

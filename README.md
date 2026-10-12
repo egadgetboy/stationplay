@@ -136,6 +136,8 @@ Requires DSM 7.2 or later with **Container Manager** (from Package Center).
 
    If you'd rather use SSH, run `sudo docker compose up -d` in that folder instead. Either way, tapiOca updates over SSH (see [Updating](#updating)).
 
+   On older systems where `docker compose` isn't found, use `docker-compose`, with a hyphen, in its place, here and in the steps for updating and rolling back. To update, run `sudo docker-compose pull`, then `sudo docker-compose up -d`.
+
 Intel-based Synology models with built-in graphics can use the GPU. Uncomment the Intel/AMD lines (see [GPU encoding](#gpu-encoding)).
 
 ### Unraid
@@ -292,7 +294,7 @@ Your stations, settings, logos, Intro Bumper videos and Broken files list live i
 | Docker Compose | In the folder with tapiOca's `docker-compose.yml`, run `docker compose up -d --pull always`. |
 | Docker Desktop | In a terminal (PowerShell on Windows), in the folder with tapiOca's `docker-compose.yml`, run `docker compose up -d --pull always`. |
 | Unraid | On Unraid's **Docker** tab, choose **Check for Updates**. When **stationplay** shows an update, choose **apply update**. |
-| Synology | Connect over SSH, go to tapiOca's folder (such as `/volume1/docker/stationplay`), and run `sudo docker compose up -d --pull always`. Container Manager's own way (open **Project**, choose the stationplay project, then **Stop** and **Build**) hasn't been confirmed yet to fetch the newest image, so these steps haven't been confirmed yet either way. |
+| Synology | Connect over SSH, go to tapiOca's folder (such as `/volume1/docker/stationplay`), and run `sudo docker compose up -d --pull always` (on older systems, `sudo docker-compose pull`, then `sudo docker-compose up -d`). Container Manager's own way (open **Project**, choose the stationplay project, then **Stop** and **Build**) hasn't been confirmed yet to fetch the newest image, so these steps haven't been confirmed yet either way. |
 | docker run | Fetch the newest image, then remove the container and start it again with the same `docker run` command as before (see [docker run](#docker-run)). |
 
 For `docker run`, that's these two commands:
@@ -341,7 +343,7 @@ services:
 
 The data folder doesn't change, so your stations, settings and people carry over. Afterward, you can delete the `src` folder.
 
-With `docker run`, run `docker rm -f stationplay`, then the [docker run](#docker-run) command with your own settings.
+With `docker run`, run `docker rm -f stationplay`, then the [docker run](#docker-run) command with your own settings. Leave out `-p 3311:3311` and `-e PUBLIC_PORT=3311` unless you used them before, to reach tapiOca's page or apps from away from home.
 
 ### Rolling back
 
@@ -354,7 +356,12 @@ To go back to the version you had before an update:
    sudo cp backups/before-1.29.1-20261009-153000.db stationplay.db
    sudo rm -f stationplay.db-wal stationplay.db-shm
    ```
-   Use your own folder and the copy's name. Using `cp` over the old file keeps its owner, so tapiOca can still write to it.
+   In PowerShell (Docker Desktop on Windows), in the data folder:
+   ```
+   Copy-Item backups\before-1.29.1-20261009-153000.db stationplay.db
+   Remove-Item stationplay.db-wal, stationplay.db-shm -ErrorAction SilentlyContinue
+   ```
+   Use your own folder and the copy's name. Copying over the old file keeps its owner, so tapiOca can still write to it.
 3. **Ask for the previous version's image.** Change the end of `image:` from `:latest` to that version, such as `ghcr.io/egadgetboy/tapioca-server:1.34.0`, and start it. On TrueNAS, edit the app and save it, then start it if it doesn't start by itself. With Docker Compose, run `docker compose up -d`. On Unraid, edit the container's **Repository** and apply. On Synology, edit `docker-compose.yml`, then connect over SSH and run `sudo docker compose up -d` in its folder. With docker run, run `docker rm stationplay`, then your `docker run` command with that version at the end.
 
 It stays on that version until you change `image:` back to `:latest`. Images are published from 1.34.0 on. To go back to an earlier version, build it from its zip (see [Building from source](#building-from-source)).
@@ -1334,7 +1341,7 @@ It uses its own ports, stops only what it started, and cleans up afterward. `--f
 - **`tapioca-<version>.zip.sig` and `SHA256SUMS.sig`:** their signatures (see [Checking a release's signature](#checking-a-releases-signature)). From 1.35.0, a release isn't published without them. Before then, files that can't be signed are published unsigned, with a warning on the run.
 - **The image's tags,** once the draft is made. The image the run tested (both machines' images, joined, by digest) gets `:<version>`, `:<major.minor>` if it's the newest of that minor version, and `:latest` if it's the newest release. Each tag is copied onto that very image, never built again, and checked to be it.
 
-Then the draft is published, once anyone can pull the image without signing in: the `stationplay` package on GitHub must be public, or the run says so and publishes nothing. A draft left by a run that stopped partway is deleted, and the release made again. The workflow runs only in this repository, not in forks.
+Then the draft is published, once anyone can pull the image without signing in: the `tapioca-server` package on GitHub must be public, or the run says so and publishes nothing. A draft left by a run that stopped partway is deleted, and the release made again. The workflow runs only in this repository, not in forks.
 
 A version whose tests are still running waits for them, and one whose tests failed isn't published; the run says why in one line. Push and test each version's commit before the next one's. Versions before 1.34.0 were source only: no image was published for them, and each person's build got Debian's packages from Debian. Public releases here start with 1.32.0.
 
@@ -1344,13 +1351,13 @@ A version whose tests are still running waits for them, and one whose tests fail
 
 This is the advanced choice: most people should use the published image (see [Install](#install)). To build the image yourself, to try a change, say:
 
-1. **Get the source:** a release's `tapioca-<version>.zip`, which unzips to a folder called `src` (check its signature first; see the next section), or a clone:
+1. **Get the source:** a release's `tapioca-<version>.zip` (releases before 1.34.0 named it `stationplay-<version>.zip`), which unzips to a folder called `src` (check its signature first; see the next section), or a clone:
 
    ```
    git clone https://github.com/egadgetboy/tapioca-server.git
    ```
 
-2. **Build the image,** from the folder that holds `src` (or your clone's folder). The first build takes a few minutes, mostly to install FFmpeg.
+2. **Build the image,** from the folder that holds `src` (or your clone's folder). The first build takes a few minutes, mostly to install FFmpeg. On TrueNAS (in **System → Shell**) and over SSH on Synology, use `sudo docker build` instead.
 
    ```
    docker build -t stationplay:1.34.0 ./src          # or ./tapioca-server for a clone
@@ -1359,6 +1366,8 @@ This is the advanced choice: most people should use the published image (see [In
 3. **Point `image:` at your build.** In your YAML or compose file, set `image: stationplay:1.34.0` (your build's name) and `pull_policy: never`, so Docker uses your build and never looks for it online. With `docker run`, put `stationplay:1.34.0` at the end instead. Remove `TAPIOCA_INSTALL`, so the page doesn't suggest fetching the published image.
 
 To update, get the new source, build it under the new version, and change `image:` to match. Then save the app in TrueNAS, or run `docker compose up -d`.
+
+**Going back to a version before 1.34.0.** Those versions built themselves from `src`. First restore the database (step 2 of [Rolling back](#rolling-back)). Then unzip that version's `stationplay-<version>.zip` in the folder that holds `src` (it unzips to `src`). In your YAML or compose file, put that version's `build:` block and `image:` line (from its `stationplay.yaml` or `docker-compose.yml`, such as `image: stationplay:1.33.1`) in place of `image:` and `pull_policy:`. Then save the app in TrueNAS, or run `docker compose up -d --build` (with `sudo` over SSH on Synology). With `docker run`, build it as in step 2 under that version's name, run `docker rm -f stationplay`, then your `docker run` command with `stationplay:1.33.1` (that version) at the end.
 
 ### Checking a release's signature
 
@@ -1374,7 +1383,7 @@ Then, in the folder with the zip and its signature, run:
 ssh-keygen -Y verify -f allowed_signers -I tapioca-release -n tapioca-release -s tapioca-<version>.zip.sig < tapioca-<version>.zip
 ```
 
-It says `Good "tapioca-release" signature` when the zip is exactly what was published. From 1.35.0, every release's zip is signed. Before then, a zip may have been published without one.
+It says `Good "tapioca-release" signature` when the zip is exactly what was published. From 1.34.0 on, every release's zip and its `SHA256SUMS` are signed.
 
 `SHA256SUMS` comes with each release from 1.34.0 on, signed the same way (`SHA256SUMS.sig`). Check it as you checked the zip, with `SHA256SUMS` and `SHA256SUMS.sig` in place of the zip and its signature. Then `sha256sum -c --ignore-missing SHA256SUMS` checks the release's files you have. Its last lines give the image's digest for each tag, such as `ghcr.io/egadgetboy/tapioca-server:1.34.0`: `docker pull ghcr.io/egadgetboy/tapioca-server@sha256:<that digest>` fetches exactly that image.
 
