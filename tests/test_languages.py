@@ -124,8 +124,10 @@ def test_the_episode_then_the_show_then_the_person_then_the_file(chosen):
     # The show's: English sound (never the commentary, though it comes first).
     chosen.change(1, "100", {"audio": "eng"})
     assert picked(chosen, 1) == ("a3", "s2")
+    # (A show's choice is kept by Sticky Audio, as the owner named it in 1.34.0.)
     assert (
-        languages.pick(FILE, chosen.wanted(1, EP)).audio_why == "English, as chosen for this show"
+        languages.pick(FILE, chosen.wanted(1, EP)).audio_why
+        == "English, kept for this show by Sticky Audio"
     )
     # The episode's own: Japanese, and captions off, which leaves only a
     # forced track in the sound's language (none in Japanese).
@@ -281,7 +283,7 @@ def test_playing_what_each_person_chose(app):
             "convert", "2027", "2022"
         )  # fmt: skip
         assert "its subtitles, drawn into the picture" in answer["why"]
-        assert answer["chosen"]["audioWhy"] == "Japanese, as chosen for this show"
+        assert answer["chosen"]["audioWhy"] == "Japanese, kept for this show by Sticky Audio"
         assert answer["chosen"]["subtitle"] == "2027"
         # Just this episode: captions off, so only English forced ones go
         # with English sound (drawn in: pictures).

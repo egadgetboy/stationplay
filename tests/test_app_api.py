@@ -236,6 +236,12 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         )  # fmt: skip
         assert mine == {"audio": {"code": "eng", "name": "English"}, "captions": True,
                         "captionLanguage": {"code": "spa", "name": "Spanish"}}  # fmt: skip
+        # From 1.34.0, subtitles Automatic, On or Off (answered to an app that sends it).
+        said = check.answer(
+            phone.put("/api/internal/languages", headers=sam, json={"subtitles": "on"}),
+            "PUT /api/internal/languages",
+        )
+        assert (said["subtitles"], said["captions"]) == ("on", True)
         check.answer(
             phone.put("/api/internal/languages", headers=sam, json={"audio": "klingon"}),
             "PUT /api/internal/languages",
