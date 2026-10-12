@@ -7,8 +7,9 @@ file names the GPL, the LGPL or the AGPL (any version) is built from; a
 package without a copyright file counts too, as it can't be told. With
 --also <list> too (another image's stationplay-<version>-packages.txt, such
 as the arm64 image's), the source of each package in that list that isn't
-installed here, whatever its license. Without --all, only FFmpeg, x264 and
-x265's.
+installed here at that very version, whatever its license (a source in both
+images at different versions is fetched at each). Without --all, only
+FFmpeg, x264 and x265's.
 
 release.yml runs it for each release from 1.34.0, in the image that was
 tested (the owner, October 12: the image is published, with this source
@@ -76,14 +77,15 @@ def gpl_sources(listing: str, copyright_of) -> dict[str, str]:
     return found
 
 
-def listed_sources(listed: str, installed: set[str]) -> dict[str, str]:
-    """Each source package (and its version) of a package in a package
-    list (tools/sbom.py's) that isn't one of `installed`."""
-    found: dict[str, str] = {}
-    for line in listed.splitlines():
-        if (got := LISTED.match(line)) and got[1] not in installed:
-            found.setdefault(got[3], got[4])
-    return found
+def listed_sources(listed: str, installed: set[tuple[str, str]]) -> set[tuple[str, str]]:
+    """Each source package and its version, of a package in a package list
+    (tools/sbom.py's) that isn't one of `installed` (each package and its
+    version: one installed at another version is another package)."""
+    return {
+        (got[3], got[4])
+        for line in listed.splitlines()
+        if (got := LISTED.match(line)) and (got[1], got[2]) not in installed
+    }
 
 
 def _copyright(package: str) -> str | None:
@@ -152,9 +154,9 @@ def from_snapshot(source: str, version: str, out: Path) -> None:
     check(out, files[0][0])
 
 
-def wanted(args: list[str]) -> dict[str, str] | str:
-    """The source packages to fetch, with their versions (see the module's
-    notes), or why it can't be said."""
+def wanted(args: list[str]) -> list[tuple[str, str]] | str:
+    """The source packages to fetch, each with its version, in order (see
+    the module's notes), or why it can't be said."""
 
     def dpkg(fmt: str) -> str:
         return subprocess.run(
@@ -166,17 +168,20 @@ def wanted(args: list[str]) -> dict[str, str] | str:
         missing = [s for s in SOURCES if s not in versions]
         if missing:
             return f"The image has nothing built from {missing[0]}"
-        return {s: versions[s] for s in SOURCES}
+        return [(s, versions[s]) for s in SOURCES]
     listing = dpkg("${Package} ${source:Package} ${source:Version}\n")
-    found = gpl_sources(listing, _copyright)
+    found = set(gpl_sources(listing, _copyright).items())
     if "--also" in args:
         at = args.index("--also") + 1
         if at >= len(args):
             return "--also needs a package list"
-        installed = {line.split()[0] for line in listing.splitlines() if line.split()}
-        for source, version in listed_sources(Path(args[at]).read_text(), installed).items():
-            found.setdefault(source, version)
-    return found
+        installed = {
+            (parts[0], parts[1])
+            for line in dpkg("${Package} ${Version}\n").splitlines()
+            if len(parts := line.split()) == 2
+        }
+        found |= listed_sources(Path(args[at]).read_text(), installed)
+    return sorted(found)
 
 
 def main(args: list[str] | None = None) -> int:
@@ -187,7 +192,7 @@ def main(args: list[str] | None = None) -> int:
     sources = Path("/etc/apt/sources.list.d/debian.sources")
     sources.write_text(re.sub(r"(?m)^Types: deb$", "Types: deb deb-src", sources.read_text()))
     apt = subprocess.run(["apt-get", "update", "-qq"], capture_output=True, text=True)
-    for source, version in sorted(chosen.items()):
+    for source, version in chosen:
         got = apt.returncode == 0 and subprocess.run(
             ["apt-get", "source", "--download-only", "-qq", f"{source}={version}"],
             cwd=OUT, capture_output=True, text=True,

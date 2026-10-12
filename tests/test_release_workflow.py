@@ -16,11 +16,21 @@ gets the version's tags (C7), and the release carries the arm64 image's
 package list, the source of the images' GPL and LGPL packages (C6), and the
 zip's signature, which is required from 1.35.0. Versions before 1.34.0
 publish as they did.
+
+The audit of 1.34.0: each release is made as a draft, its image's tags
+moved only then, and published once anyone can pull its image (a draft
+left from a run before is deleted first, and never counts as published);
+SHA256SUMS lists the image's digest for each tag and every file, signed
+like the zip; a version's tests passed only when both machines' Test steps
+did (the real jq, on GitHub's answers); the signing key is on disk only
+while signing; and the job runs only in StationPlay's own repository, with
+no credentials left in the checkout.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import stat
@@ -34,30 +44,42 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 IMAGE = ROOT / ".github" / "workflows" / "image.yml"
 
-# Stand-ins: each logs what it was asked, and answers from files the test
-# writes in $ASSETS: published (the tags out), runs (the image workflow's
-# runs: commit, run, status), tested_<run> (its Test step's conclusion) and
-# made_<run>/ (the files that run kept, under the artifact's name, $ARTIFACT,
-# which the test reads from image.yml).
+# Stand-ins: each logs what it was asked (and whether the signing key was on
+# disk then), and answers from files the test writes in $ASSETS: published
+# and drafts (the releases out, and drafts, by tag), runs.json (the image
+# workflow's runs, as GitHub lists them), jobs_<run>.json (that run's jobs
+# and their steps, as GitHub answers) and made_<run>/ (the files that run
+# kept, under the artifact's name, $ARTIFACT, which the test reads from
+# image.yml). gh answers --jq with the real jq, as gh does.
+KEY_ON_DISK = """[ -e "$RUNNER_TEMP/signing-key" ] && echo "KEY ON DISK, asked: $*" >> "$LOG"
+"""
 GH = """#!/bin/bash
 echo "gh $*" >> "$LOG"
+@KEY_ON_DISK@
+filter="." prev=""
+for a in "$@"; do [ "$prev" = --jq ] && filter=$a; prev=$a; done
+answer() { if [ -e "$1" ]; then jq -r "$filter" "$1"; fi; }
 case "$1 $2" in
-  "release list") cat "$ASSETS/published" 2>/dev/null ;;
-  "api repos/"*/workflows/*) cat "$ASSETS/runs" 2>/dev/null ;;
+  "release list")
+    { sed 's/.*/{"tagName": "&", "isDraft": false}/' "$ASSETS/published" 2>/dev/null
+      sed 's/.*/{"tagName": "&", "isDraft": true}/' "$ASSETS/drafts" 2>/dev/null
+    } | jq -s . > "$ASSETS/releases.json"
+    answer "$ASSETS/releases.json" ;;
+  "api repos/"*/workflows/*) answer "$ASSETS/runs.json" ;;
   "api repos/"*/jobs)
     run=$(sed 's|.*/runs/\\([0-9]*\\)/jobs|\\1|' <<< "$2")
-    cat "$ASSETS/tested_$run" 2>/dev/null ;;
+    answer "$ASSETS/jobs_$run.json" ;;
   "run download")
     # (gh run download <run> --name <artifact> --dir <folder>)
     [ "$4 $5 $6" = "--name $ARTIFACT --dir" ] || exit 2
     [ -d "$ASSETS/made_$3" ] || exit 1
     mkdir -p "$7" && cp "$ASSETS/made_$3"/* "$7/" ;;
-  "release create") exit 0 ;;
   *) exit 0 ;;
 esac
-"""
+""".replace("@KEY_ON_DISK@\n", KEY_ON_DISK)
 DOCKER = """#!/bin/bash
 echo "docker $*" >> "$LOG"
+@KEY_ON_DISK@
 # (Fetching the source: a file in the folder mounted at /out, unless the
 # test says it can't be had.)
 if [ "$1" = run ]; then
@@ -70,19 +92,31 @@ if [ "$1" = run ]; then
 fi
 [ "$1" = run ] || [ "$1" = login ] && cat > /dev/null
 exit 0
-"""
-# (The registry: what a tag holds now is $ASSETS/manifest.)
+""".replace("@KEY_ON_DISK@\n", KEY_ON_DISK)
+# (The registry: what a tag holds now is $ASSETS/manifest; with
+# $ASSETS/private, nothing can be pulled without signing in.)
 SKOPEO = """#!/bin/bash
 echo "skopeo $*" >> "$LOG"
+@KEY_ON_DISK@
 case "$1" in
   login) cat > /dev/null ;;
-  inspect) cat "$ASSETS/manifest" ;;
+  inspect)
+    if [ "$2" = --no-creds ]; then
+      [ -e "$ASSETS/private" ] && { echo "unauthorized: authentication required" >&2; exit 1; }
+      echo '{"Name": "ghcr.io/egadgetboy/stationplay"}'
+    else
+      cat "$ASSETS/manifest"
+    fi ;;
 esac
 exit 0
-"""
-# (Signing: the .sig beside the file, unless the test says the key won't do.)
+""".replace("@KEY_ON_DISK@\n", KEY_ON_DISK)
+# (Signing: the .sig beside the file, unless the test says the key won't do;
+# and whether the key was on disk to sign with.)
 SSH_KEYGEN = """#!/bin/bash
 echo "ssh-keygen $*" >> "$LOG"
+if [ "$2" = sign ]; then
+  [ -s "$RUNNER_TEMP/signing-key" ] && echo "the key, there to sign ${@: -1}" >> "$LOG"
+fi
 [ -e "$ASSETS/key_wont_do" ] && exit 1
 if [ "$2" = sign ]; then echo signature > "${@: -1}.sig"; fi
 exit 0
@@ -201,16 +235,28 @@ def run(tmp_path):
 
 def image_run(
     run, number: int, version: str = "1.32.1", status: str = "completed",
-    test: str = "success", made: bool = True, image: bool = True,
+    test: str | tuple[str | None, ...] = "success", made: bool = True, image: bool = True,
 ) -> None:  # fmt: skip
     """Image run `number`, on that version's commit (newest first, as
-    GitHub lists them: add the oldest first). From 1.34.0, with what its
-    image job kept too (`image`): the joined image, by digest, and the
-    arm64 image's package list."""
-    runs = run.assets / "runs"
-    before = runs.read_text() if runs.exists() else ""
-    runs.write_text(f"{run.commits[version]} {number} {status}\n" + before)
-    (run.assets / f"tested_{number}").write_text(test + "\n")
+    GitHub lists them: add the oldest first), its Test step's conclusion on
+    each machine (`test`: one for both, or one each; None: that machine's
+    job has no Test step, as when it's cancelled before it starts). From
+    1.34.0, with what its image job kept too (`image`): the joined image, by
+    digest, and the arm64 image's package list."""
+    runs = run.assets / "runs.json"
+    before = json.loads(runs.read_text())["workflow_runs"] if runs.exists() else []
+    this = {"head_sha": run.commits[version], "id": number, "status": status}
+    runs.write_text(json.dumps({"workflow_runs": [this, *before]}))
+    each = (test, test) if isinstance(test, str) else test
+    jobs = [
+        {"name": "image", "steps": [{"name": "Join the tested images", "conclusion": "success"}]}
+    ]
+    for arch, conclusion in zip(("amd64", "arm64", "riscv64"), each, strict=False):
+        steps = [{"name": "Build", "conclusion": "success"}]
+        if conclusion is not None:
+            steps.append({"name": "Test", "conclusion": conclusion})
+        jobs.append({"name": f"build-and-test ({arch})", "steps": steps})
+    (run.assets / f"jobs_{number}.json").write_text(json.dumps({"jobs": jobs}))
     if made:
         folder = run.assets / f"made_{number}"
         folder.mkdir()
@@ -231,6 +277,14 @@ def docker(said: str) -> list[str]:
 
 def creates(said: str) -> list[str]:
     return [line for line in said.splitlines() if line.startswith("gh release create")]
+
+
+def publishes(said: str) -> list[str]:
+    """Each draft made a release (published)."""
+    return [
+        line for line in said.splitlines()
+        if line.startswith("gh release edit") and "--draft=false" in line
+    ]  # fmt: skip
 
 
 def test_a_tested_version_is_published_with_its_tested_package_list(run):
@@ -281,7 +335,8 @@ def test_one_version_that_can_t_be_published_doesn_t_stop_the_next(run):
     assert status == 1  # (1.32.1 refused, said on the run's page)
     made = creates(said)
     assert len(made) == 1 and made[0].startswith("gh release create v1.32.2 "), said
-    assert "--latest=true" in made[0]
+    [out] = publishes(said)
+    assert out.startswith("gh release edit v1.32.2 ") and "--latest=true" in out
 
 
 def test_a_version_whose_tests_failed_isn_t_published(run):
@@ -402,7 +457,7 @@ def test_an_image_that_isn_t_the_tested_one_stops_it(run):
     image_run(run, 8, version="1.34.0")
     (run.assets / "manifest").write_text("something else\n")
     said, status, out = run()
-    assert status == 1 and not creates(said)
+    assert status == 1 and not publishes(said)  # (its draft stays a draft)
     assert "isn't the image that was tested" in out
 
 
@@ -417,3 +472,147 @@ def test_without_its_image_or_its_sources_nothing_is_published(run):
     said, status, out = run()
     assert status == 1 and not creates(said) and not skopeo(said)
     assert "GPL and LGPL packages couldn't all be fetched" in out
+
+
+# The audit of 1.34.0 ---------------------------------------------------------------------------
+
+
+def at(said: str, start: str) -> int:
+    """Where the first line starting `start` is in the log."""
+    lines = said.splitlines()
+    return next(n for n, line in enumerate(lines) if line.startswith(start))
+
+
+def test_a_draft_first_then_its_tags_then_its_published(run):
+    """Each release is made a draft first; only then are its image's tags
+    copied, and it's published once its image can be pulled by anyone."""
+    run.version("1.34.0")
+    (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
+    image_run(run, 8, version="1.34.0")
+    said, status, out = run()
+    assert status == 0, said + out
+    [draft] = creates(said)
+    assert draft.startswith("gh release create v1.34.0 ") and " --draft " in draft
+    assert "--latest" not in draft  # (a draft can't be the latest release)
+    [published] = publishes(said)
+    assert published == "gh release edit v1.34.0 --draft=false --latest=true"
+    anyone = "skopeo inspect --no-creds docker://ghcr.io/egadgetboy/stationplay:1.34.0"
+    assert anyone in said.splitlines()
+    assert (at(said, "gh release create") < at(said, "skopeo copy") < at(said, anyone)
+            < at(said, "gh release edit"))  # fmt: skip
+
+
+def test_a_draft_left_over_is_deleted_and_never_counts_as_published(run):
+    """(A run that stopped after making its draft: the next one deletes it
+    and makes the release again, rather than taking the version as out, or
+    being stopped by it.)"""
+    (run.assets / "drafts").write_text("v1.32.1\nv1.32.1\n")
+    image_run(run, 7)
+    said, status, out = run()
+    assert status == 0, said + out
+    assert "already published" not in out.replace("v1.32.0: already published", "")
+    assert said.count("gh release delete v1.32.1 --yes") == 2
+    assert at(said, "gh release delete v1.32.1") < at(said, "gh release create v1.32.1")
+    assert len(publishes(said)) == 1
+    # A published one is never deleted.
+    (run.assets / "drafts").write_text("")
+    (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
+    again, status, _ = run()
+    assert status == 0 and "release delete" not in again[len(said) :]
+
+
+def test_an_image_only_signed_in_people_can_pull_isn_t_published(run):
+    run.version("1.34.0")
+    (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
+    image_run(run, 8, version="1.34.0")
+    (run.assets / "private").write_text("")
+    said, status, out = run()
+    assert status == 1 and not publishes(said)
+    assert ("v1.34.0 isn't published: its image can't be pulled without signing in to GitHub. "
+            "StationPlay's package must be public") in out  # fmt: skip
+    assert not re.search(r"\b(401|403)\b", out)
+
+
+def test_sha256sums_lists_the_image_for_each_tag_and_every_file_signed(run):
+    run.version("1.35.0")
+    (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
+    image_run(run, 8, version="1.35.0")
+    said, status, out = run(SIGNING_KEY="-----BEGIN OPENSSH PRIVATE KEY-----\nx\n")
+    assert status == 0, said + out
+    folder = run.temp / "v1.35.0"
+    names = ["stationplay-1.35.0.zip", "stationplay.yaml", "docker-compose.yml",
+             "stationplay-1.35.0-packages.txt", "stationplay-1.35.0-packages-arm64.txt",
+             "stationplay-1.35.0-source.tar"]  # fmt: skip
+    lines = (folder / "SHA256SUMS").read_text().splitlines()
+    for name in names:
+        assert f"{hashlib.sha256((folder / name).read_bytes()).hexdigest()}  {name}" in lines
+    for tag in ("1.35.0", "1.35", "latest"):
+        assert f"{DIGEST.removeprefix('sha256:')}  ghcr.io/egadgetboy/stationplay:{tag}" in lines
+    assert len(lines) == len(names) + 3
+    # Signed as the zip is, and both with the release.
+    assert f"-n stationplay-release {folder / 'SHA256SUMS'}" in said
+    [draft] = creates(said)
+    for name in ("SHA256SUMS", "SHA256SUMS.sig", "stationplay-1.35.0.zip.sig"):
+        assert f"/{name}" in draft, draft
+
+
+def test_sha256sums_comes_with_every_release(run):
+    """(Before 1.34.0's image, its files only; unsigned before 1.35.0
+    without a key, as the zip is.)"""
+    image_run(run, 7)
+    said, status, out = run()
+    assert status == 0, said + out
+    [draft] = creates(said)
+    assert "/SHA256SUMS" in draft and "SHA256SUMS.sig" not in draft
+    sums = (run.temp / "v1.32.1" / "SHA256SUMS").read_text()
+    assert "stationplay-1.32.1.zip" in sums and "ghcr.io" not in sums
+
+
+@pytest.mark.parametrize(
+    ("each", "passed"),
+    [
+        (("success", "success"), True),
+        (("success", "cancelled"), False),
+        (("cancelled", "success"), False),
+        (("success", "skipped"), False),
+        (("success", None), False),  # (one machine's job never reached it)
+        ((None, None), False),
+        (("success",), False),  # (one machine missing)
+        (("success", "success", "success"), False),  # (not exactly the two)
+    ],
+)
+def test_both_machines_test_steps_must_pass(run, each, passed):
+    """Read with the real jq, from GitHub's answer for a run's jobs."""
+    image_run(run, 7, test=each)
+    said, status, out = run()
+    assert bool(publishes(said)) is passed, out
+    assert status == (0 if passed else 1)
+    if not passed:
+        assert "its tests didn't pass (image run 7)" in out and "run download" not in said
+
+
+def test_the_signing_key_is_on_disk_only_while_signing(run):
+    run.version("1.35.0")
+    (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
+    image_run(run, 8, version="1.35.0")
+    key = "-----BEGIN OPENSSH PRIVATE KEY-----\nx\n"
+    said, status, out = run(SIGNING_KEY=key)
+    assert status == 0, said + out
+    assert "the key, there to sign" in said and "KEY ON DISK" not in said
+    assert not (run.temp / "signing-key").exists()
+    # A key that won't do: gone all the same.
+    (run.assets / "key_wont_do").write_text("")
+    said, status, out = run(SIGNING_KEY=key)
+    assert status == 1 and "KEY ON DISK" not in said
+    assert not (run.temp / "signing-key").exists()
+
+
+def test_the_job_runs_only_in_stationplay_s_repository_with_no_credentials_kept():
+    text = WORKFLOW.read_text()
+    job = text[text.index("  publish:\n") :]
+    assert re.search(r"^    if: github\.repository == 'egadgetboy/stationplay'$", job, re.M)
+    checkout = re.search(r"- uses: actions/checkout@\S+\n((?:\s{8,}\S.*\n)+)", job)
+    assert checkout and re.search(r"^\s+persist-credentials: false$", checkout.group(1), re.M)
+    # (No environment: making one changes the repository's settings, which
+    # only the owner does.)
+    assert not re.search(r"^\s+environment:", text, re.M)

@@ -66,25 +66,27 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
 CMD ["python", "-m", "app.main"]
 
 # The tests, in the image as people build it (the image workflow runs them
-# here, and a release is published only once they pass): pytest, git and
+# here, and a release is published only once they pass): pytest, git, jq and
 # the tests on top, run as the user the YAML files give. Built only when
 # asked for (--target test).
 FROM stationplay AS test
 RUN pip install --no-cache-dir pytest==9.1.1 pytest-asyncio==1.4.0
-# (git, for the release workflow's own test, which runs its script in a
-# repository: the tests' stage only, never the image people build.)
+# (git and jq, for the release workflow's own test, which runs its script
+# in a repository, answering as GitHub does through the real jq: the tests'
+# stage only, never the image people build.)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git \
+    && apt-get install -y --no-install-recommends git jq \
     && rm -rf /var/lib/apt/lists/*
 COPY pytest.ini pyproject.toml stationplay.yaml docker-compose.yml Dockerfile ./
 # (What people read, for the wording scan.)
 COPY README.md SECURITY.md ./
 COPY docs ./docs
+COPY unraid ./unraid
 COPY tools/openapi_spec.py tools/image_check.py tools/sbom.py tools/gpl_source.py ./tools/
 COPY tools/logos/letters.py ./tools/logos/
 COPY .github/workflows/release.yml .github/workflows/image.yml ./.github/workflows/
 COPY tests ./tests
-RUN chmod -R a+rX pytest.ini pyproject.toml stationplay.yaml docker-compose.yml Dockerfile README.md SECURITY.md .github docs tools tests
+RUN chmod -R a+rX pytest.ini pyproject.toml stationplay.yaml docker-compose.yml Dockerfile README.md SECURITY.md .github docs unraid tools tests
 USER 1000:1000
 HEALTHCHECK NONE
 CMD ["python", "-m", "pytest", "-v", "-p", "no:cacheprovider", "-rfE"]

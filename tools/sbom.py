@@ -1,7 +1,7 @@
 """What was in the image built and tested for a release, package by
 package, with where each one's source is kept: the list each release
 carries (stationplay-<version>-packages.txt). It's the image people build
-(the tests' own stage adds pytest and git, which aren't listed).
+(the tests' own stage adds pytest, git and jq, which aren't listed).
 
 Every Debian package installed, at its exact version, with the source
 package it's built from and that source's page on snapshot.debian.org

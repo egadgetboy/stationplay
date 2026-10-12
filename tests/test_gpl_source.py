@@ -142,7 +142,44 @@ def test_another_image_s_packages_add_their_own_sources():
         "libarmonly1 1.0-1: source armonly 1.0-1, https://snapshot.debian.org/package/armonly/1.0-1/\n"
         "fastapi 0.115.0: MIT, https://pypi.org/project/fastapi/0.115.0/\n"
     )
-    assert gpl_source.listed_sources(listed, {"bash"}) == {"armonly": "1.0-1"}
+    assert gpl_source.listed_sources(listed, {("bash", "5.2.37-2")}) == {("armonly", "1.0-1")}
+
+
+def test_another_image_s_package_at_another_version_adds_its_source():
+    """(The audit of 1.34.0: a package installed here, but at another
+    version in the arm64 image, was taken as the same, and its source left
+    out.)"""
+    listed = (
+        "bash 5.2.37-3: source bash 5.2.37-3, https://snapshot.debian.org/package/bash/5.2.37-3/\n"
+        "libc6 2.41-12: source glibc 2.41-12, https://snapshot.debian.org/package/glibc/2.41-12/\n"
+    )
+    installed = {("bash", "5.2.37-2"), ("libc6", "2.41-12")}
+    assert gpl_source.listed_sources(listed, installed) == {("bash", "5.2.37-3")}
+
+
+def test_both_versions_of_a_source_are_fetched(monkeypatch, tmp_path):
+    """--all with --also: a source in both images at different versions is
+    fetched at each."""
+    answers = {
+        "${Package} ${source:Package} ${source:Version}\n": "bash bash 5.2.37-2\n",
+        "${Package} ${Version}\n": "bash 5.2.37-2\n",
+    }
+
+    def dpkg(command, **kwargs):
+        class Done:
+            stdout = answers[command[-1]]
+
+        return Done()
+
+    monkeypatch.setattr(gpl_source.subprocess, "run", dpkg)
+    monkeypatch.setattr(gpl_source, "_copyright", lambda package: "License: GPL-3+\n")
+    arm64 = tmp_path / "arm64.txt"
+    arm64.write_text(
+        "bash 5.2.37-3: source bash 5.2.37-3, https://snapshot.debian.org/package/bash/5.2.37-3/\n"
+    )
+    assert gpl_source.wanted(["--all", "--also", str(arm64)]) == [
+        ("bash", "5.2.37-2"), ("bash", "5.2.37-3")
+    ]  # fmt: skip
 
 
 def test_a_dsc_is_named_without_the_epoch():
@@ -158,7 +195,7 @@ def test_without_all_only_ffmpeg_x264_and_x265(monkeypatch):
         return Done()
 
     monkeypatch.setattr(gpl_source.subprocess, "run", dpkg)
-    assert gpl_source.wanted([]) == {
-        "ffmpeg": "7:7.1.5-0+deb13u1", "x264": "2:0.164-2", "x265": "4.1-2"
-    }  # fmt: skip
+    assert gpl_source.wanted([]) == [
+        ("ffmpeg", "7:7.1.5-0+deb13u1"), ("x264", "2:0.164-2"), ("x265", "4.1-2")
+    ]  # fmt: skip
     assert gpl_source.wanted(["--all", "--also"]) == "--also needs a package list"

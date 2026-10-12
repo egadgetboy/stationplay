@@ -5,21 +5,31 @@
 # stationplay-<version>.zip (unzipping to src), stationplay.yaml and
 # docker-compose.yml, and stationplay-<version>-packages.txt, the list of
 # every package in the image that was tested (tools/sbom.py, made by an
-# image workflow run that tested it; the tests' own additions aside). A
-# release already published is left as it is. The newest version is marked
-# the latest release.
+# image workflow run that tested it; the tests' own additions aside), with
+# SHA256SUMS, the SHA-256 of each of them. A release already published is
+# left as it is (a draft isn't one: a draft left by a run that stopped is
+# deleted, and the release made again). The newest version is marked the
+# latest release.
 #
 # From FIRST_IMAGE, the image is published too (the owner, October 12: D4
 # is No, U1): the very one the image workflow tested, by digest (C7), gets
 # the tags :<version>, :<major.minor> (if it's the newest of its minor
 # versions) and :latest (if it's the newest), copied as it is, never built
-# again, and checked. The release also carries the arm64 image's list of
-# packages, and the source of every GPL and LGPL package in the images, as
-# Debian publishes it (C6: tools/gpl_source.py). And its zip is signed
-# (stationplay-<version>.zip.sig: an SSH signature, namespace
-# stationplay-release, by the key in RELEASE_SIGNING_KEY, checked against
-# release-signing.pub), which Update now needs from FIRST_SIGNED; before
-# that, a zip that can't be signed is published without one, and said.
+# again, and checked; SHA256SUMS gives its digest for each tag. The release
+# also carries the arm64 image's list of packages, and the source of every
+# GPL and LGPL package in the images, as Debian publishes it (C6:
+# tools/gpl_source.py).
+#
+# Each release is made a draft first, with all its files. Only then are the
+# image's tags copied, and the draft is published once anyone can pull the
+# image without signing in (the package must be public).
+#
+# The zip and SHA256SUMS are signed (stationplay-<version>.zip.sig and
+# SHA256SUMS.sig: SSH signatures, namespace stationplay-release, by the key
+# in RELEASE_SIGNING_KEY, checked against release-signing.pub), which every
+# release needs from FIRST_SIGNED; before that, a release whose files can't
+# be signed is published without the signatures, and said. The key is on
+# disk only while signing, and removed straight after, whatever happens.
 #
 # Versions before FIRST_PUBLIC are never published: StationPlay's public
 # releases here start with 1.32.0 (the repository was started afresh then).
@@ -27,10 +37,13 @@
 # A version is published only once the image workflow's tests have passed
 # on its commit, or on a later main commit with nothing but release notes
 # changed since (a version's commit, then its notes on top, is how releases
-# are made). So this runs when an image run on main finishes, not when main
-# changes: a version whose tests are still running waits for them, and one
-# whose tests failed isn't published, with a line on the run's page saying
-# why.
+# are made): its Test step, on both machines. So this runs when an image run
+# on main finishes, not when main changes: a version whose tests are still
+# running waits for them, and one whose tests failed isn't published, with
+# a line on the run's page saying why.
+#
+# It runs only in StationPlay's own repository (a fork's copy does nothing),
+# and keeps no credentials in its checkout.
 name: release
 
 on:
@@ -51,6 +64,7 @@ concurrency:
 
 jobs:
   publish:
+    if: github.repository == 'egadgetboy/stationplay'
     runs-on: ubuntu-24.04
     # (The images' sources are fetched from Debian for each release.)
     timeout-minutes: 120
@@ -59,6 +73,7 @@ jobs:
         with:
           ref: main
           fetch-depth: 0 # (every version's commit)
+          persist-credentials: false
       - name: Publish what's new
         env:
           GH_TOKEN: ${{ github.token }}
@@ -70,14 +85,34 @@ jobs:
           set -euo pipefail
           # (Whether version $1 is $2 or later.)
           from() { [ "$(printf '%s\n' "$1" "$2" | sort -V | head -1)" = "$2" ]; }
-          # The signing key, only for as long as this runs; and who may sign.
+          # Signing: who may sign, and the key's place, where it's put only
+          # while signing (and removed on any exit, too).
           key="$RUNNER_TEMP/signing-key"
           trap 'rm -f "$key"' EXIT
-          if [ -n "${SIGNING_KEY:-}" ]; then (umask 077; printf '%s\n' "$SIGNING_KEY" > "$key"); fi
           allowed="$RUNNER_TEMP/allowed_signers"
           printf 'stationplay-release namespaces="stationplay-release" %s\n' "$(cat release-signing.pub 2>/dev/null || true)" > "$allowed"
+          # Signs file $1 (as $1.sig) and checks the signature with the
+          # published key; the key is on disk only meanwhile.
+          sign() {
+            local signed=1
+            rm -f "$1.sig"
+            if [ -n "${SIGNING_KEY:-}" ]; then
+              if (umask 077; printf '%s\n' "$SIGNING_KEY" > "$key") \
+                && ssh-keygen -Y sign -q -f "$key" -n stationplay-release "$1" < /dev/null \
+                && ssh-keygen -Y verify -f "$allowed" -I stationplay-release -n stationplay-release \
+                  -s "$1.sig" < "$1"; then
+                signed=0
+              fi
+              rm -f "$key"
+            fi
+            if [ "$signed" != 0 ]; then rm -f "$1.sig"; fi
+            return "$signed"
+          }
           signed_in=""
-          published=$(gh release list --limit 1000 --json tagName --jq '.[].tagName')
+          # The releases out (drafts aside: a draft isn't one), and drafts.
+          releases=$(gh release list --limit 1000 --json tagName,isDraft --jq '.[] | "\(.tagName) \(.isDraft)"')
+          published=$(awk '$2 == "false" { print $1 }' <<< "$releases")
+          drafts=$(awk '$2 == "true" { print $1 }' <<< "$releases")
           # The image workflow's recent runs on main: commit, run, status.
           runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/image.yml/runs?branch=main&per_page=100" \
             --jq '.workflow_runs[] | "\(.head_sha) \(.id) \(.status)"')
@@ -96,6 +131,11 @@ jobs:
               echo "$tag: already published"
               continue
             fi
+            # A draft of it, left by a run that stopped: deleted, and made again.
+            for _ in $(grep -xF "$tag" <<< "$drafts" || true); do
+              gh release delete "$tag" --yes
+              echo "$tag: deleted the draft a run before this one left"
+            done
             commit=$(sed -n '2s/^commit: \([0-9a-f]\{40\}\)$/\1/p' "$file")
             # Checks: the commit is on main, and is that version.
             if [ -z "$commit" ] || ! git cat-file -e "$commit^{commit}" 2>/dev/null; then
@@ -114,8 +154,9 @@ jobs:
             fi
             # Its tests: image runs on main at its commit, or at a later one
             # with nothing but release notes changed since, that passed the
-            # Test step, on every machine it ran on (newest first), or one
-            # still running.
+            # Test step on both machines (exactly two, each a success: one
+            # cancelled, skipped or never reached isn't a pass; newest
+            # first), or one still running.
             passed="" running="" failed=""
             while read -r sha run status; do
               [ -n "$sha" ] || continue
@@ -127,7 +168,7 @@ jobs:
                 continue
               fi
               tested=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" \
-                --jq '[.jobs[].steps[]? | select(.name == "Test") | .conclusion] | if length > 0 and all(. == "success") then "success" else (map(select(. != "success")) | first // "") end')
+                --jq '[.jobs[].steps[]? | select(.name == "Test") | .conclusion] | if length == 2 and all(. == "success") then "success" else "not passed" end')
               if [ "$tested" = success ]; then
                 passed="$passed $run"
                 continue
@@ -208,24 +249,9 @@ jobs:
               tar -C "$out/source" -cf "$out/stationplay-$version-source.tar" .
               files+=("$out/stationplay-$version-source.tar")
             fi
-            # The zip, signed (and the signature checked with the published
-            # key): needed from FIRST_SIGNED.
-            sig="$out/stationplay-$version.zip.sig"
-            if [ -s "$key" ] \
-              && ssh-keygen -Y sign -q -f "$key" -n stationplay-release "$out/stationplay-$version.zip" < /dev/null \
-              && ssh-keygen -Y verify -f "$allowed" -I stationplay-release -n stationplay-release \
-                -s "$sig" < "$out/stationplay-$version.zip"; then
-              files+=("$sig")
-            elif from "$version" "$FIRST_SIGNED"; then
-              echo "::error::$tag isn't published: its zip couldn't be signed with RELEASE_SIGNING_KEY, or the signature doesn't match release-signing.pub. The key must be the private half of release-signing.pub, with no passphrase."
-              refused=1
-              continue
-            else
-              echo "::warning::$tag's zip isn't signed: RELEASE_SIGNING_KEY is missing, has a passphrase, or doesn't match release-signing.pub."
-              rm -f "$sig"
-            fi
+            # The image's tags, from FIRST_IMAGE: on that very image, by digest.
+            tags=()
             if from "$version" "$FIRST_IMAGE"; then
-              # Its tags, on that very image: copied as it is, then checked.
               image=${pinned%@*}
               digest=${pinned#*@}
               tags=("$version")
@@ -233,6 +259,34 @@ jobs:
               newest_minor=$(grep -E "^${minor//./\\.}\.[0-9]+$" <<< "$versions" | sort -V | tail -1)
               if [ "$version" = "$newest_minor" ]; then tags+=("$minor"); fi
               if [ "$latest" = true ]; then tags+=(latest); fi
+            fi
+            # SHA256SUMS: each file's SHA-256 (sha256sum -c --ignore-missing
+            # checks them), then the image's digest for each of its tags.
+            sums="$out/SHA256SUMS"
+            (cd "$out" && sha256sum "${files[@]##*/}") > "$sums"
+            for t in "${tags[@]}"; do
+              printf '%s  %s\n' "${digest#sha256:}" "$image:$t" >> "$sums"
+            done
+            files+=("$sums")
+            # The zip and SHA256SUMS, signed (and the signatures checked with
+            # the published key): needed from FIRST_SIGNED.
+            zip="$out/stationplay-$version.zip"
+            if sign "$zip" && sign "$sums"; then
+              files+=("$zip.sig" "$sums.sig")
+            elif from "$version" "$FIRST_SIGNED"; then
+              echo "::error::$tag isn't published: its zip and SHA256SUMS couldn't be signed with RELEASE_SIGNING_KEY, or the signatures don't match release-signing.pub. The key must be the private half of release-signing.pub, with no passphrase."
+              refused=1
+              continue
+            else
+              echo "::warning::$tag's zip isn't signed, nor its SHA256SUMS: RELEASE_SIGNING_KEY is missing, has a passphrase, or doesn't match release-signing.pub."
+              rm -f "$zip.sig" "$sums.sig"
+            fi
+            # The release, as a draft, with all its files; then the image's
+            # tags, copied as it is, each checked; then it's published, once
+            # anyone can pull the image.
+            gh release create "$tag" --target "$commit" --draft --title "StationPlay $version" \
+              --notes-file "$out/notes.md" "${files[@]}"
+            if [ "${#tags[@]}" -gt 0 ]; then
               for t in "${tags[@]}"; do
                 skopeo copy --all --preserve-digests --quiet "docker://$pinned" "docker://$image:$t"
                 got=$(skopeo inspect --raw "docker://$image:$t" | sha256sum | cut -d' ' -f1)
@@ -241,9 +295,13 @@ jobs:
                 fi
               done
               echo "::notice::$image: ${tags[*]} on $digest"
+              if ! skopeo inspect --no-creds "docker://$image:$version" > /dev/null; then
+                echo "::error::$tag isn't published: its image can't be pulled without signing in to GitHub. StationPlay's package must be public: on GitHub, open the package's settings (Packages, then stationplay, then Package settings), set its visibility to Public, and run this workflow again."
+                refused=1
+                continue
+              fi
             fi
-            gh release create "$tag" --target "$commit" --title "StationPlay $version" \
-              --notes-file "$out/notes.md" --latest="$latest" "${files[@]}"
+            gh release edit "$tag" --draft=false --latest="$latest"
             echo "::notice::Published $tag"
           done
           exit "$refused"
