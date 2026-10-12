@@ -212,7 +212,7 @@ PAGE_FILES = (
     "page.css", "js/core.js", "js/status.js", "js/setup.js", "js/addtoplex.js", "js/logs.js",
     "js/stations.js", "js/editor.js", "js/logos.js", "js/smart.js", "js/backups.js",
     "js/filter.js", "js/broken.js", "js/apps.js", "js/checking.js", "js/access.js",
-    "js/viewing.js", "js/stats.js", "js/boot.js",
+    "js/viewing.js", "js/stats.js", "js/updates.js", "js/boot.js",
 )  # fmt: skip
 # Open to anyone, signed in or not: the page itself (it asks you to sign
 # in), its styles and scripts, its icons and its manifest (for installing it
