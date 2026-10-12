@@ -23,11 +23,12 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 
 from . import access, ratings
 from .breaks import COMMERCIALS, TRAILERS, Clip
@@ -38,6 +39,8 @@ if TYPE_CHECKING:
     from .viewing import Reach
 
 META = "clip_ratings"
+# A decade's folder, as ratings name it: 1930s to 2020s (see breaks.decade_of).
+_DECADE = re.compile(r"(19[3-9]0|20[0-2]0)s", re.ASCII)
 AGE_MOST = 18
 
 
@@ -100,10 +103,8 @@ class ClipRatings:
         rating). ValueError if one won't do, and then nothing changes."""
         cleaned = dict(self._ages)
         for key, age in ages.items():
-            kind, _, decade = str(key).partition("/")
-            if kind not in (COMMERCIALS, TRAILERS) or (
-                decade and not (decade.endswith("s") and decade[:-1].isdigit())
-            ):
+            kind, slash, decade = str(key).partition("/")
+            if kind not in (COMMERCIALS, TRAILERS) or (slash and not _DECADE.fullmatch(decade)):
                 raise ValueError("Choose a commercials or trailers folder")
             if age is None:
                 cleaned.pop(str(key), None)
@@ -150,7 +151,7 @@ def _load(text: str) -> dict[str, int]:
 
 class RatingsIn(BaseModel):
     # Each folder's rating, as an age (null: not rated), by its key.
-    ratings: dict[str, int | None] = Field(max_length=200)
+    ratings: dict[str, StrictInt | None] = Field(max_length=200)
 
 
 def routes(app: FastAPI, ctx: AppContext) -> None:

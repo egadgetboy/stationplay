@@ -9,8 +9,12 @@ an episode's own, when it has one. A show's rating comes only by asking Plex
 about the show itself, and so do a show's or movie's tags (from 1.33.0: all
 its genres, its labels, the collections it's in and its studio, whole, which
 lists don't give); that's done soon after (`fill`), in batches, and again
-every week in case Plex's changed. Media asks for the tags of what it shows
-someone a level or a person limits by them, as it goes (`ensure`).
+every week in case Plex's changed (every day for tags, while someone is
+limited by them, and at once when what's hidden changes). Media asks for the
+tags of what it shows someone a level or a person limits by them, as it goes
+(`ensure`): 50 titles at a time, each batch kept as it comes, a couple of
+batches at once, waiting only a few seconds before answering (the rest stay
+hidden until Plex has said, a moment later).
 
 What isn't known yet counts as not allowed: a station with a show whose
 rating hasn't been asked for is hidden from anyone with a limit until it is,
@@ -34,7 +38,13 @@ log = logging.getLogger("stationplay.titles")
 
 MOVIE, SHOW, EPISODE = "movie", "show", "episode"
 RECHECK_MS = 7 * 86_400_000  # how often Plex is asked about a title again
+TAGS_RECHECK_MS = 86_400_000  # ...and for its tags, while someone is limited by them
 FILL_AT_ONCE = 200  # titles asked about in one go (Plex is asked 50 at a time)
+ENSURE_AT_ONCE = 50  # Media's titles asked about in one batch
+ENSURE_TURNS = 2  # Media's batches asked about at once
+ENSURE_S = 3.0  # how long Media waits for Plex about tags before answering
+ABSENT_MS = 3_600_000  # a title Plex didn't have isn't asked about again for this long
+SAY_EVERY_S = 60.0  # (Plex not answering Media is logged at most this often)
 
 
 @dataclass(frozen=True)
@@ -88,6 +98,12 @@ class Titles:
         # can tell it's out of date).
         self.version = 0
         self._filling: asyncio.Task | None = None
+        # Media's batches being asked about (by key), when Plex last didn't
+        # have a title, and what limits Media's asking at once.
+        self._asking: dict[str, asyncio.Task] = {}
+        self._absent: dict[str, int] = {}
+        self._turns: asyncio.Semaphore | None = None
+        self._said_s = 0.0
 
     def get(self, key: str) -> Title | None:
         return self._known.get(key)
@@ -152,11 +168,17 @@ class Titles:
             self._tags_since_ms = _now()
         self._want_tags = wanted
 
+    def refresh_tags(self) -> None:
+        """Asks Plex about every show's and movie's tags again (what's hidden
+        changed: a genre or label added in Plex lately counts at once)."""
+        self._tags_since_ms = _now()
+
     def wanted(self, now: int | None = None) -> list[str]:
         """Shows never asked about (or not lately), and movies whose library
         isn't known; and, while anyone is limited by tags, every show and
-        movie whose tags aren't known (or not lately): what `fill` asks Plex
-        about, the longest waiting first."""
+        movie not asked about since that began (or since `refresh_tags`), or
+        not in the last day: what `fill` asks Plex about, the longest waiting
+        first."""
         now = _now() if now is None else now
 
         def due(t: Title) -> bool:
@@ -164,7 +186,7 @@ class Titles:
             if (t.kind == SHOW or (t.kind == MOVIE and not t.library)) and stale:
                 return True
             if self._want_tags and t.kind in (SHOW, MOVIE):
-                return stale or (t.tags is None and t.checked_ms < self._tags_since_ms)
+                return now - t.checked_ms >= TAGS_RECHECK_MS or t.checked_ms < self._tags_since_ms
             return False
 
         found = [(t.checked_ms, key) for key, t in self._known.items() if due(t)]
@@ -188,30 +210,68 @@ class Titles:
                 changed[key] = Title(old.kind, rating, library or old.library, now, tags)
             self._save(changed, now)
 
-    async def ensure(self, wanted: dict[str, str]) -> None:
-        """Asks Plex now about the shows and movies of `wanted` (key: kind)
-        whose tags aren't known (for Media, whose lists don't carry them
-        whole). One Plex doesn't answer about stays unknown."""
+    async def ensure(self, wanted: dict[str, str], wait_s: float = ENSURE_S) -> None:
+        """Asks Plex about the shows and movies of `wanted` (key: kind) whose
+        tags aren't known (for Media, whose lists don't carry them whole),
+        waiting up to `wait_s` for what Plex says. Each batch is kept as it
+        comes, and carries on if this stops waiting (or is cancelled); one
+        already being asked about isn't asked about twice; one Plex didn't
+        have isn't asked about again for an hour. What's not known yet stays
+        hidden from anyone limited by tags."""
+        if self.asker is None:
+            return
+        now = _now()
+        if len(self._absent) > 10_000:  # (forgetting the oldest)
+            self._absent = {k: at for k, at in self._absent.items() if now - at < ABSENT_MS}
         missing = [
             k for k, kind in wanted.items()
-            if kind in (SHOW, MOVIE) and (k not in self._known or self._known[k].tags is None)
+            if kind in (SHOW, MOVIE)
+            and (k not in self._known or self._known[k].tags is None)
+            and now - self._absent.get(k, now - ABSENT_MS) >= ABSENT_MS
         ]  # fmt: skip
-        if not missing or self.asker is None:
+        if not missing:
             return
-        found = await self.asker(missing)
-        now = _now()
-        changed = {}
-        for key in missing:
-            if key not in found:
-                continue
-            rating, library, *rest = found[key]
-            tags = rest[0] if rest else None
-            old = self._known.get(key)
-            changed[key] = Title(
-                wanted[key], rating, library or (old.library if old else ""), now, tags
-            )
-        if changed:
-            self._save(changed, now)
+        waits = {self._asking[k] for k in missing if k in self._asking}
+        fresh = [k for k in missing if k not in self._asking]
+        loop = asyncio.get_running_loop()
+        for at in range(0, len(fresh), ENSURE_AT_ONCE):
+            batch = {k: wanted[k] for k in fresh[at : at + ENSURE_AT_ONCE]}
+            task = loop.create_task(self._ask_batch(batch, self.asker))
+            for key in batch:
+                self._asking[key] = task
+            waits.add(task)
+        await asyncio.wait(waits, timeout=wait_s)
+
+    async def _ask_batch(self, kinds: dict[str, str], ask: Asker) -> None:
+        """One batch of Media's `ensure`, kept as it comes."""
+        me = asyncio.current_task()
+        try:
+            if self._turns is None:
+                self._turns = asyncio.Semaphore(ENSURE_TURNS)
+            async with self._turns:
+                found = await ask(list(kinds))
+            now = _now()
+            changed = {}
+            for key, kind in kinds.items():
+                if key not in found:
+                    self._absent[key] = now
+                    continue
+                rating, library, *rest = found[key]
+                tags = rest[0] if rest else None
+                old = self._known.get(key)
+                changed[key] = Title(
+                    kind, rating, library or (old.library if old else ""), now, tags
+                )
+            if changed:
+                self._save(changed, now)
+        except Exception as e:  # (unknown stays unknown: hidden, to be safe)
+            if time.monotonic() - self._said_s >= SAY_EVERY_S:
+                self._said_s = time.monotonic()
+                log.info("Can't ask Plex about some titles in Media right now (%s)", e)
+        finally:
+            for key in kinds:
+                if self._asking.get(key) is me:
+                    del self._asking[key]
 
     def tags(self, key: str) -> Tags | None:
         """A show's or movie's tags, if known."""

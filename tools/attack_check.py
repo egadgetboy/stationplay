@@ -340,6 +340,10 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
             ("DELETE", "/api/logos/upload-0123456789"), ("GET", "/api/arr"),
             ("GET", "/api/away"), ("PUT", "/api/api-tokens/outside"),
             ("PUT", f"/api/access/users/{kit['id']}"),  # (renaming someone, say)
+            # (1.33.0: what's hidden by what titles are, and clip ratings.)
+            ("GET", "/api/access/tags"), ("GET", "/api/access/clips"),
+            ("PUT", "/api/access/clips"), ("GET", "/api/access/viewing"),
+            ("PUT", f"/api/access/users/{kit['id']}/viewing"),
         ):  # fmt: skip
             r = await c.request(method, path, headers=sam_h)
             checks.ok(r.status_code == 403, f"a User can't {method} {path}", f"got {r.status_code}")

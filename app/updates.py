@@ -298,16 +298,31 @@ class Updater:
             for e in await self.ctx.library.entries(keys)
         }
 
-    def with_breaks(self, channel: Channel, items: list[Item]) -> list[Item]:
+    def with_breaks(
+        self, channel: Channel, items: list[Item], rest: list[Item] | None = None
+    ) -> list[Item]:
         """`items` with the station's commercials or trailers, and Station
-        ID card, after each: on a station someone with limits can see, only
-        clips rated at or below its highest-rated program (cliprules.py)."""
+        ID card, after each. On a station someone with limits can see, only
+        clips rated at or below its highest-rated program are dealt
+        (cliprules.py), judged by the whole station: `items` and `rest`, the
+        station's other programs (by default, its specials' as kept). While
+        what it plays isn't all known yet, every clip is dealt, and each is
+        judged as it's about to play (Broadcaster._clip_allowed), so a new
+        station, or a new show, isn't left with no breaks until the next
+        full check."""
         fillers = self.ctx.fillers
         commercials, trailers = fillers.pool(COMMERCIALS), fillers.pool(TRAILERS)
         if channel.breaks and (commercials or trailers):
-            viewing = self.ctx.viewing
-            reach = viewing_reach_of(items, self.ctx.titles)
-            if viewing.limited_audience(channel.id, reach) or viewing.limited_audience(channel.id):
+            if rest is None:
+                rest = [
+                    i
+                    for programs in self.ctx.db.program_sets(channel.id).values()
+                    for i in programs
+                ]
+            titles = self.ctx.titles
+            reach = viewing_reach_of(items + rest, titles)
+            judged = reach.known and (reach.tagged or not titles.want_tags)
+            if judged and self.ctx.viewing.limited_audience(channel.id, reach):
                 most = cliprules.cap(reach)
                 rated = self.ctx.clip_ratings.rated
                 commercials = [c for c in commercials if rated(COMMERCIALS, c, most)]
@@ -342,7 +357,14 @@ class Updater:
         card, after each program."""
         if channel.breaks and sets:
             await self.ctx.fillers.ready()
-        return {name: self.with_breaks(channel, items) for name, items in sets.items()}
+        # (Each judged with the whole station: its lineup and every set.)
+        main = self.ctx.db.latest_items(channel.id)
+        return {
+            name: self.with_breaks(
+                channel, items, main + [i for n, s in sets.items() if n != name for i in s]
+            )
+            for name, items in sets.items()
+        }
 
     async def gather_set_programs(
         self, channel: Channel, look_s: float = 0.0

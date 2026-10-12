@@ -45,7 +45,7 @@ from typing import TYPE_CHECKING
 
 from . import cliprules, intro, playing, specials, subtitles, upnext
 from . import ffmpeg as ff
-from .breaks import COMMERCIALS, ID_CARD, TRAILERS
+from .breaks import COMMERCIALS, ID_CARD, TRAILERS, clip_at
 from .broken import OPENING, PLAYING, of_part, part_key
 from .catalog import Media, part_words
 from .config import Settings
@@ -878,8 +878,12 @@ class Broadcaster:
             return True
         kind = COMMERCIALS if slot.item.kind == "episode" else TRAILERS
         clip = ctx.fillers.known(path)
+        if clip is None and not ctx.fillers.refreshed_ms:
+            # (As StationPlay starts, before the folders have been looked in:
+            # by the folder it's in, rather than a plain card for every clip.)
+            clip = clip_at(kind, path)
         if clip is None:
-            return False
+            return False  # (gone from the folders since its lineup was made)
         return ctx.clip_ratings.rated(kind, clip, cliprules.cap(viewing.reach(channel.id)))
 
     async def _play_clip(

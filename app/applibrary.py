@@ -417,7 +417,8 @@ async def seen_only(
     """Those of `entries` that `viewer` can see: shows and movies by their
     own rating and library, episodes by their show's; and by what each is
     (its show's, for an episode), whole, when their limits go by that (Plex
-    is asked for what isn't known yet: lists carry only a few genres)."""
+    is asked for what isn't known yet, as Titles.ensure says: lists carry
+    only a few genres)."""
     if viewer.everything or not entries:
         return entries
     shows = await shows_of(cat, entries)
@@ -429,10 +430,9 @@ async def seen_only(
             )
             for e in entries
         }
-        try:
-            await titles.ensure({k: kind for k, kind in wanted.items() if k})
-        except Exception as e:  # (unknown stays unknown: hidden, to be safe)
-            log.info("Can't ask Plex what titles are (%s)", e)
+        # (Waiting a few seconds at most: what's not known by then stays
+        # hidden, and is known a moment later.)
+        await titles.ensure({k: kind for k, kind in wanted.items() if k})
 
     def tags(e: Entry) -> catalog.Tags | None:
         if titles is None:

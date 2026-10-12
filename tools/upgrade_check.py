@@ -521,6 +521,20 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                       copies)  # fmt: skip
         if version_of(before) < (1, 30, 3):
             checks.ok("a new table, alerts" in logs, "(for the alerts it now keeps)")
+        if version_of(__version__) >= (1, 33, 0):
+            # (From 1.33.0: what a level and a person hide by what titles are,
+            # and the clip folders' ratings, so the release before is started
+            # below on a database that has them.)
+            teen = page.put(f"/api/access/levels/{made['teen']}", json={
+                "name": "Teen", "movieAge": 13, "tvAge": 14, "unrated": False,
+                "blocks": {"genres": ["Horror"]}})  # fmt: skip
+            own = page.put(f"/api/access/users/{made['sam']}/viewing", json={"own": {
+                "blocks": {"labels": ["Late night"]},
+                "allowTitles": [{"key": "300", "title": "Two Discs"}]}})  # fmt: skip
+            rated = page.put("/api/access/clips", json={"ratings": {"commercials": 0}})
+            checks.ok((teen.status_code, own.status_code, rated.status_code) == (200, 200, 200),
+                      "what's new works (a level hiding a genre, a person's own limits, clip "
+                      "ratings)", (teen.text[:200], own.text[:200], rated.text[:200]))  # fmt: skip
         sent = page.post("/api/internal/problem", json={
             "kind": "crashed", "detail": "after the update", "journal": "a\nb", **APP})  # fmt: skip
         checks.ok(sent.status_code == 200, "what's new works (a problem with its journal)",
@@ -613,6 +627,9 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                   == (before, ADMIN["name"], [(STATION["number"], STATION["name"])]),
                   "it starts, the Admin still signed in, the station there",
                   (server["version"], me, stations))  # fmt: skip
+        changed = page.put(f"/api/access/levels/{made['teen']}", json={
+            "name": "Teen", "movieAge": 13, "tvAge": 14, "unrated": False})  # fmt: skip
+        checks.ok(changed.status_code == 200, "a level can still be changed", changed.text[:200])
         stopped(checks, sp, before)
         checks.ok(kept_alerts(as_is) == kept, "it leaves the alerts as they were",
                   kept_alerts(as_is))  # fmt: skip

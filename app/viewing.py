@@ -35,6 +35,7 @@ import logging
 import re
 import sqlite3
 import time
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -85,8 +86,14 @@ TITLES_MOST = 500
 TAG_LONGEST = 100
 
 
+def fold(name: str) -> str:
+    """A name as limits match it: whatever its capitals, accents written
+    either way Unicode allows, and spaces (as Plex and the page may have it)."""
+    return " ".join(unicodedata.normalize("NFC", name).casefold().split())
+
+
 def _fold(values: tuple[str, ...]) -> frozenset[str]:
-    return frozenset(v.casefold() for v in values)
+    return frozenset(fold(v) for v in values)
 
 
 @dataclass(frozen=True)
@@ -161,7 +168,7 @@ class Blocks:
         if kind == "title":
             return next((name for key, name in self.titles if key in reach.titles), "")
         found = getattr(reach, kind, frozenset())
-        return next((v for v in getattr(self, kind) if v.casefold() in found), "")
+        return next((v for v in getattr(self, kind) if fold(v) in found), "")
 
     def as_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {kind: list(getattr(self, kind)) for kind in TAG_KINDS}
@@ -179,7 +186,7 @@ class Blocks:
         if got is None:
             return Blocks()
         if not isinstance(got, dict):
-            raise ValueError("Blocks are given as lists")
+            raise ValueError("Give genres, tags, collections and studios as lists of names")
         lists: dict[str, tuple[str, ...]] = {}
         for kind in TAG_KINDS:
             values = got.get(kind) or []
@@ -187,20 +194,25 @@ class Blocks:
                 raise ValueError(f"Choose up to {BLOCKS_MOST} of each")
             seen: dict[str, str] = {}
             for v in values:
-                text = plain(str(v)).strip()
+                if not isinstance(v, str):
+                    raise ValueError(f"Give each {TAG_NAMES[kind]} as its name")
+                text = plain(v).strip()
                 if not text or len(text) > TAG_LONGEST:
                     raise ValueError(f"Each {TAG_NAMES[kind]} is up to {TAG_LONGEST} characters")
-                seen.setdefault(text.casefold(), text)
+                seen.setdefault(fold(text), text)
             lists[kind] = tuple(sorted(seen.values(), key=str.casefold))
         titles = got.get("titles") or []
         if not isinstance(titles, list) or len(titles) > TITLES_MOST:
             raise ValueError(f"Choose up to {TITLES_MOST} titles")
         keyed: dict[str, str] = {}
         for t in titles:
-            key = str((t or {}).get("key", "")) if isinstance(t, dict) else ""
-            if not _KEY.fullmatch(key):
-                raise ValueError("Titles are given by their key")
-            keyed[key] = plain(str(t.get("title") or "")).strip()[:200]
+            key = t.get("key") if isinstance(t, dict) else None
+            name = t.get("title") if isinstance(t, dict) else None
+            if not isinstance(key, str) or not _KEY.fullmatch(key):
+                raise ValueError("Give each show or movie with its key, as Plex has it")
+            if name is not None and not isinstance(name, str):
+                raise ValueError("Give each show or movie's title as words")
+            keyed[key] = plain(name or "").strip()[:200]
         return Blocks(
             lists["genres"], lists["labels"], lists["collections"], lists["studios"],
             tuple(sorted(keyed.items(), key=lambda kt: kt[1].casefold())),
@@ -355,7 +367,7 @@ def blocked_why(blocks: Blocks, reach: Reach, which: str) -> str | None:
     if met is None:
         return None
     if met == "unknown":
-        return "StationPlay is still asking Plex what its programs are"
+        return "StationPlay is still asking Plex about the genres and tags of what it plays"
     name = blocks.named(met, reach)
     if met == "title":
         return f"It plays {name or 'a title'}, {which}"
@@ -404,7 +416,7 @@ def reach_of(items: list[Item], titles: Titles) -> Reach:
             tags["labels"] |= _fold(judged.tags.labels)
             tags["collections"] |= _fold(judged.tags.collections)
             if judged.tags.studio:
-                tags["studios"].add(judged.tags.studio.casefold())
+                tags["studios"].add(fold(judged.tags.studio))
         if not judged.known:
             known = False
             continue
@@ -489,6 +501,7 @@ class Viewing:
         # everything, so no one has limits.
         self.signing_in: Callable[[], bool] = lambda: True
         self._reaches: dict[int, tuple[tuple, Reach]] = {}
+        self._names: frozenset[tuple[str, str]] | None = None  # (hidden by, as last loaded)
         self.reload()
 
     def _make_built_in(self) -> None:
@@ -515,6 +528,14 @@ class Viewing:
         self._people = {
             user_id: Person.from_text(text) for user_id, text in self.db.user_blocks().items()
         }
+        for user_id, person in self._people.items():
+            if person is None:
+                found = self.db.user(user_id)
+                log.warning(
+                    "What's hidden or allowed for %s can't be read, so they see nothing "
+                    "limits decide until an Admin saves What they see for them again",
+                    found.name if found else f"user {user_id}",
+                )
         # (Titles' tags are asked for only while someone is limited by them:
         # as soon as someone is, Plex is asked about what's on the stations.)
         wanted = any(lv.blocks.by_tags for lv in self._levels.values()) or any(
@@ -522,7 +543,20 @@ class Viewing:
         )
         began = wanted and not self.titles.want_tags
         self.titles.want_tags = wanted
-        if began and self.titles.asker is not None:
+        # (New names to hide by: every title's tags are asked for again, so
+        # a genre or label just added in Plex counts at once.)
+        names = frozenset(
+            (kind, name)
+            for blocks in [lv.blocks for lv in self._levels.values()]
+            + [p.blocks for p in self._people.values() if p is not None]
+            for kind in TAG_KINDS
+            for name in blocks.folded[kind]
+        )
+        added = self._names is not None and not names <= self._names
+        self._names = names
+        if added and wanted:
+            self.titles.refresh_tags()
+        if (began or (added and wanted)) and self.titles.asker is not None:
             # (Not running yet, the Updater asks soon after starting.)
             with contextlib.suppress(RuntimeError):
                 self.titles.fill_soon(self.titles.asker)
@@ -636,11 +670,15 @@ class Viewing:
     # What someone sees ----------------------------------------------------------
 
     def watches_only(self, user: User) -> bool:
-        """Whether a User is on a limited level: they watch what they can
-        see, but don't make stations (whose editor shows the libraries as a
-        whole)."""
+        """Whether a User has limits (their level's, or their own: what's
+        hidden for them, or what can't be read): they watch what they can
+        see, but don't make stations, whose editor shows the libraries as a
+        whole."""
         now = self.db.user(user.id)
-        return now is not None and now.role != ADMIN and self.level(now.level_id).limited
+        if now is None or now.role == ADMIN:
+            return False
+        own = self._people.get(now.id, Person())
+        return self.level(now.level_id).limited or own is None or not own.blocks.empty
 
     def viewer(self, user: User | None) -> Viewer:
         """What `user` may see (None: signing in is off, so everything). Read
@@ -686,7 +724,9 @@ class Viewing:
              sorted(lv.libraries) if lv.libraries is not None else None, lv.blocks.to_text())
             for lv in self._levels.values()
         ]  # fmt: skip
-        users = [(u.id, u.role, u.level_id) for u in self.db.users()]
+        # (Only who has limits: adding someone who sees everything, or a new
+        # name, changes no station's commercials.)
+        users = sorted((u.id, u.level_id) for u in self.db.users() if not self.viewer(u).everything)
         people = {str(k): (p.to_text() if p else "?") for k, p in self._people.items()}
         stations = {str(k): sorted(v.items()) for k, v in self._stations.items()}
         text = json.dumps([levels, users, people, stations, self.signing_in()], sort_keys=True)
@@ -825,6 +865,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     def level_from(body: LevelIn, level_id: int | None) -> Level:
         try:
             blocks = None if body.blocks is None else Blocks.from_json(body.blocks)
+            if blocks is not None and blocks.titles:
+                raise ValueError("Choose shows and movies for one person, under What they see")
             return v.save_level(
                 level_id, body.name, body.movieAge, body.tvAge, body.unrated, body.libraries,
                 blocks,
@@ -945,7 +987,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 for c in got:
                     name = plain(str(c.get("title") or "")).strip()
                     if name and len(name) <= TAG_LONGEST:
-                        found[kind].setdefault(name.casefold(), name)
+                        found[kind].setdefault(fold(name), name)
         return {kind: sorted(names.values(), key=str.casefold) for kind, names in found.items()}
 
     @app.get("/api/access/users/{user_id}/stations")

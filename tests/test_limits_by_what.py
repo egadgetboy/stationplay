@@ -100,7 +100,7 @@ def test_a_station_is_hidden_by_any_program_its_level_hides(tmp_path):
     unknown = reach_of([movie, Item(2, 2, 1, "301", "movie", "")], titles)
     assert not unknown.tagged
     assert level(genres=("Western",)).why_not(unknown) == (
-        "StationPlay is still asking Plex what its programs are"
+        "StationPlay is still asking Plex about the genres and tags of what it plays"
     )
     assert Level(2, "Teen", 13, 14, True, None).allows_reach(unknown)
 
@@ -283,3 +283,188 @@ def test_titles_without_tags_are_asked_about_once_after_starting(tmp_path):
     asyncio.run(later.fill(ask))
     assert asked == [["100"]]  # (asked once, not again and again)
     assert later.wanted() == [] and later.tags("100") is None
+
+
+def test_someone_with_their_own_limits_only_watches(app):
+    """The audit of 1.33.0: on Unrestricted, with titles or a genre hidden
+    for them, Kit could still list a Media folder whole and make stations
+    from it on the page (the station editor's addresses), there and on the
+    public port. Anything hidden for someone makes them watch only, as a
+    level with limits does; and so does what's kept for them that can't be
+    read."""
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json={"name": "Ada", "password": "correct horse"})
+        kit = admin.post("/api/access/users", json={**KIT, "role": "user"}).json()
+        page = TestClient(app)
+        page.post("/api/access/sign-in", json=KIT)
+        assert page.get("/api/libraries/2/items").status_code == 200  # (no limits yet)
+        own = {"blocks": {"titles": [{"key": "302", "title": "Creaky House"}]}}
+        assert (
+            admin.put(f"/api/access/users/{kit['id']}/viewing", json={"own": own}).status_code
+            == 200
+        )
+        assert page.get("/api/libraries/2/items").status_code == 403
+        assert page.get("/poster/302").status_code == 403
+        refused = page.post("/api/channels", json={"number": 11, "name": "Mine", "sources": [
+            {"type": "movie", "ratingKey": "302"}]})  # fmt: skip
+        assert refused.status_code == 403 and "watch" in refused.json()["detail"]
+        # Only titles allowed for them: nothing hidden, so nothing changes.
+        own = {"blocks": {}, "allowTitles": [{"key": "302", "title": "Creaky House"}]}
+        admin.put(f"/api/access/users/{kit['id']}/viewing", json={"own": own})
+        assert page.get("/api/libraries/2/items").status_code == 200
+        # What can't be read: watch only, and a warning says so.
+        ctx = admin.app.state.ctx
+        ctx.db.set_user_blocks(kit["id"], "{not json")
+        ctx.viewing.reload()
+        assert page.get("/api/libraries/2/items").status_code == 403
+        assert (
+            "What's hidden or allowed for Kit can't be read"
+            in admin.get("/api/logs").json()["text"]
+        )
+
+
+def test_names_match_however_unicode_and_spaces_write_them():
+    """The audit of 1.33.0: an "Ä" written as A and a mark, as Plex may send
+    it, didn't match one typed as a single letter; nor did a label with two
+    spaces, since the page's names have one."""
+    import unicodedata
+
+    typed = Blocks.from_json({"genres": ["Ärger"], "labels": ["Late  Night"]})
+    from_plex = Tags(genres=(unicodedata.normalize("NFD", "ärger"),))
+    assert typed.hit("1", from_plex) == "genres"
+    assert typed.hit("1", Tags(labels=("late   night",))) == "labels"
+    reach = Reach(tagged=True, genres=frozenset({"ärger"}))
+    assert typed.meets(reach) == "genres"
+
+
+def test_odd_blocks_are_refused_not_turned_into_words():
+    """The audit of 1.33.0: [null, true, {...}] were kept as the genres
+    "None", "True" and "{'a': 1}"."""
+    for bad in (
+        {"genres": [None]},
+        {"genres": [True]},
+        {"studios": [{"a": 1}]},
+        {"titles": [{"key": 301, "title": "Heist"}]},
+        {"titles": [{"key": "301", "title": ["Heist"]}]},
+    ):
+        with pytest.raises(ValueError):
+            Blocks.from_json(bad)
+
+
+def test_a_level_hides_by_what_titles_are_not_by_title(app):
+    """Shows and movies are hidden for one person (What they see), not for a
+    level: a level given titles is refused, rather than hiding them where
+    the page never shows it."""
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json={"name": "Ada", "password": "correct horse"})
+        kid = kid_level(admin)
+        refused = admin.put(f"/api/access/levels/{kid}", json={
+            "name": "Kid", "movieAge": 10, "tvAge": 10, "unrated": False,
+            "blocks": {"titles": [{"key": "300", "title": "Picnic"}]},
+        })  # fmt: skip
+        assert refused.status_code == 400
+        assert "What they see" in refused.json()["detail"]
+
+
+def test_who_might_see_what_changes_only_with_limits(app):
+    """The audit of 1.33.0: adding someone who sees everything, or renaming
+    someone, made every station's lineup be made again (Viewing.signature
+    went by everyone)."""
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json={"name": "Ada", "password": "correct horse"})
+        viewing = admin.app.state.ctx.viewing
+        before = viewing.signature
+        kit = admin.post("/api/access/users", json={**KIT, "role": "user"}).json()
+        assert viewing.signature == before
+        admin.put(f"/api/access/users/{kit['id']}", json={"name": "Kitty"})
+        assert viewing.signature == before
+        admin.put(f"/api/access/users/{kit['id']}/viewing", json={"level": kid_level(admin)})
+        assert viewing.signature != before
+
+
+def test_new_names_to_hide_by_ask_plex_about_every_titles_tags_again(tmp_path):
+    """The audit of 1.33.0: a label added in Plex to a title already asked
+    about counted only a week later. Hiding a new name asks again at once,
+    and while anyone hides by tags, they're asked again every day."""
+    from app import titles as titles_module
+    from app.titles import Title
+    from app.viewing import Viewing
+
+    db = Database(tmp_path / "db.sqlite")
+    titles = Titles(db)
+    now = int(time.time() * 1000)
+    titles._save({"300": Title("movie", "PG", "1", now, NO_TAGS)}, now)
+    viewing = Viewing(db, titles)
+    assert titles.wanted() == []  # (no one hides by tags)
+    kid = next(lv for lv in viewing.levels() if lv.name == "Kid")
+    viewing.save_level(kid.id, "Kid", 10, 10, False, None, Blocks(labels=("Grown-ups",)))
+    assert titles.want_tags and titles.wanted() == ["300"]  # (asked again: a new name)
+    titles._known["300"] = Title("movie", "PG", "1", _now_ms() + 1, NO_TAGS)  # (asked)
+    viewing.save_level(kid.id, "Kid", 10, 10, False, None, Blocks(labels=("Grown-ups",)))
+    assert titles.wanted() == []  # (the same names: not again)
+    a_day = _now_ms() + titles_module.TAGS_RECHECK_MS + 1
+    assert titles.wanted(a_day) == ["300"]
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def test_media_on_a_big_folder_answers_in_time_and_keeps_what_plex_said(tmp_path):
+    """The audit of 1.33.0: for someone limited by tags, Media asked Plex
+    about a whole folder 50 at a time within one 8-second answer, kept
+    nothing until all of it was in, and so failed every time on a big
+    folder. Now each batch is kept as it comes and carries on after the
+    answer; a title being asked about isn't asked about twice; and Plex is
+    asked a couple of batches at a time."""
+    import asyncio
+
+    from app import titles as titles_module
+
+    titles = Titles(Database(tmp_path / "db.sqlite"))
+    asked: list[list[str]] = []
+    at_once = [0, 0]
+
+    async def ask(keys):
+        asked.append(keys)
+        at_once[0] += 1
+        at_once[1] = max(at_once[1], at_once[0])
+        await asyncio.sleep(0.05)
+        at_once[0] -= 1
+        return {k: ("PG", "2", NO_TAGS) for k in keys if k != "399"}  # (Plex lost 399)
+
+    titles.asker = ask
+    folder = {str(k): "movie" for k in range(400)}
+
+    async def run():
+        started = time.monotonic()
+        await titles.ensure(folder, wait_s=0.12)
+        took = time.monotonic() - started
+        partly = sum(titles.tags(k) is not None for k in folder)
+        await titles.ensure(folder, wait_s=0.0)  # (a second answer meanwhile)
+        await asyncio.sleep(0.6)  # (what was asked about carries on, and is kept)
+        return took, partly
+
+    took, partly = asyncio.run(run())
+    assert took < 0.5 and 0 < partly < 400
+    assert all(titles.tags(k) == NO_TAGS for k in folder if k != "399")
+    flat = [k for batch in asked for k in batch]
+    assert sorted(flat) == sorted(folder) and len(flat) == len(set(flat))  # (each asked once)
+    assert max(len(b) for b in asked) == titles_module.ENSURE_AT_ONCE
+    assert at_once[1] <= titles_module.ENSURE_TURNS
+    # A title Plex didn't have isn't asked about again for a while.
+    asyncio.run(titles.ensure({"399": "movie"}, wait_s=0.1))
+    assert flat.count("399") == 1 and sum(b.count("399") for b in asked) == 1
+
+
+def test_whats_allowed_for_someone_and_whats_hidden_for_them(app):
+    """docs/users.md's rules 2, 3 and 7: a show or movie hidden for someone
+    wins over one allowed for them; one allowed for them is shown even if a
+    genre hidden for them would hide it (the page says the same)."""
+    kid = Level(4, "Kid", None, None, True, None, "", Blocks())
+    own = Person(Blocks(genres=("Horror",), titles=(("301", "Heist"),)),
+                 (("301", "Heist"), ("302", "Creaky House")))  # fmt: skip
+    kit = Viewer(kid, everything=False, own=own)
+    assert not kit.sees(Judged(False, 0, "2", True, "301", HORROR))
+    assert kit.sees(Judged(False, 0, "2", True, "302", HORROR))
+    assert not kit.sees(Judged(False, 0, "2", True, "303", HORROR))

@@ -213,3 +213,128 @@ def test_an_alert_says_how_many_stations_skip_unrated_clips(tmp_path):
     assert told.said[-1][0] == (
         "Every station people with limits can see has its commercials and trailers rated."
     )
+
+
+def test_a_feature_presentation_is_judged_with_its_station(app):
+    """The audit of 1.33.0: a station's specials (its Feature Presentation's
+    and blocks' programs) were judged on their own. A PG feature on station
+    7, which plays an R movie only Ada can see, lost its unrated trailers as
+    if Kit could see the station."""
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        ctx = admin.app.state.ctx
+        picnic = [
+            replace(i, breaks=None, duration_ms=i.program_end_ms)
+            for i in ctx.db.latest_items(ids[9])
+        ]
+        made = admin.portal.call(
+            ctx.updater.sets_as_aired, ctx.db.get_channel(ids[7]), {"feature": picnic}
+        )
+        assert {p for i in made["feature"] for p, _ in i.breaks or () if p != ID_CARD} == {
+            TRAILER.path
+        }
+        # (On a station Kit sees, it's judged with that station: none.)
+        made = admin.portal.call(
+            ctx.updater.sets_as_aired, ctx.db.get_channel(ids[9]), {"feature": picnic}
+        )
+        assert {p for i in made["feature"] for p, _ in i.breaks or () if p != ID_CARD} == set()
+
+
+def test_a_new_stations_clips_are_dealt_before_its_ratings_are_known(app, plex):
+    """The audit of 1.33.0: a station made from a show not asked about yet
+    got no commercials at all, rated or not, until the next full check. Now
+    every clip is dealt while what it plays isn't known, and each is judged
+    as it's about to play."""
+    plex.add_show("110", "Barn Dance", contentRating=["TV-G"])
+    for n in range(1, 3):
+        plex.add_episode(f"21{n}", "110", 1, n, f"Dance {n}", f"/tv/b/{n}.mkv", 22 * 60_000)
+    with TestClient(app) as admin:
+        set_up(admin)
+        ctx = admin.app.state.ctx
+        assert (
+            admin.put("/api/access/clips", json={"ratings": {"commercials": 0}}).status_code == 200
+        )
+        made = admin.post("/api/channels", json={"number": 12, "sources": [
+            {"type": "show", "ratingKey": "110"}], "breaks": 2})  # fmt: skip
+        assert made.status_code == 201, made.text
+        channel = ctx.db.get_channel(made.json()["id"])
+        dealt = {
+            p for i in ctx.db.latest_items(channel.id) for p, _ in i.breaks or () if p != ID_CARD
+        }
+        assert dealt == {COMMERCIAL.path, SIXTIES.path} or dealt == {COMMERCIAL.path}
+        playing = SimpleNamespace(ctx=ctx)
+        slot = SimpleNamespace(item=SimpleNamespace(kind="episode"))
+        # (Once it's known, TV-G, Kit sees it: rated for all ages, played.)
+        admin.portal.call(ctx.titles.filled)
+        assert Broadcaster._clip_allowed(playing, channel, slot, COMMERCIAL.path)
+
+
+def test_rated_clips_play_while_stationplay_is_starting(app):
+    """The audit of 1.33.0: until the clip folders had been looked in (as
+    StationPlay starts, or longer if Plex didn't answer), every commercial
+    on a station someone with limits sees was a plain card, rated or not.
+    Then, a clip is rated by the folder its path is in."""
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        ctx = admin.app.state.ctx
+        admin.put(
+            "/api/access/clips", json={"ratings": {"commercials": 0, "commercials/1960s": 14}}
+        )
+        ctx.fillers._known.clear()
+        ctx.fillers.refreshed_ms = 0
+        playing = SimpleNamespace(ctx=ctx)
+        slot = SimpleNamespace(item=SimpleNamespace(kind="episode"))
+        channel = ctx.db.get_channel(ids[3])  # (TV-Y7, which Kit sees)
+        assert Broadcaster._clip_allowed(playing, channel, slot, COMMERCIAL.path)
+        assert not Broadcaster._clip_allowed(playing, channel, slot, SIXTIES.path)  # (TV-14)
+        assert not Broadcaster._clip_allowed(playing, channel, slot, "/tv/elsewhere/x.mkv")
+        ctx.fillers.refreshed_ms = 1  # (looked in: one not found is gone)
+        assert not Broadcaster._clip_allowed(playing, channel, slot, COMMERCIAL.path)
+
+
+def test_the_alert_counts_specials_too(app):
+    """The audit of 1.33.0: a station Kit sees whose Feature Presentation
+    skips unrated trailers wasn't counted."""
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        ctx = admin.app.state.ctx
+        admin.put("/api/access/clips", json={"ratings": {"commercials": 0}})
+        assert alerts.skipping_unrated(ctx) == 1  # (station 9's trailers)
+        picnic = ctx.db.latest_items(ids[9])
+        ctx.db.save_program_sets(ids[3], {"feature": picnic})
+        assert alerts.skipping_unrated(ctx) == 2
+
+
+def test_clip_ratings_take_only_folders_and_ratings(app):
+    """The audit of 1.33.0: true was taken as 1, "commercials/" and a decade
+    in other digits as folders."""
+    with TestClient(app) as admin:
+        set_up(admin)
+        for ratings in ({"trailers": True}, {"trailers": "13"}):
+            assert admin.put("/api/access/clips", json={"ratings": ratings}).status_code == 422
+        for key in ("commercials/", "commercials/١٩٦٠s", "commercials/" + "1" * 50 + "0s",
+                    "commercials/1960s/x", "commercials/1910s"):  # fmt: skip
+            put = admin.put("/api/access/clips", json={"ratings": {key: 0}})
+            assert put.status_code == 400, key
+        assert admin.get("/api/access/clips").json()["folders"][0]["age"] is None
+
+
+def test_new_ratings_make_the_stations_lineups_again(app):
+    """Rating the clip folders makes lineups again with what may play (the
+    check for Plex's changes counts the ratings, and who might see what)."""
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        ctx = admin.app.state.ctx
+
+        def dealt(number: int) -> set[str] | None:
+            """What the update waiting for the station deals (None: no update)."""
+            update = ctx.updater.pending.get(ids[number])
+            if update is None:
+                return None
+            return {p for i in update.items for p, _ in i.breaks or () if p != ID_CARD}
+
+        admin.portal.call(ctx.updater.check)
+        assert dealt(3) is None  # (nothing changed: Kit sees it, and nothing's rated)
+        admin.put("/api/access/clips", json={"ratings": {"commercials": 0}})
+        admin.portal.call(ctx.updater.check)
+        assert dealt(3) == {COMMERCIAL.path, SIXTIES.path}

@@ -62,8 +62,13 @@ function titlePicker(label, chosen) {
   const input = h('input', { type: 'search', maxlength: 100, autocomplete: 'off', 'aria-label': label, placeholder: 'Type part of a title' });
   const finds = h('div', { class: 'chips title-finds', 'aria-live': 'polite' });
   const chips = h('div', { class: 'chips' });
-  const paint = () => chips.replaceChildren(...chosen.map(t => h('span', { class: 'sel' }, h('span', {}, t.title || 'A title Plex doesn’t have now'),
+  // (One Plex doesn't have now, as when it's added again with a new key,
+  // is marked: choose it again.)
+  const gone = t => everyTitle && !everyTitle.some(e => e.ratingKey === t.key);
+  const paint = () => chips.replaceChildren(...chosen.map(t => h('span', { class: 'sel' }, h('span', {}, t.title || 'A title'),
+    gone(t) ? h('span', { class: 'hint' }, ' — not in Plex now: find it again') : null,
     h('button', { type: 'button', 'aria-label': `Remove ${t.title}`, onclick: () => { chosen.splice(chosen.indexOf(t), 1); paint(); } }, '×'))));
+  if (chosen.length) loadEveryTitle().then(paint, () => {});
   let timer = null;
   input.addEventListener('input', () => {
     clearTimeout(timer);
@@ -129,7 +134,7 @@ function renderViewing() {
     h('div', { class: 'limit-note' }, h('strong', {}, 'How it works'),
       h('ul', {},
         h('li', {}, h('strong', {}, 'Stations are all or nothing. '), 'Everyone watching a station sees the same stream, so a station is shown only if everything it plays is within the level. Choose What they see beside someone’s name to allow or block one for them anyway.'),
-        h('li', {}, h('strong', {}, 'Watching only. '), 'People on a level with limits watch what they can see, but can’t make stations.'),
+        h('li', {}, h('strong', {}, 'Watching only. '), 'People on a level with limits, or with anything hidden for them, watch what they can see, but can’t make stations.'),
         h('li', {}, h('strong', {}, 'Plex and other apps. '), 'Plex, Jellyfin and other apps don’t say who’s watching, so they show every station. To keep stations from some people in Plex, use Block stations for some Plex users, below.'))),
     table,
     h('div', {}, h('button', { class: 'btn', type: 'button', onclick: () => editLevel(null) }, 'Add a level')),
@@ -169,7 +174,7 @@ function clipRatingsBox() {
   };
   return h('div', { class: 'limit-note clip-ratings' },
     h('strong', {}, 'Commercials and trailers'),
-    h('p', { style: 'margin:6px 0 0' }, 'On a station someone with limits can see, a commercial or trailer plays only if its folder is rated, and at or below the station’s highest-rated program. Until then, those stations skip it. Rate each folder for the most it holds. A decade’s folder is rated as its kind is, unless you rate it.'),
+    h('p', { style: 'margin:6px 0 0' }, 'On a station someone with limits can see, a commercial or trailer plays only if its folder is rated, and at or below the station’s highest-rated program. Until then, those stations skip it. Give each folder the rating of its strongest clip. A decade’s folder is rated as its kind is, unless you rate it.'),
     h('table', { class: 'users' }, h('tbody', {}, ...rows)),
     h('div', { class: 'scan-set' }, h('button', { class: 'btn primary', type: 'button', onclick: save }, 'Save ratings'), result));
 }
@@ -227,7 +232,7 @@ async function editLevel(lv) {
     row('TV up to', tv, 'An episode counts as its show’s rating, or its own if that’s stricter.'),
     row('Unrated titles', unrated, 'Titles with no rating in Plex.'),
     row('Media folders', h('div', {}, h('label', {}, every, ' Every Media folder'), ' ', h('label', {}, some, ' Only these:'), pick)),
-    h('p', { class: 'hint', style: 'margin:0' }, 'Also hide any show or movie with one of these, whatever its rating. A station that plays one is hidden too. Names are matched whatever their capitals.'),
+    h('p', { class: 'hint', style: 'margin:0' }, 'Also hide any show or movie with one of these, whatever its rating. A station that plays one is hidden too. Capital letters don’t matter.'),
     ...TAG_KINDS.map(([kind, label, noun]) => row(label, namePicker(`${label} ${lv ? lv.name : 'this level'} hides`, noun, hidden[kind], offered[kind] || []),
       kind === 'labels' ? 'Plex calls these labels.' : null)),
     h('div', { class: 'scan-set' },
@@ -253,7 +258,7 @@ async function openUserStations(u) {
     : s.levelSees ? `Shown: it’s within ${got.level}.` : `Hidden: ${s.why.charAt(0).toLowerCase()}${s.why.slice(1)}.`;
   const part = (title, ...children) => h('section', { class: 'sees-part' }, h('h4', {}, title), ...children);
   $('#userStationsBody').replaceChildren(
-    h('p', { style: 'margin:0' }, `${u.name} is on ${got.level}. They see what ${got.level} shows, but for what you choose for them here.`),
+    h('p', { style: 'margin:0' }, `${u.name} is on ${got.level}. They see what ${got.level} shows, except for what you choose for them here.`),
     part('Stations',
       h('p', { class: 'hint', style: 'margin:0' }, `A station is shown or hidden as ${got.level} says, unless you allow or block it for ${u.name}.`),
       got.stations.length ? h('table', { class: 'users' },
@@ -275,7 +280,7 @@ async function openUserStations(u) {
         namePicker(`${label} hidden for ${u.name}`, noun, stationsFor.hidden[kind], offered[kind] || []))),
       h('div', { class: 'field' }, h('label', {}, 'Shows and movies'), titlePicker(`Shows and movies hidden for ${u.name}`, stationsFor.hidden.titles))),
     part(`Allowed for ${u.name} in Media`,
-      h('p', { class: 'hint', style: 'margin:0' }, `Shown to ${u.name} in Media even if ${got.level} would hide them, as long as they’re in a Media folder ${got.level} shows. Hidden above wins. Stations are as chosen above.`),
+      h('p', { class: 'hint', style: 'margin:0' }, `Shown to ${u.name} in Media even if ${got.level} would hide them, as long as they’re in a Media folder ${got.level} shows. A show or movie hidden above stays hidden. Stations are as chosen above.`),
       titlePicker(`Shows and movies allowed for ${u.name}`, stationsFor.allowed)));
   $('#userStations').showModal();
 }

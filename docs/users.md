@@ -23,8 +23,8 @@ apps show only what the server sends.
 4. **Plain rules, in order.** The first rule that applies decides, so an
    Admin can always tell why something is hidden.
 5. **Lean.** Plex stays the catalog. StationPlay keeps a title's rating and
-   Media folder only where its stations need them, and its genres and tags
-   only while some level or person hides by them.
+   Media folder only where its stations need them, and asks Plex for
+   genres and tags only while some level or person hides by them.
 
 ## Phases
 
@@ -127,16 +127,26 @@ From 1.33.0, an Admin can choose, for each person who isn't an Admin:
   movies, hidden for that person whatever their level shows.
 - **Allowed in Media.** Shows and movies shown to that person whatever
   their rating, genre or tags, as long as they're in a Media folder the
-  person's level includes. Hidden wins over allowed.
+  person's level includes. A show or movie hidden for them wins over one
+  allowed; a hidden genre, tag, collection or studio doesn't.
 
 A hidden title is hidden everywhere StationPlay shows titles to that
-person: Media, search, More like this, cast and crew pages, Continue
-Watching (the Resume row) and collections, and any station that plays it.
+person: Media, search, More like this, cast and crew pages and Continue
+Watching (the Resume row), and any station that plays it. Someone with
+anything hidden for them watches only, as on a level with limits: the
+station editor, which shows Media folders whole, isn't for them.
 
 **What StationPlay knows.** StationPlay asks Plex for each title's genres
-and tags in the background, only while some level or person hides by them.
-Until it knows a title's, the title is hidden from anyone whose level or
-own rules hide by tags, as with a rating not known yet.
+and tags in the background, only while some level or person hides by them:
+each title again every day, and every title at once when a new name is
+hidden. Until it knows a title's, the title is hidden from anyone whose
+level or own rules hide by tags, as with a rating not known yet. Media asks
+as it goes, 50 titles at a time, two batches at once, keeping each as it
+comes and waiting only a few seconds before answering: the first look at a
+big Media folder may show some titles a moment later. A title Plex doesn't
+have isn't asked about again for an hour. Titles are hidden or allowed by
+Plex's key, so one Plex adds again under a new key needs choosing again
+(the page marks it "not in Plex now").
 
 **On the Access tab.** Viewing Levels → **Edit** (or **Add a level**) has
 **Genres**, **Tags**, **Collections** and **Studios**: each a box to type a
@@ -165,14 +175,15 @@ decides. An episode counts as its show for rules 2, 3, 6 and 7.
 4. A title in a Media folder their level doesn't include is hidden.
 5. A title rated above their level's age is hidden. An unrated title follows
    the level's setting.
-6. A genre, tag, collection or studio their level hides hides the title.
-7. A genre, tag, collection or studio hidden for this person hides the
-   title.
+6. A title with a genre, tag, collection or studio their level hides is
+   hidden.
+7. A title with a genre, tag, collection or studio hidden for this person
+   is hidden.
 8. Anything else is shown.
 
 For a station, a station **allowed** for the person is shown, and one
 **blocked** for them is hidden. Otherwise, it's shown only if every program
-it plays passes rules 4 to 7. "Every program" means everything in its
+it plays passes rules 2 and 4 to 7. "Every program" means everything in its
 current lineup, including its specials' programs. A title allowed for the
 person doesn't make a station shown: an Admin allows the station instead.
 Station numbers don't change when some stations are hidden.
@@ -207,6 +218,16 @@ has its own rating.
 - **Stations only people without limits can see.** Every clip plays, as
   before.
 - **Who sees a station.** A clip never changes it.
+- **The whole station.** A station's lineup and its specials (Feature
+  Presentation and blocks) are judged together: who can see it, and its
+  highest-rated program.
+- **Twice.** Clips are chosen as a lineup is made, and each is checked
+  again as it's about to play. While what a station plays isn't known yet
+  (a new show not asked about), every clip is chosen, and the check as each
+  plays decides. As StationPlay starts, before the clip folders have been
+  looked in, a clip is rated by the folder its file is in.
+- **Nothing rated on the station.** A station whose programs are all
+  unrated, seen by someone with limits, plays no commercials or trailers.
 - **It's logged.** The access log shows "Ada rated the clip folders:
   commercials/1960s TV-14".
 
@@ -270,8 +291,8 @@ Media in the apps (browsing, search, details, pictures and playing) already
 asks Plex about each title. Plex sends its rating and Media folder, so
 StationPlay judges the title from that and keeps no copy. Plex's lists
 don't carry genres and tags, so from 1.33.0, while some level or person
-hides by them, StationPlay also keeps the genres and tags of the titles
-Media shows, in `titles`.
+hides by them, StationPlay asks for the genres and tags of the titles Media
+shows, and keeps them in `titles`.
 
 ## Devices and Who's tuning in?
 

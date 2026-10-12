@@ -481,7 +481,7 @@ class Alerts:
         await asyncio.to_thread(self._look_at_data, ctx.settings.data_dir)
         self._look_outside(ctx.reach.status(), ctx.away.address)
         self.files(await asyncio.to_thread(ctx.reports.needing))
-        self.clips(skipping_unrated(ctx))
+        self.clips(await asyncio.to_thread(skipping_unrated, ctx))
 
     async def _look_at_plex(self, ctx: AppContext) -> None:
         plex = ctx.plex
@@ -611,9 +611,15 @@ def skipping_unrated(ctx: AppContext) -> int:
     for channel in ctx.db.list_channels():
         if not channel.breaks or not ctx.viewing.limited_audience(channel.id):
             continue
-        kinds = {i.kind for i in ctx.db.latest_items(channel.id)}
+        # (Its lineup and its specials': commercials follow episodes, and
+        # trailers everything else.)
+        items = [
+            *ctx.db.latest_items(channel.id),
+            *(i for programs in ctx.db.program_sets(channel.id).values() for i in programs),
+        ]
+        kinds = {i.kind for i in items}
         if ("episode" in kinds and unrated[COMMERCIALS]) or (
-            "movie" in kinds and unrated[TRAILERS]
+            kinds - {"episode"} and unrated[TRAILERS]
         ):
             n += 1
     return n

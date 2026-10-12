@@ -87,6 +87,18 @@ def decade_of(folder: str, path: str) -> int | None:
     return None
 
 
+def clip_at(kind: str, path: str) -> Clip | None:
+    """A clip as its path says it is, before the folders have been looked
+    in (as StationPlay starts): in a `kind` folder (`commercials` or
+    `trailers`), and its decade by the folders between; None if it isn't in
+    one."""
+    parts = path.replace("\\", "/").split("/")[:-1]
+    if kind not in parts:
+        return None
+    folder = "/".join(parts[: len(parts) - parts[::-1].index(kind)])
+    return Clip(path, 0, 0, 0.0, decade_of(folder, path))
+
+
 class FillerLibrary:
     """The commercials and trailers found on disk."""
 
