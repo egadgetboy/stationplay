@@ -1,4 +1,4 @@
-"""StationPlay's own new versions: once a day, whether a newer release than
+"""tapiOca's own new versions: once a day, whether a newer release than
 this one is out (the update check, an Admin's choice), and what the page's
 banner says to update, for this kind of install (STATIONPLAY_INSTALL, set
 in the YAML or compose file).
@@ -8,9 +8,9 @@ a new server asks in setup's last step, and one updated from before 1.34.0
 asks once, on the page. Even then, nothing is asked until setup is done.
 Off, or not answered, it contacts nothing.
 
-The check asks GitHub for StationPlay's latest release (api.github.com, its
+The check asks GitHub for tapiOca's latest release (api.github.com, its
 public API: no account, nothing sent but the request itself, with
-StationPlay's version in its User-Agent; GitHub sees the server's internet
+tapiOca's version in its User-Agent; GitHub sees the server's internet
 address, as any website does). It asks by the repository's number, which
 stays the same if the repository is renamed or moved. It waits 10 seconds,
 follows no redirect, and keeps only the version found, its page's address
@@ -46,13 +46,13 @@ log = logging.getLogger(__name__)
 META = "update_check"  # the Admin's answer, as JSON: {"on": true or false} (none: not yet)
 SEEN_META = "update_seen"  # what the last look found, as JSON (see Seen)
 VERSION_META = "version_started"  # the version that last started (from 1.34.0)
-# StationPlay's repository on GitHub, by its number, which a rename or move
-# doesn't change (gh api repos/egadgetboy/stationplay --jq .id).
+# tapiOca's repository on GitHub, by its number, which a rename or move
+# doesn't change (gh api repos/egadgetboy/tapioca-server --jq .id).
 REPOSITORY_ID = 1414995565
 LATEST = f"https://api.github.com/repositories/{REPOSITORY_ID}/releases/latest"
-RELEASES = "https://github.com/egadgetboy/stationplay/releases"
-README = "https://github.com/egadgetboy/stationplay#updating"
-IMAGE = "ghcr.io/egadgetboy/stationplay"
+RELEASES = "https://github.com/egadgetboy/tapioca-server/releases"
+README = "https://github.com/egadgetboy/tapioca-server#updating"
+IMAGE = "ghcr.io/egadgetboy/tapioca-server"
 FIRST_S = 120.0  # after starting, before the first look
 EVERY_S = 86_400.0  # then once a day
 AGAIN_S = 3_600.0  # after a look that failed, before trying again
@@ -65,7 +65,7 @@ NOTES_MOST = 300  # characters of an address kept
 # Each kind of install, as STATIONPLAY_INSTALL names it: its name, the
 # banner's heading, how its image is updated (sentences), and a command to
 # copy, if there's one. Each fetches the newest image as it updates, so
-# starting StationPlay never needs the internet (the YAML and compose files
+# starting tapiOca never needs the internet (the YAML and compose files
 # ask for :latest, and Docker fetches it only when it hasn't got it). No
 # command has &&: PowerShell, in Docker Desktop on Windows, hasn't got it.
 IMAGE_LATEST = f"{IMAGE}:latest"
@@ -74,10 +74,10 @@ STEPS: dict[str, tuple[str, str, tuple[str, ...], str]] = {
         "TrueNAS",
         "To update on TrueNAS:",
         (
-            "In TrueNAS, open Apps, then StationPlay. If it offers Update, choose it.",
+            "In TrueNAS, open Apps, then tapiOca. If it offers Update, choose it.",
             "If it doesn't, open System, then Shell, and run the command below. Then open Apps, "
-            "choose StationPlay, and choose Edit, then Save.",
-            "These TrueNAS steps haven't been confirmed yet. If StationPlay still shows this "
+            "choose tapiOca, and choose Edit, then Save.",
+            "These TrueNAS steps haven't been confirmed yet. If tapiOca still shows this "
             "version afterward, see All the steps.",
         ),
         f"sudo docker pull {IMAGE_LATEST}",
@@ -85,20 +85,20 @@ STEPS: dict[str, tuple[str, str, tuple[str, ...], str]] = {
     "compose": (
         "Docker Compose",
         "To update with Docker Compose:",
-        ("In the folder with StationPlay's docker-compose.yml, run:",),
+        ("In the folder with tapiOca's docker-compose.yml, run:",),
         "docker compose up -d --pull always",
     ),
     "docker-desktop": (
         "Docker Desktop",
         "To update with Docker Desktop:",
-        ("In a terminal, in the folder with StationPlay's docker-compose.yml, run:",),
+        ("In a terminal, in the folder with tapiOca's docker-compose.yml, run:",),
         "docker compose up -d --pull always",
     ),
     "unraid": (
         "Unraid",
         "To update on Unraid:",
         (
-            "On Unraid's Docker tab, choose Check for Updates. When StationPlay shows an update, "
+            "On Unraid's Docker tab, choose Check for Updates. When tapiOca shows an update, "
             "choose apply update.",
         ),
         "",
@@ -107,11 +107,11 @@ STEPS: dict[str, tuple[str, str, tuple[str, ...], str]] = {
         "Synology",
         "To update on Synology:",
         (
-            "Connect over SSH, go to StationPlay's folder (such as /volume1/docker/stationplay), "
+            "Connect over SSH, go to tapiOca's folder (such as /volume1/docker/stationplay), "
             "and run the command below.",
-            "Container Manager's own way (open Project, choose StationPlay's project, then Stop "
+            "Container Manager's own way (open Project, choose tapiOca's project, then Stop "
             "and Build) hasn't been confirmed yet to fetch the newest image, so these steps "
-            "haven't been confirmed yet either way. If StationPlay still shows this version "
+            "haven't been confirmed yet either way. If tapiOca still shows this version "
             "afterward, see All the steps.",
         ),
         "sudo docker compose up -d --pull always",
@@ -131,7 +131,7 @@ ANY = (
     "",
     "To update:",
     (
-        "Update StationPlay's image the way you installed it. The README's Updating section has "
+        "Update tapiOca's image the way you installed it. The README's Updating section has "
         "the steps for each kind of install.",
     ),
     "",
@@ -186,11 +186,11 @@ def _problem(status: int) -> str:
     """What went wrong, in words for the page, for GitHub's answer's status
     (which only the log gives)."""
     if status in (403, 429):
-        return "GitHub asked StationPlay to wait, so it will look again later"
+        return "GitHub asked tapiOca to wait, so it will look again later"
     if status == 404:
-        return "GitHub couldn't find StationPlay's releases"
+        return "GitHub couldn't find tapiOca's releases"
     if 300 <= status < 400:
-        return "GitHub pointed somewhere else, which StationPlay doesn't follow"
+        return "GitHub pointed somewhere else, which tapiOca doesn't follow"
     return "GitHub couldn't answer just then"
 
 
@@ -216,7 +216,7 @@ def _seen(got: Any) -> Seen | None:
 
 
 def _release_page(url: Any, version: str) -> str:
-    """The release's page, if GitHub's answer gives StationPlay's own;
+    """The release's page, if GitHub's answer gives tapiOca's own;
     otherwise the list of releases."""
     text = str(url or "")
     if text.startswith(RELEASES + "/") and len(text) <= NOTES_MOST:
@@ -309,11 +309,11 @@ class Releases:
         return await self.check()
 
     async def check(self) -> Seen:
-        """Asks GitHub for StationPlay's latest release, and keeps what it
+        """Asks GitHub for tapiOca's latest release, and keeps what it
         found (see the module's notes)."""
         at = int(time.time() * 1000)
         headers = {
-            "User-Agent": f"StationPlay/{__version__}",
+            "User-Agent": f"tapiOca/{__version__}",
             "Accept": "application/vnd.github+json",
         }
         logged = ""
@@ -337,13 +337,13 @@ class Releases:
         except (TimeoutError, httpx.HTTPError, ValueError):
             seen = Seen(at, "", "", "GitHub couldn't be reached")
         if seen.problem:
-            log.info("The update check couldn't tell whether a new StationPlay is out (%s)",
+            log.info("The update check couldn't tell whether a new tapiOca is out (%s)",
                      logged or seen.problem)  # fmt: skip
             # (What was found before stays known.)
             before = self.seen
             if before and before.version:
                 seen = Seen(at, before.version, before.url, seen.problem)
         elif newer(seen.version) and (self.seen is None or self.seen.version != seen.version):
-            log.info("StationPlay %s is available (this is %s)", seen.version, __version__)
+            log.info("tapiOca %s is available (this is %s)", seen.version, __version__)
         self.db.set_meta(SEEN_META, json.dumps(seen.as_dict()))
         return seen

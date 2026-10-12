@@ -1,8 +1,8 @@
-# StationPlay: standing rules
+# tapiOca: standing rules
 
-StationPlay is a self-hosted TV and media server, free and open source under
+tapiOca (called StationPlay until 1.34.0) is a self-hosted TV and media server, free and open source under
 the AGPL (version 3), copyright egadgetboy. Its paid apps live in a private repo
-(egadgetboy/stationplay-apps). These are the owner's standing decisions:
+(egadgetboy/tapioca-apps). These are the owner's standing decisions:
 follow them in every change.
 
 ## The product
@@ -20,8 +20,15 @@ follow them in every change.
   Plex, the files, an Admin's keyed services and the open sources built in
   (Wikidata; TVmaze's data, credited, never its images); only the server
   contacts them, and their credits show under About. Each release carries
-  the open-source notices its parts require (FFmpeg's, in the image). Work
-  on the product name is paused (a rename is coming).
+  the open-source notices its parts require (FFmpeg's, in the image). The name
+  (the owner, October 12): **tapiOca**, always a lowercase t and a capital O,
+  even at the start of a sentence (never "Tapioca", "TAPIOCA" or "TapiOca");
+  the full name is **"tapiOca: Stations & Media"**; lowercase **tapioca** for
+  new identifiers. Names other programs match (STATIONPLAY_*, the
+  StationPlay-API header, cookies, the database, the container name, Plex's
+  tuner and guide IDs and more) keep their old names: see
+  docs/notes/names-kept.md. The brand kit is in the apps repo, at
+  brand/tapioca-brand-kit.
 - **Clear American English.** Friendly, short and plain on the page;
   concise in the logs. Short sentences, one idea each, no jargon. Say
   **PIN**, never "passcode" (the owner's choice, from 1.31.0).
@@ -31,16 +38,16 @@ follow them in every change.
 - **Opt-in features, a lean server:** no new dependencies; what an app can
   do itself lives in the app.
 - **No real file names or paths** in anything the apps receive.
-- StationPlay stays labeled **alpha** until the apps launch. No web client
+- tapiOca stays labeled **alpha** until the apps launch. No web client
   for watching, no DVR.
 - **Personal use, on hardware you own** (the owner, October 12): the README
-  and first-run setup's Plex step say StationPlay works with your own Plex
+  and first-run setup's Plex step say tapiOca works with your own Plex
   Media Server, and that Plex's terms license it for personal use, on
   hardware and storage you own. They state it as Plex's terms, never as a
-  limit StationPlay sets. The privacy notice (PRIVACY.md, served at
+  limit tapiOca sets. The privacy notice (PRIVACY.md, served at
   /privacy) and the copyright notice in the source stay, as Plex's terms
   ask of software that calls Plex.
-- **Parental claims** say "in StationPlay's apps," and the docs say what
+- **Parental claims** say "in tapiOca's apps," and the docs say what
   limits don't cover (Plex, Jellyfin and anything else on the tuner).
 - **No licensing in the server** (the owner's final plan, October 10): it
   stays fully open source and unlimited and never locks anything. The apps
@@ -81,12 +88,13 @@ follow them in every change.
   and Fixed bullets, Updating, Rolling back. Published by
   `.github/workflows/release.yml`.
 - **The image is published** (the owner, October 12, later the same day:
-  D4 is No, U1): `ghcr.io/egadgetboy/stationplay`, amd64 and arm64, with
+  D4 is No, U1): `ghcr.io/egadgetboy/tapioca-server`, amd64 and arm64, with
   `:<version>`, `:<major.minor>` and `:latest` moved only after the image's
   tests pass; always the exact image tested, by digest, never rebuilt (C7);
   with the GPL and LGPL packages' source attached to each release (C6), and
-  each release zip signed. The YAML and compose files use `:latest` with
-  `pull_policy: always` (U2). Building from source stays an advanced choice.
+  each release zip signed. The YAML and compose files use `:latest` and start without the
+  internet (`pull_policy: missing`; each install's update steps pull: the
+  lead developer, October 12, for the owner to confirm, as U2 had `always`). Building from source stays an advanced choice.
 - **Report** to the owner, 5 lines: version and summary; tests; choices;
   known limits; one suggested improvement to the development process, for
   the owner's approval. Then: which work went to `routine-builder`, and what

@@ -1,5 +1,5 @@
 """The update check (releases.py, from 1.34.0): once a day, whether a newer
-StationPlay is out, from GitHub's list of releases; an Admin's setting;
+tapiOca is out, from GitHub's list of releases; an Admin's setting;
 what the banner says for each kind of install; and nothing asked,
 downloaded or followed beyond that one answer.
 
@@ -96,7 +96,7 @@ def test_a_newer_release_is_found_and_said(made):
     # One request: GitHub's latest release, saying who's asking, and nothing else.
     [asked] = github.asked
     assert str(asked.url) == releases.LATEST and asked.method == "GET"
-    assert asked.headers["user-agent"] == f"StationPlay/{__version__}"
+    assert asked.headers["user-agent"] == f"tapiOca/{__version__}"
     assert not asked.content
 
 
@@ -117,13 +117,13 @@ def test_only_stationplay_s_own_release_page_is_linked(made):
     ("github", "problem", "logged"),
     [
         (GitHub(status=404, body={"message": "Not Found"}),
-         "GitHub couldn't find StationPlay's releases", "GitHub answered 404"),
+         "GitHub couldn't find tapiOca's releases", "GitHub answered 404"),
         (GitHub(status=403, body={"message": "rate limit"}),
-         "GitHub asked StationPlay to wait, so it will look again later", "GitHub answered 403"),
-        (GitHub(status=429), "GitHub asked StationPlay to wait, so it will look again later",
+         "GitHub asked tapiOca to wait, so it will look again later", "GitHub answered 403"),
+        (GitHub(status=429), "GitHub asked tapiOca to wait, so it will look again later",
          "GitHub answered 429"),
         (GitHub(status=301, headers={"Location": "https://elsewhere.test/"}),
-         "GitHub pointed somewhere else, which StationPlay doesn't follow",
+         "GitHub pointed somewhere else, which tapiOca doesn't follow",
          "GitHub answered 301"),
         (GitHub(status=503), "GitHub couldn't answer just then", "GitHub answered 503"),
         (GitHub(body={"tag_name": "nightly"}), "GitHub's answer named no version",
@@ -181,17 +181,17 @@ def test_each_kind_of_install_has_its_steps():
         assert said["heading"].startswith("To update ") and said["heading"].endswith(":")
         # One command, with no && (PowerShell, in Docker Desktop on
         # Windows, hasn't got it), that fetches the newest image itself:
-        # starting StationPlay never needs the internet.
+        # starting tapiOca never needs the internet.
         assert "&&" not in (said["command"] or ""), install
     for install in ("compose", "docker-desktop"):
         assert releases.steps(install)["command"] == "docker compose up -d --pull always"
     assert releases.steps("docker-run")["command"] == (
-        "docker pull ghcr.io/egadgetboy/stationplay:latest"
+        "docker pull ghcr.io/egadgetboy/tapioca-server:latest"
     )
     assert releases.steps("docker-run")["heading"] == "To update with docker run:"
     assert releases.steps("synology")["command"] == "sudo docker compose up -d --pull always"
     assert releases.steps("truenas")["command"] == (
-        "sudo docker pull ghcr.io/egadgetboy/stationplay:latest"
+        "sudo docker pull ghcr.io/egadgetboy/tapioca-server:latest"
     )
     # Steps no one has confirmed yet say so, in plain words.
     for install in ("truenas", "synology"):
@@ -207,7 +207,7 @@ def test_each_kind_of_install_has_its_steps():
 def test_github_is_asked_by_the_repository_s_number(made):
     """(A rename or move of the repository answers 301 at its old name,
     which isn't followed: its number stays.)"""
-    assert releases.REPOSITORY_ID == 1414995565  # (gh api repos/egadgetboy/stationplay --jq .id)
+    assert releases.REPOSITORY_ID == 1414995565  # (gh api repos/egadgetboy/tapioca-server --jq .id)
     assert releases.LATEST == "https://api.github.com/repositories/1414995565/releases/latest"
     github = GitHub(body={"tag_name": f"v{bump()}", "html_url": releases.RELEASES})
     asyncio.run(made(github).check())

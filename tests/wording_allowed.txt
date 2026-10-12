@@ -10,16 +10,3 @@ tapiOca was called StationPlay until version 1.34.0  # the one line that gives t
 StationPlay's address couldn't be found  # what the apps send, word for word, and problems.py matches
 StationPlay didn't answer  # what the apps send, word for word, and problems.py matches
 StationPlay answered with an error  # what the apps send, word for word, and problems.py matches
-Apps, then StationPlay  # app/releases.py, the main session's to rename (1.34.0's rebrand); remove these then
-choose StationPlay, and choose Edit  # app/releases.py, the main session's to rename
-If StationPlay still shows this version  # app/releases.py, the main session's to rename
-with StationPlay's docker-compose.yml  # app/releases.py, the main session's to rename
-When StationPlay shows an update  # app/releases.py, the main session's to rename
-go to StationPlay's folder  # app/releases.py, the main session's to rename
-choose StationPlay's project  # app/releases.py, the main session's to rename
-Update StationPlay's image  # app/releases.py, the main session's to rename
-GitHub asked StationPlay to wait  # app/releases.py, the main session's to rename
-find StationPlay's releases  # app/releases.py, the main session's to rename
-which StationPlay doesn't follow  # app/releases.py, the main session's to rename
-a new StationPlay is out  # app/releases.py, the main session's to rename
-StationPlay %s is available  # app/releases.py, the main session's to rename
