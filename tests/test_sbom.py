@@ -75,9 +75,13 @@ def test_the_list_names_every_package_and_the_release_s_files():
     ) in text
     assert "fastapi 0.115.0: MIT, https://pypi.org/project/fastapi/0.115.0/" in text
     assert "stationplay-1.32.1.zip" in text
-    # (Releases are source only, the owner, October 12: no image, so no
-    # source of an image's packages to point to, and the list says so.)
-    assert "gpl-source" not in text and "StationPlay publishes no image" in text
+    # (From 1.34.0 the tested image is published, the owner's decision U1,
+    # which reversed "releases are source only": the list names it, and the
+    # source of its GPL and LGPL packages beside it.)
+    assert "This image is published as ghcr.io/egadgetboy/stationplay:1.32.1." in text
+    assert "stationplay-1.32.1-source.tar, beside this list" in text
+    arm = sbom.report("1.34.0", sbom.debian_rows(LISTING), [], "3.13.16", "arm64")
+    assert "ghcr.io/egadgetboy/stationplay:1.34.0 (this list is its arm64 image's)." in arm
     # (The audit of 1.32.1: Python itself is in neither dpkg's list nor pip's.)
     assert (
         "Python 3.13.16 (the python image's own, under the PSF license), "

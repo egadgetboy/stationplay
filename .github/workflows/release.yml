@@ -9,8 +9,17 @@
 # release already published is left as it is. The newest version is marked
 # the latest release.
 #
-# Releases are source only (the owner, October 12): no image is published.
-# Each person's build fetches Debian's packages from Debian.
+# From FIRST_IMAGE, the image is published too (the owner, October 12: D4
+# is No, U1): the very one the image workflow tested, by digest (C7), gets
+# the tags :<version>, :<major.minor> (if it's the newest of its minor
+# versions) and :latest (if it's the newest), copied as it is, never built
+# again, and checked. The release also carries the arm64 image's list of
+# packages, and the source of every GPL and LGPL package in the images, as
+# Debian publishes it (C6: tools/gpl_source.py). And its zip is signed
+# (stationplay-<version>.zip.sig: an SSH signature, namespace
+# stationplay-release, by the key in RELEASE_SIGNING_KEY, checked against
+# release-signing.pub), which Update now needs from FIRST_SIGNED; before
+# that, a zip that can't be signed is published without one, and said.
 #
 # Versions before FIRST_PUBLIC are never published: StationPlay's public
 # releases here start with 1.32.0 (the repository was started afresh then).
@@ -34,6 +43,7 @@ on:
 permissions:
   contents: write
   actions: read # (the image workflow's runs, and the package list each made)
+  packages: write # (a version's tags on its tested image)
 
 concurrency:
   group: release
@@ -42,7 +52,8 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # (The images' sources are fetched from Debian for each release.)
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
         with:
@@ -52,8 +63,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           FIRST_PUBLIC: "1.32.0"
+          FIRST_IMAGE: "1.34.0"
+          FIRST_SIGNED: "1.35.0"
+          SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
         run: |
           set -euo pipefail
+          # (Whether version $1 is $2 or later.)
+          from() { [ "$(printf '%s\n' "$1" "$2" | sort -V | head -1)" = "$2" ]; }
+          # The signing key, only for as long as this runs; and who may sign.
+          key="$RUNNER_TEMP/signing-key"
+          trap 'rm -f "$key"' EXIT
+          if [ -n "${SIGNING_KEY:-}" ]; then (umask 077; printf '%s\n' "$SIGNING_KEY" > "$key"); fi
+          allowed="$RUNNER_TEMP/allowed_signers"
+          printf 'stationplay-release namespaces="stationplay-release" %s\n' "$(cat release-signing.pub 2>/dev/null || true)" > "$allowed"
+          signed_in=""
           published=$(gh release list --limit 1000 --json tagName --jq '.[].tagName')
           # The image workflow's recent runs on main: commit, run, status.
           runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/image.yml/runs?branch=main&per_page=100" \
@@ -65,7 +88,7 @@ jobs:
           for version in $versions; do
             tag="v$version"
             file="docs/releases/$tag.md"
-            if [ "$(printf '%s\n' "$version" "$FIRST_PUBLIC" | sort -V | head -1)" != "$FIRST_PUBLIC" ]; then
+            if ! from "$version" "$FIRST_PUBLIC"; then
               echo "$tag: before $FIRST_PUBLIC, never published"
               continue
             fi
@@ -91,7 +114,8 @@ jobs:
             fi
             # Its tests: image runs on main at its commit, or at a later one
             # with nothing but release notes changed since, that passed the
-            # Test step (newest first), or one still running.
+            # Test step, on every machine it ran on (newest first), or one
+            # still running.
             passed="" running="" failed=""
             while read -r sha run status; do
               [ -n "$sha" ] || continue
@@ -103,7 +127,7 @@ jobs:
                 continue
               fi
               tested=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" \
-                --jq '[.jobs[].steps[]? | select(.name == "Test") | .conclusion] | first // ""')
+                --jq '[.jobs[].steps[]? | select(.name == "Test") | .conclusion] | if length > 0 and all(. == "success") then "success" else (map(select(. != "success")) | first // "") end')
               if [ "$tested" = success ]; then
                 passed="$passed $run"
                 continue
@@ -150,11 +174,76 @@ jobs:
               refused=1
               continue
             fi
+            made=$(dirname "$listed")
             mv "$listed" "$out/"
+            files=("$out/stationplay-$version.zip" "$out/stationplay.yaml" "$out/docker-compose.yml"
+              "$out/stationplay-$version-packages.txt")
+            if from "$version" "$FIRST_IMAGE"; then
+              # The image that run tested (both machines' images, joined),
+              # by digest, and the arm64 image's list of packages.
+              pinned=$(cat "$made/stationplay-$version-image.txt" 2>/dev/null || true)
+              if ! [[ "$pinned" =~ ^ghcr\.io/[a-z0-9._-]+/stationplay@sha256:[0-9a-f]{64}$ ]] \
+                || [ ! -s "$made/stationplay-$version-packages-arm64.txt" ]; then
+                echo "::error::$tag isn't published: the image run that tested it kept no image or no arm64 list of packages. Re-run that run (Re-run all jobs): publishing tries again when it finishes."
+                refused=1
+                continue
+              fi
+              mv "$made/stationplay-$version-packages-arm64.txt" "$out/"
+              files+=("$out/stationplay-$version-packages-arm64.txt")
+              if [ -z "$signed_in" ]; then
+                echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+                echo "$GH_TOKEN" | skopeo login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+                signed_in=yes
+              fi
+              # The source of every GPL and LGPL package in the images, as
+              # Debian publishes it (C6), fetched in the tested image itself.
+              mkdir -p "$out/source"
+              if ! docker run --rm -i --user 0 --platform linux/amd64 -v "$out/source:/out" \
+                  -v "$out/stationplay-$version-packages-arm64.txt:/in/arm64.txt:ro" "$pinned" \
+                  python - --all --also /in/arm64.txt < tools/gpl_source.py; then
+                echo "::error::$tag isn't published: the source of its images' GPL and LGPL packages couldn't all be fetched (the lines above say which). Run this workflow again later."
+                refused=1
+                continue
+              fi
+              tar -C "$out/source" -cf "$out/stationplay-$version-source.tar" .
+              files+=("$out/stationplay-$version-source.tar")
+            fi
+            # The zip, signed (and the signature checked with the published
+            # key): needed from FIRST_SIGNED.
+            sig="$out/stationplay-$version.zip.sig"
+            if [ -s "$key" ] \
+              && ssh-keygen -Y sign -q -f "$key" -n stationplay-release "$out/stationplay-$version.zip" < /dev/null \
+              && ssh-keygen -Y verify -f "$allowed" -I stationplay-release -n stationplay-release \
+                -s "$sig" < "$out/stationplay-$version.zip"; then
+              files+=("$sig")
+            elif from "$version" "$FIRST_SIGNED"; then
+              echo "::error::$tag isn't published: its zip couldn't be signed with RELEASE_SIGNING_KEY, or the signature doesn't match release-signing.pub. The key must be the private half of release-signing.pub, with no passphrase."
+              refused=1
+              continue
+            else
+              echo "::warning::$tag's zip isn't signed: RELEASE_SIGNING_KEY is missing, has a passphrase, or doesn't match release-signing.pub."
+              rm -f "$sig"
+            fi
+            if from "$version" "$FIRST_IMAGE"; then
+              # Its tags, on that very image: copied as it is, then checked.
+              image=${pinned%@*}
+              digest=${pinned#*@}
+              tags=("$version")
+              minor=${version%.*}
+              newest_minor=$(grep -E "^${minor//./\\.}\.[0-9]+$" <<< "$versions" | sort -V | tail -1)
+              if [ "$version" = "$newest_minor" ]; then tags+=("$minor"); fi
+              if [ "$latest" = true ]; then tags+=(latest); fi
+              for t in "${tags[@]}"; do
+                skopeo copy --all --preserve-digests --quiet "docker://$pinned" "docker://$image:$t"
+                got=$(skopeo inspect --raw "docker://$image:$t" | sha256sum | cut -d' ' -f1)
+                if [ "sha256:$got" != "$digest" ]; then
+                  echo "::error::$image:$t isn't the image that was tested"; exit 1
+                fi
+              done
+              echo "::notice::$image: ${tags[*]} on $digest"
+            fi
             gh release create "$tag" --target "$commit" --title "StationPlay $version" \
-              --notes-file "$out/notes.md" --latest="$latest" \
-              "$out/stationplay-$version.zip" "$out/stationplay.yaml" "$out/docker-compose.yml" \
-              "$out/stationplay-$version-packages.txt"
+              --notes-file "$out/notes.md" --latest="$latest" "${files[@]}"
             echo "::notice::Published $tag"
           done
           exit "$refused"

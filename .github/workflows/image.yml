@@ -1,10 +1,15 @@
-# Builds the container image and tests it as built, whenever main changes.
-# The tests run in the image itself (the Dockerfile's test stage: the image
-# people build, with the tests added), on the FFmpeg, Python and libraries
-# it has. StationPlay publishes no image: releases are source only (the
-# owner, October 12). release.yml publishes a release only once this
-# workflow's tests have passed on its commit, with the list of packages this
-# run's image had.
+# Builds the container image, for amd64 and for arm64 (each on its own kind
+# of machine), and tests each as built, whenever main changes. The tests run
+# in the image itself (the Dockerfile's test stage: the image people get,
+# with the tests added), on the FFmpeg, Python and libraries it has.
+#
+# The image is published (the owner, October 12: D4 is No, U1), and always
+# the exact image that was tested, by digest, never built again (C7). So
+# each image that passes its tests is pushed here, by commit: the amd64 one
+# as sha-<commit>-amd64, the arm64 one as sha-<commit>-arm64, then both as
+# one, sha-<commit>. release.yml gives a version's tags (:<version>,
+# :<major.minor>, :latest) to exactly that one, once this workflow has
+# passed on its commit, with the lists of packages each image had.
 name: image
 
 on:
@@ -13,28 +18,88 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-test:
+  # (Written first, though it runs last, after both images have passed: the
+  # two images joined as one, and what release.yml needs, kept with the run.)
+  image:
+    needs: build-and-test
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: made-*
+          path: ${{ runner.temp }}/made/
+          merge-multiple: true
+      - name: Join the tested images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stationplay"
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' app/__init__.py)
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          amd=$(cat "$RUNNER_TEMP/made/digest-amd64.txt")
+          arm=$(cat "$RUNNER_TEMP/made/digest-arm64.txt")
+          docker buildx imagetools create --tag "$image:sha-$GITHUB_SHA" "$image@$amd" "$image@$arm"
+          joined=$(docker buildx imagetools inspect "$image:sha-$GITHUB_SHA" --format '{{json .Manifest}}' | jq -r .digest)
+          # (What's inside is the very images tested: each one's own
+          # manifest, or those in it, if docker push made a list.)
+          platforms() {
+            jq -r 'if .manifests then .manifests[] | select(.platform.os != "unknown") | .digest else empty end'
+          }
+          want=$(for d in "$amd" "$arm"; do
+            got=$(docker buildx imagetools inspect --raw "$image@$d" | platforms)
+            echo "${got:-$d}"
+          done | sort | paste -sd ' ')
+          inside=$(docker buildx imagetools inspect --raw "$image@$joined" | platforms | sort | paste -sd ' ')
+          if [ "$inside" != "$want" ]; then
+            echo "::error::The joined image isn't the two that were tested ($inside, not $want)"; exit 1
+          fi
+          echo "$image@$joined" > "$RUNNER_TEMP/made/stationplay-$version-image.txt"
+          rm "$RUNNER_TEMP/made/digest-amd64.txt" "$RUNNER_TEMP/made/digest-arm64.txt"
+          echo "::notice::Tested and pushed: $image@$joined (amd64 $amd, arm64 $arm)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: ${{ runner.temp }}/made/
+          if-no-files-found: error
+          retention-days: 90
+
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     # (The tests take 30 to 50 minutes; building, a few more.)
     timeout-minutes: 75
     permissions:
       contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v5
       - name: Build
         run: |
           docker build --tag stationplay:latest .
           docker build --target test --tag stationplay:test .
-          # (The tests run in the very image people build: the test stage's
+          # (The tests run in the very image people get: the test stage's
           # layers are its, with the tests' on top.)
           shipped=$(docker image inspect -f '{{join .RootFS.Layers " "}}' stationplay:latest)
           tested=$(docker image inspect -f '{{join .RootFS.Layers " "}}' stationplay:test)
           if [ "${tested#"$shipped "}" = "$tested" ]; then
-            echo "::error::The test stage isn't built on the image people build"; exit 1
+            echo "::error::The test stage isn't built on the image people get"; exit 1
           fi
-          # (git is the tests' own: never in the image people build.)
+          # (git is the tests' own: never in the image people get.)
           if docker run --rm stationplay:latest sh -c 'command -v git'; then
-            echo "::error::git is in the image people build"; exit 1
+            echo "::error::git is in the image people get"; exit 1
           fi
       # First, every test collected, and the tests that read the project's
       # own files run (a few minutes): a file the image hasn't got stops it
@@ -60,14 +125,14 @@ jobs:
             python -m pytest -q -p no:cacheprovider $chosen 2>&1 \
             | tee "$RUNNER_TEMP/quick.txt" || said "$RUNNER_TEMP/quick.txt"
       # release.yml publishes a version only once this step has passed on
-      # its commit (or a later one with nothing but release notes since):
-      # keep its name.
+      # its commit (or a later one with nothing but release notes since), on
+      # both kinds of machine: keep its name.
       - name: Test
         timeout-minutes: 60
         run: |
           # (What the tests ran with, on the run's page.)
           docker run --rm stationplay:test sh -c \
-            'echo "::notice::$(ffmpeg -version | head -1) at $(command -v ffmpeg); $(nproc) processors; $(python --version)"'
+            'echo "::notice::${{ matrix.arch }}: $(ffmpeg -version | head -1) at $(command -v ffmpeg); $(nproc) processors; $(python --version)"'
           # (Each test that fails is named on the run's page, not only in its
           # log, with why: pytest's summary is as wide as COLUMNS, and the
           # lines saying what failed ("E ...") go in one more note, since a
@@ -86,12 +151,38 @@ jobs:
         run: |
           version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' app/__init__.py)
           mkdir -p "$RUNNER_TEMP/made"
-          docker run --rm -i stationplay:latest python - "$version" < tools/sbom.py \
-            > "$RUNNER_TEMP/made/stationplay-$version-packages.txt"
-          echo "::notice::$(grep -c snapshot.debian.org "$RUNNER_TEMP/made/stationplay-$version-packages.txt") Debian packages listed"
+          if [ "${{ matrix.arch }}" = amd64 ]; then
+            docker run --rm -i stationplay:latest python - "$version" < tools/sbom.py \
+              > "$RUNNER_TEMP/made/stationplay-$version-packages.txt"
+          else
+            docker run --rm -i stationplay:latest python - "$version" < tools/sbom.py \
+              > "$RUNNER_TEMP/made/stationplay-$version-packages-arm64.txt"
+          fi
+          echo "::notice::$(grep -ch snapshot.debian.org "$RUNNER_TEMP"/made/*.txt) Debian packages listed"
+      # The tested image itself, pushed by this commit (never built again:
+      # the same layers the tests ran on), and its digest kept for the
+      # image job above.
+      - name: Push the tested image
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stationplay"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag stationplay:latest "$image:sha-$GITHUB_SHA-${{ matrix.arch }}"
+          pushed=$(docker push "$image:sha-$GITHUB_SHA-${{ matrix.arch }}" | tee /dev/stderr)
+          # (The digest docker push says; else the one it recorded.)
+          digest=$(sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' <<< "$pushed" | tail -1)
+          if [ -z "$digest" ]; then
+            digest=$(docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' stationplay:latest \
+              | sed -n "s|^$image@\(sha256:[0-9a-f]\{64\}\)$|\1|p" | head -1)
+          fi
+          if [ -z "$digest" ]; then echo "::error::The pushed image's digest wasn't found"; exit 1; fi
+          echo "$digest" > "$RUNNER_TEMP/made/digest-${{ matrix.arch }}.txt"
       - uses: actions/upload-artifact@v4
         with:
-          name: packages
+          name: made-${{ matrix.arch }}
           path: ${{ runner.temp }}/made/
           if-no-files-found: error
-          retention-days: 90
+          retention-days: 1

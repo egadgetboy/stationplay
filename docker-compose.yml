@@ -3,24 +3,21 @@
 # On TrueNAS SCALE, use stationplay.yaml instead.
 #
 # Before starting (README: Install > Docker Compose, or your system's section):
-#   1. Unzip StationPlay into a folder (it creates src/), and copy this file
-#      from src/ into that folder, beside src/:  cp src/docker-compose.yml .
-#   2. Make a data folder owned by the user below:
+#   1. Put this file in a folder of its own, and make a data folder there,
+#      owned by the user below:
 #        mkdir -p data && sudo chown -R 1000:1000 data
 #      (Docker Desktop on Windows or macOS: just make the folder, and delete
 #      the "user:" line below.)
-#   3. Change the lines marked  <- CHANGE
-#   4. In that folder:  docker compose up -d --build
+#   2. Change the lines marked  <- CHANGE, and set STATIONPLAY_INSTALL.
+#   3. In that folder:  docker compose up -d
 #
-# To update later: unzip the new version over src/, raise the version in
-# "image:" (e.g. 1.23.0 -> 1.23.1), then run  docker compose up -d --build
+# To update: in that folder,  docker compose pull && docker compose up -d
+# (StationPlay's page says when a new version is out, and how.)
 
 services:
   stationplay:
-    build:
-      context: ./src
-      dockerfile: Dockerfile
-    image: stationplay:1.33.1
+    image: ghcr.io/egadgetboy/stationplay:latest       # the newest release; :1.34 or :1.34.0 stays on one
+    pull_policy: always                                # the newest image whenever it's started with up
     container_name: stationplay
     restart: unless-stopped
     init: true
@@ -34,6 +31,9 @@ services:
       # you don't need that, and remove PUBLIC_PORT below too.
       - "3311:3311"
     environment:
+      # How the page says to update (README: Updating): compose, unraid,
+      # synology or docker-desktop.
+      STATIONPLAY_INSTALL: "compose"                   # <- CHANGE for Unraid, Synology or Docker Desktop
       PLEX_URL: "http://192.168.1.10:32400"            # <- CHANGE to your Plex server's address
       PLEX_TOKEN: "paste-your-plex-token-here"         # <- CHANGE (README: "Finding your Plex token")
       TZ: "America/Chicago"                            # <- CHANGE to your time zone

@@ -106,3 +106,59 @@ def test_a_file_from_snapshot_is_checked_against_its_hash(tmp_path, monkeypatch)
     served[tar_hash] = b"tampered"
     with pytest.raises(ValueError, match="isn't as it should be"):
         gpl_source.from_snapshot("x264", "2:0.164.3108+git31e19f9-2", tmp_path)
+
+
+def test_every_gpl_and_lgpl_package_s_source_is_wanted():
+    """(From 1.34.0, when the image is published: C6.) Each source package
+    an installed package with the GPL, LGPL or AGPL in its copyright file is
+    built from, once; one without a copyright file too; others not."""
+    listing = (
+        "libavcodec61 ffmpeg 7:7.1.5-0+deb13u1\n"
+        "libavformat61 ffmpeg 7:7.1.5-0+deb13u1\n"
+        "libc6 glibc 2.41-12\n"
+        "bash bash 5.2.37-2\n"
+        "libssl3t64 openssl 3.5.1-1\n"
+        "mystery mystery 1.0-1\n"
+        "odd line\n"
+    )
+    copyrights = {
+        "libavcodec61": "License: LGPL-2.1+\n",
+        "libavformat61": "License: LGPL-2.1+\n",
+        "libc6": "the GNU Lesser General Public License, version 2.1\n",
+        "bash": "License: GPL-3+\n",
+        "libssl3t64": "License: Apache-2.0\n",
+    }
+    found = gpl_source.gpl_sources(listing, copyrights.get)
+    assert found == {
+        "ffmpeg": "7:7.1.5-0+deb13u1", "glibc": "2.41-12", "bash": "5.2.37-2",
+        "mystery": "1.0-1",
+    }  # fmt: skip
+
+
+def test_another_image_s_packages_add_their_own_sources():
+    listed = (
+        "StationPlay 1.34.0: every package in the image that was tested\n"
+        "bash 5.2.37-2: source bash 5.2.37-2, https://snapshot.debian.org/package/bash/5.2.37-2/\n"
+        "libarmonly1 1.0-1: source armonly 1.0-1, https://snapshot.debian.org/package/armonly/1.0-1/\n"
+        "fastapi 0.115.0: MIT, https://pypi.org/project/fastapi/0.115.0/\n"
+    )
+    assert gpl_source.listed_sources(listed, {"bash"}) == {"armonly": "1.0-1"}
+
+
+def test_a_dsc_is_named_without_the_epoch():
+    assert gpl_source._dsc_name("ffmpeg", "7:7.1.5-0+deb13u1") == "ffmpeg_7.1.5-0+deb13u1.dsc"
+    assert gpl_source._dsc_name("bash", "5.2.37-2") == "bash_5.2.37-2.dsc"
+
+
+def test_without_all_only_ffmpeg_x264_and_x265(monkeypatch):
+    def dpkg(*args, **kwargs):
+        class Done:
+            stdout = "ffmpeg 7:7.1.5-0+deb13u1\nx264 2:0.164-2\nx265 4.1-2\nbash 5.2-2\n"
+
+        return Done()
+
+    monkeypatch.setattr(gpl_source.subprocess, "run", dpkg)
+    assert gpl_source.wanted([]) == {
+        "ffmpeg": "7:7.1.5-0+deb13u1", "x264": "2:0.164-2", "x265": "4.1-2"
+    }  # fmt: skip
+    assert gpl_source.wanted(["--all", "--also"]) == "--also needs a package list"

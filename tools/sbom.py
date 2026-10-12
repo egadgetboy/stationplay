@@ -7,8 +7,9 @@ Every Debian package installed, at its exact version, with the source
 package it's built from and that source's page on snapshot.debian.org
 (which keeps every version Debian has published); and every Python package,
 with its license and its page on PyPI. StationPlay's own source is the
-release's zip. No image is published (releases are source only): this
-says what was tested.
+release's zip. From 1.34.0 the image that was tested is the one published
+(the owner, October 12: D4 is No), and the source of its GPL and LGPL
+packages goes with the release (stationplay-<version>-source.tar).
 
 It runs inside the image (the image workflow runs it, piped in, after the
 tests, so the image needs nothing more):
@@ -79,6 +80,7 @@ def report(
     debian: list[tuple[str, str, str, str]],
     python: list[tuple[str, str, str]],
     python_version: str = "",
+    arch: str = "",
 ) -> str:
     lines = [
         f"StationPlay {version}: every package in the image that was tested",
@@ -87,9 +89,12 @@ def report(
         "built from and where Debian keeps that source. Each package's own",
         "license is in the image, in /usr/share/doc/<package>/copyright.",
         f"StationPlay's own source is stationplay-{version}.zip, under the AGPL.",
-        "StationPlay publishes no image: an image built from the zip gets",
-        "Debian's packages from Debian, as they are on the day it's built, and",
-        "lists them in /opt/stationplay/third-party-packages.txt.",
+        f"This image is published as ghcr.io/egadgetboy/stationplay:{version}"
+        + (f" (this list is its {arch} image's)." if arch else "."),
+        "The source of its GPL and LGPL packages, as Debian publishes it, is",
+        f"stationplay-{version}-source.tar, beside this list. An image built from",
+        "the zip instead gets Debian's packages from Debian, as they are on the",
+        "day it's built, and lists them in /opt/stationplay/third-party-packages.txt.",
         "",
         f"Debian packages ({len(debian)})",
         "",
@@ -114,7 +119,8 @@ def main() -> int:
         ["dpkg-query", "-W", "-f", DPKG_FORMAT], capture_output=True, text=True, check=True
     ).stdout
     rows = python_rows(metadata.distributions())
-    sys.stdout.write(report(version, debian_rows(listing), rows, platform.python_version()))
+    arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(platform.machine(), platform.machine())
+    sys.stdout.write(report(version, debian_rows(listing), rows, platform.python_version(), arch))
     return 0
 
 

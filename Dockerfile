@@ -38,6 +38,9 @@ COPY app ./app
 # be found. (Each package's copyright file stays in /usr/share/doc.) And
 # StationPlay's privacy notice, which its page links to.
 COPY LICENSE THIRD_PARTY_NOTICES.md PRIVACY.md ./
+# The public half of the key each release's zip is signed with (see
+# release.yml): for checking an update before it's used.
+COPY release-signing.pub ./
 RUN dpkg-query -W -f='${Package} ${Version} (source: ${source:Package} ${source:Version})\n' \
     > third-party-packages.txt
 # COPY keeps whatever permissions the files had on the NAS, which may not
