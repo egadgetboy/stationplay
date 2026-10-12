@@ -289,64 +289,108 @@ $('#alertsNotify').addEventListener('click', () => {
   panel.open = true;
   panel.scrollIntoView({ block: 'start', behavior: 'smooth' });
 });
-// Notify a web address of alerts (see notify.py on the server), on the Logs tab.
-const NOTIFY_FORMATS = { text: 'plain text', json: 'JSON', discord: 'Discord' };
-// (A Discord webhook's address: it always gets Discord's format, as on the server: see notify.py.)
+// Alert notifications to web addresses (see notify.py on the server), on the Logs tab.
+const NOTIFY_FORMATS = { text: 'plain text', json: 'JSON', discord: 'Discord', slack: 'Slack' };
+const NOTIFY_MOST = 3;
+// (A Discord webhook's address always gets Discord's format, and one on
+// hooks.slack.com Slack's, as on the server: see notify.py.)
 const isDiscord = url => { try { const u = new URL(url.trim()); return /^(?:(?:ptb|canary)\.)?discord(?:app)?\.com$/i.test(u.hostname) && /^\/api\/(?:v\d+\/)?webhooks\//.test(u.pathname); } catch { return false; } };
+const isSlack = url => { try { return new URL(url.trim()).hostname.toLowerCase() === 'hooks.slack.com'; } catch { return false; } };
 const siteOf = url => { try { return new URL(url).host; } catch { return url; } };
+const notifyLast = sent => sent
+  ? `Last sent ${ago(sent.at)}${sent.test ? ' (a test)' : ''}: ${sent.ok ? sent.status : `it didn’t go through (${sent.status})`}.`
+  : 'Nothing sent yet.';
 async function loadNotify() {
   let got;
   try { got = await api('/api/notify'); }
   catch (e) { $('#notifySum').textContent = ''; $('#notifyBody').replaceChildren(h('p', { class: 'muted', style: 'margin:0' }, e.message)); return; }
-  $('#notifySum').textContent = got.on ? `On, to ${siteOf(got.url)}, as ${NOTIFY_FORMATS[got.format]}` : 'Off';
+  const saved = [...(got.url ? [{ url: got.url, format: got.format, last: got.last }] : []), ...(got.more || [])];
+  $('#notifySum').textContent = !got.on ? 'Off'
+    : saved.length > 1 ? `On, to ${saved.length} addresses: ${saved.map(a => siteOf(a.url)).join(', ')}`
+    : `On, to ${siteOf(got.url)}, as ${NOTIFY_FORMATS[got.format]}`;
   const body = $('#notifyBody');
   if (body.dataset.editing) return;  // (not while it's being changed)
   const edit = () => { body.dataset.editing = '1'; };
+  // Each address on the page: what's typed, its format, and how its last message went.
+  const rows = saved.length ? saved.map(a => ({ ...a })) : [{ url: '', format: got.format, last: got.last }];
   const on = h('input', { type: 'checkbox', checked: got.on, oninput: edit });
-  const url = h('input', { type: 'url', id: 'notifyUrl', value: got.url, placeholder: 'https://ntfy.sh/your-topic', maxlength: 500, autocomplete: 'off', spellcheck: 'false', 'aria-describedby': 'notifyUrlHint', oninput: () => { edit(); if (isDiscord(url.value)) format.value = 'discord'; }, style: 'width:min(100%,420px);justify-self:start' });
-  const format = h('select', { id: 'notifyFormat', style: 'width:auto;justify-self:start', 'aria-describedby': 'notifyFormatHint', onchange: edit },
-    h('option', { value: 'text' }, 'Plain text, for ntfy'), h('option', { value: 'json' }, 'JSON, for Gotify, Home Assistant and others'), h('option', { value: 'discord' }, 'Discord'));
-  format.value = got.format;
-  const result = h('span', { class: 'hint', role: 'status' });
-  const last = h('p', { class: 'muted small', style: 'margin:0' });
-  const paintLast = sent => {
-    last.textContent = sent
-      ? `Last sent ${ago(sent.at)}${sent.test ? ' (a test)' : ''}: ${sent.ok ? sent.status : `it didn’t go through (${sent.status})`}.`
-      : 'Nothing sent yet.';
+  const list = h('div', { style: 'display:grid;gap:12px' });
+  const add = h('button', { type: 'button', class: 'btn', style: 'justify-self:start', onclick: () => {
+    if (rows.length >= NOTIFY_MOST) return;
+    rows.push({ url: '', format: 'text', last: null });
+    edit();
+    paint();
+    list.lastElementChild?.querySelector('input')?.focus();
+  } }, 'Add an address');
+  const row = (r, n) => {
+    const many = rows.length > 1;
+    const name = many ? `Web address ${n + 1}` : 'Web address';
+    const id = n ? `notifyUrl${n + 1}` : 'notifyUrl';
+    const format = h('select', { id: n ? `notifyFormat${n + 1}` : 'notifyFormat', 'aria-label': `Format for ${name.toLowerCase()}`, 'aria-describedby': 'notifyFormatHint',
+      style: 'flex:1 0 auto;width:auto', onchange: () => { edit(); r.format = format.value; } },
+      h('option', { value: 'text' }, 'ntfy or plain text'), h('option', { value: 'json' }, 'JSON (Gotify, Home Assistant and others)'),
+      h('option', { value: 'discord' }, 'Discord'), h('option', { value: 'slack' }, 'Slack'));
+    format.value = r.format;
+    const url = h('input', { type: 'url', id, value: r.url, placeholder: 'https://ntfy.sh/your-topic', maxlength: 500, autocomplete: 'off', spellcheck: 'false', 'aria-describedby': 'notifyUrlHint',
+      style: 'flex:1000 1 260px;min-width:0', oninput: () => {
+        edit();
+        r.url = url.value;
+        if (isDiscord(url.value)) format.value = 'discord';
+        else if (isSlack(url.value)) format.value = 'slack';
+        r.format = format.value;
+      } });
+    const result = h('span', { class: 'hint', role: 'status' });
+    const last = h('p', { class: 'muted small', style: 'margin:0' }, notifyLast(r.last));
+    const test = h('button', { type: 'button', class: 'btn', onclick: async () => {
+      test.disabled = true;
+      test.textContent = 'Sending…';
+      result.textContent = '';
+      try {
+        const tried = await api('/api/notify/test', { method: 'POST', body: { url: url.value, format: format.value, which: n } });
+        r.last = tried.sent;
+        last.textContent = notifyLast(tried.sent);
+        result.textContent = tried.sent.ok ? 'Sent. Check that it arrived.' : `It didn’t go through: ${tried.sent.status}.`;
+      } catch (e) {
+        result.textContent = e.message;
+      } finally {
+        test.disabled = false;
+        test.textContent = 'Send a test';
+      }
+    } }, 'Send a test');
+    const remove = many ? h('button', { type: 'button', class: 'btn ghost', 'aria-label': `Remove ${name.toLowerCase()}`, onclick: () => {
+      rows.splice(n, 1);
+      edit();
+      paint();
+    } }, 'Remove') : null;
+    return h('div', { class: 'arr-app' },
+      h('div', { class: 'field' }, h('label', { for: id }, name), h('div', { class: 'scan-set' }, url, format)),
+      h('div', { class: 'scan-set' }, test, remove, result),
+      last);
   };
-  paintLast(got.last);
+  const paint = () => {
+    list.replaceChildren(...rows.map(row));
+    add.hidden = rows.length >= NOTIFY_MOST;
+  };
+  paint();
+  const result = h('span', { class: 'hint', role: 'status' });
   const save = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
     result.textContent = '';
-    try { await api('/api/notify', { method: 'PUT', body: { on: on.checked, url: url.value, format: format.value } }); }
+    const [first, ...more] = rows;
+    try { await api('/api/notify', { method: 'PUT', body: { on: on.checked, url: first.url, format: first.format, more: more.map(r => ({ url: r.url, format: r.format })) } }); }
     catch (e) { result.textContent = e.message; return; }
-    toast(on.checked ? 'Saved. Alerts will be sent to that address.' : 'Saved. Alerts aren’t sent anywhere.');
+    const to = rows.filter(r => r.url.trim()).length > 1 ? 'those addresses' : 'that address';
+    toast(on.checked ? `Saved. Alerts will be sent to ${to}.` : 'Saved. Alerts aren’t sent anywhere.');
     delete body.dataset.editing;
     loadNotify();
   } }, 'Save');
-  const test = h('button', { type: 'button', class: 'btn', onclick: async () => {
-    test.disabled = true;
-    test.textContent = 'Sending…';
-    result.textContent = '';
-    try {
-      const tried = await api('/api/notify/test', { method: 'POST', body: { url: url.value, format: format.value } });
-      paintLast(tried.sent);
-      result.textContent = tried.sent.ok ? 'Sent. Check that it arrived.' : `It didn’t go through: ${tried.sent.status}.`;
-    } catch (e) {
-      result.textContent = e.message;
-    } finally {
-      test.disabled = false;
-      test.textContent = 'Send a test';
-    }
-  } }, 'Send a test');
   body.replaceChildren(
-    h('p', { style: 'margin:0' }, 'StationPlay says when something needs a look: Plex can’t be reached, the data folder is nearly full or can’t be written to, a station keeps failing to start, backups fail, the clock is badly off, or StationPlay’s apps can’t reach it from outside. Each alert shows in the header and in the log below, once when it starts and again when it’s fixed. With this on, StationPlay also sends each one to a web address of yours, such as an ntfy topic, Gotify, a Home Assistant webhook or a Discord webhook.'),
-    h('label', {}, on, ' Notify a web address when an alert starts and when it’s fixed'),
-    h('div', { class: 'field' }, h('label', { for: 'notifyUrl' }, 'Web address'), url,
-      h('span', { class: 'hint', id: 'notifyUrlHint' }, 'Only Admins see it, and the log shows only its site, as it can carry a token. StationPlay waits 5 seconds for an answer, tries once more, and follows no redirects.')),
-    h('div', { class: 'field' }, h('label', { for: 'notifyFormat' }, 'Format'), format,
-      h('span', { class: 'hint', id: 'notifyFormatHint' }, 'Plain text sends the alert as it is, titled StationPlay. JSON sends its title, message, kind, and state (started or fixed). Discord posts the alert as StationPlay, and a Discord webhook’s address always uses it.')),
-    h('div', { class: 'scan-set' }, save, test, result),
-    last);
+    h('p', { style: 'margin:0' }, 'StationPlay says when something needs a look: Plex can’t be reached, the data folder is nearly full or can’t be written to, a station keeps failing to start, backups fail, the clock is badly off, or StationPlay’s apps can’t reach it from outside. Each alert shows in the header and in the log below, once when it starts and again when it’s fixed. With this on, StationPlay also sends each one to up to 3 web addresses of yours, such as an ntfy topic on your phone, Gotify, a Home Assistant webhook, or a Discord or Slack webhook.'),
+    h('label', {}, on, ' Send each alert to the addresses below when it starts and when it’s fixed'),
+    list,
+    add,
+    h('p', { class: 'hint', id: 'notifyUrlHint', style: 'margin:0' }, 'Each alert goes to every address. One that fails doesn’t hold up the others. Only Admins see the addresses, and the log shows only their sites, as an address can carry a token. StationPlay waits 5 seconds for an answer, tries once more, and follows no redirects.'),
+    h('p', { class: 'hint', id: 'notifyFormatHint', style: 'margin:0' }, 'The ntfy or plain text format sends the alert as it is, titled StationPlay. JSON sends its title, message, kind, and state (started or fixed). Discord and Slack post it as a chat message. A Discord or Slack webhook’s address always uses its own format. Mattermost and Rocket.Chat take Slack’s format too.'),
+    h('div', { class: 'scan-set' }, save, result));
 }
 function reachIcon(state) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');

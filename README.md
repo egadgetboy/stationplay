@@ -1180,7 +1180,7 @@ An alert starts only once a problem persists (for Plex, five checks a minute apa
 
 Alerts are kept in StationPlay's database, so a restart doesn't repeat them. An open alert stays open (the **Logs** tab notes it's still going) until its check finds it fixed. Then it's reported fixed, once. That's so even if it was fixed while StationPlay was stopped. The apps' list of alerts fixed in the last day survives restarts too. A restored backup starts with no alerts, so anything still wrong is reported again.
 
-**Notifications.** To get alerts elsewhere, open **Notify a web address** at the top of the **Logs** tab, turn it on, and enter a web address. Use an ntfy topic (**Plain text**), or a Gotify message or Home Assistant webhook address (**JSON**: `{"title": "StationPlay", "message": "...", "kind": "...", "state": "started"}`, or `"fixed"`). For Discord, use a webhook's address (in Discord: **Server Settings**, **Integrations**, **Webhooks**). StationPlay sends it in Discord's own format (**Discord**) whichever format is chosen, and never pings anyone. **Send a test** tries it right away. StationPlay waits 5 seconds for an answer, tries once more, follows no redirects, and keeps only the answer's status. Only Admins see the address, and the log names only its site.
+**Notifications.** To get alerts elsewhere, open **Alert notifications** at the top of the **Logs** tab, turn it on, and enter a web address. Choose **Add an address** for more, up to 3 (say, Discord and your phone). Each alert goes to every address, and one that fails or is slow doesn't hold up the others. Each address has its own format: an ntfy topic (**ntfy or plain text**); a Gotify message or Home Assistant webhook address (**JSON**: `{"title": "StationPlay", "message": "...", "kind": "...", "state": "started"}`, or `"fixed"`); a Discord webhook's address (in Discord: **Server Settings**, **Integrations**, **Webhooks**), in Discord's own format (**Discord**); or a Slack incoming webhook's address, in Slack's format (**Slack**: `{"text": "..."}`, which Mattermost and Rocket.Chat take too). A Discord or Slack webhook's address always gets its own format, whichever is chosen, and never pings anyone. **Send a test** tries an address right away. For each address, StationPlay waits 5 seconds for an answer, tries once more, follows no redirects, and keeps only the answer's status. Only Admins see the addresses, and the log names only their sites.
 
 **Installing and starting**
 
@@ -1328,7 +1328,7 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/devices.py` | Linked devices, Who's tuning in?, PINs and invite codes |
 | `app/stats.py`, `app/watching.py` | Viewing stats, who's watching now, and matching Plex sessions to stations |
 | `app/health.py` | The server's health for the Stats tab: processor, memory, network and storage, from Linux's own files |
-| `app/alerts.py`, `app/notify.py` | Admin alerts, and notifying a web address of them |
+| `app/alerts.py`, `app/notify.py` | Admin alerts, and notifying up to 3 web addresses of them |
 | `app/playing.py` | What's playing, in words: how the log names stations, files and apps, and whose app is where |
 | `app/limits.py` | Blocking stations for some Plex users |
 | `app/logos.py`, `app/logos/` | The logo library and your own logos |

@@ -1,7 +1,7 @@
 """Admin alerts: what StationPlay finds wrong that an Admin can act on, each
 said once when it starts and again when it's fixed: in the Logs tab, in the
 page's header (for Admins), to StationPlay's apps (GET /api/internal/alerts,
-for Admins), and to the web address an Admin chose (see notify.py).
+for Admins), and to the web addresses an Admin chose (see notify.py).
 
 Only what StationPlay can tell for sure, and only once it has held a while,
 so a moment's hiccup is never an alert; and once one starts, it's fixed

@@ -14,8 +14,8 @@ on top of each other, text smaller than the page's smallest (11px), a tap
 target smaller than about 40px on a phone or tablet, or a dialog that
 doesn't fit the screen. It also checks a few things the page does, and
 says "check failed" for any that's wrong: Link an app's code getting its
-dash as it's typed, Tuner access's controls, and Notify a web address
-choosing Discord's format for a Discord webhook. It's a tool, not a test:
+dash as it's typed, Tuner access's controls, and Alert notifications
+choosing Discord's and Slack's formats for their webhooks. It's a tool, not a test:
 the tests don't run it.
 
     pip install playwright pillow       (and: python -m playwright install chromium)
@@ -89,6 +89,8 @@ TUNER_SEEN = [
 ]
 # A Discord webhook's address, typed on the Logs tab (Format then says Discord).
 DISCORD = "https://discord.com/api/webhooks/123456789012345678/abcDEF-ghi_jkl"
+SLACK = "https://hooks.slack.com/services/T000/B000/example-key"
+NTFY = "https://ntfy.sh/stationplay-alerts"
 
 SHOWS = [
     # (title, year, genres, content rating, studio)
@@ -906,22 +908,45 @@ def tuner_views(page: Page, look: Look) -> None:
     no_toast(page)
 
 
-def notify_discord(page: Page, look: Look) -> None:
-    """The Logs tab's Notify a web address, with a Discord webhook's address
-    typed: Format switches to Discord by itself."""
+def notify_addresses(page: Page, look: Look) -> None:
+    """The Logs tab's Alert notifications, with 2 addresses: a Discord
+    webhook's typed first (Format switches to Discord by itself), then an
+    ntfy topic added (a Slack webhook's address, typed there first, switches
+    it to Slack)."""
     page.evaluate(
         "() => { const p = document.querySelector('#notifyPanel'); p.open = true; p.scrollIntoView(); }"
     )
     page.wait_for_selector("#notifyUrl")
-    look.expect("Notify a web address, Format to start", page.input_value("#notifyFormat"), "text")
+    look.expect("Alert notifications, Format to start", page.input_value("#notifyFormat"), "text")
+    look.expect("Alert notifications, one address to start", page.locator("#notifyUrl2").count(), 0)
     page.fill("#notifyUrl", "")
     page.locator("#notifyUrl").press_sequentially(DISCORD)
     look.expect(
-        "Notify a web address, Format once a Discord webhook's address is typed",
+        "Alert notifications, Format once a Discord webhook's address is typed",
         page.input_value("#notifyFormat"),
         "discord",
     )
+    page.get_by_role("button", name="Add an address").click()
+    page.wait_for_selector("#notifyUrl2")
+    page.locator("#notifyUrl2").press_sequentially(SLACK)
+    look.expect(
+        "Alert notifications, Format once a Slack webhook's address is typed",
+        page.input_value("#notifyFormat2"),
+        "slack",
+    )
+    page.fill("#notifyUrl2", NTFY)
+    page.select_option("#notifyFormat2", "text")
+    look.expect(
+        "Alert notifications, the first address's Format kept",
+        page.input_value("#notifyFormat"),
+        "discord",
+    )
+    page.evaluate("() => document.querySelector('#notifyPanel').scrollIntoView()")
     look("logs-notify")
+    page.evaluate(
+        "() => document.querySelector('#notifyBody .btn.primary').scrollIntoView({ block: 'end' })"
+    )
+    look("logs-notify-end")
 
 
 def signin_answer_lost(context: Any, base: str, look: Look) -> None:
@@ -1103,7 +1128,7 @@ def admin_views(page: Page, look: Look, only: set[str] | None) -> None:
         page.wait_for_selector("#problemList details[open] pre:not(:empty)")
         page.wait_for_timeout(300)
         look("logs-journal", full=True)
-        notify_discord(page, look)
+        notify_addresses(page, look)
     if wanted("alerts"):
         page.click("#alertsPill")
         page.wait_for_selector("#alertsDlg[open]")
