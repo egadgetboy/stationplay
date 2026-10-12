@@ -31,7 +31,7 @@ Don't rename them.
 - `X-Plex-Client-Identifier: stationplay-live-channels`: Plex knows the server's requests by it.
 - Lineup and guide (XMLTV) channel IDs, and Station keys: Plex maps its guide to them.
 - The User-Agent token `stationplay` that tuner.py looks for (the apps send `StationPlay/<version>`), and the `StationPlay/<version>` User-Agent the server sends to GitHub, alert addresses and its own reach check.
-- The problem-report sentences the apps send word for word, which problems.py matches: "StationPlay's address couldn't be found", "StationPlay didn't answer", "StationPlay answered with an error".
+- Older apps' problem-report sentences, which problems.py still reads (as_now): "StationPlay's address couldn't be found", "StationPlay didn't answer", "StationPlay answered with an error". Apps from 1.34.0's release say "tapiOca" there; both are shown by the new name.
 
 ## Code and history
 - The Python package and module names (`app`, `stationplay` in pyproject.toml).

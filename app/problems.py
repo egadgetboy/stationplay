@@ -131,18 +131,19 @@ MEANINGS: tuple[tuple[str, str], ...] = (
 )  # fmt: skip
 _MEANINGS = tuple((re.compile(rf"\b(?:{pattern})\b"), said) for pattern, said in MEANINGS)
 # What an app says kept it from reaching tapiOca, and what that means.
+# (Older apps say it by tapiOca's old name: see as_now.)
 TROUBLES: tuple[tuple[str, str], ...] = (
     ("No network on this device",
      "The device itself had no network (Wi-Fi off, or no signal), so tapiOca wasn't at "
      "fault."),
-    ("StationPlay's address couldn't be found",
+    ("tapiOca's address couldn't be found",
      "The device couldn't look up tapiOca's address (DNS). Check the address the app "
      "uses, and your DNS or reverse proxy."),
-    ("StationPlay didn't answer",
+    ("tapiOca didn't answer",
      "Nothing answered at tapiOca's address: tapiOca, the server it's on, or the "
      "connection to it may have been down."),
     ("A secure connection couldn't be made", _SECURE),
-    ("StationPlay answered with an error",
+    ("tapiOca answered with an error",
      "Something answered for tapiOca with an error, often a reverse proxy while "
      "tapiOca was stopped or starting."),
 )  # fmt: skip
@@ -223,10 +224,21 @@ def who_couldnt(device_name: str, device: str) -> str:
     return device_name or device.split(",")[0].strip()
 
 
+# The name older apps call tapiOca by, at the start of their trouble.
+OLD_NAME = "StationPlay"
+
+
+def as_now(detail: str) -> str:
+    """An app's trouble by tapiOca's name: older apps (before 1.34.0's
+    rebrand) start it with the old one ("StationPlay didn't answer")."""
+    return "tapiOca" + detail[len(OLD_NAME) :] if detail.startswith(OLD_NAME) else detail
+
+
 def trouble_of(detail: str) -> str:
     """The kind of trouble an app had reaching tapiOca, from its
     detail: one of TROUBLES as it said it ("tapiOca answered with an
     error (503)"), or else its first sentence."""
+    detail = as_now(detail)
     for known, _ in TROUBLES:
         if detail.startswith(known):
             found = re.match(rf"{re.escape(known)}( \(\d{{3}}\))?", detail)
@@ -251,7 +263,7 @@ def meanings(details: list[str], kind: str) -> list[str]:
     for detail in details:
         found = [said for pattern, said in _MEANINGS if pattern.search(detail)]
         if kind == UNREACHABLE:
-            found += [said for known, said in TROUBLES if detail.startswith(known)]
+            found += [said for known, said in TROUBLES if as_now(detail).startswith(known)]
         out += [said for said in found if said not in out]
     return out
 

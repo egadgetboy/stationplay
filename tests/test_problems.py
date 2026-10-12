@@ -249,16 +249,31 @@ def test_trouble_reaching_stationplay_reads_plainly(app, caplog):
         for minutes in (0, 30):
             sent(tv, kind="unreachable", detail=detail, at=now - (90 + minutes) * 60_000)
         rows = {p["label"]: p for p in tv.get("/api/problems").json()["problems"]}
-        both = rows["Den couldn't reach tapiOca for 2 hours 10 minutes in all · StationPlay "
+        # (An older app's trouble, by the old name: shown by the new one.)
+        both = rows["Den couldn't reach tapiOca for 2 hours 10 minutes in all · tapiOca "
                     "didn't answer"]  # fmt: skip
         assert (both["times"], both["details"]) == (2, [detail])
         # An error answered: the status kept; a device with no name, by its model.
         tv.post("/api/internal/problem", json={**PHONE, "kind": "unreachable",
                 "detail": "StationPlay answered with an error (503) for 2 min.", "lastedMs": 125_000})  # fmt: skip
-        assert any(p["label"] == "Pixel 8 couldn't reach tapiOca for 2 minutes · StationPlay "
+        assert any(p["label"] == "Pixel 8 couldn't reach tapiOca for 2 minutes · tapiOca "
                    "answered with an error (503)" for p in tv.get("/api/problems").json()["problems"])  # fmt: skip
     assert problems.lasted(30_000) == "less than a minute"
     assert problems.lasted(61 * 60_000) == "1 hour 1 minute"
+
+
+def test_the_apps_trouble_by_either_name(app):
+    """tapiOca's apps say their trouble by the new name (1.34.0's rebrand);
+    older apps by the old one. Both are understood, and both are shown with
+    the new name."""
+    for older, newer in (
+        ("StationPlay's address couldn't be found", "tapiOca's address couldn't be found"),
+        ("StationPlay didn't answer", "tapiOca didn't answer"),
+        ("StationPlay answered with an error (503)", "tapiOca answered with an error (503)"),
+    ):
+        for said in (older, newer):
+            assert problems.trouble_of(f"{said} for 2 min. The device was on Wi-Fi.") == newer
+            assert problems.meanings([f"{said} for 2 min."], problems.UNREACHABLE), said
 
 
 def test_what_the_error_codes_the_apps_send_mean(app):

@@ -718,8 +718,9 @@ device, one kind of device or everyone. Send what's known:
 - `unreachable` (from 1.29.1): the app couldn't reach tapiOca for a
   minute or more, sent once it's back. `detail` says what kind of trouble.
   It starts with one of "No network on this device", "tapiOca's address
-  couldn't be found", "StationPlay didn't answer", "A secure connection
-  couldn't be made" or "StationPlay answered with an error (503)". Then come
+  couldn't be found", "tapiOca didn't answer", "A secure connection
+  couldn't be made" or "tapiOca answered with an error (503)" (apps from
+  before 1.34.0 say "StationPlay" for "tapiOca": both are read). Then come
   the device's kind of network (Wi-Fi, mobile data, Ethernet; never its
   name or address) and how long it lasted. `lastedMs` says how long, in
   milliseconds. (Without it, tapiOca reads "for 3 min 20 s" or "for 1
