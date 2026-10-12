@@ -81,6 +81,19 @@ def test_where_each_person_last_signed_in_from(app):
         signed = away.post("/api/access/sign-in", json=SAM, headers={"X-Real-IP": "192.168.1.5"})
         assert signed.status_code == 200, signed.text
         assert person(admin, "Sam")["signedInFrom"] == "192.168.1.5 (over the internet)"
+        # At home through a proxy: the address it says it came from, but only
+        # an address (the 1.34.0 re-audit: X-Forwarded-For can say anything,
+        # and showed as if it were where someone was).
+        home = TestClient(app, client=("192.168.1.66", 5000))
+        for said, shown in (
+            ("Admin laptop in the kitchen, 1.2.3.4", "192.168.1.66"),
+            ("<b>1.2.3.4</b>", "192.168.1.66"),
+            ("192.168.1.23, 10.0.0.1", "192.168.1.23 (via 192.168.1.66)"),
+            ("2001:db8::5", "2001:db8::5 (via 192.168.1.66)"),
+        ):
+            signed = home.post("/api/access/sign-in", json=SAM, headers={"X-Forwarded-For": said})
+            assert signed.status_code == 200, signed.text
+            assert person(admin, "Sam")["signedInFrom"] == shown, said
         # Only Admins see the list.
         sam = TestClient(app)
         assert sam.post("/api/access/sign-in", json=SAM).status_code == 200

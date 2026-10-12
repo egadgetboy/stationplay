@@ -406,6 +406,66 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
         checks.ok(bad.status_code == 400, "a station source must be a plain Plex key",
                   f"got {bad.status_code}")  # fmt: skip
 
+    # 6b) 1.34.0: the page's files open before sign-in, the update check,
+    # the extra alert addresses, and where people signed in from (the
+    # 1.34.0 re-audit: the attack check hadn't grown with them).
+    checks.section("1.34.0: page files, the update check, alert addresses")
+    async with httpx.AsyncClient(base_url=home) as anon, httpx.AsyncClient(base_url=net) as out:
+        for client, where_ in ((anon, "at home"), (out, "from the internet")):
+            for path in ("/favicon.svg", "/favicon.ico",
+                         "/fonts/SpaceGrotesk/SpaceGrotesk-Regular.woff2"):  # fmt: skip
+                r = await client.get(path)
+                checks.ok(r.status_code == 200, f"{path} opens signed out {where_}",
+                          f"got {r.status_code}")  # fmt: skip
+            for path in (
+                "/fonts/..%2f..%2fstationplay.db", "/fonts/%2e%2e/%2e%2e/etc/passwd",
+                "/fonts/SpaceGrotesk/OFL.txt", "/fonts/SpaceGrotesk/..%2f..%2findex.html",
+                "/fonts/SpaceGrotesk%2f..%2f..%2f..%2fapp%2faccess.py", "/favicon.svg%2f..%2fstationplay.db",
+            ):  # fmt: skip
+                r = await client.get(path)
+                checks.ok(
+                    r.status_code in (400, 401, 403, 404) and b"root:" not in r.content
+                    and b"SQLite" not in r.content and b"import" not in r.content,
+                    f"{path} gets nothing {where_}", f"got {r.status_code}",
+                )  # fmt: skip
+    async with httpx.AsyncClient(base_url=home) as c:
+        for method, path, body in (
+            ("GET", "/api/updates", None), ("PUT", "/api/updates", {"on": False}),
+            ("POST", "/api/updates/check", None), ("GET", "/api/notify", None),
+            ("PUT", "/api/notify", {"on": True, "url": "https://evil.test/hook",
+                                    "more": [{"url": "https://evil.test/2"}]}),
+            ("POST", "/api/notify/test", {"on": True, "url": "https://evil.test/hook", "which": 1}),
+        ):  # fmt: skip
+            r = await c.request(method, path, json=body, headers=sam_h)
+            checks.ok(r.status_code == 403, f"a User can't {method} {path}", f"got {r.status_code}")
+        # (Never true here: an Admin's yes would have tapiOca ask GitHub.)
+        for said in ("true", 1, "yes", None):
+            r = await c.put("/api/updates", json={"on": said}, headers=admin_h)
+            checks.ok(r.status_code in (400, 422), f"the update check takes only true or false, not {said!r}",
+                      f"got {r.status_code}")  # fmt: skip
+        listed = (await c.get("/api/access/users", headers=admin_h)).json()
+        people = listed.get("users", listed) if isinstance(listed, dict) else listed
+        checks.ok(all("<" not in (p.get("signedInFrom") or "") for p in people),
+                  "where people signed in from is never markup")  # fmt: skip
+        forged = await c.post("/api/access/sign-in", json=USER,
+                              headers={"X-Forwarded-For": "<img src=x onerror=alert(1)>, 1.2.3.4"})  # fmt: skip
+        listed = (await c.get("/api/access/users", headers=admin_h)).json()
+        people = listed.get("users", listed) if isinstance(listed, dict) else listed
+        sam_from = next(
+            (p.get("signedInFrom", "") for p in people if p.get("name") == USER["name"]), ""
+        )
+        checks.ok(forged.status_code == 200 and "<" not in sam_from and "img" not in sam_from,
+                  "a forged X-Forwarded-For isn't kept as where someone signed in", sam_from)  # fmt: skip
+    async with httpx.AsyncClient(base_url=home) as pat:
+        await pat.post("/api/access/sign-in", json=ADMIN)
+        for method, path, body in (("PUT", "/api/updates", {"on": False}),
+                                   ("PUT", "/api/notify", {"on": False})):  # fmt: skip
+            cross = await pat.request(
+                method, path, json=body, headers={"Sec-Fetch-Site": "cross-site"}
+            )
+            checks.ok(cross.status_code == 403, f"{method} {path} from another site is refused",
+                      f"got {cross.status_code}")  # fmt: skip
+
     # 7) Oversized and malformed bodies.
     checks.section("Oversized and malformed bodies")
     async with httpx.AsyncClient(base_url=home) as c:

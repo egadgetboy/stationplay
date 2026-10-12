@@ -540,7 +540,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                   "alerts are sent to a web address")  # fmt: skip
         has_data(checks, sp.url, made, __version__, "updated")
         copies = sorted((data / "backups").glob(f"before-{__version__}-*.db"))
-        logs = page.get("/api/logs").text
+        logs = page.get("/api/logs").json()["text"]  # (the text once: .text has each line twice)
         # (Whether the database changed is read from the database itself, not
         # taken from the code under test: a change changes_needed() misses
         # would otherwise pass with no copy.)

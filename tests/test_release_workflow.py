@@ -419,7 +419,9 @@ def test_an_older_version_never_takes_the_newer_ones_tags(run):
     (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
     image_run(run, 8, version="1.34.0")
     image_run(run, 9, version="1.34.1")
-    said, status, out = run(SIGNING_KEY="-----BEGIN OPENSSH PRIVATE KEY-----\nx\n")  # (signed from 1.34.0)
+    said, status, out = run(
+        SIGNING_KEY="-----BEGIN OPENSSH PRIVATE KEY-----\nx\n"
+    )  # (signed from 1.34.0)
     assert status == 0, said + out
     tags = [line.rsplit(":", 1)[1] for line in skopeo(said)]
     assert tags == ["1.34.0", "1.34.1", "1.34", "latest"]
@@ -456,7 +458,9 @@ def test_an_image_that_isn_t_the_tested_one_stops_it(run):
     (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
     image_run(run, 8, version="1.34.0")
     (run.assets / "manifest").write_text("something else\n")
-    said, status, out = run(SIGNING_KEY="-----BEGIN OPENSSH PRIVATE KEY-----\nx\n")  # (signed from 1.34.0)
+    said, status, out = run(
+        SIGNING_KEY="-----BEGIN OPENSSH PRIVATE KEY-----\nx\n"
+    )  # (signed from 1.34.0)
     assert status == 1 and not publishes(said)  # (its draft stays a draft)
     assert "isn't the image that was tested" in out
 
@@ -489,7 +493,9 @@ def test_a_draft_first_then_its_tags_then_its_published(run):
     run.version("1.34.0")
     (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
     image_run(run, 8, version="1.34.0")
-    said, status, out = run(SIGNING_KEY="-----BEGIN OPENSSH PRIVATE KEY-----\nx\n")  # (signed from 1.34.0)
+    said, status, out = run(
+        SIGNING_KEY="-----BEGIN OPENSSH PRIVATE KEY-----\nx\n"
+    )  # (signed from 1.34.0)
     assert status == 0, said + out
     [draft] = creates(said)
     assert draft.startswith("gh release create v1.34.0 ") and " --draft " in draft
@@ -642,11 +648,15 @@ def test_the_workflow_signs_from_1_34_0():
 def test_every_file_release_yml_reads_is_one_image_yml_writes():
     """(The 1.34.0 audit: renaming the image's reference or the arm64 list in
     image.yml would have stopped every release, with every test passing.)"""
-    reads = set(re.findall(r'\$(?:made|out/made-\$run)/(tapioca-\$version-[\w.-]+)"', WORKFLOW.read_text()))
+    reads = set(
+        re.findall(r'\$(?:made|out/made-\$run)/(tapioca-\$version-[\w.-]+)"', WORKFLOW.read_text())
+    )
     writes = set(re.findall(r'"\$RUNNER_TEMP/made/(tapioca-\$version-[\w.-]+)"', IMAGE.read_text()))
     assert reads >= {"tapioca-$version-image.txt", "tapioca-$version-packages.txt",
                      "tapioca-$version-packages-arm64.txt"}, reads  # fmt: skip
-    assert reads <= writes, f"release.yml reads {sorted(reads - writes)}, which image.yml never writes"
+    assert reads <= writes, (
+        f"release.yml reads {sorted(reads - writes)}, which image.yml never writes"
+    )
 
 
 def test_no_workflow_leaves_its_credentials_in_a_checkout():

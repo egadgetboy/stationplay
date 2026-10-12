@@ -456,9 +456,20 @@ def where(scope: dict) -> str:
     for name, value in scope.get("headers") or ():
         if name == b"x-forwarded-for":
             first = value.decode("latin-1").split(",")[0].strip()[:60]
-            if first and first != address_:
+            # (Only an address: the header can say anything, and what it says
+            # is kept and shown as where someone was. The 1.34.0 re-audit.)
+            if first and first != address_ and _is_address(first):
                 return f"{first} (via {address_})"
     return address_
+
+
+def _is_address(text: str) -> bool:
+    """Whether `text` is an IPv4 or IPv6 address, and nothing else."""
+    try:
+        ipaddress.ip_address(text)
+    except ValueError:
+        return False
+    return True
 
 
 class Busy(Exception):
