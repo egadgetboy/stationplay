@@ -60,6 +60,7 @@ from app.broadcaster import Viewer  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.db import Database, Item  # noqa: E402
 from app.plex import PlexClient  # noqa: E402
+from app.releases import RELEASES  # noqa: E402
 from tests.fakeplex_library import LibraryPlex  # noqa: E402
 from tests.helpers import Proxy  # noqa: E402
 
@@ -208,6 +209,12 @@ def library() -> StandInPlex:
 # StationPlay, running ----------------------------------------------------------------
 
 
+# A newer StationPlay, as the stand-in for GitHub says (see Running), and
+# the page's "Not now" for it (updates.js).
+NEWER = "9.0.0"
+NOT_NOW = "stationplay.updateNotNow"
+
+
 class Running:
     """StationPlay on its home-network port and its public one, in a thread
     of its own; `call` runs something on its event loop."""
@@ -224,6 +231,11 @@ class Running:
             settings, PlexClient("http://plex.test", "token", transport=plex.transport())
         )
         self.ctx = self.app.state.ctx
+        # (The update check finds a newer StationPlay here, never asking GitHub.)
+        self.ctx.releases.transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, json={
+                "tag_name": f"v{NEWER}", "html_url": f"{RELEASES}/tag/v{NEWER}"})
+        )  # fmt: skip
         self.ctx.play_transport = plex.transport()
         config = uvicorn.Config(self.app, log_level="warning", lifespan="on", proxy_headers=False)
         self.server = uvicorn.Server(config)
@@ -405,6 +417,10 @@ def fill(sp: Running, data: Path) -> None:
         ok(home.post("/api/internal/play", headers=app_token, json={"key": "303", "device": {
             "containers": ["mkv", "mp4"], "hdr": [], "audio": ["aac", "ac3"], "hls": ["ts"],
             "video": [{"codec": "h264", "width": 3840, "height": 2160, "bitDepth": 8}]}}))  # fmt: skip
+
+        # A newer StationPlay is out (see Running), on Docker Compose.
+        ctx.releases.install = "compose"
+        ok(home.post("/api/updates/check"))
 
         # Tuner access: any device on the home network, with two devices listed.
         ok(home.put("/api/tuner", json={"only": False, "devices": TUNER_LISTED}))
@@ -1199,6 +1215,19 @@ def admin_views(page: Page, look: Look, only: set[str] | None) -> None:
     if wanted("addtoplex"):
         tab(page, "setup")
         look("addtoplex", full=True)
+        # The banner a newer StationPlay brings (hidden, as Not now, in the
+        # other views): what it says, and Not now hiding it.
+        page.evaluate(f"() => {{ localStorage.removeItem('{NOT_NOW}'); return loadUpdates(); }}")
+        page.wait_for_selector("#updateBanner:not([hidden])")
+        page.evaluate("() => window.scrollTo(0, 0)")
+        look.expect("the update banner", page.inner_text("#updateBanner .update-title strong"),
+                    f"StationPlay {NEWER} is available.")  # fmt: skip
+        look.expect("the update banner's command",
+                    page.inner_text("#updateBanner code"),
+                    "docker compose pull && docker compose up -d")  # fmt: skip
+        look("update-banner")
+        page.click("#updateBanner button:has-text('Not now')")
+        look.expect("Not now hides the banner", page.is_hidden("#updateBanner"), True)
     if wanted("access"):
         tab(page, "access")
         look("access", full=True)
@@ -1385,6 +1414,10 @@ def main() -> None:
                                 device_scale_factor=1, is_mobile=size in touch,
                                 has_touch=size in touch, color_scheme=theme,
                             )  # fmt: skip
+                            # (The update banner is shown in one view only.)
+                            context.add_init_script(
+                                f"try {{ localStorage.setItem('{NOT_NOW}', '{NEWER}'); }} catch {{}}"
+                            )
                             if person in ("admin", "user"):
                                 signed = context.request.post(
                                     f"{sp.home}/api/access/sign-in",

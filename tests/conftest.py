@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from app import alerts, db, jobs, reach, scanner
+from app import alerts, db, jobs, reach, releases, scanner
 
 from .test_e2e import media  # noqa: F401  (the test media files the end-to-end tests play)
 
@@ -35,6 +35,9 @@ def no_checks_over_the_internet(monkeypatch):
         raise httpx.ConnectError("No network in the tests", request=request)
 
     monkeypatch.setattr(reach.Reach, "transport", httpx.MockTransport(nothing_answers))
+    # (Nor does the update check reach GitHub, and it doesn't look by itself.)
+    monkeypatch.setattr(releases.Releases, "transport", httpx.MockTransport(nothing_answers))
+    monkeypatch.setattr(releases, "FIRST_S", 10**6)
 
 
 @pytest.fixture(autouse=True)
