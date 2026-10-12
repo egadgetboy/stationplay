@@ -206,7 +206,7 @@ def test_without_its_tested_package_list_nothing_is_published(run):
     said, status, out = run()
     assert status == 1
     assert not creates(said)
-    assert "has its list of packages" in out and "Run the image workflow on main again" in out
+    assert "has its list of packages" in out and "Re-run the newest of those runs" in out
 
 
 def test_the_newest_passing_run_without_its_list_is_passed_over(run):

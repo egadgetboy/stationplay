@@ -1205,7 +1205,7 @@ STATIONPLAY_SOAK=1 python -m pytest -k soak -o faulthandler_timeout=0           
 STATIONPLAY_SOAK=1 STATIONPLAY_SOAK_MINUTES=30 python -m pytest -k soak -o faulthandler_timeout=0
 STATIONPLAY_REALWORLD=1 python -m pytest tests/test_e2e_realworld.py
 
-docker build --target test -t stationplay-test .           # all tests in the image as it ships, as GitHub runs them
+docker build --target test -t stationplay-test .           # all tests in the image as people build it, as GitHub runs them
 docker run --rm --init stationplay-test
 
 pip install ruff mypy
@@ -1232,7 +1232,7 @@ The tests need ffmpeg on the `PATH`. The HDR and real-world tests also need ffmp
 
 It uses its own ports, stops only what it started, and cleans up afterward. `--from v1.28.1` starts from another release, and `-v` shows every check.
 
-**Releases.** Each release's notes are in `docs/releases/v<version>.md`. Their first lines name the commit of that version (`commit: <its full ID>`), which must be a commit `main` was tested at (for a merge, the merge commit). `.github/workflows/release.yml` runs each time the image workflow finishes on `main`. For each version not yet published, it checks that the commit is on `main`, is that version, and passed the image workflow's tests (on that commit, or on a later one that changed only release notes). Then it publishes the release on GitHub: the tag at that commit, the notes, the files built from that commit (`stationplay-<version>.zip`, `stationplay.yaml` and `docker-compose.yml`), and `stationplay-<version>-packages.txt`, the list of every package in the image that was tested (the tests' own additions aside), at its exact version, with a link to its source. An image workflow run that tested the commit makes that list after its tests and keeps it with the run for 90 days; without it, nothing is published, and the release run says to run the image workflow again. A version whose tests are still running waits for them, and one whose tests failed isn't published; the run says why in one line. Push and test each version's commit before the next one's. Releases are source only: no image is published, and each person's build gets Debian's packages from Debian. Public releases here start with 1.32.0.
+**Releases.** Each release's notes are in `docs/releases/v<version>.md`. Their first lines name the commit of that version (`commit: <its full ID>`), which must be a commit `main` was tested at (for a merge, the merge commit). `.github/workflows/release.yml` runs each time the image workflow finishes on `main`. For each version not yet published, it checks that the commit is on `main`, is that version, and passed the image workflow's tests (on that commit, or on a later one that changed only release notes). Then it publishes the release on GitHub: the tag at that commit, the notes, the files built from that commit (`stationplay-<version>.zip`, `stationplay.yaml` and `docker-compose.yml`), and `stationplay-<version>-packages.txt`, the list of every package in the image that was tested (the tests' own additions aside), at its exact version, with a link to its source. An image workflow run that tested the commit makes that list after its tests and keeps it with the run for 90 days; without it, nothing is published, and the release run says to re-run that image run. A version whose tests are still running waits for them, and one whose tests failed isn't published; the run says why in one line. Push and test each version's commit before the next one's. Releases are source only: no image is published, and each person's build gets Debian's packages from Debian. Public releases here start with 1.32.0.
 
 **Before each push to `main`,** run `python tools/image_check.py` (about 3 minutes). It lays the project out as the image's test stage has it and runs the tests that read the project's own files there, so a file the image hasn't got shows up at once rather than 40 minutes into the image workflow. The image workflow runs the same tests first, in the image itself.
 
@@ -1314,7 +1314,7 @@ Bug reports and ideas are welcome, as GitHub issues. A good bug report says what
 
 StationPlay doesn't accept code contributions for now, so please don't open pull requests. That may change later, with a contributor agreement.
 
-To report a security problem, see [SECURITY.md](SECURITY.md). Please don't open a public issue for one.
+To report a security problem, see [SECURITY.md](SECURITY.md). Please don't describe one in a public issue.
 
 ## Forks and credit
 

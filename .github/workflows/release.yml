@@ -5,8 +5,9 @@
 # stationplay-<version>.zip (unzipping to src), stationplay.yaml and
 # docker-compose.yml, and stationplay-<version>-packages.txt, the list of
 # every package in the image that was tested (tools/sbom.py, made by an
-# image workflow run that tested it; the tests' own additions aside). A release already published is
-# left as it is. The newest version is marked the latest release.
+# image workflow run that tested it; the tests' own additions aside). A
+# release already published is left as it is. The newest version is marked
+# the latest release.
 #
 # Releases are source only (the owner, October 12): no image is published.
 # Each person's build fetches Debian's packages from Debian.
@@ -145,7 +146,7 @@ jobs:
               fi
             done
             if [ -z "$listed" ]; then
-              echo "::error::$tag isn't published: no image run that passed its tests (runs:$passed) has its list of packages. Run the image workflow on main again (Actions, image, Run workflow): this runs after it."
+              echo "::error::$tag isn't published: no image run that passed its tests (runs:$passed) has its list of packages. Re-run the newest of those runs (on its page: Re-run all jobs): publishing tries again when it finishes."
               refused=1
               continue
             fi
