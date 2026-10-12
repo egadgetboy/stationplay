@@ -9,7 +9,7 @@ StationPlay runs on your own hardware, with your own Plex Media Server. Its deve
 On your hardware, in StationPlay's data folder:
 
 - Your stations and settings. These include Sonarr's and Radarr's keys and the alert web addresses, if an Admin sets them. (The Plex token is in StationPlay's app settings, not in its data folder.)
-- The people who can sign in: their names, Viewing Levels, sign-ins and linked devices, and their passwords and PINs, stored only as salted hashes.
+- The people who can sign in: their names, Viewing Levels, sign-ins and linked devices, when and from what address each last signed in, and their passwords and PINs, stored only as salted hashes.
 - What each person watches in StationPlay's apps (history and Resume), and viewing stats for each person.
 - The names of Plex users, and what each watched on StationPlay's stations in Plex, for the viewing stats.
 - The access log: sign-ins (failed ones too, with the name typed), changes, and the addresses they came from. It keeps the newest 2,000 lines.
