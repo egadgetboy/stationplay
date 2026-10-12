@@ -110,7 +110,7 @@ function showTab(name) {
   for (const id of TABS) $('#tab-' + id).hidden = id !== name;
   if (name === 'broken') { loadArr().then(loadBroken); loadScan(); loadReportSettings(); }
   if (name === 'logs') { loadLogs(true); loadProblems(); loadNotify(); }
-  if (name === 'setup') { loadBackups(); renderPlaybackPanel(); }
+  if (name === 'setup') { loadBackups(); renderPlaybackPanel(); loadUpdates(); }
   if (name === 'stats') { loadStats(); loadNow(); }
   if (name === 'access') { loadAccess(); loadApps(); loadTuner(); loadLimits(); loadAway(); loadAppLimits(); loadAppLibraries(); loadApiTokens(); }
   history.replaceState(null, '', '#' + name);

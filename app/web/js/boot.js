@@ -21,7 +21,10 @@ const refresh = () => {
   loadStatus();
   loadChannels();
   linkWanted();
+  loadUpdates();
 })();
+// (A new version: looked for again every hour while the page is open.)
+setInterval(() => { if (!document.hidden) loadUpdates(); }, 3600000);
 setInterval(() => { if (!document.hidden) refresh(); }, 10000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 setInterval(() => { if (currentTab === 'logs' && !document.hidden && !signedOut()) loadLogs(); }, 5000);
