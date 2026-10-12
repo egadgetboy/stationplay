@@ -194,10 +194,17 @@ class Titles:
         movie whose tags aren't known and weren't asked for since that began
         (or StationPlay started), or not since `refresh_tags`, or not in the
         last day: what `fill` asks Plex about, the longest waiting first."""
-        now = _now() if now is None else now
-        # (Never later than now: a clock that stepped back mustn't make every
-        # title due again at every look.)
-        since, refresh = min(self._tags_since_ms, now), min(self._refresh_ms, now)
+        if now is None:
+            now = _now()
+            # (Never later than now: after a clock steps back, what's asked
+            # about from then on counts as asked since, rather than every
+            # title being due at every look until the clock catches up.)
+            if self._tags_since_ms > now:
+                self._tags_since_ms = now
+            if self._refresh_ms > now:
+                self._refresh_ms = now
+                self.db.set_meta(META_REFRESH, str(now))
+        since, refresh = self._tags_since_ms, self._refresh_ms
 
         def due(t: Title) -> bool:
             stale = now - t.checked_ms >= RECHECK_MS
@@ -270,6 +277,9 @@ class Titles:
             # already, so asking for the same big folder again, from another
             # device or sort, doesn't go ahead of everyone else.)
             ahead = [k for k in fresh if k not in self._backlog][: ENSURE_AHEAD * ENSURE_AT_ONCE]
+            # (...but at least its first batch, in the order it's shown, so
+            # what's on screen isn't left behind another folder's rest.)
+            ahead = ahead or fresh[:ENSURE_AT_ONCE]
         going = set(ahead)
         later = [k for k in fresh if k not in going]
         for at in range(0, len(ahead), ENSURE_AT_ONCE):
@@ -284,7 +294,7 @@ class Titles:
         until = ensure_until.get()
         if until is not None:
             wait_s = min(wait_s, until - loop.time())
-        if wait_s > 0:
+        if wait_s > 0 and waits:
             await asyncio.wait(waits, timeout=wait_s)
 
     def _start_batch(self, kinds: dict[str, str], ask: Asker) -> asyncio.Task:
@@ -298,7 +308,11 @@ class Titles:
         while self._backlog:
             keys = list(self._backlog)[:ENSURE_AT_ONCE]
             taken = {k: self._backlog.pop(k) for k in keys}
-            batch = {k: kind for k, kind in taken.items() if k not in self._asking}
+            batch = {
+                k: kind
+                for k, kind in taken.items()
+                if k not in self._asking and (k not in self._known or self._known[k].tags is None)
+            }
             if batch:
                 await self._start_batch(batch, ask)
 

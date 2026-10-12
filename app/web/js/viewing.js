@@ -138,7 +138,7 @@ function renderViewing() {
         h('li', {}, h('strong', {}, 'Plex and other apps. '), 'Plex, Jellyfin and other apps don’t say who’s watching, so they show every station. To keep stations from some people in Plex, use Block stations for some Plex users, below.'))),
     table,
     h('div', {}, h('button', { class: 'btn', type: 'button', onclick: () => editLevel(null) }, 'Add a level')),
-    clipRatingsBox());
+    ...[clipRatingsBox()].filter(Boolean));
 }
 // Commercials and trailers under limits (1.33.0): each folder's rating.
 let clipRatings = null;  // (from /api/access/clips, with the Access tab)
@@ -259,7 +259,7 @@ async function openUserStations(u) {
   const part = (title, ...children) => h('section', { class: 'sees-part' }, h('h4', {}, title), ...children);
   $('#userStationsBody').replaceChildren(
     h('p', { style: 'margin:0' }, `${u.name} is on ${got.level}. They see what ${got.level} shows, except for what you choose for them here.`),
-    viewing?.users[u.id]?.ownUnreadable ? h('p', { class: 'hint', role: 'alert', style: 'margin:0' }, `What was chosen for ${u.name} here couldn’t be read, so they see nothing for now. Choose it again and save.`) : null,
+    ...(viewing?.users[u.id]?.ownUnreadable ? [h('p', { class: 'hint', role: 'alert', style: 'margin:0' }, `What was chosen for ${u.name} here couldn’t be read, so they see nothing for now. Choose it again and save.`)] : []),
     part('Stations',
       h('p', { class: 'hint', style: 'margin:0' }, `A station is shown or hidden as ${got.level} says, unless you allow or block it for ${u.name}.`),
       got.stations.length ? h('table', { class: 'users' },

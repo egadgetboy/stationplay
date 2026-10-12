@@ -317,6 +317,8 @@ def test_someone_with_their_own_limits_only_watches(app):
         ctx.db.set_user_blocks(kit["id"], "{not json")
         ctx.viewing.reload()
         assert page.get("/api/libraries/2/items").status_code == 403
+        users = admin.get("/api/access/viewing").json()["users"]
+        assert users[str(kit["id"])]["ownUnreadable"] is True  # (the page says so)
         assert (
             "What's hidden or allowed for Kit can't be read"
             in admin.get("/api/logs").json()["text"]
@@ -628,3 +630,68 @@ def test_one_media_answer_shares_its_wait_for_plex(app, monkeypatch):
         assert until <= seen[0][2] + titles_module.ENSURE_S + 0.1
         # (The first ask is everything Home shows: both rows' titles.)
         assert {"100", "300", "302"} <= set(seen[0][1])
+
+
+def test_asking_again_for_a_folder_waiting_its_turn_shows_its_first_titles(tmp_path):
+    """The last check of 1.33.0: a big Media folder whose rest was all
+    waiting behind another folder's, asked for again, had nothing being
+    asked about to wait for, and the answer failed ("can't reach Plex").
+    Now its first batch, in the order it's shown, is asked about then."""
+    import asyncio
+
+    titles = Titles(Database(tmp_path / "db.sqlite"))
+
+    async def ask(keys):
+        await asyncio.sleep(0.1)
+        return {k: ("PG", "2", NO_TAGS) for k in keys}
+
+    titles.asker = ask
+    movies = {f"m{k}": "movie" for k in range(1000)}
+    shows = {f"s{k}": "show" for k in range(600)}
+
+    async def run():
+        await titles.ensure(movies, wait_s=0.0)
+        await titles.ensure(shows, wait_s=0.0)
+        # (Until the shows' first batches are back; their rest waits.)
+        for _ in range(100):
+            known = sum(titles.tags(k) is not None for k in shows)
+            if known >= 200:
+                break
+            await asyncio.sleep(0.05)
+        await titles.ensure(shows, wait_s=1.0)
+        return known, sum(titles.tags(k) is not None for k in shows)
+
+    before, after = asyncio.run(run())
+    assert before == 200 and after >= before + 50
+
+
+def test_a_clock_that_stepped_back_once_doesnt_keep_every_title_due(tmp_path, monkeypatch):
+    """The last check of 1.33.0: with the clock an hour fast when a new name
+    was hidden, then set right, every title was due at every look (and,
+    kept, after a restart) until the clock caught up."""
+    import asyncio
+
+    from app import titles as titles_module
+    from app.titles import Title
+
+    db = Database(tmp_path / "db.sqlite")
+    now = _now_ms()
+    titles = Titles(db)
+    titles._save({"300": Title("movie", "PG", "1", now - 60_000, NO_TAGS)}, now)
+    titles.want_tags = True
+    clock = [now + 3_600_000]  # (an hour fast)
+    monkeypatch.setattr(titles_module, "_now", lambda: clock[0])
+    titles.refresh_tags()
+    clock[0] = now  # (set right)
+    assert titles.wanted() == ["300"]
+
+    async def ask(keys):
+        clock[0] += 1_000
+        return {k: ("PG", "1", NO_TAGS) for k in keys}
+
+    asyncio.run(titles.fill(ask))
+    clock[0] += 60_000
+    assert titles.wanted() == []
+    later = Titles(db)  # (restarted)
+    later.want_tags = True
+    assert later.wanted() == []

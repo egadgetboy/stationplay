@@ -672,6 +672,20 @@ class Look:
             page.screenshot(path=str(path))
         for problem in page.evaluate(MEASURE, self.touch):
             self.said.append(f"{path.relative_to(self.folder.parent)}: {problem}")
+        # Words a program left by mistake ("null", "undefined", "[object
+        # Object]"), anywhere in sight.
+        stray = page.evaluate(
+            """() => { const out = []; const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+              for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+                const t = n.textContent.trim();
+                if (!n.parentElement || n.parentElement.closest('script, style, [hidden]')) continue;
+                if (t === 'null' || t === 'undefined' || t.includes('[object ')) out.push(t);
+              } return out; }"""
+        )
+        if stray:
+            self.said.append(
+                f"{path.relative_to(self.folder.parent)}: stray words on the page: {stray}"
+            )
         # A dialog whose body scrolls: its end too.
         scrolled = page.evaluate(
             """() => { const b = [...document.querySelectorAll('dialog[open] .dlg-body')].pop();
