@@ -1,0 +1,152 @@
+# Publishes StationPlay's releases on GitHub, from docs/releases/: each
+# v<version>.md there names the commit of that version (on main) and holds
+# its notes. For each one not yet published, this makes the tag at that
+# commit and the release, with the release's files built from that commit:
+# stationplay-<version>.zip (unzipping to src), stationplay.yaml and
+# docker-compose.yml, and its image (ghcr.io/<you>/stationplay:<version>,
+# and :latest for the newest). A release already published is left as it
+# is. The newest version is marked the latest release.
+#
+# Versions before FIRST_PUBLIC are never published: StationPlay's public
+# releases here start with 1.32.0 (the repository was started afresh then).
+#
+# A version is published only once the image workflow's tests have passed
+# on its commit, or on a later main commit with nothing but release notes
+# changed since (a version's commit, then its notes on top, is how releases
+# are made). So this runs when an image run on main finishes, not when main
+# changes: a version whose tests are still running waits for them, and one
+# whose tests failed isn't published, with a line on the run's page saying
+# why.
+name: release
+
+on:
+  workflow_run:
+    workflows: [image]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read # (the image workflow's runs)
+  packages: write # (the release's image)
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0 # (every version's commit)
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish what's new
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FIRST_PUBLIC: "1.32.0"
+        run: |
+          set -euo pipefail
+          published=$(gh release list --limit 1000 --json tagName --jq '.[].tagName')
+          # The image workflow's recent runs on main: commit, run, status.
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/image.yml/runs?branch=main&per_page=100" \
+            --jq '.workflow_runs[] | "\(.head_sha) \(.id) \(.status)"')
+          # (None yet, before a version's notes are pushed: nothing to do.)
+          versions=$(ls docs/releases/v*.md 2>/dev/null | sed 's|.*/v\(.*\)\.md|\1|' | sort -V || true)
+          newest=$(tail -1 <<< "$versions")
+          refused=0
+          for version in $versions; do
+            tag="v$version"
+            file="docs/releases/$tag.md"
+            if [ "$(printf '%s\n' "$version" "$FIRST_PUBLIC" | sort -V | head -1)" != "$FIRST_PUBLIC" ]; then
+              echo "$tag: before $FIRST_PUBLIC, never published"
+              continue
+            fi
+            if grep -qxF "$tag" <<< "$published"; then
+              echo "$tag: already published"
+              continue
+            fi
+            commit=$(sed -n '2s/^commit: \([0-9a-f]\{40\}\)$/\1/p' "$file")
+            # Checks: the commit is on main, and is that version.
+            if [ -z "$commit" ] || ! git cat-file -e "$commit^{commit}" 2>/dev/null; then
+              echo "::error::$file: its second line must be 'commit: <a commit's full ID>'"; exit 1
+            fi
+            if ! git merge-base --is-ancestor "$commit" origin/main; then
+              echo "::error::$tag: commit $commit isn't on main"; exit 1
+            fi
+            if ! git show "$commit:app/__init__.py" | grep -q "^__version__ = \"$version\"$"; then
+              echo "::error::$tag: app/__init__.py at $commit isn't version $version"; exit 1
+            fi
+            if git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
+              if [ "$(git rev-parse "$tag^{commit}")" != "$commit" ]; then
+                echo "::error::$tag already exists, at another commit"; exit 1
+              fi
+            fi
+            # Its tests: an image run on main at its commit, or at a later
+            # one with nothing but release notes changed since, that passed
+            # the Test step (or is still running).
+            passed="" running="" failed=""
+            while read -r sha run status; do
+              [ -n "$sha" ] || continue
+              git merge-base --is-ancestor "$commit" "$sha" 2>/dev/null || continue
+              git merge-base --is-ancestor "$sha" origin/main || continue
+              git diff --quiet "$commit" "$sha" -- . ':(exclude)docs/releases' || continue
+              if [ "$status" != completed ]; then
+                running=$run
+                continue
+              fi
+              tested=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" \
+                --jq '[.jobs[].steps[]? | select(.name == "Test") | .conclusion] | first // ""')
+              if [ "$tested" = success ]; then
+                passed=$run
+                break
+              fi
+              failed=$run
+            done <<< "$runs"
+            if [ -z "$passed" ]; then
+              if [ -n "$running" ]; then
+                echo "::notice::$tag waits for its tests (image run $running): it's published when they pass"
+              elif [ -n "$failed" ]; then
+                echo "::error::$tag isn't published: its tests didn't pass (image run $failed)"
+                refused=1
+              else
+                echo "::error::$tag isn't published: the image workflow hasn't tested its commit ${commit:0:7}, or a later main commit with nothing but release notes since"
+                refused=1
+              fi
+              continue
+            fi
+            echo "$tag: its tests passed (image run $passed)"
+            # The release's files, from that commit.
+            out="$RUNNER_TEMP/$tag"
+            mkdir -p "$out"
+            git archive --format=zip --prefix=src/ -o "$out/stationplay-$version.zip" "$commit"
+            git show "$commit:stationplay.yaml" > "$out/stationplay.yaml"
+            git show "$commit:docker-compose.yml" > "$out/docker-compose.yml"
+            # The notes: everything after the commit's lines.
+            tail -n +4 "$file" | sed '/./,$!d' > "$out/notes.md"
+            latest=false
+            if [ "$version" = "$newest" ]; then latest=true; fi
+            # Its image first, built from that commit as the image workflow
+            # tested it: if it can't be pushed, nothing is published, and the
+            # next run tries again (a release is never left without its image).
+            image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/stationplay"
+            git archive --format=tar "$commit" | docker build --quiet --tag "$image:$version" -
+            docker push --quiet "$image:$version"
+            if [ "$latest" = true ]; then
+              docker tag "$image:$version" "$image:latest"
+              docker push --quiet "$image:latest"
+            fi
+            gh release create "$tag" --target "$commit" --title "StationPlay $version" \
+              --notes-file "$out/notes.md" --latest="$latest" \
+              "$out/stationplay-$version.zip" "$out/stationplay.yaml" "$out/docker-compose.yml"
+            echo "::notice::Published $tag"
+          done
+          exit "$refused"

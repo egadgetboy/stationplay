@@ -1,0 +1,200 @@
+"""What StationPlay's apps are shown about a library's shows, movies and
+episodes, whichever source it comes from (see docs/on-demand.md): a source
+turns its own data into these, as plex.to_entry does for Plex.
+
+Codec and container names are made the same whatever a source calls them
+("dca" is DTS, "subrip" is SRT), so deciding what a device can play
+(ondemand.py) never depends on one source's spelling.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+SHOW = "show"
+MOVIE = "movie"
+EPISODE = "episode"
+
+# A source's names for the same thing, made one.
+_CONTAINERS = {"matroska": "mkv", "mpegts": "ts", "mpeg2ts": "ts", "m4v": "mp4", "quicktime": "mov"}
+_VIDEO = {
+    "avc": "h264", "avc1": "h264", "x264": "h264", "h265": "hevc", "x265": "hevc",
+    "hvc1": "hevc", "hev1": "hevc", "mpeg2": "mpeg2video", "wmv3": "vc1", "wvc1": "vc1",
+    "xvid": "mpeg4", "divx": "mpeg4",
+}  # fmt: skip
+_AUDIO = {
+    "dca": "dts", "dca-ma": "dts", "dca-hra": "dts", "dts-hd": "dts", "dtshd": "dts",
+    "e-ac3": "eac3", "ac-3": "ac3",
+}  # fmt: skip
+_SUBTITLES = {
+    "subrip": "srt", "ssa": "ass", "webvtt": "vtt", "hdmv_pgs_subtitle": "pgs",
+    "dvd_subtitle": "vobsub", "dvdsub": "vobsub", "tx3g": "mov_text",
+}  # fmt: skip
+# Subtitles drawn as pictures (a player shows them as they are, or they're
+# drawn into the picture when converting); the rest are text.
+PICTURE_SUBTITLES = frozenset({"pgs", "vobsub", "dvb_subtitle"})
+
+# HDR kinds, as devices list what they can show.
+HDR10 = "hdr10"
+HLG = "hlg"
+DOLBY_VISION = "dv"
+
+
+def container(name: str | None) -> str:
+    """A container's one name: "mkv", "mp4", "ts"... ("" if unknown). A
+    source listing several ("mov,mp4,m4a") counts as its first."""
+    first = (name or "").strip().lower().split(",")[0]
+    return _CONTAINERS.get(first, first)
+
+
+def video_codec(name: str | None) -> str:
+    n = (name or "").strip().lower()
+    return _VIDEO.get(n, n)
+
+
+def audio_codec(name: str | None) -> str:
+    n = (name or "").strip().lower()
+    return _AUDIO.get(n, n)
+
+
+def subtitle_codec(name: str | None) -> str:
+    n = (name or "").strip().lower()
+    return _SUBTITLES.get(n, n)
+
+
+@dataclass(frozen=True)
+class Track:
+    """One of a file's audio or subtitle tracks."""
+
+    id: str  # the source's own id for it
+    codec: str  # made one (see above)
+    language: str = ""  # as people read it ("English"), "" if unknown
+    title: str = ""  # what the file calls it ("Commentary"), "" if nothing
+    channels: int | None = None  # (audio)
+    default: bool = False
+    forced: bool = False  # (subtitles: only the parts in another language)
+    external: bool = False  # (subtitles) a file of its own, beside the video
+    index: int | None = None  # its place among all the file's tracks (0: the first)
+    language_code: str = ""  # its language as a code ("eng": see languages.py), "" if unknown
+
+    @property
+    def picture(self) -> bool:
+        """Whether it's subtitles drawn as pictures."""
+        return self.codec in PICTURE_SUBTITLES
+
+
+@dataclass(frozen=True)
+class Media:
+    """One version of a program's file, as its source describes it.
+
+    A version can be in several files, played one after the other as one
+    program: a movie on two discs, which Plex stacks ("cd1" and "cd2",
+    "part 1" and "part 2"). Then `parts` has each file, in order, described
+    as a file is (each with its own length, None where the source didn't
+    say, and what it holds, where the source said); the version's own
+    fields are its first file's, but for its length and size, which are all
+    of them together. A version in one file has no `parts`: it's its own
+    one file (see `files`)."""
+
+    container: str
+    video: str  # its picture's codec ("" for none)
+    width: int = 0
+    height: int = 0
+    bit_depth: int = 8
+    hdr: str = ""  # its HDR: "", HDR10 or HLG (Dolby Vision's base, if any)
+    dv_profile: int | None = None  # Dolby Vision's profile (0: unknown); None: none
+    bitrate_kbps: int | None = None
+    file: str | None = None  # where the source has it (its first file)
+    part_key: str | None = None  # the source's address for it
+    size: int | None = None
+    duration_ms: int | None = None
+    id: str = ""  # the source's own id for this version
+    audio: tuple[Track, ...] = ()
+    subtitles: tuple[Track, ...] = ()
+    parts: tuple[Media, ...] = ()  # its files, when it's in several
+
+    @property
+    def files(self) -> tuple[Media, ...]:
+        """Its files, in order: its parts, or itself."""
+        return self.parts or (self,)
+
+    @property
+    def joined(self) -> bool:
+        """Whether it's in several files, played as one."""
+        return len(self.parts) > 1
+
+    @property
+    def default_audio(self) -> Track | None:
+        return next((a for a in self.audio if a.default), self.audio[0] if self.audio else None)
+
+    @property
+    def size_label(self) -> str:
+        """Its picture's size as people say it: "4K", "1080p", "720p", "SD"."""
+        return size_label(self.width, self.height)
+
+
+def part_words(n: int, of: int) -> str:
+    """Which of a program's files (see Media.parts): "part 2 of 3"."""
+    return f"part {n} of {of}"
+
+
+def size_label(width: int, height: int) -> str:
+    """A picture's size as people say it (by width too: a 1920x800 movie is
+    1080p, letterboxed)."""
+    if width >= 3200 or height >= 1800:
+        return "4K"
+    if width >= 1600 or height >= 900:
+        return "1080p"
+    if width >= 1100 or height >= 650:
+        return "720p"
+    if height >= 540:
+        return "576p"
+    if height >= 360:
+        return "480p"
+    return "SD" if width or height else ""
+
+
+@dataclass(frozen=True)
+class Entry:
+    """A show, movie or episode."""
+
+    key: str
+    kind: str  # SHOW, MOVIE or EPISODE
+    title: str  # (an episode's own title)
+    year: int | None = None
+    summary: str = ""
+    library: str = ""  # the library it's in, "" if the source didn't say
+    show_key: str | None = None  # (an episode's show)
+    show_title: str = ""
+    season: int | None = None
+    episode: int | None = None
+    duration_ms: int | None = None
+    added_ms: int | None = None
+    released: str = ""  # YYYY-MM-DD, "" if unknown
+    episodes: int | None = None  # (a show: how many)
+    seasons: int | None = None  # (a show: how many)
+    genres: tuple[str, ...] = ()
+    content_rating: str = ""
+    studio: str = ""
+    has_thumb: bool = True
+    has_art: bool = False
+    intro: tuple[int, int] | None = None  # [start, end) in ms, when asked for
+    credits: tuple[int, int] | None = None
+    media: tuple[Media, ...] = field(default=())  # (episodes and movies, when asked for)
+    sort_title: str = ""  # how the source sorts it ("Orbit Room, The"), "" if as its title
+    # Its file (its first version's), as the source has it: episodes with the
+    # same one are in one file together ("S01E01-E02"); "" if not known.
+    file: str = ""
+    # (When asked for in detail:)
+    tagline: str = ""
+    cast: tuple[tuple[str, str], ...] = ()  # (name, role) as billed
+    directors: tuple[str, ...] = ()
+    writers: tuple[str, ...] = ()
+
+    def version(self, version_id: str) -> Media | None:
+        """One version of its file, as a file key names it (see
+        broken.version_key): "" for its first (the one a station plays),
+        or another's ID; None if it has no such version now."""
+        if not version_id:
+            return self.media[0] if self.media else None
+        return next((m for m in self.media[1:] if m.id == version_id), None)

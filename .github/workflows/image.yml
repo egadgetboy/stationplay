@@ -1,0 +1,52 @@
+# Builds the container image and tests it as built, whenever main changes.
+# The tests run in the image itself (the Dockerfile's test stage: the image
+# that ships, with the tests added), on the FFmpeg, Python and libraries that
+# ship. Nothing is published here: release.yml publishes a release's image,
+# and only once this workflow's tests have passed on its commit.
+name: image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test-and-publish:
+    runs-on: ubuntu-24.04
+    # (The tests take 30 to 50 minutes; building, a few more.)
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build
+        run: |
+          docker build --tag stationplay:latest .
+          docker build --target test --tag stationplay:test .
+          # (The tests run in the very image that's published: the test
+          # stage's layers are its, with the tests' on top.)
+          shipped=$(docker image inspect -f '{{join .RootFS.Layers " "}}' stationplay:latest)
+          tested=$(docker image inspect -f '{{join .RootFS.Layers " "}}' stationplay:test)
+          if [ "${tested#"$shipped "}" = "$tested" ]; then
+            echo "::error::The test stage isn't built on the image that's published"; exit 1
+          fi
+      # release.yml publishes a version only once this step has passed on
+      # its commit (or a later one with nothing but release notes since):
+      # keep its name.
+      - name: Test
+        timeout-minutes: 60
+        run: |
+          # (What the tests ran with, on the run's page.)
+          docker run --rm stationplay:test sh -c \
+            'echo "::notice::$(ffmpeg -version | head -1) at $(command -v ffmpeg); $(nproc) processors; $(python --version)"'
+          # (Each test that fails is named on the run's page, not only in its
+          # log, with why: pytest's summary is as wide as COLUMNS, and the
+          # lines saying what failed ("E ...") go in one more note, since a
+          # step shows 10 at most.)
+          set -o pipefail
+          docker run --rm --init -e COLUMNS=400 stationplay:test 2>&1 | tee "$RUNNER_TEMP/tests.txt" || {
+            grep -E "^(FAILED|ERROR) " "$RUNNER_TEMP/tests.txt" | head -9 | cut -c1-1600 | sed 's/^/::error::/'
+            why=$(grep -E "^E   " "$RUNNER_TEMP/tests.txt" | head -40 | cut -c1-300 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
+            [ -n "$why" ] && echo "::error title=Why::$why"
+            exit 1
+          }

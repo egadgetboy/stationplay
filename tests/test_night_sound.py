@@ -1,0 +1,112 @@
+"""Night mode's sound, as StationPlay makes it (hls.NIGHT_SOUND) for apps
+that can't make it themselves (Apple's, Roku's), and for converted copies:
+it only ever turns sound down, loud scenes the most, so turning night mode
+on never makes anything louder (the owner's report: in 1.31 and before, it
+turned everything up 8 dB after turning loud sounds down, so most programs
+got louder). The Android app makes the same sound on the device (its
+NightMode, with the same curve: these levels are its too)."""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+
+import pytest
+
+from app import hls
+
+FFMPEG = os.environ.get("FFMPEG_PATH", "ffmpeg")
+SECONDS = 4
+# Speech-like sound: a 220 Hz voice in syllables, four a second (the
+# Android app's tests use the same), and loud, dense sound (an action
+# scene's).
+VOICE = "abs(sin(PI*4*t))^3*(sin(2*PI*220*t)+0.5*sin(2*PI*440*t))"
+
+
+def measured(source: str, night: bool) -> float:
+    """The mean level (dB, RMS) of `source` (a lavfi source), over its
+    second half (once night mode has settled), with or without night
+    mode's sound."""
+    chain = f"{hls.NIGHT_SOUND}," if night else ""
+    done = subprocess.run(
+        [FFMPEG, "-hide_banner", "-nostdin", "-f", "lavfi", "-i", source, "-t", str(SECONDS),
+         "-af", f"{chain}atrim=start={SECONDS / 2},volumedetect", "-f", "null", "-"],
+        capture_output=True, text=True, timeout=60, check=True,
+    )  # fmt: skip
+    found = re.search(r"mean_volume: (-?[\d.]+) dB", done.stderr)
+    assert found, done.stderr[-500:]
+    return float(found.group(1))
+
+
+def tone(db: float) -> str:
+    """A 1 kHz tone peaking at `db`, on two channels."""
+    return f"aevalsrc={10 ** (db / 20):.6f}*sin(2*PI*1000*t)|{10 ** (db / 20):.6f}*sin(2*PI*1000*t):s=48000"  # fmt: skip
+
+
+def voice(db: float) -> str:
+    """The speech-like sound at `db` RMS (its peaks about 9 dB above), on two
+    channels."""
+    k = 10 ** (db / 20) / 0.442  # (the voice's own RMS, at 1)
+    return f"aevalsrc={k:.6f}*{VOICE}|{k:.6f}*{VOICE}:s=48000"
+
+
+def action(db: float) -> str:
+    """Loud, dense sound at about `db` RMS (-15 at most), on two channels."""
+    assert db <= -15
+    amplitude = 10 ** ((db + 14.3) / 20)  # (pink noise's RMS is 14.3 dB under its amplitude)
+    return f"anoisesrc=color=pink:amplitude={amplitude:.6f}:sample_rate=48000:seed=7,pan=stereo|c0=c0|c1=c0"  # fmt: skip
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _ffmpeg():
+    if subprocess.run([FFMPEG, "-version"], capture_output=True).returncode != 0:
+        pytest.skip("FFmpeg isn't installed")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [tone(-40), tone(-30), tone(-20), tone(-6), voice(-36), voice(-30), voice(-24), voice(-20),
+     action(-24), action(-15)],
+    ids=["tone-40", "tone-30", "tone-20", "tone-6", "voice-36", "voice-30", "voice-24", "voice-20",
+         "action-24", "action-15"],
+)  # fmt: skip
+def test_nothing_gets_louder(source):
+    before, after = measured(source, False), measured(source, True)
+    assert after <= before + 0.3, (before, after)
+
+
+def test_quiet_sound_is_left_as_it_is():
+    before, after = measured(tone(-40), False), measured(tone(-40), True)
+    assert abs(after - before) <= 0.5, (before, after)
+
+
+def test_voices_stay_close_to_where_they_were():
+    # Dialogue as quiet films mix it (-30 dB RMS): at most 3 dB down.
+    before, after = measured(voice(-30), False), measured(voice(-30), True)
+    assert before - 3 <= after <= before + 0.3, (before, after)
+
+
+def test_loud_sound_comes_down_the_most():
+    before, after = measured(tone(-6), False), measured(tone(-6), True)
+    assert after <= before - 12, (before, after)
+    before, after = measured(action(-15), False), measured(action(-15), True)
+    assert after <= before - 10, (before, after)
+
+
+def test_voices_and_action_end_up_a_few_decibels_apart():
+    # 18 dB apart in the film; 6 or less with night mode on.
+    assert abs(measured(action(-15), False) - measured(voice(-33), False) - 18) <= 1
+    voices, loud = measured(voice(-33), True), measured(action(-15), True)
+    assert loud - voices <= 6, (voices, loud)
+
+
+@pytest.mark.parametrize(
+    ("peak", "turned"),
+    # (The curve: nothing below -29 dB; 1 dB down for each 3 louder up to -22,
+    # then 19 down for each 20 louder. Android's NightMode.gainDb is the same.)
+    [(-40, 0.0), (-25, -4 / 3), (-10, -7 / 3 - 12 * 0.95), (-3, -7 / 3 - 19 * 0.95)],
+)
+def test_the_curve_is_the_android_apps(peak, turned):
+    before, after = measured(tone(peak), False), measured(tone(peak), True)
+    assert after - before == pytest.approx(turned, abs=1.5), (before, after)

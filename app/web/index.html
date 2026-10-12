@@ -1,0 +1,949 @@
+<!doctype html>
+<html lang="en"__THEME__>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StationPlay</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 85.55 100'%3E%3Cstyle%3Epath{stroke:%23000}@media (prefers-color-scheme:dark){path{stroke:%23fff}}%3C/style%3E%3Cpath d='M3.14 87.74L3.14 12.26A9.12 9.12 0 0 1 17.06 4.5L78.09 42.24A9.12 9.12 0 0 1 78.09 57.76L17.06 95.5A9.12 9.12 0 0 1 3.14 87.74Z' fill='none' stroke-width='6.28'/%3E%3Cpath d='M12.56 82.53L12.56 17.47A2.61 2.61 0 0 1 16.53 15.25L69.15 47.78A2.61 2.61 0 0 1 69.15 52.22L16.53 84.75A2.61 2.61 0 0 1 12.56 82.53Z' fill='%230ea609' stroke='none' style='stroke:none'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<!-- As an app (added to a home screen, or installed on a computer): in a
+     window of its own, in the page's colors, below an iPhone's status bar.
+     (The manifest is asked for with this browser's cookies, for a sign-in
+     in front of StationPlay, such as Cloudflare Access.) -->
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+<meta name="theme-color" content="#f4f2ee" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#11161b" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="StationPlay">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="stylesheet" href="/web/page.css?v=__VERSION__">
+</head>
+<body>
+<svg class="sprite" aria-hidden="true">
+  <!-- StationPlay's logo: the mark, and the wordmark (Montserrat SemiBold and Bold, as outlines) -->
+  <symbol id="sp-mark" viewBox="0 0 85.55 100"><path d="M3.14 87.74L3.14 12.26A9.12 9.12 0 0 1 17.06 4.5L78.09 42.24A9.12 9.12 0 0 1 78.09 57.76L17.06 95.5A9.12 9.12 0 0 1 3.14 87.74Z" fill="none" stroke="currentColor" stroke-width="6.28"/><path d="M12.56 82.53L12.56 17.47A2.61 2.61 0 0 1 16.53 15.25L69.15 47.78A2.61 2.61 0 0 1 69.15 52.22L16.53 84.75A2.61 2.61 0 0 1 12.56 82.53Z" style="fill:var(--brand)"/></symbol>
+  <symbol id="sp-word" viewBox="0 0 250.99 25.46"><path d="M9.76 25.46Q6.86 25.46 4.21 24.63Q1.56 23.8 0 22.49L1.59 18.92Q3.08 20.09 5.27 20.87Q7.46 21.64 9.76 21.64Q11.71 21.64 12.91 21.22Q14.11 20.79 14.68 20.07Q15.24 19.34 15.24 18.43Q15.24 17.29 14.43 16.6Q13.62 15.91 12.32 15.51Q11.03 15.1 9.46 14.75Q7.89 14.39 6.31 13.92Q4.74 13.44 3.45 12.68Q2.16 11.92 1.34 10.65Q0.53 9.37 0.53 7.39Q0.53 5.38 1.61 3.7Q2.69 2.02 4.9 1.01Q7.11 0 10.5 0Q12.73 0 14.92 0.57Q17.12 1.13 18.74 2.19L17.29 5.76Q15.63 4.77 13.86 4.3Q12.1 3.82 10.47 3.82Q8.56 3.82 7.37 4.28Q6.19 4.74 5.64 5.48Q5.09 6.22 5.09 7.18Q5.09 8.31 5.89 9Q6.68 9.69 7.97 10.08Q9.27 10.47 10.86 10.84Q12.45 11.21 14.02 11.67Q15.6 12.13 16.89 12.87Q18.18 13.62 18.97 14.89Q19.77 16.16 19.77 18.11Q19.77 20.09 18.69 21.77Q17.61 23.45 15.38 24.46Q13.16 25.46 9.76 25.46ZM28.52 25.11V4.24H20.31V0.35H41.32V4.24H33.12V25.11ZM39.8 25.11 50.94 0.35H55.47L66.64 25.11H61.83L59.36 19.38H46.98L44.54 25.11ZM57.84 15.77 53.17 4.95 48.53 15.77ZM73.23 25.11V4.24H65.03V0.35H86.04V4.24H77.83V25.11ZM89.19 25.11V0.35H93.79V25.11ZM111.21 25.46Q108.31 25.46 105.87 24.51Q103.43 23.55 101.62 21.84Q99.82 20.12 98.83 17.81Q97.84 15.49 97.84 12.73Q97.84 9.97 98.83 7.66Q99.82 5.34 101.62 3.62Q103.43 1.91 105.87 0.95Q108.31 0 111.17 0Q114.07 0 116.49 0.95Q118.92 1.91 120.72 3.62Q122.52 5.34 123.51 7.66Q124.5 9.97 124.5 12.73Q124.5 15.49 123.51 17.82Q122.52 20.16 120.72 21.86Q118.92 23.55 116.49 24.51Q114.07 25.46 111.21 25.46ZM111.17 21.43Q113.05 21.43 114.64 20.79Q116.23 20.16 117.4 18.97Q118.56 17.79 119.22 16.22Q119.87 14.64 119.87 12.73Q119.87 10.82 119.22 9.25Q118.56 7.67 117.4 6.49Q116.23 5.3 114.64 4.67Q113.05 4.03 111.17 4.03Q109.3 4.03 107.72 4.67Q106.15 5.3 104.97 6.49Q103.78 7.67 103.13 9.25Q102.47 10.82 102.47 12.73Q102.47 14.61 103.13 16.2Q103.78 17.79 104.95 18.97Q106.11 20.16 107.71 20.79Q109.3 21.43 111.17 21.43ZM128.7 25.11V0.35H132.48L146.13 17.12V0.35H150.69V25.11H146.91L133.26 8.35V25.11Z" fill="currentColor"/><path d="M156.53 25.11V0.35H167.25Q170.57 0.35 172.98 1.43Q175.38 2.51 176.69 4.53Q178 6.54 178 9.34Q178 12.1 176.69 14.11Q175.38 16.13 172.98 17.21Q170.57 18.28 167.25 18.28H162.26V25.11ZM162.26 13.62H166.93Q169.58 13.62 170.89 12.48Q172.2 11.35 172.2 9.34Q172.2 7.29 170.89 6.15Q169.58 5.02 166.93 5.02H162.26ZM181.88 25.11V0.35H187.61V20.44H200.02V25.11ZM200.77 25.11 211.81 0.35H217.46L228.53 25.11H222.52L220.33 19.8H208.83L206.64 25.11ZM218.52 15.45 214.6 5.98 210.67 15.45ZM235.64 25.11V16.27L226.06 0.35H232.14L238.76 11.35L245.37 0.35H250.99L241.37 16.34V25.11Z" style="fill:var(--brand)"/></symbol>
+</svg>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><svg class="mark" viewBox="0 0 85.55 100" aria-hidden="true"><use href="#sp-mark"/></svg><svg class="word" viewBox="0 0 250.99 25.46" role="img" aria-label="StationPlay"><use href="#sp-word"/></svg></div>
+    <div class="spacer"></div>
+    <span class="pill" id="plexPill"><span class="dot"></span><span>Checking Plex…</span></span>
+    <span class="pill" id="livePill" hidden><span class="dot live"></span><span></span></span>
+    <button class="pill away" id="awayPill" type="button" hidden><span class="dot"></span><span class="long">Away from home</span><span class="short">Away</span><span class="word"></span></button>
+    <button class="pill alerts" id="alertsPill" type="button" hidden aria-haspopup="dialog"><span class="dot bad"></span><span class="count"></span></button>
+    <button class="pill userpill" id="userPill" type="button" hidden title="Your account"><span></span></button>
+  </header>
+
+  <div class="tabrow">
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-tab="stations" aria-selected="true">Stations</button>
+    <button class="tab admin" role="tab" data-tab="setup">Add to Plex</button>
+    <button class="tab admin" role="tab" data-tab="access">Access</button>
+    <button class="tab" role="tab" data-tab="stats">Stats</button>
+    <button class="tab admin" role="tab" data-tab="logs">Logs</button>
+    <button class="tab admin" role="tab" data-tab="broken">Broken files <span class="count" id="brokenCount" hidden></span></button>
+  </nav>
+  <!-- Buy Me a Coffee's cup, from its brand assets (via Simple Icons). Only a
+       link: nothing is loaded from its site. -->
+  <a class="coffee" href="https://buymeacoffee.com/egadgetboy" target="_blank" rel="noopener noreferrer" title="Support StationPlay on Buy Me a Coffee" aria-label="Buy me a coffee (opens Buy Me a Coffee)"><span class="cup"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20.216 6.415l-.132-.666c-.119-.598-.388-1.163-1.001-1.379-.197-.069-.42-.098-.57-.241-.152-.143-.196-.366-.231-.572-.065-.378-.125-.756-.192-1.133-.057-.325-.102-.69-.25-.987-.195-.4-.597-.634-.996-.788a5.723 5.723 0 00-.626-.194c-1-.263-2.05-.36-3.077-.416a25.834 25.834 0 00-3.7.062c-.915.083-1.88.184-2.75.5-.318.116-.646.256-.888.501-.297.302-.393.77-.177 1.146.154.267.415.456.692.58.36.162.737.284 1.123.366 1.075.238 2.189.331 3.287.37 1.218.05 2.437.01 3.65-.118.299-.033.598-.073.896-.119.352-.054.578-.513.474-.834-.124-.383-.457-.531-.834-.473-.466.074-.96.108-1.382.146-1.177.08-2.358.082-3.536.006a22.228 22.228 0 01-1.157-.107c-.086-.01-.18-.025-.258-.036-.243-.036-.484-.08-.724-.13-.111-.027-.111-.185 0-.212h.005c.277-.06.557-.108.838-.147h.002c.131-.009.263-.032.394-.048a25.076 25.076 0 013.426-.12c.674.019 1.347.067 2.017.144l.228.031c.267.04.533.088.798.145.392.085.895.113 1.07.542.055.137.08.288.111.431l.319 1.484a.237.237 0 01-.199.284h-.003c-.037.006-.075.01-.112.015a36.704 36.704 0 01-4.743.295 37.059 37.059 0 01-4.699-.304c-.14-.017-.293-.042-.417-.06-.326-.048-.649-.108-.973-.161-.393-.065-.768-.032-1.123.161-.29.16-.527.404-.675.701-.154.316-.199.66-.267 1-.069.34-.176.707-.135 1.056.087.753.613 1.365 1.37 1.502a39.69 39.69 0 0011.343.376.483.483 0 01.535.53l-.071.697-1.018 9.907c-.041.41-.047.832-.125 1.237-.122.637-.553 1.028-1.182 1.171-.577.131-1.165.2-1.756.205-.656.004-1.31-.025-1.966-.022-.699.004-1.556-.06-2.095-.58-.475-.458-.54-1.174-.605-1.793l-.731-7.013-.322-3.094c-.037-.351-.286-.695-.678-.678-.336.015-.718.3-.678.679l.228 2.185.949 9.112c.147 1.344 1.174 2.068 2.446 2.272.742.12 1.503.144 2.257.156.966.016 1.942.053 2.892-.122 1.408-.258 2.465-1.198 2.616-2.657.34-3.332.683-6.663 1.024-9.995l.215-2.087a.484.484 0 01.39-.426c.402-.078.787-.212 1.074-.518.455-.488.546-1.124.385-1.766zm-1.478.772c-.145.137-.363.201-.578.233-2.416.359-4.866.54-7.308.46-1.748-.06-3.477-.254-5.207-.498-.17-.024-.353-.055-.47-.18-.22-.236-.111-.71-.054-.995.052-.26.152-.609.463-.646.484-.057 1.046.148 1.526.22.577.088 1.156.159 1.737.212 2.48.226 5.002.19 7.472-.14.45-.06.899-.13 1.345-.21.399-.072.84-.206 1.08.206.166.281.188.657.162.974a.544.544 0 01-.169.364zm-6.159 3.9c-.862.37-1.84.788-3.109.788a5.884 5.884 0 01-1.569-.217l.877 9.004c.065.78.717 1.38 1.5 1.38 0 0 1.243.065 1.658.065.447 0 1.786-.065 1.786-.065.783 0 1.434-.6 1.499-1.38l.94-9.95a3.996 3.996 0 00-1.322-.238c-.826 0-1.491.284-2.26.613z"/></svg></span><span class="label">Buy me a coffee</span></a>
+  </div>
+
+  <section id="tab-stations">
+    <div class="section-head">
+      <h2>Your stations</h2>
+      <div class="spacer"></div>
+      <span class="hint" id="roomHint" hidden></span>
+      <button class="btn" id="smartStations" title="Make stations from what’s in your Plex: one station, or one for each decade, genre, studio, and more"><span>Smart stations</span></button>
+      <button class="btn" id="fromCollections" title="Make a station from each Plex collection you pick, named after the collection"><span>From Plex collections</span></button>
+      <button class="btn primary" id="newChannel">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v10M3 8h10"/></svg>
+        <span>New station</span>
+      </button>
+    </div>
+    <div class="live-list" id="liveList"></div>
+    <div class="channels" id="channels"></div>
+  </section>
+
+  <section id="tab-broken" hidden>
+    <div class="section-head">
+      <h2>Broken files</h2>
+      <div class="spacer"></div>
+      <button class="btn" type="button" id="brokenAgain" title="Go through this list again now. Programs back in Plex, and programs the quick check took off the air, are checked again.">Check the list again</button>
+      <a class="btn" href="/api/broken/download" download>Download list</a>
+    </div>
+    <div class="panel scan">
+      <div class="scan-line" id="scanQuick"></div>
+      <div class="scan-line" id="scanDeep"></div>
+      <div class="scan-line" id="scanMedia" hidden></div>
+      <div class="scan-line" id="scanClips" hidden></div>
+      <div class="scan-line" id="scanList"></div>
+      <div class="scan-set">
+        <label><input type="checkbox" id="scanOn"> Deep scan every night from</label>
+        <input type="time" id="scanStart" aria-label="Start time">
+        <span>to</span>
+        <input type="time" id="scanEnd" aria-label="End time">
+        <button class="btn" id="scanSave" hidden>Save</button>
+      </div>
+    </div>
+    <details class="panel arr" id="arrPanel">
+      <summary><strong>Replacing files with Sonarr and Radarr</strong><span class="muted" id="arrSum"></span></summary>
+      <div class="arr-body" id="arrBody"></div>
+    </details>
+    <details class="panel arr" id="reportsPanel">
+      <summary><strong>Reports from StationPlay’s apps</strong><span class="muted" id="reportsSum"></span></summary>
+      <div class="arr-body" id="reportsBody"></div>
+    </details>
+    <div id="filesEmpty" hidden></div>
+    <div class="panel files" id="needsPanel">
+      <div class="files-head"><h3>Needs you</h3><span class="chip bad" id="needsCount" hidden></span></div>
+      <p class="muted small files-intro">People’s reports, and files StationPlay found, waiting for you to choose what to do.</p>
+      <div id="needsList"></div>
+    </div>
+    <div class="panel files" id="replacingPanel" hidden>
+      <div class="files-head"><h3>Being replaced</h3><span class="chip accent" id="replacingCount"></span></div>
+      <p class="muted small files-intro">What Sonarr or Radarr is fetching now. A new file is checked like any other, and goes back on the air once it passes.</p>
+      <div id="replacingList"></div>
+    </div>
+    <div class="panel files" id="foundPanel" hidden>
+      <div class="files-head"><h3>Found by StationPlay</h3><span class="chip plain" id="foundCount"></span></div>
+      <p class="muted small files-intro">The rest of what StationPlay found: files you’re handling yourself, files no station or Media plays now, and files that can’t be shown correctly on the stations.</p>
+      <div id="brokenPanel"></div>
+    </div>
+    <p class="muted small">
+      What’s on this list is off the air on every station, and other programs play in their place. In Media, in StationPlay’s apps, a broken file doesn’t play (another version of it does, if there is one) and a damaged one still does.
+      <strong>Missing</strong> files are gone from disk or from Plex while a station or Media still has them. <strong>Broken</strong> files won’t play. <strong>Damaged</strong> files play, but the picture or sound breaks up. <strong>Unsupported</strong> files play but can’t be shown correctly (Dolby Vision profile 5). Replace them with another version.
+      Fix or replace the file, then choose <strong>Retry</strong>. Or let the list clear itself: a program comes off the list when Plex has it again under a new ID (after a file is renamed, for example), or when it’s missing and neither a station nor Media has it anymore. (Removed it on purpose? Take it off the stations its entry lists.) A program with a new file, or one the quick check took off the air, comes off once it passes the quick check.
+      Problems found by the deep scan or during playback stay until the file changes. Retry also tells the checks to leave that file on the air.
+    </p>
+  </section>
+
+  <section id="tab-logs" hidden>
+    <div class="section-head">
+      <h2>Logs</h2>
+      <div class="spacer"></div>
+      <div class="checks">
+        <label><input type="checkbox" id="logWarn"> Warnings</label>
+        <label><input type="checkbox" id="logErr"> Errors</label>
+        <label title="Sign-ins, sign-outs, and changes to who can sign in"><input type="checkbox" id="logAccess"> Access</label>
+      </div>
+      <button class="btn" id="copyLogs">Copy</button>
+    </div>
+    <details class="panel arr" id="notifyPanel">
+      <summary><strong>Notify a web address</strong><span class="muted" id="notifySum"></span></summary>
+      <div class="arr-body" id="notifyBody"></div>
+    </details>
+    <div class="panel problems" id="problemsPanel">
+      <div class="problems-head">
+        <h3>Problems in the apps</h3>
+        <div class="spacer"></div>
+        <div class="seg" role="group" aria-label="Time period" id="problemDays">
+          <button type="button" data-days="1" aria-pressed="false">Today</button>
+          <button type="button" data-days="7" aria-pressed="true">7 days</button>
+          <button type="button" data-days="30" aria-pressed="false">30 days</button>
+        </div>
+        <button class="btn" id="clearProblems">Clear</button>
+      </div>
+      <p class="muted small">StationPlay’s apps say here when something goes wrong as they play: a station that doesn’t start or stops, something from Media that doesn’t play, playing that can’t keep up, the app closing unexpectedly, or the app not reaching StationPlay for a minute or more (told once it’s back). Each says which app, and on what kind of device, so you can tell whether a problem is one device’s or everyone’s, what the app said, and what it did just before.</p>
+      <div id="problemList"></div>
+    </div>
+    <p class="muted small">The latest 200 entries, newest at the bottom. Select Warnings, Errors, or both to see only those. Select Access to see who signed in and from where. The access history is kept when StationPlay restarts.</p>
+    <div class="panel logs" id="logList"></div>
+  </section>
+
+  <section id="tab-stats" hidden>
+    <div id="statLive" hidden>
+      <div class="section-head">
+        <h2>Server</h2>
+        <span class="pill"><span class="dot live"></span><span>Live</span></span>
+        <div class="spacer"></div>
+        <span class="muted small" id="serverNote">The last 10 minutes, updated every 5 seconds while this tab is open</span>
+      </div>
+      <div class="health" id="healthTiles"></div>
+      <div class="panel now-panel">
+        <div class="now-head"><h3>Watching now</h3><span class="muted small" id="nowCount"></span></div>
+        <div id="statNow"></div>
+      </div>
+    </div>
+    <div class="section-head">
+      <h2>Stats</h2>
+      <div class="spacer"></div>
+      <div class="seg" role="group" aria-label="Time period">
+        <button type="button" data-days="1" aria-pressed="false">Today</button>
+        <button type="button" data-days="7" aria-pressed="true">7 days</button>
+        <button type="button" data-days="30" aria-pressed="false">30 days</button>
+        <button type="button" data-days="0" aria-pressed="false">All</button>
+      </div>
+    </div>
+    <div class="tiles" id="statTiles"></div>
+    <div class="panel"><table class="stats" id="statTable"></table></div>
+    <div class="stats-cols" id="statTop" hidden>
+      <div class="panel">
+        <h3>Top people</h3>
+        <div class="toplist" id="statPeople"></div>
+        <p class="muted small" style="margin:10px 0 0">Only Admins see this. StationPlay’s apps count for whoever is signed in on them, stations and Media alike. For Plex, StationPlay asks Plex every 30 seconds who’s watching which station, and counts the time for each Plex user. Viewing in other apps (through the M3U playlist) isn’t counted by person, and neither is time when two stations air the same program at once.</p>
+      </div>
+      <div class="panel"><h3>Top Media</h3><div class="toplist" id="statMedia"></div></div>
+    </div>
+    <div class="stats-cols">
+      <div class="panel"><h3>Most watched shows &amp; movies</h3><div class="toplist" id="statPrograms"></div></div>
+      <div class="panel"><h3>When people watch</h3><div id="statHours"></div></div>
+    </div>
+    <p class="muted small">A viewing counts once it lasts a minute, so flipping past a station doesn’t count. StationPlay counts the streams Plex asks it for, so several people watching one station together in Plex (or Plex recording it) may count as one viewing; each of StationPlay’s apps counts on its own. Stats are kept for 400 days. Today means since midnight.</p>
+  </section>
+
+  <section id="tab-access" hidden>
+    <div class="section-head"><h2>Access</h2></div>
+    <div class="panel setup">
+      <p id="accessState" style="margin:0"></p>
+      <dl class="roles">
+        <dt>Admin</dt>
+        <dd>Can do everything: manage every station and use Stats, Add to Plex (including backups), Broken files, Logs, and Access (who can sign in).</dd>
+        <dt>User</dt>
+        <dd>Can watch the stations and Media their Viewing Level allows (Unrestricted, with no limits, to start), and see Stats. Can make new stations (as many as you allow below, 3 to start) and change or delete only the stations they made. Can add logos (uploaded, or a show’s logo from Plex) and Intro Bumper videos, but only Admins can delete them. On a Viewing Level with limits, they only watch. Can’t open Add to Plex, Broken files, Logs, or Access.</dd>
+      </dl>
+    </div>
+    <div class="panel" style="margin-top:16px" id="userPanel" hidden><table class="users" id="userTable"></table></div>
+    <div class="panel" style="margin-top:16px" id="appsPanel" hidden>
+      <div class="panel-pad"><strong>Signed-in apps</strong>
+      <p class="hint" style="margin:4px 0 0">StationPlay’s apps that are signed in, and as whom. Signing one out ends its sign-in at once; one unused for 30 days ends by itself.</p></div>
+      <table class="users" id="appsTable"></table>
+    </div>
+    <div class="panel" style="margin-top:16px" id="devicesPanel" hidden>
+      <div class="panel-pad"><strong>Linked devices</strong>
+      <p class="hint" style="margin:4px 0 0">Devices where people pick who’s watching. Unlinking one signs it out.</p></div>
+      <table class="users" id="devicesTable"></table>
+      <div class="panel-pad scan-set"><label for="showOnDefault" class="small"><strong>New people show on</strong></label><select id="showOnDefault"><option value="signed-in">Only devices they sign in on</option><option value="home">Every device at home</option></select><button class="btn" type="button" id="showOnEveryone">Use for everyone</button><span class="hint" id="showOnEveryoneSaid" role="status"></span></div>
+    </div>
+    <form class="panel setup" style="margin-top:16px" id="addUserForm">
+      <strong id="addUserTitle">Add a user</strong>
+      <div class="adduser">
+        <div class="field"><label for="newUserName">Name</label><input type="text" id="newUserName" maxlength="40" autocomplete="off" required></div>
+        <div class="field"><label for="newUserPassword">Password</label><input type="password" id="newUserPassword" minlength="__PASSWORD_MIN__" maxlength="__PASSWORD_MAX__" autocomplete="new-password" required></div>
+        <div class="field" id="newUserPinField"><label for="newUserPin">PIN (optional)</label><input type="text" id="newUserPin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off" placeholder="4 digits"></div>
+        <div class="field"><label for="newUserRole">Role</label><select id="newUserRole"><option value="user">User</option><option value="admin">Admin</option></select></div>
+        <div class="field" id="newUserStationsField"><label for="newUserStations">Stations they can make</label><select id="newUserStations"></select></div>
+        <button class="btn primary" type="submit">Add</button>
+      </div>
+      <span class="hint" id="addUserHint"></span>
+    </form>
+    <details class="panel arr" id="viewingPanel" hidden>
+      <summary><strong>Viewing Levels</strong><span class="muted" id="viewingSum"></span></summary>
+      <div class="arr-body" id="viewingBody"></div>
+    </details>
+    <details class="panel arr" id="tunerPanel">
+      <summary><strong>Tuner access</strong><span class="muted" id="tunerSum"></span></summary>
+      <div class="arr-body" id="tunerBody"></div>
+    </details>
+    <details class="panel arr" id="limitsPanel">
+      <summary><strong>Block stations for some Plex users</strong><span class="muted" id="limitsSum"></span></summary>
+      <div class="arr-body" id="limitsBody"></div>
+    </details>
+    <details class="panel arr" id="awayPanel">
+      <summary><strong>StationPlay’s apps away from home</strong><span class="muted" id="awaySum" data-away-sum></span></summary>
+      <div class="arr-body" id="awayBody"></div>
+    </details>
+    <details class="panel arr" id="appLimitsPanel">
+      <summary><strong>How many can watch at once in StationPlay’s apps</strong><span class="muted" id="appLimitsSum"></span></summary>
+      <div class="arr-body" id="appLimitsBody"></div>
+    </details>
+    <details class="panel arr" id="appLibrariesPanel">
+      <summary><strong>Media in StationPlay’s apps</strong><span class="muted" id="appLibrariesSum"></span></summary>
+      <div class="arr-body" id="appLibrariesBody"></div>
+    </details>
+    <details class="panel arr" id="apiTokensPanel">
+      <summary><strong>API tokens</strong><span class="muted" id="apiTokensSum"></span></summary>
+      <div class="arr-body" id="apiTokensBody"></div>
+    </details>
+    <p class="muted small">Plex, Jellyfin and other apps never sign in, so the tuner, guide, and stream addresses on the Add to Plex tab are open to every device on your network, unless you choose Only these devices under Tuner access. Locked out? Create an empty file named <code>reset-access</code> in StationPlay’s data folder, then restart StationPlay. This removes every user and turns off sign-in, so anyone on your network can use StationPlay again.</p>
+  </section>
+
+  <section id="tab-setup" hidden>
+    <div class="panel setup">
+      <div class="copyrow"><span class="what">Tuner address</span><code id="tunerUrl">…</code><button class="btn" data-copy="tunerUrl">Copy</button></div>
+      <div class="copyrow"><span class="what">Guide (XMLTV) for Plex</span><code id="xmltvUrl">…</code><button class="btn" data-copy="xmltvUrl">Copy</button></div>
+      <div class="copyrow"><span class="what">Playlist (M3U) for other apps</span><code id="m3uUrl">…</code><button class="btn" data-copy="m3uUrl">Copy</button></div>
+      <div class="copyrow"><span class="what">Guide for other apps</span><code id="guideUrl">…</code><button class="btn" data-copy="guideUrl">Copy</button></div>
+      <div class="copyrow"><span class="what">Media files</span><span id="mediaAccess" class="small">…</span></div>
+      <div class="copyrow"><span class="what">Video encoding</span><span id="encoding" class="small">…</span></div>
+      <div class="copyrow"><span class="what">Guide updates</span><span id="guideState" class="small">…</span></div>
+      <div>
+        <strong>Adding StationPlay to Plex</strong>
+        <ol class="steps">
+          <li>In Plex, open <em>Settings → Live TV &amp; DVR → Set Up Plex DVR</em>.</li>
+          <li>Choose <em>Don’t see your HDHomeRun device? Enter its network address manually</em> (Plex can’t find StationPlay on its own) and enter the tuner address above.</li>
+          <li>When Plex asks for guide data, choose <em>Have an XMLTV guide on your server? Click here to use it</em> and enter the guide address for Plex, shown above.</li>
+          <li>Plex matches your stations automatically (it calls them channels). Continue, and they appear in the <em>Live TV</em> guide in Plex.</li>
+        </ol>
+        <p class="hint">StationPlay keeps the Plex guide up to date on its own: when a station changes, it asks Plex to refresh the guide. If it can’t (see <em>Guide updates</em> above), refresh the guide in Plex after you change a station: <em>Settings → Live TV &amp; DVR → your tuner → Refresh Guide</em>. For a new station, also choose <em>Scan for channels</em> there so Plex adds it.</p>
+      </div>
+      <div>
+        <strong>Watching in Jellyfin, Emby, Kodi, or another app</strong>
+        <ul class="steps">
+          <li><em>Jellyfin:</em> Dashboard → <em>Live TV</em> → <em>Tuner Devices</em> + → <em>M3U Tuner</em>, with the playlist address above. Then <em>TV Guide Data Providers</em> + → <em>XMLTV</em>, with the guide address for other apps.</li>
+          <li><em>Emby</em> (needs Emby Premiere): Settings → <em>Live TV</em> → add a TV source → <em>M3U Tuner</em>, with the playlist address. Then add a guide data provider → <em>XMLTV</em>, with the guide address for other apps.</li>
+          <li><em>Kodi:</em> Install its PVR Simple Client add-on (under PVR clients). In its settings, set <em>M3U play list URL</em> to the playlist address and <em>XMLTV URL</em> to the guide address for other apps.</li>
+          <li><em>Other apps</em> (Channels DVR, VLC…): Give them the playlist address. It tells them where to find the guide.</li>
+        </ul>
+        <p class="hint">These apps refresh their guide on their own schedule (about once a day). After you change a station, refresh the guide in the app to see the change right away.</p>
+      </div>
+    </div>
+    <div class="section-head" style="margin-top:22px"><h2>Picture and tuners</h2><div class="spacer"></div><button type="button" class="btn" id="runSetup">Run setup again</button></div>
+    <div class="panel setup" id="playbackPanel"></div>
+    <div class="section-head" style="margin-top:22px">
+      <h2>Backups</h2>
+      <div class="spacer"></div>
+      <button class="btn" id="backupNow">Download a backup</button>
+      <button type="button" class="btn" data-choose-file="restoreFile">Restore a backup…</button>
+      <input type="file" id="restoreFile" accept=".zip,application/zip" hidden>
+    </div>
+    <p class="muted small">Every night, StationPlay backs up your stations, settings, the Broken files list, your logos (uploaded or from Plex), who can sign in, and the viewing stats. It keeps the last 7 backups in the <code>backups</code> folder inside its data folder. To keep backups small, Intro Bumper videos aren’t included; they stay in the <code>bumpers</code> folder. Restoring a backup replaces all of this with the backup’s copy, and StationPlay restarts to finish.</p>
+    <div class="panel" id="backupList"></div>
+  </section>
+
+  <footer class="foot"><span id="appVersion"></span><span id="footSetupWrap" hidden><button type="button" class="linkish" id="footSetup">Setup</button> · </span>© 2026 egadgetboy · Open source under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer">GNU AGPL v3</a> · <a href="https://github.com/egadgetboy/stationplay" target="_blank" rel="noopener noreferrer">Source</a> · <a href="/open-source-notices" target="_blank" rel="noopener noreferrer">Open-source notices</a> · No warranty<br><span class="appearance"><label for="appearance">Appearance</label><select id="appearance"><option value="">Automatic</option><option value="light">Light</option><option value="dark">Dark</option></select></span></footer>
+</div>
+
+<div id="signinView" hidden>
+  <form class="panel signin" id="signinForm">
+    <div class="brand stacked"><svg class="mark" viewBox="0 0 85.55 100" aria-hidden="true"><use href="#sp-mark"/></svg><svg class="word" viewBox="0 0 250.99 25.46" role="img" aria-label="StationPlay"><use href="#sp-word"/></svg></div>
+    <div id="signinByPassword">
+      <div class="field"><label for="signinName">Name</label><input type="text" id="signinName" autocomplete="username" required></div>
+      <div class="field"><label for="signinPassword">Password</label><input type="password" id="signinPassword" autocomplete="current-password" required></div>
+    </div>
+    <div id="signinByPin" hidden>
+      <div class="field"><label for="signinPin" id="signinPinLabel">PIN</label><input type="password" id="signinPin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off"></div>
+    </div>
+    <button class="btn primary" type="submit" style="justify-content:center">Sign in</button>
+    <button class="linkish" type="button" id="signinOther" hidden>Use a password instead</button>
+    <span class="hint" id="signinStatus" role="alert"></span>
+    <p class="hint" id="signinNote" hidden></p>
+  </form>
+  <p class="foot">© 2026 egadgetboy · Open source under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer">GNU AGPL v3</a> · <a href="https://github.com/egadgetboy/stationplay" target="_blank" rel="noopener noreferrer">Source</a> · <a href="/open-source-notices" target="_blank" rel="noopener noreferrer">Open-source notices</a> · No warranty</p>
+</div>
+
+<dialog id="userDevices">
+  <div class="dlg-head"><h3 id="userDevicesTitle">Devices</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeUserDevices" aria-label="Close">✕</button></div>
+  <div class="dlg-body" id="userDevicesBody"></div>
+  <div class="dlg-foot"><span class="hint" id="userDevicesStatus" role="alert" style="margin-right:auto"></span><button class="btn" type="button" id="doneUserDevices">Done</button></div>
+</dialog>
+
+<dialog id="userStations">
+  <div class="dlg-head"><h3 id="userStationsTitle">Stations</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeUserStations" aria-label="Close">✕</button></div>
+  <div class="dlg-body" id="userStationsBody"></div>
+  <div class="dlg-foot"><span class="hint" id="userStationsStatus" role="alert" style="margin-right:auto"></span><button class="btn" type="button" id="cancelUserStations">Cancel</button><button class="btn primary" type="button" id="saveUserStations">Save</button></div>
+</dialog>
+
+<dialog id="account">
+  <form id="accountForm">
+    <div class="dlg-head"><h3 id="accountTitle">Your account</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeAccount" aria-label="Close">✕</button></div>
+    <div class="dlg-body">
+      <strong>Change your password</strong>
+      <div class="field"><label for="pwCurrent">Current password</label><input type="password" id="pwCurrent" autocomplete="current-password" required></div>
+      <div class="field"><label for="pwNew">New password</label><input type="password" id="pwNew" minlength="__PASSWORD_MIN__" maxlength="__PASSWORD_MAX__" autocomplete="new-password" required></div>
+      <span class="hint" id="accountStatus" role="alert"></span>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn" type="button" id="signOut">Sign out</button>
+      <button class="btn" type="button" id="openLink" style="margin-right:auto">Link an app</button>
+      <button class="btn primary" type="submit">Change password</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="alertsDlg" aria-labelledby="alertsTitle">
+  <div class="dlg-head"><h3 id="alertsTitle">Alerts</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeAlerts" aria-label="Close">✕</button></div>
+  <div class="dlg-body" id="alertsBody"></div>
+  <div class="dlg-foot"><button class="btn" type="button" id="alertsNotify" style="margin-right:auto">Notify a web address…</button><button class="btn" type="button" id="alertsDone">Done</button></div>
+</dialog>
+
+<dialog id="linkApp" aria-labelledby="linkTitle">
+  <form id="linkForm">
+    <div class="dlg-head"><h3 id="linkTitle">Link an app</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeLink" aria-label="Close">✕</button></div>
+    <div class="dlg-body">
+      <p class="hint" style="margin:0">Enter the code StationPlay’s app shows on your TV (or other device). It signs in as you, with no password typed on the remote.</p>
+      <div class="field"><label for="linkCode">Code</label><input type="text" id="linkCode" maxlength="40" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" placeholder="K7QM-4DPX" required style="font-size:20px;letter-spacing:2px;text-transform:uppercase;width:12em"></div>
+      <p id="linkWho" hidden style="margin:0"></p>
+      <span class="hint" id="linkStatus" role="alert"></span>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn" type="button" id="cancelLink" style="margin-right:auto">Cancel</button>
+      <button class="btn primary" type="submit" id="linkGo">Next</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="editor">
+  <form method="dialog" id="editorForm">
+    <div class="dlg-head"><h3 id="editorTitle">New station</h3><div class="spacer"></div><button class="btn ghost" value="cancel" aria-label="Close">✕</button></div>
+    <div class="dlg-body editor-body">
+      <div class="editor-basics">
+        <div class="row">
+          <div class="field"><label for="fNumber">Number</label><input type="number" id="fNumber" min="1" max="9999" required></div>
+          <div class="field"><label for="fName">Name</label><input type="text" id="fName" maxlength="60" placeholder="Station 1"></div>
+        </div>
+        <div class="field">
+          <label>Logo</label>
+          <div class="logo-choice">
+            <span id="logoPreview"></span>
+            <span class="hint" id="logoName"></span>
+            <button type="button" class="btn" id="chooseLogo"><span>Choose…</span></button>
+            <button type="button" class="btn ghost" id="randomLogo"><span>Surprise me</span></button>
+            <button type="button" class="btn ghost plex-logo" id="plexLogo" hidden><img id="plexLogoImg" alt=""><span>Use the logo from Plex</span></button>
+          </div>
+        </div>
+      </div>
+      <div class="field editor-content" id="contentField">
+        <label id="contentLabel">What’s on this station</label>
+        <div class="picking" id="pickingBanner" hidden>
+          <span id="pickingText"></span>
+          <button type="button" class="btn primary" id="pickingDone">Done</button>
+        </div>
+        <div class="seg" role="group" aria-label="How to choose">
+          <button type="button" data-pick="titles" aria-pressed="true">Pick shows &amp; movies</button>
+          <button type="button" data-pick="filter" aria-pressed="false">Use a filter</button>
+        </div>
+        <div class="picker" id="titlePicker">
+          <div class="picker-tools">
+            <select id="libSelect" aria-label="Media folder"><option>Loading Media folders…</option></select>
+            <input type="search" id="libSearch" placeholder="Filter by title, genre, or year" aria-label="Filter by title, genre, or year">
+            <div class="seg zoom" role="group" aria-label="Poster size">
+              <button type="button" data-zoom="1" aria-pressed="true" title="Small posters" aria-label="Small posters"><svg width="16" height="16" viewBox="0 0 16 16"><rect x="5.5" y="4.5" width="5" height="7" rx="1" fill="currentColor"/></svg></button>
+              <button type="button" data-zoom="2" aria-pressed="false" title="Medium posters" aria-label="Medium posters"><svg width="16" height="16" viewBox="0 0 16 16"><rect x="4.5" y="3" width="7" height="10" rx="1" fill="currentColor"/></svg></button>
+              <button type="button" data-zoom="3" aria-pressed="false" title="Large posters" aria-label="Large posters"><svg width="16" height="16" viewBox="0 0 16 16"><rect x="3" y="1" width="10" height="14" rx="1.2" fill="currentColor"/></svg></button>
+            </div>
+          </div>
+          <div class="picker-list" id="libItems"></div>
+        </div>
+        <div class="picker" id="filterPicker" hidden>
+          <div class="fbox">
+            <div class="field">
+              <label>Type</label>
+              <div class="seg" role="group" aria-label="Movies or TV">
+                <button type="button" data-fkind="movie" aria-pressed="true">Movies</button>
+                <button type="button" data-fkind="show" aria-pressed="false">TV shows</button>
+              </div>
+            </div>
+            <div class="field"><label>From these Media folders</label><div class="chips" id="fLibs"></div></div>
+            <div id="fFields" class="ffields"></div>
+            <div class="field"><label>Decade <span class="hint">— for TV shows, the year they started</span></label><div class="chips" id="fDecade"></div></div>
+            <div class="frow">
+              <div class="field"><label for="fAdded">Added in the last</label>
+                <div class="inline-add"><input type="number" id="fAdded" min="1" max="3650" placeholder="Any"><span class="hint">days</span></div>
+                <span class="hint" id="fAddedHint"></span></div>
+              <div class="field"><label for="fRating">Minimum audience rating</label>
+                <select id="fRating"><option value="0">Any</option><option>5</option><option>6</option><option>6.5</option><option>7</option><option>7.5</option><option>8</option><option>8.5</option><option>9</option></select>
+                <span class="hint">With a minimum set, programs without an audience rating in Plex are left out.</span></div>
+            </div>
+            <div class="field"><label for="fTitle">Title contains</label><input type="text" id="fTitle" placeholder="e.g., Christmas"></div>
+          </div>
+          <div class="fresult">
+            <span class="hint" id="fCount">Choose what to include.</span>
+            <button type="button" class="btn" id="fReviewOpen" hidden>Choose which…</button>
+            <button type="button" class="btn primary" id="addFilter">Add this filter</button>
+          </div>
+          <div id="fReview" hidden>
+            <div class="freview-tools">
+              <span class="hint">Uncheck any you want to leave out. They stay out, and new matches are still added.</span>
+              <span class="spacer"></span>
+              <button type="button" class="linkbtn" id="fReviewAll">Select all</button>
+              <button type="button" class="linkbtn" id="fReviewNone">Clear all</button>
+            </div>
+            <div id="fMatches"></div>
+          </div>
+        </div>
+        <span class="hint" id="pickedCount"></span>
+        <div class="selected" id="selected"></div>
+      </div>
+      <div class="editor-groups">
+        <details class="group" id="groupPlay">
+          <summary><span class="g-title">How it plays</span><span class="g-sum" id="sumPlay"></span></summary>
+          <div class="g-body">
+            <div class="opt">
+              <span class="opt-label">Picture</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Picture size">
+                  <button type="button" data-picture="480p" aria-pressed="false">480p</button>
+                  <button type="button" data-picture="720p" aria-pressed="true">720p</button>
+                  <button type="button" data-picture="1080p" aria-pressed="false">1080p</button>
+                </div>
+                <span class="hint" id="pictureHint"></span>
+              </div>
+            </div>
+            <div class="opt">
+              <span class="opt-label">Order</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Order">
+                  <button type="button" data-order="rotate" aria-pressed="true">Episode order</button>
+                  <button type="button" data-order="shuffle" aria-pressed="false">Shuffle</button>
+                </div>
+                <span class="hint" id="orderHint"></span>
+              </div>
+            </div>
+            <div class="opt">
+              <span class="opt-label">4:3 shows</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="4:3 shows">
+                  <button type="button" data-aspect="fit" aria-pressed="true">Black bars</button>
+                  <button type="button" data-aspect="stretch" aria-pressed="false">Stretch</button>
+                  <button type="button" data-aspect="zoom" aria-pressed="false">Zoom</button>
+                </div>
+                <span class="hint" id="aspectHint"></span>
+              </div>
+            </div>
+            <div class="opt">
+              <span class="opt-label">Intros &amp; credits</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Intros and credits">
+                  <button type="button" data-skip="off" aria-pressed="true">Play them</button>
+                  <button type="button" data-skip="on" aria-pressed="false">Skip them</button>
+                </div>
+                <span class="hint" id="skipHint"></span>
+              </div>
+            </div>
+          </div>
+        </details>
+        <details class="group" id="groupSpecials">
+          <summary><span class="g-title">Specials</span><span class="g-sum" id="sumSpecials"></span></summary>
+          <div class="g-body">
+            <p class="hint">Each special takes over the station for a while, then the station picks up where it left off. If two would overlap, only one plays: a block wins over the Feature Presentation, and both win over a marathon. When a block starts soon after the Feature Presentation, StationPlay picks a movie that ends in time.</p>
+            <div class="opt">
+              <span class="opt-label">Marathons</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Marathons">
+                  <button type="button" data-marathon="off" aria-pressed="true">Off</button>
+                  <button type="button" data-marathon="random" aria-pressed="false">Random times</button>
+                  <button type="button" data-marathon="set" aria-pressed="false">Set times</button>
+                </div>
+                <div class="marathon-row" id="marathonRandom" hidden>
+                  <div class="seg" role="group" aria-label="Marathons per week">
+                    <button type="button" data-mweek="1" aria-pressed="false">1</button>
+                    <button type="button" data-mweek="2" aria-pressed="true">2</button>
+                    <button type="button" data-mweek="3" aria-pressed="false">3</button>
+                    <button type="button" data-mweek="4" aria-pressed="false">4</button>
+                  </div>
+                  <span class="hint">per week</span>
+                </div>
+                <div class="marathon-row" id="marathonSet" hidden>
+                  <div class="chips" role="group" aria-label="Marathon days" id="marathonDays"></div>
+                  <input type="time" id="marathonTime" value="20:00" aria-label="Marathon time">
+                </div>
+                <div class="seg" role="group" aria-label="Which episodes" id="marathonPick" hidden>
+                  <button type="button" data-mepisodes="next" aria-pressed="true">Next in order</button>
+                  <button type="button" data-mepisodes="random" aria-pressed="false">Random starting point</button>
+                </div>
+                <span class="hint" id="marathonHint"></span>
+              </div>
+            </div>
+            <div class="opt">
+              <span class="opt-label">Feature Presentation</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Feature Presentation">
+                  <button type="button" data-feature="off" aria-pressed="true">Off</button>
+                  <button type="button" data-feature="on" aria-pressed="false">On</button>
+                </div>
+                <div class="marathon-row" id="featureSet" hidden>
+                  <div class="chips" role="group" aria-label="Feature Presentation days" id="featureDays"></div>
+                  <input type="time" id="featureTime" value="20:00" aria-label="Feature Presentation time">
+                </div>
+                <div class="marathon-row" id="featureFrom" hidden>
+                  <label class="hint" for="featureSource">Movies from</label>
+                  <select id="featureSource"></select>
+                </div>
+                <span class="hint" id="featureHint"></span>
+                <div class="intro-preview" id="featurePreviewRow" hidden>
+                  <button type="button" class="btn" id="featurePreview">Preview the card</button>
+                  <span class="hint" id="featurePreviewStatus"></span>
+                </div>
+                <video id="featureVideo" controls playsinline hidden></video>
+              </div>
+            </div>
+            <div class="opt">
+              <span class="opt-label">Blocks</span>
+              <div class="opt-ctl">
+                <div class="blocks" id="blockList"></div>
+                <div class="intro-preview"><button type="button" class="btn" id="addBlock">Add a block</button></div>
+                <span class="hint" id="blocksHint"></span>
+              </div>
+            </div>
+          </div>
+        </details>
+        <details class="group" id="groupBreaks">
+          <summary><span class="g-title">Between programs</span><span class="g-sum" id="sumBreaks"></span></summary>
+          <div class="g-body">
+            <div class="opt">
+              <span class="opt-label">Commercials &amp; trailers</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Commercials and trailers after each program">
+                  <button type="button" data-breaks="0" aria-pressed="true">None</button>
+                  <button type="button" data-breaks="1" aria-pressed="false">1</button>
+                  <button type="button" data-breaks="2" aria-pressed="false">2</button>
+                  <button type="button" data-breaks="3" aria-pressed="false">3</button>
+                </div>
+                <span class="hint" id="breaksHint"></span>
+              </div>
+            </div>
+            <div class="opt">
+              <span class="opt-label">Station ID card</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Station ID card">
+                  <button type="button" data-sid="0" aria-pressed="true">Off</button>
+                  <button type="button" data-sid="3" aria-pressed="false">3 sec</button>
+                  <button type="button" data-sid="5" aria-pressed="false">5 sec</button>
+                  <button type="button" data-sid="10" aria-pressed="false">10 sec</button>
+                </div>
+                <span class="hint" id="sidHint"></span>
+              </div>
+            </div>
+            <div class="opt-sub" id="sidSet">
+              <div class="opt">
+                <span class="opt-label">Jingle</span>
+                <div class="opt-ctl">
+                  <div class="seg" role="group" aria-label="Station ID card jingle">
+                    <button type="button" data-sidsound="on" aria-pressed="true">On</button>
+                    <button type="button" data-sidsound="off" aria-pressed="false">Off</button>
+                  </div>
+                </div>
+              </div>
+              <div class="intro-preview">
+                <button type="button" class="btn" id="sidPreview">Preview</button>
+                <span class="hint" id="sidPreviewStatus"></span>
+              </div>
+              <video id="sidVideo" controls playsinline hidden></video>
+            </div>
+          </div>
+        </details>
+        <details class="group" id="groupScreen">
+          <summary><span class="g-title">On screen</span><span class="g-sum" id="sumScreen"></span></summary>
+          <div class="g-body">
+            <div class="opt">
+              <span class="opt-label">In the corner</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="In the corner">
+                  <button type="button" data-mark="off" aria-pressed="true">Nothing</button>
+                  <button type="button" data-mark="logo" aria-pressed="false">Logo</button>
+                  <button type="button" data-mark="name" aria-pressed="false">Name</button>
+                  <button type="button" data-mark="clock" aria-pressed="false">Clock</button>
+                </div>
+                <span class="hint" id="markHint"></span>
+              </div>
+            </div>
+            <div class="opt-sub" id="markSet">
+              <div class="mark-preview" id="markPreview" aria-label="How it looks on screen"></div>
+              <span class="hint">Click a corner of the picture to move it there.</span>
+              <div class="opt">
+                <span class="opt-label">Size</span>
+                <div class="opt-ctl">
+                  <div class="seg" role="group" aria-label="Size of what’s in the corner">
+                    <button type="button" data-msize="small" aria-pressed="false">Small</button>
+                    <button type="button" data-msize="medium" aria-pressed="false">Medium</button>
+                    <button type="button" data-msize="large" aria-pressed="true">Large</button>
+                  </div>
+                </div>
+              </div>
+              <div class="opt">
+                <span class="opt-label">Transparency</span>
+                <div class="opt-ctl">
+                  <div class="seg" role="group" aria-label="Transparency of what’s in the corner">
+                    <button type="button" data-mtrans="high" aria-pressed="false">High</button>
+                    <button type="button" data-mtrans="medium" aria-pressed="false">Medium</button>
+                    <button type="button" data-mtrans="low" aria-pressed="true">Low</button>
+                  </div>
+                </div>
+              </div>
+              <div class="opt">
+                <span class="opt-label">Corner</span>
+                <div class="opt-ctl">
+                  <div class="seg corners" role="group" aria-label="Which corner">
+                    <button type="button" data-mpos="top-left" aria-pressed="false">Top left</button>
+                    <button type="button" data-mpos="top-right" aria-pressed="false">Top right</button>
+                    <button type="button" data-mpos="bottom-left" aria-pressed="true">Bottom left</button>
+                    <button type="button" data-mpos="bottom-right" aria-pressed="false">Bottom right</button>
+                  </div>
+                </div>
+              </div>
+              <div class="opt" id="clockFormatField">
+                <span class="opt-label">Clock</span>
+                <div class="opt-ctl">
+                  <div class="seg" role="group" aria-label="Clock format">
+                    <button type="button" data-clock="12" aria-pressed="true">12-hour</button>
+                    <button type="button" data-clock="24" aria-pressed="false">24-hour</button>
+                  </div>
+                </div>
+              </div>
+              <div class="opt" id="markStyleField">
+                <span class="opt-label">Look</span>
+                <div class="opt-ctl">
+                  <div class="seg" role="group" aria-label="Logo color in the corner">
+                    <button type="button" data-mstyle="color" aria-pressed="true">In color</button>
+                    <button type="button" data-mstyle="white" aria-pressed="false">All white</button>
+                  </div>
+                </div>
+              </div>
+              <div class="opt">
+                <span class="opt-label">When</span>
+                <div class="opt-ctl">
+                  <div class="seg" role="group" aria-label="When it’s shown">
+                    <button type="button" data-mtime="always" aria-pressed="true">Always</button>
+                    <button type="button" data-mtime="start" aria-pressed="false">At the start</button>
+                  </div>
+                  <span class="hint" id="markTimeHint"></span>
+                </div>
+              </div>
+            </div>
+            <div class="opt">
+              <span class="opt-label">Up Next Banner</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Up Next Banner">
+                  <button type="button" data-upnext="0" aria-pressed="false">Off</button>
+                  <button type="button" data-upnext="3" aria-pressed="false">3 sec</button>
+                  <button type="button" data-upnext="5" aria-pressed="false">5 sec</button>
+                  <button type="button" data-upnext="10" aria-pressed="true">10 sec</button>
+                </div>
+                <span class="hint" id="upNextHint"></span>
+              </div>
+            </div>
+            <div class="opt-sub" id="upNextSet">
+              <div class="opt">
+                <span class="opt-label">Size</span>
+                <div class="opt-ctl">
+                  <div class="seg" role="group" aria-label="Up Next Banner size">
+                    <button type="button" data-upnextsize="small" aria-pressed="false">Small</button>
+                    <button type="button" data-upnextsize="medium" aria-pressed="false">Medium</button>
+                    <button type="button" data-upnextsize="large" aria-pressed="true">Large</button>
+                  </div>
+                </div>
+              </div>
+              <div class="intro-preview">
+                <button type="button" class="btn" id="upNextPreview">Preview</button>
+                <span class="hint" id="upNextPreviewStatus"></span>
+              </div>
+              <!-- Silent, so it plays on a loop with nothing over the picture
+                   (a player's controls would cover the banner). -->
+              <video id="upNextVideo" muted loop playsinline hidden title="Click to pause or play"></video>
+            </div>
+            <div class="opt">
+              <span class="opt-label">Subtitles</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Subtitles">
+                  <button type="button" data-subs="off" aria-pressed="true">Off</button>
+                  <button type="button" data-subs="forced" aria-pressed="false">Forced only</button>
+                  <button type="button" data-subs="always" aria-pressed="false">Always</button>
+                </div>
+                <span class="hint" id="subsHint"></span>
+              </div>
+            </div>
+          </div>
+        </details>
+        <details class="group" id="groupTune">
+          <summary><span class="g-title">When someone tunes in</span><span class="g-sum" id="sumTune"></span></summary>
+          <div class="g-body">
+            <div class="opt">
+              <span class="opt-label">Viewers join</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Where viewers join">
+                  <button type="button" data-tunein="now" aria-pressed="true">In progress</button>
+                  <button type="button" data-tunein="start" aria-pressed="false">From the beginning</button>
+                </div>
+                <span class="hint" id="tuneInHint"></span>
+              </div>
+            </div>
+            <div class="opt">
+              <span class="opt-label">Intro Bumper</span>
+              <div class="opt-ctl">
+                <div class="seg" role="group" aria-label="Intro Bumper">
+                  <button type="button" data-introkind="off" aria-pressed="false">Off</button>
+                  <button type="button" data-introkind="card" aria-pressed="false">Built-in card</button>
+                  <button type="button" data-introkind="video" aria-pressed="false">Your video</button>
+                </div>
+                <span class="hint" id="introHint"></span>
+              </div>
+            </div>
+            <div class="opt-sub" id="bumperSet" hidden>
+              <div class="opt">
+                <label class="opt-label" for="fBumper">Video</label>
+                <div class="opt-ctl">
+                  <div class="intro-preview">
+                    <select id="fBumper"></select>
+                    <button type="button" class="btn" data-choose-file="bumperUpload">Upload a video…</button>
+                    <input type="file" id="bumperUpload" accept="video/*,.mkv,.mov,.mp4,.m4v,.webm,.avi,.ts" hidden>
+                    <button type="button" class="btn" id="bumperDelete">Delete</button>
+                  </div>
+                  <span class="hint" id="bumperStatus"></span>
+                </div>
+              </div>
+              <video id="bumperVideo" controls playsinline preload="metadata" hidden></video>
+            </div>
+            <div class="opt-sub" id="introSet">
+              <div class="opt">
+                <span class="opt-label">Length</span>
+                <div class="opt-ctl">
+                  <div class="seg" role="group" aria-label="Intro Bumper length">
+                    <button type="button" data-intro="3" aria-pressed="false">3 sec</button>
+                    <button type="button" data-intro="5" aria-pressed="false">5 sec</button>
+                    <button type="button" data-intro="10" aria-pressed="false">10 sec</button>
+                    <button type="button" data-intro="15" aria-pressed="false">15 sec</button>
+                  </div>
+                </div>
+              </div>
+              <div class="opt">
+                <span class="opt-label">Sound</span>
+                <div class="opt-ctl">
+                  <div class="seg" role="group" aria-label="Intro Bumper sound">
+                    <button type="button" data-introsound="on" aria-pressed="true">On</button>
+                    <button type="button" data-introsound="off" aria-pressed="false">Off</button>
+                  </div>
+                </div>
+              </div>
+              <div class="opt">
+                <label class="opt-label" for="fDescription">Description</label>
+                <div class="opt-ctl">
+                  <input type="text" id="fDescription" maxlength="140" placeholder="The sitcoms you grew up with, all day and all night.">
+                  <span class="hint" id="descCount"></span>
+                </div>
+              </div>
+              <div class="intro-preview">
+                <button type="button" class="btn" id="introPreview">Preview</button>
+                <span class="hint" id="introPreviewStatus"></span>
+              </div>
+              <video id="introVideo" controls playsinline hidden></video>
+            </div>
+          </div>
+        </details>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <span class="hint" id="editorStatus" style="margin-right:auto"></span>
+      <button class="btn" value="cancel">Cancel</button>
+      <button class="btn primary" id="saveChannel" value="default">Save station</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="collections">
+  <div class="dlg-head"><h3>Stations from Plex collections</h3><div class="spacer"></div><button class="btn ghost" id="closeCollections" aria-label="Close">✕</button></div>
+  <div class="dlg-body">
+    <p class="hint">Each collection you pick becomes a shuffled station named after the collection, with the Collection logo. You can change any of this later. Each station stays in sync with its collection: anything added to the collection in Plex joins the station within an hour. Collections with the same name in different Media folders each get their own station, numbered like Sunshine1 and Sunshine2.</p>
+    <input type="search" id="colSearch" placeholder="Search collections" aria-label="Search collections" autocomplete="off">
+    <div class="picker"><div class="picker-list" id="colList"></div></div>
+  </div>
+  <div class="dlg-foot">
+    <span class="hint" id="colStatus"></span>
+    <div class="spacer"></div>
+    <button class="btn" type="button" id="colCancel">Cancel</button>
+    <button class="btn primary" type="button" id="colMake" disabled>Make station</button>
+  </div>
+</dialog>
+
+<dialog id="smart" aria-labelledby="smartTitle">
+  <div class="dlg-head"><h3 id="smartTitle">Smart stations</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeSmart" aria-label="Close">✕</button></div>
+  <div class="dlg-body">
+    <p class="hint" style="margin:0">Make stations from what’s in your Plex. Choose what they play, then make one station, or one for each decade, genre, studio, and more. Like any filter, each station stays in sync with Plex: new matches are added automatically.</p>
+    <div id="smartFilter"></div>
+    <div class="opt">
+      <span class="opt-label">Make</span>
+      <div class="opt-ctl">
+        <div class="marathon-row">
+          <div class="seg" role="group" aria-label="How many stations">
+            <button type="button" data-smart="one" aria-pressed="true">One station</button>
+            <button type="button" data-smart="split" aria-pressed="false">One for each…</button>
+          </div>
+          <select id="smartSplit" aria-label="One station for each" hidden></select>
+        </div>
+        <span class="hint" id="smartHint"></span>
+      </div>
+    </div>
+    <div class="smart-groups" id="smartGroups"></div>
+    <div class="opt">
+      <label class="opt-label" for="smartFrom">First number</label>
+      <div class="opt-ctl">
+        <input type="number" id="smartFrom" min="1" max="9999" style="width:7em">
+        <span class="hint">Each new station gets the next free number, starting from this one.</span>
+      </div>
+    </div>
+  </div>
+  <div class="dlg-foot">
+    <span class="hint" id="smartStatus"></span>
+    <div class="spacer"></div>
+    <button class="btn" type="button" id="smartCancel">Cancel</button>
+    <button class="btn primary" type="button" id="smartMake" disabled>Make station</button>
+  </div>
+</dialog>
+
+<dialog id="setupDlg" aria-labelledby="setupTitle">
+  <div class="dlg-head"><h3 id="setupTitle">Welcome to StationPlay</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeSetup" aria-label="Close">✕</button></div>
+  <div class="dlg-body" id="setupBody"></div>
+  <div class="dlg-foot" id="setupFoot"></div>
+</dialog>
+
+<dialog id="notice" aria-labelledby="noticeTitle">
+  <div class="dlg-head"><h3 id="noticeTitle"></h3></div>
+  <div class="dlg-body" id="noticeBody"></div>
+  <div class="dlg-foot"><button class="btn primary" type="button" id="noticeOk">OK</button></div>
+</dialog>
+
+<dialog id="guide">
+  <div class="dlg-head"><h3 id="guideTitle">Guide</h3><div class="spacer"></div><button class="btn ghost" id="closeGuide" aria-label="Close">✕</button></div>
+  <div class="dlg-body"><div class="guide-list" id="guideList"></div></div>
+</dialog>
+
+<dialog id="logoPicker">
+  <div class="dlg-head"><h3>Choose a logo</h3><div class="spacer"></div><button class="btn ghost" id="closeLogos" aria-label="Close">✕</button></div>
+  <div class="dlg-body">
+    <div class="logo-tools">
+      <input type="search" id="logoSearch" placeholder="Search logos" aria-label="Search logos" autocomplete="off">
+      <button type="button" class="btn" data-choose-file="logoUpload">Upload your own…</button>
+      <input type="file" id="logoUpload" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden>
+    </div>
+    <div class="chips" id="logoCats"></div>
+    <div class="logo-grid" id="logoGrid"></div>
+    <p class="hint" id="logoNone" hidden>No matching logos.</p>
+    <p class="hint">Faded logos are already used by another station. You can upload your own logo as a PNG, JPEG, WebP, GIF, or BMP. Square images look best; other shapes are fitted onto a transparent background.</p>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<!-- The corner logo "all white": light parts solid, dark parts faint, with a
+     soft dark edge (a close match for how the server draws it). -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs>
+  <filter id="whiteMark" color-interpolation-filters="sRGB">
+    <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0.215 0.422 0.082 0 0.28" result="lum"/>
+    <feComposite in="lum" in2="SourceAlpha" operator="in" result="face"/>
+    <feGaussianBlur in="SourceAlpha" stdDeviation="1.2" result="blur"/>
+    <feOffset in="blur" dx="1" dy="1" result="off"/>
+    <feColorMatrix in="off" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .45 0" result="edge"/>
+    <feMerge><feMergeNode in="edge"/><feMergeNode in="face"/></feMerge>
+  </filter>
+</defs></svg>
+
+<!-- What the server fills in; then the page's scripts, in order (app/web/js). -->
+<script>
+const LOGO_V = '__LOGO_VERSION__';  // the library's version (filled in by the server)
+const COLLECTION_LOGO = '__COLLECTION_LOGO__';  // for stations made from Plex collections only
+// What a new station starts with (filled in by the server).
+const NEW_STATION = __NEW_STATION__;
+const FEATURE_CARD_S = __FEATURE_CARD_S__;  // the Feature Presentation card's length
+// Who may sign in and what Users may make (see access.py; filled in by the server).
+const ACCESS = __ACCESS__;
+</script>
+<script src="/web/js/core.js?v=__VERSION__"></script>
+<script src="/web/js/status.js?v=__VERSION__"></script>
+<script src="/web/js/setup.js?v=__VERSION__"></script>
+<script src="/web/js/addtoplex.js?v=__VERSION__"></script>
+<script src="/web/js/logs.js?v=__VERSION__"></script>
+<script src="/web/js/stations.js?v=__VERSION__"></script>
+<script src="/web/js/editor.js?v=__VERSION__"></script>
+<script src="/web/js/logos.js?v=__VERSION__"></script>
+<script src="/web/js/smart.js?v=__VERSION__"></script>
+<script src="/web/js/backups.js?v=__VERSION__"></script>
+<script src="/web/js/filter.js?v=__VERSION__"></script>
+<script src="/web/js/broken.js?v=__VERSION__"></script>
+<script src="/web/js/apps.js?v=__VERSION__"></script>
+<script src="/web/js/checking.js?v=__VERSION__"></script>
+<script src="/web/js/access.js?v=__VERSION__"></script>
+<script src="/web/js/viewing.js?v=__VERSION__"></script>
+<script src="/web/js/stats.js?v=__VERSION__"></script>
+<script src="/web/js/boot.js?v=__VERSION__"></script>
+</body>
+</html>
