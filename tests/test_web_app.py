@@ -464,3 +464,15 @@ def test_more_arrows_are_only_drawn():
     assert "height: 44px" in pieces[1] and "color: var(--ink-2)" in pieces[1]
     assert ".more-arrows svg { display: block; width: 32px; height: 32px;" in css
     assert ".more-arrows.page { position: fixed;" in css and "--more-bg: var(--bg)" in css
+
+
+def test_every_file_the_page_loads_is_one_of_its_files():
+    """(1.34.0: updates.js was in index.html but not served, so the page
+    had no update banner.) Each script and stylesheet the page asks for is
+    in PAGE_FILES, in the order it loads them, and nothing in app/web/js is
+    left out."""
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+    asked = re.findall(r'(?:src|href)="/web/([^"?]+)\?v=__VERSION__"', html)
+    assert asked == list(PAGE_FILES)
+    scripts = sorted(f"js/{p.name}" for p in (WEB_DIR / "js").glob("*.js"))
+    assert scripts == sorted(name for name in PAGE_FILES if name.startswith("js/"))
