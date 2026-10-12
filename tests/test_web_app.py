@@ -530,3 +530,88 @@ def test_the_page_has_tapiocas_icons_and_its_own_fonts(client):
     on_disk = sorted(p.relative_to(WEB_DIR / "fonts").as_posix()
                      for p in (WEB_DIR / "fonts").rglob("*.woff2"))  # fmt: skip
     assert on_disk == sorted(FONT_FILES)
+
+
+def _tokens(block: str) -> dict[str, str]:
+    return dict(re.findall(r"(--[\w-]+):\s*(#[0-9a-fA-F]{6})\s*;", block))
+
+
+def _luminance(color: str) -> float:
+    def part(c: int) -> float:
+        c = c / 255
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (int(color[i : i + 2], 16) for i in (1, 3, 5))
+    return 0.2126 * part(r) + 0.7152 * part(g) + 0.0722 * part(b)
+
+
+def _contrast(a: str, b: str) -> float:
+    la, lb = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+
+def _over(color: str, percent: float, surface: str) -> str:
+    mixed = [
+        round(int(color[i : i + 2], 16) * percent + int(surface[i : i + 2], 16) * (1 - percent))
+        for i in (1, 3, 5)
+    ]
+    return "#" + "".join(f"{c:02x}" for c in mixed)
+
+
+def test_the_needs_a_look_chip_is_easy_to_read():
+    """Setup's checks: "Needs a look" (.chip.warn) is at least 4.5:1 on
+    every surface it can sit on, light and dark (the audit of 1.34.0: 4.4:1
+    in the light theme), in the brand kit's colors."""
+    css = (WEB_DIR / "page.css").read_text(encoding="utf-8")
+    light = _tokens(css.split(":root {", 1)[1].split("}", 1)[0])
+    dark = _tokens(css.split('[data-theme="dark"]', 1)[1].split("}", 1)[0])
+    assert light["--warn"].lower() == "#c62828"  # (the kit's Danger, light)
+    rule = re.search(r"\.chip\.warn \{([^}]*)\}", css)
+    assert rule
+    text = re.search(r"(?<![-\w])color: var\((--[\w-]+)\)", rule[1])
+    assert text
+    background = re.search(r"background: ([^;]+);", rule[1])
+    for theme in (light, dark):
+        ink = theme[text[1]]
+        for surface in (theme["--bg"], theme["--panel"], theme["--panel-2"]):
+            fill = surface
+            if background:
+                said = background[1].strip()
+                mixed = re.fullmatch(
+                    r"color-mix\(in srgb, var\((--[\w-]+)\) (\d+)%, transparent\)", said
+                )
+                token = re.fullmatch(r"var\((--[\w-]+)\)", said)
+                if mixed:
+                    fill = _over(theme[mixed[1]], int(mixed[2]) / 100, surface)
+                elif token:
+                    fill = theme[token[1]]
+                else:
+                    assert said in ("transparent", "none"), said
+            assert _contrast(ink, fill) >= 4.5, (ink, fill, surface)
+
+
+def test_no_style_makes_the_name_capitals():
+    """tapiOca is always written so: no text-transform makes it "TAPIOCA"
+    (the audit of 1.34.0: setup's last step on a phone said "WHO CAN USE
+    TAPIOCA"). Capitals only for fixed words that never hold the name:
+    tables' headings, the Watching now table's labels on a phone, and a
+    problem's "What it means". (Block names, shown as On now's and the
+    guide's labels, are anyone's words.)"""
+    css = (WEB_DIR / "page.css").read_text(encoding="utf-8")
+    capitals = sorted(
+        " ".join(selector.split())
+        for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)
+        if re.search(r"text-transform:\s*(uppercase|capitalize)", body)
+    )
+    assert capitals == sorted([
+        "th",
+        "table.now td.now-how::before, table.now td.now-app::before",
+        ".problem-means .label",
+    ])
+    for name in ("index.html", *(f for f in PAGE_FILES if f != "page.css")):
+        page = (WEB_DIR / name).read_text(encoding="utf-8")
+        found = re.findall(r"text-?[tT]ransform:\s*'?(\w+)", page)
+        # (Only Link an app's code, which a person types.)
+        assert found in ([], ["uppercase"]), name
+        if found:
+            assert 'id="linkCode"' in page and page.count("uppercase") == 1, name

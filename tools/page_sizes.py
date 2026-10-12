@@ -17,7 +17,8 @@ says "check failed" for any that's wrong: Link an app's code getting its
 dash as it's typed, Tuner access's controls, Alert notifications
 choosing Discord's and Slack's formats for their webhooks, and the arrows
 that say more is above or below (first-run setup's steps, a short dialog,
-the log, a problem's journal and the page). It's a tool, not a test:
+the log, a problem's journal and the page), and the name as it's drawn
+(always tapiOca, never made "TAPIOCA" by a style). It's a tool, not a test:
 the tests don't run it.
 
     pip install playwright pillow       (and: python -m playwright install chromium)
@@ -726,6 +727,17 @@ class Look:
         if stray:
             self.said.append(
                 f"{path.relative_to(self.folder.parent)}: stray words on the page: {stray}"
+            )
+        # The name as it's shown: always tapiOca. innerText is the text as
+        # drawn, so a text-transform that makes it "TAPIOCA" counts (the
+        # audit of 1.34.0: setup's last step on a phone).
+        misnamed = page.evaluate(
+            r"""() => [...new Set(document.body.innerText.match(/(?<!\w)(?:TAPIOCA|Tapioca|TapiOca)(?!\w)/g) || [])]"""
+        )
+        if misnamed:
+            self.said.append(
+                f"{path.relative_to(self.folder.parent)}: check failed: the name as shown: "
+                f"{misnamed}, not tapiOca"
             )
         # A dialog whose body scrolls: its end too.
         scrolled = page.evaluate(
