@@ -5,6 +5,7 @@ image hasn't got fails in minutes, not 40 minutes into the image workflow
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -143,3 +144,20 @@ def test_other_ways_of_reaching_outside_count_too(tmp_path):
     (tests / "test_dots.py").write_text('DOCS = HERE / ".." / "docs"\n')
     (tests / "test_attack.py").write_text('BAD = {"ratingKey": "../../accounts"}\n')
     assert image_check.reaching_out(tests) == ["tests/test_dirname.py", "tests/test_dots.py"]
+
+
+def test_git_is_the_tests_own():
+    """git, which one test needs, goes in the tests' stage only, never in
+    the image people build (the audit of 1.32.1: nothing kept it there)."""
+    text = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text()
+    stages = re.split(r"(?m)^FROM ", text.replace("\\\n", " "))[1:]
+    with_git = [
+        stage.split("\n", 1)[0].strip()
+        for stage in stages
+        if any(
+            "apt-get install" in line and "git" in line.split()
+            for line in stage.splitlines()
+            if line.startswith("RUN ")
+        )
+    ]
+    assert with_git == ["stationplay AS test"]

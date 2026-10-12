@@ -14,6 +14,8 @@ Please report a security problem privately, never in a public issue:
 
 Only StationPlay's maintainer sees the report.
 
+If you don't see **Report a vulnerability**, open an issue that says only "I've found a security problem," with no details. The maintainer will answer there with a private way to send it.
+
 ## What happens next
 
 - You'll get a reply within 7 days.
@@ -24,4 +26,4 @@ Please give the fix time to ship before you tell anyone else about the problem.
 
 ## What's in scope
 
-StationPlay itself: the server, its page and its API. Problems in Plex, Jellyfin, FFmpeg or Debian belong with those projects.
+StationPlay itself: the server, its page and its API, and StationPlay's own apps. Problems in Plex, Jellyfin, FFmpeg or Debian belong with those projects.

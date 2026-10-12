@@ -4,8 +4,8 @@
 # commit and the release, with the release's files built from that commit:
 # stationplay-<version>.zip (unzipping to src), stationplay.yaml and
 # docker-compose.yml, and stationplay-<version>-packages.txt, the list of
-# every package in the image its tests ran in (tools/sbom.py, made by the
-# image workflow's run that tested it). A release already published is
+# every package in the image that was tested (tools/sbom.py, made by an
+# image workflow run that tested it; the tests' own additions aside). A release already published is
 # left as it is. The newest version is marked the latest release.
 #
 # Releases are source only (the owner, October 12): no image is published.
@@ -88,9 +88,9 @@ jobs:
                 echo "::error::$tag already exists, at another commit"; exit 1
               fi
             fi
-            # Its tests: an image run on main at its commit, or at a later
-            # one with nothing but release notes changed since, that passed
-            # the Test step (or is still running).
+            # Its tests: image runs on main at its commit, or at a later one
+            # with nothing but release notes changed since, that passed the
+            # Test step (newest first), or one still running.
             passed="" running="" failed=""
             while read -r sha run status; do
               [ -n "$sha" ] || continue
@@ -104,8 +104,8 @@ jobs:
               tested=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" \
                 --jq '[.jobs[].steps[]? | select(.name == "Test") | .conclusion] | first // ""')
               if [ "$tested" = success ]; then
-                passed=$run
-                break
+                passed="$passed $run"
+                continue
               fi
               failed=$run
             done <<< "$runs"
@@ -121,7 +121,7 @@ jobs:
               fi
               continue
             fi
-            echo "$tag: its tests passed (image run $passed)"
+            echo "$tag: its tests passed (image runs:$passed)"
             # The release's files, from that commit.
             out="$RUNNER_TEMP/$tag"
             mkdir -p "$out"
@@ -132,16 +132,24 @@ jobs:
             tail -n +4 "$file" | sed '/./,$!d' > "$out/notes.md"
             latest=false
             if [ "$version" = "$newest" ]; then latest=true; fi
-            # The list of what was in the image its tests ran in, made by
-            # that very run (the image workflow's "Made of" step): if it can't
-            # be had, nothing is published, and the run says why.
-            if ! gh run download "$passed" --name packages --dir "$out/made" \
-              || ! [ -s "$out/made/stationplay-$version-packages.txt" ]; then
-              echo "::error::$tag isn't published: image run $passed has no list of its packages for $version"
+            # The list of the packages in the image that was tested, made by
+            # a run that passed (the image workflow's "Made of" step, after
+            # Test; kept 90 days): the newest that has it. Without it, nothing
+            # is published, and the run says what to do.
+            listed=""
+            for run in $passed; do
+              if gh run download "$run" --name packages --dir "$out/made-$run" \
+                && [ -s "$out/made-$run/stationplay-$version-packages.txt" ]; then
+                listed="$out/made-$run/stationplay-$version-packages.txt"
+                break
+              fi
+            done
+            if [ -z "$listed" ]; then
+              echo "::error::$tag isn't published: no image run that passed its tests (runs:$passed) has its list of packages. Run the image workflow on main again (Actions, image, Run workflow): this runs after it."
               refused=1
               continue
             fi
-            mv "$out/made/stationplay-$version-packages.txt" "$out/"
+            mv "$listed" "$out/"
             gh release create "$tag" --target "$commit" --title "StationPlay $version" \
               --notes-file "$out/notes.md" --latest="$latest" \
               "$out/stationplay-$version.zip" "$out/stationplay.yaml" "$out/docker-compose.yml" \

@@ -39,9 +39,9 @@ def entry_for(item: Item, **more) -> dict:
 
 
 def test_the_same_program_under_a_new_key():
-    old = entry_for(ep("201", "Bonanza", 10, 29, "The Fence", 1969, "/tv/B - S10E29 - nodlabs.mkv"))
+    old = entry_for(ep("201", "Bonanza", 10, 29, "The Fence", 1969, "/tv/B - S10E29 - grp.mkv"))
     # Renamed, only its capital letters changed: the same file.
-    assert same_program(old, ep("901", "Other", 1, 1, "x", None, "/tv/B - S10E29 - NODLABS.mkv"))
+    assert same_program(old, ep("901", "Other", 1, 1, "x", None, "/tv/B - S10E29 - GRP.mkv"))
     # The same episode of the same show, from the same year.
     assert same_program(old, ep("902", "bonanza", 10, 29, "The Fence", 1969, "/new/path.mkv"))
     # Another episode, another show, or another year (a remake) isn't.
@@ -122,15 +122,15 @@ async def test_plex_says_whether_a_program_was_removed_or_added_again():
     plex.add_section("2", "Movies", "movie")
     plex.add_show("100", "Bonanza", year=1959)
     for n in (1, 2):
-        plex.add_episode(f"20{n}", "100", 10, n, f"Ep {n}", f"/tv/b{n}-nodlabs.mkv", 60_000)
+        plex.add_episode(f"20{n}", "100", 10, n, f"Ep {n}", f"/tv/b{n}-grp.mkv", 60_000)
     plex.add_movie("301", "Dune", "/movies/dune.mkv", 60_000, year=1984, section="2")
     client = PlexClient("http://plex.test", "token", transport=like_plex(plex))
-    old_201 = ep("201", "Bonanza", 10, 1, "Ep 1", 1965, "/tv/b1-nodlabs.mkv")
-    old_202 = ep("202", "Bonanza", 10, 2, "Ep 2", 1965, "/tv/b2-nodlabs.mkv")
+    old_201 = ep("201", "Bonanza", 10, 1, "Ep 1", 1965, "/tv/b1-grp.mkv")
+    old_202 = ep("202", "Bonanza", 10, 2, "Ep 2", 1965, "/tv/b2-grp.mkv")
     old_dune = movie("301", "Dune", 1984)
     # 201's file renamed: Plex added it again under a new key. 202 removed.
     plex.remove("201")
-    plex.add_episode("211", "100", 10, 1, "Ep 1", "/tv/b1-NODLABS.mkv", 60_000)
+    plex.add_episode("211", "100", 10, 1, "Ep 1", "/tv/b1-GRP.mkv", 60_000)
     plex.remove("202")
     shows = Lookups()
     assert await client.find_again(old_201, shows) == "211"
@@ -307,7 +307,7 @@ def test_the_app_says_which_files_its_stations_have(tmp_path):
 
     fp = FakePlex()
     fp.add_show("100", "Bonanza", year=1959)
-    fp.add_episode("201", "100", 1, 1, "Ep", "/tv/Bonanza/Bonanza - S01E01 - NODLABS.mkv", 60_000)
+    fp.add_episode("201", "100", 1, 1, "Ep", "/tv/Bonanza/Bonanza - S01E01 - GRP.mkv", 60_000)
     fp.add_movie("301", "Dune", "/movies/Dune (1984).mkv", 60_000, year=1984)
     app = create_app(
         Settings(plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "data"),
@@ -319,7 +319,7 @@ def test_the_app_says_which_files_its_stations_have(tmp_path):
             {"type": "movie", "ratingKey": "301", "title": "Dune"}]})  # fmt: skip
         assert made.status_code == 201, made.text
         ctx = app.state.ctx
-        assert known_files(ctx, "100") == {"bonanza - s01e01 - nodlabs.mkv"}
+        assert known_files(ctx, "100") == {"bonanza - s01e01 - grp.mkv"}
         assert known_files(ctx, "301") == {"dune (1984).mkv"}
         assert known_files(ctx, "999") == set()
         assert ctx.plex.known_files("100") == known_files(ctx, "100")
@@ -341,7 +341,7 @@ async def test_a_replaced_file_in_another_show_is_found_by_its_episode_title():
     for key in ("533", "534", "633"):
         plex.episodes[key]["year"] = 1964
     client = PlexClient("http://plex.test", "token", transport=like_plex(plex))
-    old = "/tv/tv-classics.teens/Bonanza (1959)/Bonanza (1959) - S05E33 - Triangle [DVD][MP3 1.0][XviD]-nodlabs.avi"
+    old = "/tv/tv-classics.teens/Bonanza (1959)/Bonanza (1959) - S05E33 - Triangle [DVD][MP3 1.0][XviD]-grp.avi"
     # (Its own show, 100, is gone from Plex.)
     s05e33 = Item(0, 0, 1_000, "233", "episode", "Triangle", "Bonanza", "100", 5, 33, 1964,
                   file_path=old)  # fmt: skip

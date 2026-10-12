@@ -61,10 +61,10 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
 
 CMD ["python", "-m", "app.main"]
 
-# The tests, in the image as it ships (the image workflow runs them here,
-# and publishes the image only once they pass): pytest and the tests on top,
-# run as the user the YAML files give, and nothing else changed. Built only
-# when asked for (--target test).
+# The tests, in the image as people build it (the image workflow runs them
+# here, and a release is published only once they pass): pytest, git and
+# the tests on top, run as the user the YAML files give. Built only when
+# asked for (--target test).
 FROM stationplay AS test
 RUN pip install --no-cache-dir pytest==9.1.1 pytest-asyncio==1.4.0
 # (git, for the release workflow's own test, which runs its script in a
@@ -76,7 +76,7 @@ COPY pytest.ini pyproject.toml stationplay.yaml docker-compose.yml Dockerfile ./
 COPY docs ./docs
 COPY tools/openapi_spec.py tools/image_check.py tools/sbom.py tools/gpl_source.py ./tools/
 COPY tools/logos/letters.py ./tools/logos/
-COPY .github/workflows/release.yml ./.github/workflows/
+COPY .github/workflows/release.yml .github/workflows/image.yml ./.github/workflows/
 COPY tests ./tests
 RUN chmod -R a+rX pytest.ini pyproject.toml stationplay.yaml docker-compose.yml Dockerfile .github docs tools tests
 USER 1000:1000

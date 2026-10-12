@@ -56,10 +56,9 @@ source package.
   source only: no image is published. Your image gets Debian's packages,
   FFmpeg's among them, from Debian on the day it's built, and
   `third-party-packages.txt` in it lists them. Each release also comes with
-  `stationplay-<version>-packages.txt`, the packages in the image
-  StationPlay's tests ran in, each with a link to its source. FFmpeg's
-  upstream project is at
-  <https://ffmpeg.org>.
+  `stationplay-<version>-packages.txt`, the packages in the image that
+  was tested for it, each with a link to its source. FFmpeg's upstream
+  project is at <https://ffmpeg.org>.
 
 ## Fonts
 

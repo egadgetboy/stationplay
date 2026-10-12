@@ -4,8 +4,8 @@
 > isn't in the OpenAPI spec, and it may change with any release. For your
 > own scripts and players, use StationPlay's API (`docs/api.md`).
 
-StationPlay's own apps (iPhone, iPad, Android, Google TV and Android TV,
-Roku) use these addresses, under `/api/internal`, for signing in,
+StationPlay's own apps (iPhone, iPad, Apple TV, Android, Google TV and
+Android TV, Roku) use these addresses, under `/api/internal`, for signing in,
 connection tests and Media. For the server, its stations and their guide,
 the apps use StationPlay's API (`docs/api.md`), and they play stations as it
 describes.

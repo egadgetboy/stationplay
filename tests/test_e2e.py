@@ -575,7 +575,7 @@ async def test_the_broken_files_list_clears_itself(tmp_path, media):
     tv.mkdir()
     files = {}
     for n, name in enumerate(["good1", "good2", "good3", "good1", "good2", "good3", "good1"], 1):
-        files[n] = tv / f"Bonanza - S10E{n:02d} [DVD]-nodlabs.mkv"
+        files[n] = tv / f"Bonanza - S10E{n:02d} [DVD]-grp.mkv"
         shutil.copy(media[name], files[n])
         plex.add_episode(
             f"20{n}", "100", 10, n, f"Ep {n}", str(files[n]), CLIP_S * 1000, size=1000 + n
@@ -588,7 +588,7 @@ async def test_the_broken_files_list_clears_itself(tmp_path, media):
 
         # S10E01's file renamed (only its capital letters): Plex adds it
         # again under a new key. S10E02 is removed from Plex.
-        renamed = files[1].with_name(files[1].name.replace("nodlabs", "NODLABS"))
+        renamed = files[1].with_name(files[1].name.replace("grp", "GRP"))
         files[1].rename(renamed)
         plex.remove("201")
         plex.add_episode("211", "100", 10, 1, "Ep 1", str(renamed), CLIP_S * 1000, size=1001)

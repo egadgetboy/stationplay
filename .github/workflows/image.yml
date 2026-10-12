@@ -1,8 +1,8 @@
 # Builds the container image and tests it as built, whenever main changes.
 # The tests run in the image itself (the Dockerfile's test stage: the image
 # people build, with the tests added), on the FFmpeg, Python and libraries
-# it has. No image is published, here or anywhere: releases are source only
-# (the owner, October 12). release.yml publishes a release only once this
+# it has. StationPlay publishes no image: releases are source only (the
+# owner, October 12). release.yml publishes a release only once this
 # workflow's tests have passed on its commit, with the list of packages this
 # run's image had.
 name: image
@@ -31,6 +31,10 @@ jobs:
           tested=$(docker image inspect -f '{{join .RootFS.Layers " "}}' stationplay:test)
           if [ "${tested#"$shipped "}" = "$tested" ]; then
             echo "::error::The test stage isn't built on the image people build"; exit 1
+          fi
+          # (git is the tests' own: never in the image people build.)
+          if docker run --rm stationplay:latest sh -c 'command -v git'; then
+            echo "::error::git is in the image people build"; exit 1
           fi
       # First, every test collected, and the tests that read the project's
       # own files run (a few minutes): a file the image hasn't got stops it

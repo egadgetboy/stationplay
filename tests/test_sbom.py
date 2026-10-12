@@ -67,7 +67,7 @@ def test_the_list_names_every_package_and_the_release_s_files():
         [("fastapi", "0.115.0", "MIT")],
         "3.13.16",
     )
-    assert text.startswith("StationPlay 1.32.1: every package in the image its tests ran in\n")
+    assert text.startswith("StationPlay 1.32.1: every package in the image that was tested\n")
     assert "Debian packages (3)" in text and "Python packages (1)" in text
     assert (
         "libavcodec61 7:7.1.5-0+deb13u1: source ffmpeg 7:7.1.5-0+deb13u1, "
@@ -83,3 +83,13 @@ def test_the_list_names_every_package_and_the_release_s_files():
         "Python 3.13.16 (the python image's own, under the PSF license), "
         "https://www.python.org/ftp/python/3.13.16/Python-3.13.16.tgz"
     ) in text
+
+
+def test_a_blank_license_field_is_no_license_given():
+    """The audit of 1.32.1: a License field of only spaces or blank lines
+    stopped the whole list (so no release could be published)."""
+    rows = sbom.python_rows([
+        Dist("spaces", "1.0", License="   "),
+        Dist("lines", "1.0", License="\n\n", Classifier=["License :: OSI Approved :: MIT License"]),
+    ])  # fmt: skip
+    assert rows == [("lines", "1.0", "MIT License"), ("spaces", "1.0", "see its page")]

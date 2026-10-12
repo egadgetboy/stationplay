@@ -1,13 +1,14 @@
-"""What was in the image StationPlay's tests ran in, package by package,
-with where each one's source is kept: the list each release carries
-(stationplay-<version>-packages.txt).
+"""What was in the image built and tested for a release, package by
+package, with where each one's source is kept: the list each release
+carries (stationplay-<version>-packages.txt). It's the image people build
+(the tests' own stage adds pytest and git, which aren't listed).
 
 Every Debian package installed, at its exact version, with the source
 package it's built from and that source's page on snapshot.debian.org
 (which keeps every version Debian has published); and every Python package,
 with its license and its page on PyPI. StationPlay's own source is the
 release's zip. No image is published (releases are source only): this
-says what the tests ran with.
+says what was tested.
 
 It runs inside the image (the image workflow runs it, piped in, after the
 tests, so the image needs nothing more):
@@ -43,7 +44,8 @@ def license_of(meta) -> str:
     """A Python package's license, in a few words."""
     said = (meta.get("License-Expression") or "").strip()
     if not said:
-        said = (meta.get("License") or "").strip().splitlines()[0] if meta.get("License") else ""
+        # (Its first line: a License field may hold the license's whole text.)
+        said = next(iter((meta.get("License") or "").strip().splitlines()), "").strip()
     if not said or len(said) > 60:
         classifiers = [
             c.rsplit(" :: ", 1)[-1]
@@ -79,7 +81,7 @@ def report(
     python_version: str = "",
 ) -> str:
     lines = [
-        f"StationPlay {version}: every package in the image its tests ran in",
+        f"StationPlay {version}: every package in the image that was tested",
         "",
         "Each Debian package at its exact version, with the source package it's",
         "built from and where Debian keeps that source. Each package's own",
