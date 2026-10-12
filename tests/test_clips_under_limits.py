@@ -464,3 +464,96 @@ def test_the_alert_counts_trailers_after_anything_but_episodes(app):
         other = [replace(i, kind="clip") for i in ctx.db.latest_items(ids[3])]
         ctx.db.save_program_sets(ids[3], {"feature": other})
         assert alerts.skipping_unrated(ctx) == 2  # (and station 3's special, trailers after it)
+
+
+def feature(section: str, title: str) -> dict:
+    return {"featureMode": "on", "featureDays": "0", "featureTime": "20:00",
+            "featureSource": {"type": "section", "key": section, "sectionType": "movie",
+                              "title": title}}  # fmt: skip
+
+
+def trailers_of(items) -> set[str]:
+    return {p for i in items for p, _ in i.breaks or () if p != ID_CARD}
+
+
+@pytest.fixture
+def specials(plex):
+    """A Media folder of a G movie, and one of an R movie, for Feature
+    Presentations."""
+    plex.add_section("3", "Family", "movie")
+    plex.add_movie("303", "Kite Day", "/f/kite.mkv", 80 * 60_000, section="3", contentRating=["G"])
+    plex.add_section("4", "Late Show", "movie")
+    plex.add_movie("304", "Night Run", "/l/run.mkv", 95 * 60_000, section="4", contentRating=["R"])
+    return plex
+
+
+def test_a_station_is_judged_whole_when_made_or_changed(app, specials):
+    """The final check of 1.33.0: a new station's lineup was judged without
+    its new Feature Presentation; a changed station's specials, with its
+    lineup as it was; an edit of the specials alone left the lineup's
+    breaks as they were. Kit sees PG at most; trailers aren't rated."""
+    with TestClient(app) as admin:
+        set_up(admin)
+        ctx = admin.app.state.ctx
+
+        def edit(movie: str, section: str, title: str) -> None:
+            put = admin.put(f"/api/channels/{six}", json={
+                "number": 6, "sources": [{"type": "movie", "ratingKey": movie}], "breaks": 2,
+                **feature(section, title)})  # fmt: skip
+            assert put.status_code == 200, put.text
+
+        def lineup() -> set[str]:
+            return trailers_of(ctx.db.latest_items(six))
+
+        def features() -> list[set[str]]:
+            sets = ctx.db.program_sets(six)
+            assert sets
+            return [trailers_of(programs) for programs in sets.values()]
+
+        # Made: a PG movie with an R feature, which only Ada can see: every trailer.
+        made = admin.post("/api/channels", json={
+            "number": 6, "sources": [{"type": "movie", "ratingKey": "300"}], "breaks": 2,
+            **feature("4", "Late Show")})  # fmt: skip
+        assert made.status_code == 201, made.text
+        six = made.json()["id"]
+        assert lineup() == {TRAILER.path} and features() == [{TRAILER.path}]
+        # The feature alone changed, to G: Kit can see it all now, so the
+        # lineup's breaks are dealt again too: no trailers anywhere.
+        edit("300", "3", "Family")
+        assert lineup() == set() and features() == [set()]
+        # The lineup alone changed, to the R movie: only Ada sees it, so the
+        # G feature (judged with the new lineup) plays every trailer too.
+        edit("301", "3", "Family")
+        assert lineup() == {TRAILER.path} and features() == [{TRAILER.path}]
+
+
+def test_a_station_is_judged_whole_as_it_follows_plex(app, specials):
+    """The final check of 1.33.0: Update now, and the checks for Plex's
+    changes, judged a station's specials with its lineup as it was. Station
+    8 plays a collection holding an R movie, with a G feature; then the
+    collection holds a PG movie instead, so Kit can see the station, and
+    neither keeps its unrated trailers."""
+    specials.add_collection("950", "Picks", "2", "301")
+    with TestClient(app) as admin:
+        set_up(admin)
+        ctx = admin.app.state.ctx
+        picks = {"type": "collection", "ratingKey": "950", "title": "Picks", "library": "2",
+                 "kind": "movie"}  # fmt: skip
+        made = admin.post("/api/channels", json={
+            "number": 8, "sources": [picks], "breaks": 2, **feature("3", "Family")})  # fmt: skip
+        assert made.status_code == 201, made.text
+        eight = made.json()["id"]
+        sets = ctx.db.program_sets(eight)
+        assert sets and all(trailers_of(s) == {TRAILER.path} for s in sets.values())
+        specials.collections["950"]["children"] = ["300"]
+        specials.collections["950"]["updatedAt"] += 1
+        admin.portal.call(ctx.updater.check, True)
+        update = ctx.updater.pending[eight]
+        assert update.sets and trailers_of(update.items) == set()
+        assert all(trailers_of(s) == set() for s in update.sets.values())
+        ctx.updater.pending.pop(eight)
+        now = admin.post(f"/api/channels/{eight}/update")
+        assert now.status_code == 200, now.text
+        assert trailers_of(ctx.db.latest_items(eight)) == set()
+        sets = ctx.db.program_sets(eight)
+        assert sets and all(trailers_of(s) == set() for s in sets.values())

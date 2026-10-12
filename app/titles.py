@@ -46,6 +46,7 @@ MOVIE, SHOW, EPISODE = "movie", "show", "episode"
 RECHECK_MS = 7 * 86_400_000  # how often Plex is asked about a title again
 TAGS_RECHECK_MS = 86_400_000  # ...and for its tags, while someone is limited by them
 FILL_AT_ONCE = 200  # titles asked about in one go (Plex is asked 50 at a time)
+META_REFRESH = "tags_refresh_ms"  # (when every title's tags were last wanted again)
 ENSURE_AT_ONCE = 50  # Media's titles asked about in one batch
 ENSURE_TURNS = 2  # Media's batches asked about at once
 ENSURE_AHEAD = 4  # of one ask's batches, those asked about at once; the rest wait their turn
@@ -101,7 +102,9 @@ class Titles:
         # asked about once from when that began (or StationPlay started).
         self._want_tags = False
         self._tags_since_ms = _now()
-        self._refresh_ms = 0  # (refresh_tags: every title asked about again since then)
+        # (refresh_tags: every title asked about again since then; kept, so
+        # a restart before it's done doesn't forget it.)
+        self._refresh_ms = _int(db.get_meta(META_REFRESH, "0"))
         # Bumped whenever anything here changes (so what's worked out from it
         # can tell it's out of date).
         self.version = 0
@@ -113,6 +116,7 @@ class Titles:
         self._backlog_task: asyncio.Task | None = None
         self._absent: dict[str, int] = {}
         self._turns: asyncio.Semaphore | None = None
+        self._turns_loop: asyncio.AbstractEventLoop | None = None
         self._said_s = 0.0
 
     def get(self, key: str) -> Title | None:
@@ -182,6 +186,7 @@ class Titles:
         """Asks Plex about every show's and movie's tags again (what's hidden
         changed: a genre or label added in Plex lately counts at once)."""
         self._refresh_ms = _now()
+        self.db.set_meta(META_REFRESH, str(self._refresh_ms))
 
     def wanted(self, now: int | None = None) -> list[str]:
         """Shows never asked about (or not lately), and movies whose library
@@ -190,6 +195,9 @@ class Titles:
         (or StationPlay started), or not since `refresh_tags`, or not in the
         last day: what `fill` asks Plex about, the longest waiting first."""
         now = _now() if now is None else now
+        # (Never later than now: a clock that stepped back mustn't make every
+        # title due again at every look.)
+        since, refresh = min(self._tags_since_ms, now), min(self._refresh_ms, now)
 
         def due(t: Title) -> bool:
             stale = now - t.checked_ms >= RECHECK_MS
@@ -198,8 +206,8 @@ class Titles:
             if self._want_tags and t.kind in (SHOW, MOVIE):
                 return (
                     now - t.checked_ms >= TAGS_RECHECK_MS
-                    or (t.tags is None and t.checked_ms < self._tags_since_ms)
-                    or t.checked_ms < self._refresh_ms
+                    or (t.tags is None and t.checked_ms < since)
+                    or t.checked_ms < refresh
                 )
             return False
 
@@ -255,13 +263,21 @@ class Titles:
         loop = asyncio.get_running_loop()
         waits = {self._asking[k] for k in missing if k in self._asking}
         fresh = [k for k in missing if k not in self._asking]
-        ahead = fresh[: ENSURE_AHEAD * ENSURE_AT_ONCE]
+        if len(fresh) <= ENSURE_AHEAD * ENSURE_AT_ONCE:
+            ahead = fresh  # (a small ask goes ahead, even of what's waiting its turn)
+        else:
+            # (A big one: only its first few batches of what isn't waiting
+            # already, so asking for the same big folder again, from another
+            # device or sort, doesn't go ahead of everyone else.)
+            ahead = [k for k in fresh if k not in self._backlog][: ENSURE_AHEAD * ENSURE_AT_ONCE]
+        going = set(ahead)
+        later = [k for k in fresh if k not in going]
         for at in range(0, len(ahead), ENSURE_AT_ONCE):
             batch = {k: wanted[k] for k in ahead[at : at + ENSURE_AT_ONCE]}
             for key in batch:
                 self._backlog.pop(key, None)  # (asked now, if it was waiting)
             waits.add(self._start_batch(batch, self.asker))
-        for key in fresh[len(ahead) :]:
+        for key in later:
             self._backlog.setdefault(key, wanted[key])
         if self._backlog and (self._backlog_task is None or self._backlog_task.done()):
             self._backlog_task = loop.create_task(self._work_backlog(self.asker))
@@ -290,8 +306,9 @@ class Titles:
         """One batch of Media's `ensure`, kept as it comes."""
         me = asyncio.current_task()
         try:
-            if self._turns is None:
-                self._turns = asyncio.Semaphore(ENSURE_TURNS)
+            loop = asyncio.get_running_loop()
+            if self._turns is None or self._turns_loop is not loop:
+                self._turns, self._turns_loop = asyncio.Semaphore(ENSURE_TURNS), loop
             async with self._turns:
                 found = await ask(list(kinds))
             now = _now()
@@ -370,3 +387,10 @@ class Titles:
 
 def _now() -> int:
     return int(time.time() * 1000)
+
+
+def _int(text: str) -> int:
+    try:
+        return int(text)
+    except ValueError:
+        return 0

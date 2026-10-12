@@ -142,8 +142,12 @@ each title again every day, and every title at once when a new name is
 hidden. Until it knows a title's, the title is hidden from anyone whose
 level or own rules hide by tags, as with a rating not known yet. Media asks
 as it goes, 50 titles at a time, two batches at once, keeping each as it
-comes and waiting only a few seconds before answering: the first look at a
-big Media folder may show some titles a moment later. A title Plex doesn't
+comes and waiting only a few seconds (in all, for one answer) before
+answering. A big folder's first 200 titles are asked about at once, and the
+rest a batch at a time, behind what other answers ask, so the first look at
+it shows some titles at first and the rest within about a minute for a few
+thousand. Hiding a new name asks Plex about every title again, even across
+a restart. A title Plex doesn't
 have isn't asked about again for an hour. Titles are hidden or allowed by
 Plex's key, so one Plex adds again under a new key needs choosing again
 (the page marks it "not in Plex now").

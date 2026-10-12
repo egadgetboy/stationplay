@@ -262,7 +262,7 @@ async function loadAccess() {
       const made = h('div', { class: 'hint' }, `${u.stationsMade} made`);
       const mine = viewing?.users[u.id] || { level: null, stations: {} };
       const level = viewing?.levels.find(lv => lv.id === mine.level);
-      const watchesOnly = u.role !== 'admin' && ((level && levelLimited(level)) || hidesCount(mine.own?.blocks) > 0);
+      const watchesOnly = u.role !== 'admin' && ((level && levelLimited(level)) || hidesCount(mine.own?.blocks) > 0 || mine.ownUnreadable);
       const stations = u.role === 'admin'
         ? h('td', { class: 'small', 'data-label': 'Stations they make' }, 'Any number', made)
         : watchesOnly

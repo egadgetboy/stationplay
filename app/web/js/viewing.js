@@ -259,6 +259,7 @@ async function openUserStations(u) {
   const part = (title, ...children) => h('section', { class: 'sees-part' }, h('h4', {}, title), ...children);
   $('#userStationsBody').replaceChildren(
     h('p', { style: 'margin:0' }, `${u.name} is on ${got.level}. They see what ${got.level} shows, except for what you choose for them here.`),
+    viewing?.users[u.id]?.ownUnreadable ? h('p', { class: 'hint', role: 'alert', style: 'margin:0' }, `What was chosen for ${u.name} here couldn’t be read, so they see nothing for now. Choose it again and save.`) : null,
     part('Stations',
       h('p', { class: 'hint', style: 'margin:0' }, `A station is shown or hidden as ${got.level} says, unless you allow or block it for ${u.name}.`),
       got.stations.length ? h('table', { class: 'users' },

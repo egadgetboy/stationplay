@@ -428,13 +428,13 @@ const SETUP_PAGES = {
       me.required ? api('/api/access/viewing').catch(() => null) : null,
     ]);
     setAway(away);
-    const limited = view ? Object.values(view.users).filter(u => { const lv = view.levels.find(l => l.id === u.level); return (lv && levelLimited(lv)) || hidesCount(u.own?.blocks) > 0; }).length : 0;
+    const limited = view ? Object.values(view.users).filter(u => { const lv = view.levels.find(l => l.id === u.level); return (lv && levelLimited(lv)) || hidesCount(u.own?.blocks) > 0 || u.ownUnreadable; }).length : 0;
     const shared = libs ? libs.libraries.filter(l => libs.shared.includes(l.key)).map(l => l.title) : [];
     const w = scan.window;
     const set = [
       ['playback', `${pb.picture} for new stations, ${plural(pb.tuners, 'tuner')}`],
       ['signIn', me.required ? 'Only people who sign in' : 'Anyone on your network'],
-      ...(view ? [['viewing', limited ? `${limited === 1 ? '1 person' : `${limited} people`} on a level with limits` : 'Everyone sees everything']] : []),
+      ...(view ? [['viewing', limited ? `${limited === 1 ? '1 person' : `${limited} people`} with limits` : 'Everyone sees everything']] : []),
       ['away', h('span', { 'data-away-sum': 'Ready for apps away from home' }, awaySummary(away, 'Ready for apps away from home'))],
       ['library', shared.length ? `Shared: ${shared.join(', ')}` : 'Not shared'],
       ['fileChecks', w.on ? `Deep scan every night from ${clock(w.start)} to ${clock(w.end)}` : 'Quick checks only (the deep scan is off)'],

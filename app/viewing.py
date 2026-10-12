@@ -664,6 +664,11 @@ class Viewing:
     def stations_of(self, user_id: int) -> dict[int, bool]:
         return dict(self._stations.get(user_id, {}))
 
+    def unreadable(self, user_id: int) -> bool:
+        """Whether what's kept for someone can't be read (they see nothing
+        limits decide, and only watch, until an Admin saves it again)."""
+        return user_id in self._people and self._people[user_id] is None
+
     def person(self, user_id: int) -> Person:
         """What's hidden or allowed for someone (nothing, if it can't be
         read: viewer() hides everything from them then)."""
@@ -857,6 +862,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     "level": v.level(u.level_id).id,
                     "stations": {str(c): a for c, a in v.stations_of(u.id).items()},
                     "own": v.person(u.id).as_json(),
+                    "ownUnreadable": v.unreadable(u.id),
                 }
                 for u in ctx.db.users()
             },

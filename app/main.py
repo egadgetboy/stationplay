@@ -2279,9 +2279,14 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             items = await as_aired(now, items, sets)
             return await change(channel_id, items, "edit", fresh=order_changed, sets=sets)
         if specials_changed:
-            return await change(
-                channel_id, ctx.db.latest_items(channel_id), "edit", fresh=False, sets=sets
-            )
+            # (Its programs as kept, their breaks dealt again with the new
+            # specials: who can see the station may have changed.)
+            kept = [
+                replace(i, breaks=None, duration_ms=i.program_end_ms)
+                for i in ctx.db.latest_items(channel_id)
+            ]
+            items = await as_aired(now, kept, sets)
+            return await change(channel_id, items, "edit", fresh=False, sets=sets)
         return channel_json(channel_or_404(channel_id))
 
     # Made one at a time: each takes a few seconds of the processor.

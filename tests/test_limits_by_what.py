@@ -458,27 +458,39 @@ def test_media_on_a_big_folder_answers_in_time_and_keeps_what_plex_said(tmp_path
 
     took, partly, small_took, small_known = asyncio.run(run())
     assert took < 0.38 and partly == 2 * titles_module.ENSURE_AT_ONCE  # (two batches back in time)
-    assert small_known and small_took < 0.8
+    # (Behind at most what was already going and one batch of the rest: the
+    # same big folder asked for again didn't go ahead of it.)
+    assert small_known and small_took < 0.55
     assert all(titles.tags(k) == NO_TAGS for k in big if k != "599")
     flat = [k for batch in asked for k in batch]
     assert sorted(flat) == sorted([*big, *small]) and len(flat) == len(set(flat))  # (each once)
     assert max(len(b) for b in asked) == titles_module.ENSURE_AT_ONCE
     assert at_once[1] <= titles_module.ENSURE_TURNS
 
-    async def again():
-        # A title Plex didn't have isn't asked about again for a while.
+    # Then, on the same event loop as StationPlay's: a title Plex didn't
+    # have isn't asked about again for a while; one answer's asks share its
+    # wait (Titles.ensure_until); and another big folder, after the first
+    # was done, has its rest asked about too (the batches waiting their turn
+    # start again).
+    other = {f"o{k}": "movie" for k in range(400)}
+
+    async def more():
         await titles.ensure({"599": "movie"}, wait_s=0.1)
-        # One answer's asks share its wait (Titles.ensure_until).
         until = titles_module.ensure_until.set(asyncio.get_running_loop().time() + 0.05)
         try:
             started = time.monotonic()
             await titles.ensure({"t1": "movie"}, wait_s=3.0)
-            return time.monotonic() - started
+            waited = time.monotonic() - started
         finally:
             titles_module.ensure_until.reset(until)
+        await titles.ensure(other, wait_s=0.0)
+        await asyncio.sleep(1.8)
+        return waited
 
-    waited = asyncio.run(again())
-    assert sum(b.count("599") for b in asked) == 1 and waited < 0.15
+    asked.clear()
+    waited = asyncio.run(more())
+    assert "599" not in [k for b in asked for k in b] and waited < 0.15
+    assert all(titles.tags(k) == NO_TAGS for k in other)
 
 
 def test_titles_plex_couldnt_answer_about_are_asked_again(tmp_path):
@@ -532,8 +544,9 @@ def test_a_restart_doesnt_ask_plex_about_every_titles_tags_again(tmp_path, monke
 
     db = Database(tmp_path / "db.sqlite")
     now = _now_ms()
-    Titles(db)._save({"300": Title("movie", "PG", "1", now, NO_TAGS),
-                      "301": Title("movie", "R", "1", now, None)}, now)  # fmt: skip
+    before = now - 1_000  # (asked about before the restart)
+    Titles(db)._save({"300": Title("movie", "PG", "1", before, NO_TAGS),
+                      "301": Title("movie", "R", "1", before, None)}, before)  # fmt: skip
     later = Titles(db)  # (StationPlay started again)
     later.want_tags = True
     assert later.wanted() == ["301"]
@@ -551,7 +564,67 @@ def test_a_restart_doesnt_ask_plex_about_every_titles_tags_again(tmp_path, monke
 
     async def ask(keys):
         asked.extend(keys)
+        await asyncio.sleep(0)
         return {k: ("PG", "1", NO_TAGS) for k in keys}
 
     asyncio.run(asyncio.wait_for(later.fill(ask), 2.0))
     assert sorted(asked) == ["300", "301"]
+    assert later.wanted() == []  # (a refresh "later" than the clock counts as now)
+
+
+def test_a_refresh_not_done_before_a_restart_still_happens(tmp_path):
+    """The final check of 1.33.0: hiding a new name asked about every
+    title's tags again, but a restart before that was done forgot it, and
+    the old tags counted for up to a day."""
+    from app.titles import Title
+
+    db = Database(tmp_path / "db.sqlite")
+    now = _now_ms()
+    titles = Titles(db)
+    titles._save({"300": Title("movie", "PG", "1", now - 10 * 3_600_000, NO_TAGS)}, now)
+    titles.want_tags = True
+    titles.refresh_tags()
+    assert titles.wanted() == ["300"]
+    later = Titles(db)  # (restarted)
+    later.want_tags = True
+    assert later.wanted() == ["300"]
+
+
+def test_one_media_answer_shares_its_wait_for_plex(app, monkeypatch):
+    """The re-check of 1.33.0's fixes: Home asked about each row's titles in
+    turn, each waiting its own few seconds, and could run out of time (an
+    answer of "can't reach Plex"). Now Home asks about all it shows at once,
+    and every ask in one answer shares one deadline, within its own."""
+    import asyncio
+
+    from app import titles as titles_module
+
+    seen: list[tuple[float | None, list[str], float]] = []
+    real = titles_module.Titles.ensure
+
+    async def ensure(self, wanted, wait_s=titles_module.ENSURE_S):
+        seen.append((titles_module.ensure_until.get(), list(wanted),
+                     asyncio.get_running_loop().time()))  # fmt: skip
+        await real(self, wanted, wait_s)
+
+    monkeypatch.setattr(titles_module.Titles, "ensure", ensure)
+    with TestClient(app) as admin:
+        assert admin.put("/api/app-libraries", json={"libraries": ["1", "2"]}).status_code == 200
+        admin.post("/api/access/users", json={"name": "Ada", "password": "correct horse"})
+        kit = admin.post("/api/access/users", json={**KIT, "role": "user"}).json()
+        kid = kid_level(admin)
+        admin.put(f"/api/access/users/{kit['id']}/viewing", json={"level": kid})
+        admin.put(f"/api/access/levels/{kid}", json={
+            "name": "Kid", "movieAge": 10, "tvAge": 10, "unrated": False,
+            "blocks": {"genres": ["horror"]}})  # fmt: skip
+        as_kit = sign_in_app(app, KIT)
+        seen.clear()
+        home = TestClient(app).get("/api/internal/home", headers=as_kit)
+        assert home.status_code == 200, home.text
+        assert seen, "Home asks about its titles' tags"
+        untils = {until for until, _, _ in seen}
+        assert len(untils) == 1 and None not in untils  # (one deadline for the answer)
+        (until,) = untils
+        assert until <= seen[0][2] + titles_module.ENSURE_S + 0.1
+        # (The first ask is everything Home shows: both rows' titles.)
+        assert {"100", "300", "302"} <= set(seen[0][1])
