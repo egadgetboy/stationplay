@@ -312,3 +312,58 @@ def test_the_sign_in_page_says_where_the_pin_works(pat, app):
     away = TestClient(app, base_url=f"http://testserver:{PUBLIC_PORT}")
     me = away.get("/api/access/me").json()
     assert me["user"] is None and me.get("outside") is True and "pinFor" not in me
+
+
+def test_asking_who_is_signed_in_never_makes_a_browser_take_the_pin(pat, app):
+    """The audit of 1.33.1: /api/access/me never remembers a browser or lets
+    one take the PIN, at home or from the internet, with a page sign-in or
+    an app's (Bearer) one, with or without a browser cookie: only a password
+    typed on a browser does that."""
+    ctx = app.state.ctx
+
+    def devices() -> list[tuple]:
+        return [tuple(r) for r in ctx.db._conn.execute(
+            "SELECT token_hash, user_id, pin_ok FROM devices ORDER BY token_hash")]  # fmt: skip
+
+    browser = signed_in_with_password(app)
+    session = browser.cookies.get(access.COOKIE)
+    ctx.db._conn.execute("UPDATE devices SET pin_ok = 0")
+    ctx.db._conn.commit()
+    app_token = (
+        TestClient(app)
+        .post(
+            "/api/internal/sign-in", json={**SAM, "app": "StationPlay for Roku", "deviceName": "TV"}
+        )
+        .json()["token"]
+    )
+    before = devices()
+    for base in ("http://testserver", f"http://testserver:{PUBLIC_PORT}"):
+        for device in (browser.cookies.get(access.DEVICE_COOKIE), None):
+            client = TestClient(app, base_url=base)
+            client.cookies.set(access.COOKIE, session)
+            if device:
+                client.cookies.set(access.DEVICE_COOKIE, device)
+            for headers in ({}, {"Authorization": f"Bearer {app_token}"}):
+                got = client.get("/api/access/me", headers=headers)
+                assert got.status_code == 200
+                assert _cookie_from(got, access.DEVICE_COOKIE) is None
+    assert devices() == before
+
+
+def test_the_sign_in_page_shows_where_the_pin_works():
+    """What the sign-in page shows, from the internet and at home (the
+    owner's report, October 12)."""
+    from .test_web_app import PAGE, WEB_DIR
+
+    assert (
+        '<p class="hint" id="signinWhere" hidden>At this address, StationPlay always asks for your password, even at home.'
+        in PAGE
+    )
+    assert (
+        '<p class="hint" id="signinHome" hidden>Have a PIN? It works here after you sign in once on this browser with your password.</p>'
+        in PAGE
+    )
+    script = (WEB_DIR / "js" / "access.js").read_text(encoding="utf-8")
+    assert "$('#signinWhere').hidden = !me.outside || !!me.notSetUp;" in script
+    assert "$('#signinHome').hidden = !!me.outside || !me.required;" in script
+    assert "if (name) $('#signinHome').hidden = true;" in script

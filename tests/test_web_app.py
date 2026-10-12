@@ -385,9 +385,43 @@ def test_the_privacy_notice_is_served_and_linked(client):
     got = stranger.get("/privacy")
     assert got.status_code == 200 and got.text == notice
     assert got.headers["content-type"] == "text/plain; charset=utf-8"
-    assert "sends nothing to its developer" in notice and "personal use" in notice
+    assert "sends nothing to its developer" in notice
+    assert "Plex's own privacy policy covers Plex" in notice
     assert (
         PAGE.count('<a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy</a>') == 2
     )
     assert "Copyright © 2026 egadgetboy" in (package.__doc__ or "")
     assert "COPY LICENSE THIRD_PARTY_NOTICES.md PRIVACY.md ./" in (root / "Dockerfile").read_text()
+
+
+def test_the_privacy_notice_is_open_on_the_public_port_too(tmp_path):
+    """From the internet too, before there's a user and after."""
+    from fastapi.testclient import TestClient
+
+    from app.config import Settings
+    from app.main import create_app
+    from app.plex import PlexClient
+
+    from .fakeplex import FakePlex
+
+    app = create_app(
+        Settings(plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "data",
+                 public_port=3311),
+        PlexClient("http://plex.test", "token", transport=FakePlex().transport()),
+    )  # fmt: skip
+    with TestClient(app) as home:
+        away = TestClient(app, base_url="http://testserver:3311")
+        assert away.get("/privacy").status_code == 200
+        home.post("/api/access/users", json={"name": "Pat", "password": "correct horse"})
+        assert away.get("/privacy").status_code == 200
+
+
+def test_first_run_setup_says_what_plexs_terms_require():
+    """The owner, October 12: the Plex step of first-run setup states Plex's
+    personal-use terms (and links StationPlay's privacy notice)."""
+    script = (WEB_DIR / "js" / "setup.js").read_text(encoding="utf-8")
+    assert (
+        "Plex’s terms license Plex Media Server for personal use, on hardware and storage you own."
+        in script
+    )
+    assert script.count("PERSONAL_USE()") == 1  # (once: the Plex step)

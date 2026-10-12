@@ -58,9 +58,9 @@ function checkRow(c) {
 const needsLook = c => c.state === 'bad' || c.state === 'warn';
 // Plex's terms, which StationPlay's own use of Plex goes by (see the README's
 // What you need, and PRIVACY.md).
-const PERSONAL_USE = () => h('div', { class: 'limit-note' }, h('strong', {}, 'For your personal use. '),
-  'StationPlay works with your own Plex Media Server, for you and your household, on hardware you own, as Plex’s terms require. Don’t run it as a service for others. ',
-  h('a', { href: '/privacy', target: '_blank', rel: 'noopener noreferrer' }, 'Privacy notice'));
+const PERSONAL_USE = () => h('div', { class: 'limit-note' }, h('strong', {}, 'Plex’s terms. '),
+  'Plex’s terms license Plex Media Server for personal use, on hardware and storage you own. StationPlay works with your Plex server, so follow them. ',
+  h('a', { href: '/privacy', target: '_blank', rel: 'noopener noreferrer' }, 'StationPlay’s privacy notice'));
 const SETUP_AGAIN = 'You can run setup again any time from the Add to Plex tab, or Setup at the foot of the page.';
 // `why`: "new" (a new StationPlay), "updated" (an update has new questions),
 // or "again" (run again).
@@ -225,7 +225,6 @@ const SETUP_PAGES = {
     paint(checks);
     return { node: h('div', { class: 'playback' },
       h('p', { class: 'hint', style: 'margin:0' }, 'StationPlay checks that it can reach Plex and read your files, how it encodes video, its clock, and its backups. Anything marked Needs a look or Not working says what to do. After changing StationPlay’s app settings, restart it, then choose Check again.'),
-      PERSONAL_USE(),
       list,
       h('div', { class: 'row-btns' }, again)) };
   },

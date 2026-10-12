@@ -28,8 +28,11 @@ function showSignIn(idle = false) {
   const note = me.notSetUp || (idle ? ACCESS.idleSignedOut : '');
   $('#signinNote').hidden = !note;
   $('#signinNote').textContent = note;
-  // (From the internet: where the PIN works instead.)
+  // Where the PIN works: from the internet (the public port, even through a
+  // proxy at home), never; at home, after a password on this browser. (Hidden
+  // when the PIN is what's asked: see signInBy.)
   $('#signinWhere').hidden = !me.outside || !!me.notSetUp;
+  $('#signinHome').hidden = !!me.outside || !me.required;
   signInBy('');
   $('#signinName').focus();
   // At home, on a browser someone signed in on with their password: their PIN
@@ -40,6 +43,7 @@ function showSignIn(idle = false) {
 let pinFor = '';
 function signInBy(name) {
   pinFor = name;
+  if (name) $('#signinHome').hidden = true;
   $('#signinByPin').hidden = !name;
   $('#signinByPassword').hidden = !!name;
   $('#signinOther').hidden = !name;

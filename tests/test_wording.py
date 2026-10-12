@@ -202,7 +202,8 @@ def _notes_version(path: Path) -> tuple[int, ...]:
 
 
 def markdown_files() -> list[Path]:
-    files = [ROOT / "README.md", ROOT / "SECURITY.md", *sorted(ROOT.glob("THIRD_PARTY_NOTICES*"))]
+    files = [ROOT / "README.md", ROOT / "SECURITY.md", ROOT / "PRIVACY.md",
+             *sorted(ROOT.glob("THIRD_PARTY_NOTICES*"))]  # fmt: skip
     files += sorted((ROOT / "docs").glob("*.md"))
     files += [
         p
@@ -523,6 +524,7 @@ def test_it_reads_every_kind_of_text():
     for expected in (
         "README.md",
         "SECURITY.md",
+        "PRIVACY.md",
         "THIRD_PARTY_NOTICES.md",
         "docs/users.md",
         "docs/internal-api.md",
