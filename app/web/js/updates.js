@@ -5,7 +5,7 @@
 // updated from before 1.34.0: a new one asks in setup's last step); and the
 // update check's setting, on the Add to Plex tab. "Not now" hides the
 // banner for that version, in this browser.
-const UPDATE_NOT_NOW = 'stationplay.updateNotNow';
+const UPDATE_NOT_NOW = 'tapioca.updateNotNow';
 const UPDATE_PRIVACY = 'Once a day, tapiOca asks GitHub whether a newer version is out. GitHub sees your server’s internet address when it asks, as any website does. tapiOca sends only its version, and never updates by itself.';
 const notNowFor = () => { try { return localStorage.getItem(UPDATE_NOT_NOW) || ''; } catch { return ''; } };
 let updates = null;

@@ -55,7 +55,7 @@ You need just one file, which tells Docker how to run tapiOca:
 | `docker-compose.yml` | The app definition for Docker Compose, for everything else. |
 | `unraid/stationplay.xml` | A template for Unraid's Docker tab. It's in the repo's `unraid` folder. |
 
-Download the first two from the [latest release](https://github.com/egadgetboy/tapioca-server/releases/latest), under **Assets**. Both ask for `:latest`, the newest release. Docker downloads it when you install, and again only when you update (see [Updating](#updating)), so tapiOca never needs the internet to start. Each also sets `STATIONPLAY_INSTALL`, which tells tapiOca's page how your kind of install updates. The steps below say what to set it to.
+Download the first two from the [latest release](https://github.com/egadgetboy/tapioca-server/releases/latest), under **Assets**. Both ask for `:latest`, the newest release. Docker downloads it when you install, and again only when you update (see [Updating](#updating)), so tapiOca never needs the internet to start. Each also sets `TAPIOCA_INSTALL`, which tells tapiOca's page how your kind of install updates. The steps below say what to set it to.
 
 To build the image yourself instead, see [Building from source](#building-from-source).
 
@@ -89,7 +89,7 @@ The `data` folder holds your stations and settings, so the user tapiOca runs as 
 - **Plex and time zone:** `PLEX_URL`, `PLEX_TOKEN` and `TZ` (your time zone, such as `America/Chicago`).
 - **The user:** change `user:` if your media belongs to another user. TrueNAS's built-in apps user is `568:568`. If you use it, also run `sudo chown -R 568:568 /mnt/tank/apps/stationplay/data`.
 
-Leave `STATIONPLAY_INSTALL` set to `truenas`. Also check the GPU lines (see [GPU encoding](#gpu-encoding)). The Intel/AMD lines are turned on in this file. If the server has no Intel or AMD graphics, delete them, or the app won't start.
+Leave `TAPIOCA_INSTALL` set to `truenas`. Also check the GPU lines (see [GPU encoding](#gpu-encoding)). The Intel/AMD lines are turned on in this file. If the server has no Intel or AMD graphics, delete them, or the app won't start.
 
 Save. TrueNAS downloads the image and starts tapiOca.
 
@@ -107,7 +107,7 @@ mkdir -p data && sudo chown -R 1000:1000 data      # use your UID:GID
 
 (Or download `docker-compose.yml` from the [latest release](https://github.com/egadgetboy/tapioca-server/releases/latest) in a browser, and put it in that folder.)
 
-Open `docker-compose.yml` in a text editor and change every line marked `<- CHANGE`: the user, Plex's address, your Plex token, your time zone and your media folder. Leave `STATIONPLAY_INSTALL` set to `compose`. For a GPU, uncomment its lines (see [GPU encoding](#gpu-encoding)). Then start tapiOca:
+Open `docker-compose.yml` in a text editor and change every line marked `<- CHANGE`: the user, Plex's address, your Plex token, your time zone and your media folder. Leave `TAPIOCA_INSTALL` set to `compose`. For a GPU, uncomment its lines (see [GPU encoding](#gpu-encoding)). Then start tapiOca:
 
 ```
 docker compose up -d
@@ -131,7 +131,7 @@ Requires DSM 7.2 or later with **Container Manager** (from Package Center).
    sudo chown -R 1026:100 data
    ```
 
-4. Edit `docker-compose.yml` in File Station or a text editor. Set `user: "1026:100"` (your numbers), set `STATIONPLAY_INSTALL` to `"synology"`, and change the other lines marked `<- CHANGE`. Your media folder is usually under `/volume1/`, such as `/volume1/video`.
+4. Edit `docker-compose.yml` in File Station or a text editor. Set `user: "1026:100"` (your numbers), set `TAPIOCA_INSTALL` to `"synology"`, and change the other lines marked `<- CHANGE`. Your media folder is usually under `/volume1/`, such as `/volume1/video`.
 5. In **Container Manager**, open **Project** and choose **Create**. Name it `stationplay`, choose `/volume1/docker/stationplay` as its path, and use the `docker-compose.yml` that's there. Finish, and Container Manager downloads the image and starts tapiOca.
 
    If you'd rather use SSH, run `sudo docker compose up -d` in that folder instead. Either way, tapiOca updates over SSH (see [Updating](#updating)).
@@ -145,17 +145,17 @@ The simplest way is tapiOca's template, from the repo's `unraid` folder. You can
 1. Open the terminal (the `>_` icon). Make tapiOca's data folder, owned by Unraid's standard `nobody:users` (`99:100`, which owns your shares), and add the template:
 
    ```
-   mkdir -p /mnt/user/appdata/stationplay
-   chown -R 99:100 /mnt/user/appdata/stationplay
-   curl -fL -o /boot/config/plugins/dockerMan/templates-user/my-tapiOca.xml \
+   mkdir -p /mnt/user/appdata/stationplay/data
+   chown -R 99:100 /mnt/user/appdata/stationplay/data
+   curl -fL -o /boot/config/plugins/dockerMan/templates-user/my-stationplay.xml \
      https://raw.githubusercontent.com/egadgetboy/tapioca-server/main/unraid/stationplay.xml
    ```
 
-2. On the **Docker** tab, choose **Add Container**, and pick **tapiOca** under **Template**.
-3. Fill in Plex's address, your Plex token, your time zone and your media folder (such as `/mnt/user/media`). The data folder is already `/mnt/user/appdata/stationplay`. Leave `STATIONPLAY_INSTALL` set to `unraid`. The template runs tapiOca as `99:100`: to change that, turn on **Advanced View** and edit `--user` under **Extra Parameters**.
+2. On the **Docker** tab, choose **Add Container**, and pick **stationplay** under **Template**. That's the container's name, as on every other kind of install.
+3. Fill in Plex's address, your Plex token, your time zone and your media folder (such as `/mnt/user/media`). The data folder is already `/mnt/user/appdata/stationplay/data`, the same folder a compose install there uses. Leave `TAPIOCA_INSTALL` set to `unraid`. The template runs tapiOca as `99:100`: to change that, turn on **Advanced View** and edit `--user` under **Extra Parameters**.
 4. Choose **Apply**. Unraid downloads the image and starts tapiOca.
 
-**With the compose file instead.** From the **Apps** tab, install the **Compose Manager** plugin, which adds the `docker compose` command. Then follow the [Docker Compose](#docker-compose-linux-proxmox-raspberry-pi) steps in `/mnt/user/appdata/stationplay`, with `user: "99:100"` and `chown -R 99:100 data`. Set `STATIONPLAY_INSTALL` to `"compose"`, since you'll update it with `docker compose`, not from the Docker tab.
+**With the compose file instead.** From the **Apps** tab, install the **Compose Manager** plugin, which adds the `docker compose` command. Then follow the [Docker Compose](#docker-compose-linux-proxmox-raspberry-pi) steps in `/mnt/user/appdata/stationplay`, with `user: "99:100"` and `chown -R 99:100 data`. Set `TAPIOCA_INSTALL` to `"compose"`, since you'll update it with `docker compose`, not from the Docker tab.
 
 For an Intel GPU, the `/dev/dri` folder must exist on the server. Unraid loads the Intel driver for most Intel graphics. In the template, turn on **Advanced View** and set **GPU** to `/dev/dri`. If the **Video encoding** line names a group tapiOca needs, add `--group-add <that number>` to **Extra Parameters**. See [GPU encoding](#gpu-encoding).
 
@@ -167,7 +167,7 @@ tapiOca runs in **Docker Desktop**. The computer must stay on and awake for your
 2. Make a folder, such as `C:\tapioca` or `~/tapioca`, with a `data` folder inside it. Download `docker-compose.yml` from the [latest release](https://github.com/egadgetboy/tapioca-server/releases/latest) into that folder.
 3. Edit `docker-compose.yml`:
    - Delete the `user:` line. Docker Desktop manages file permissions itself.
-   - Set `STATIONPLAY_INSTALL` to `"docker-desktop"`.
+   - Set `TAPIOCA_INSTALL` to `"docker-desktop"`.
    - Set your media folder with forward slashes, such as `D:/Media:/media:ro` on Windows or `/Users/you/Movies:/media:ro` on a Mac.
    - Change the other lines marked `<- CHANGE`.
 4. In a terminal (PowerShell on Windows), go to that folder and run `docker compose up -d`.
@@ -186,7 +186,7 @@ docker run -d --name stationplay --restart unless-stopped --init \
   --user 1000:1000 \
   -p 3310:3310 \
   -p 3311:3311 \
-  -e STATIONPLAY_INSTALL=docker-run \
+  -e TAPIOCA_INSTALL=docker-run \
   -e PLEX_URL=http://192.168.1.10:32400 \
   -e PLEX_TOKEN=paste-your-plex-token-here \
   -e TZ=America/Chicago \
@@ -280,7 +280,7 @@ Put `PUBLIC_PORT` behind a Cloudflare Tunnel or a reverse proxy with HTTPS. [Rea
 
 ## Updating
 
-**tapiOca's page can tell you when a new version is out,** if an Admin says yes (see **The update check** below). Admins then see a banner at the top: "tapiOca 1.35.0 is available." It shows the steps for your kind of install (from `STATIONPLAY_INSTALL`), with **What's new** (the release's notes), **Back up now**, **All the steps** (this section) and **Not now**, which hides the banner for that version in this browser. tapiOca never downloads or updates anything by itself.
+**tapiOca's page can tell you when a new version is out,** if an Admin says yes (see **The update check** below). Admins then see a banner at the top: "tapiOca 1.35.0 is available." It shows the steps for your kind of install (from `TAPIOCA_INSTALL`), with **What's new** (the release's notes), **Back up now**, **All the steps** (this section) and **Not now**, which hides the banner for that version in this browser. tapiOca never downloads or updates anything by itself.
 
 Your stations, settings, logos, Intro Bumper videos and Broken files list live in the `data` folder, so updates keep them. Existing stations keep their settings. New defaults apply only to stations you make afterward. The version you're running is shown at the bottom of tapiOca's page.
 
@@ -288,11 +288,11 @@ Your stations, settings, logos, Intro Bumper videos and Broken files list live i
 
 | Install | To update |
 |---|---|
-| TrueNAS SCALE | In TrueNAS, open **Apps**, then tapiOca. If it offers **Update**, choose it. If it doesn't, open **System**, then **Shell**, and run `sudo docker pull ghcr.io/egadgetboy/tapioca-server:latest`. Then open tapiOca in **Apps**, and choose **Edit**, then **Save**. These TrueNAS steps haven't been confirmed yet. If tapiOca still shows the old version afterward, see [Troubleshooting](#troubleshooting). |
+| TrueNAS SCALE | In TrueNAS, open **Apps**, then **stationplay**. If it offers **Update**, choose it. If it doesn't, open **System**, then **Shell**, and run `sudo docker pull ghcr.io/egadgetboy/tapioca-server:latest`. Then open **Apps**, choose **stationplay**, and choose **Edit**, then **Save**. These TrueNAS steps haven't been confirmed yet. If tapiOca still shows the old version afterward, see [Troubleshooting](#troubleshooting). |
 | Docker Compose | In the folder with tapiOca's `docker-compose.yml`, run `docker compose up -d --pull always`. |
 | Docker Desktop | In a terminal (PowerShell on Windows), in the folder with tapiOca's `docker-compose.yml`, run `docker compose up -d --pull always`. |
-| Unraid | On Unraid's **Docker** tab, choose **Check for Updates**. When tapiOca shows an update, choose **apply update**. |
-| Synology | Connect over SSH, go to tapiOca's folder (such as `/volume1/docker/stationplay`), and run `sudo docker compose up -d --pull always`. Container Manager's own way (open **Project**, choose tapiOca's project, then **Stop** and **Build**) hasn't been confirmed yet to fetch the newest image, so these steps haven't been confirmed yet either way. |
+| Unraid | On Unraid's **Docker** tab, choose **Check for Updates**. When **stationplay** shows an update, choose **apply update**. |
+| Synology | Connect over SSH, go to tapiOca's folder (such as `/volume1/docker/stationplay`), and run `sudo docker compose up -d --pull always`. Container Manager's own way (open **Project**, choose the stationplay project, then **Stop** and **Build**) hasn't been confirmed yet to fetch the newest image, so these steps haven't been confirmed yet either way. |
 | docker run | Fetch the newest image, then remove the container and start it again with the same `docker run` command as before (see [docker run](#docker-run)). |
 
 For `docker run`, that's these two commands:
@@ -320,10 +320,10 @@ The update steps above then fetch only what that tag allows. Change it back to `
 Before 1.34.0, tapiOca was built on your own machine from the release's zip. From 1.34.0 on, it comes as a ready-made image. If you built it before, switch once:
 
 1. **Make a backup.** On the **Add to Plex** tab, choose **Download a backup**.
-2. **Edit your YAML or compose file.** On TrueNAS, open **Apps**, then tapiOca, and choose **Edit**. Then:
+2. **Edit your YAML or compose file.** On TrueNAS, open **Apps**, then **stationplay**, and choose **Edit**. Then:
    - Delete the `build:` block: the `build:` line and the lines indented under it (`context:` and `dockerfile:`).
    - Change `image:` to `ghcr.io/egadgetboy/tapioca-server:latest`.
-   - Add `STATIONPLAY_INSTALL` under `environment:`, set to how you update (see [Updating](#updating)). On TrueNAS, set it to `"truenas"`. With Docker Compose on Linux, set it to `"compose"`, and with Docker Desktop, `"docker-desktop"`. On Synology, set it to `"synology"`: you installed it over SSH, and it updates that way. On Unraid, set it to `"compose"`: you installed it with the Compose Manager plugin, and it updates with `docker compose`.
+   - Add `TAPIOCA_INSTALL` under `environment:`, set to how you update (see [Updating](#updating)). On TrueNAS, set it to `"truenas"`. With Docker Compose on Linux, set it to `"compose"`, and with Docker Desktop, `"docker-desktop"`. On Synology, set it to `"synology"`: you installed it over SSH, and it updates that way. On Unraid, set it to `"compose"`: you installed it with the Compose Manager plugin, and it updates with `docker compose`.
 3. **Leave everything else as it is:** your Plex token, folders, user, ports and GPU lines.
 4. **Save it in TrueNAS,** or run `docker compose up -d` in the compose file's folder. On Synology, connect over SSH and run `sudo docker compose up -d` there.
 
@@ -336,7 +336,7 @@ services:
     container_name: stationplay
     ...
     environment:
-      STATIONPLAY_INSTALL: "truenas"
+      TAPIOCA_INSTALL: "truenas"
 ```
 
 The data folder doesn't change, so your stations, settings and people carry over. Afterward, you can delete the `src` folder.
@@ -1186,7 +1186,7 @@ tapiOca is set up mostly on its page. These environment variables, in the YAML o
 |---|---|---|
 | `PLEX_URL` | *(none)* | Your Plex server's address, such as `http://192.168.1.10:32400`. Required. |
 | `PLEX_TOKEN` | *(none)* | Your Plex token (see [Finding your Plex token](#finding-your-plex-token)). Required. |
-| `STATIONPLAY_INSTALL` | *(none)* | How you installed tapiOca: `truenas`, `compose`, `unraid`, `synology`, `docker-desktop` or `docker-run`. The page uses it to show how your install updates (see [Updating](#updating)). |
+| `TAPIOCA_INSTALL` | *(none)* | How you installed tapiOca: `truenas`, `compose`, `unraid`, `synology`, `docker-desktop` or `docker-run`. The page uses it to show how your install updates (see [Updating](#updating)). |
 | `TZ` | `UTC` | Your time zone, such as `America/Chicago`. Used for the clock, specials, the overnight checks, backups, stats and log times. |
 | `MEDIA_DIR` | `/media` | Where your media is mounted inside the container. |
 | `PATH_MAPPINGS` | *(none)* | For unusual layouts only: `plex/path:local/path`, with several separated by `;`. |
@@ -1356,7 +1356,7 @@ This is the advanced choice: most people should use the published image (see [In
    docker build -t stationplay:1.34.0 ./src          # or ./tapioca-server for a clone
    ```
 
-3. **Point `image:` at your build.** In your YAML or compose file, set `image: stationplay:1.34.0` (your build's name) and `pull_policy: never`, so Docker uses your build and never looks for it online. With `docker run`, put `stationplay:1.34.0` at the end instead. Remove `STATIONPLAY_INSTALL`, so the page doesn't suggest fetching the published image.
+3. **Point `image:` at your build.** In your YAML or compose file, set `image: stationplay:1.34.0` (your build's name) and `pull_policy: never`, so Docker uses your build and never looks for it online. With `docker run`, put `stationplay:1.34.0` at the end instead. Remove `TAPIOCA_INSTALL`, so the page doesn't suggest fetching the published image.
 
 To update, get the new source, build it under the new version, and change `image:` to match. Then save the app in TrueNAS, or run `docker compose up -d`.
 

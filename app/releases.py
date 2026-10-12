@@ -1,6 +1,6 @@
 """tapiOca's own new versions: once a day, whether a newer release than
 this one is out (the update check, an Admin's choice), and what the page's
-banner says to update, for this kind of install (STATIONPLAY_INSTALL, set
+banner says to update, for this kind of install (TAPIOCA_INSTALL, set
 in the YAML or compose file).
 
 Nothing is asked of GitHub until an Admin says yes (the audit of 1.34.0):
@@ -62,7 +62,7 @@ SOONEST_S = 60.0  # Check now, at most this often
 VERSION = re.compile(r"v?(\d{1,4})\.(\d{1,4})\.(\d{1,4})")
 NOTES_MOST = 300  # characters of an address kept
 
-# Each kind of install, as STATIONPLAY_INSTALL names it: its name, the
+# Each kind of install, as TAPIOCA_INSTALL names it: its name, the
 # banner's heading, how its image is updated (sentences), and a command to
 # copy, if there's one. Each fetches the newest image as it updates, so
 # starting tapiOca never needs the internet (the YAML and compose files
@@ -74,9 +74,9 @@ STEPS: dict[str, tuple[str, str, tuple[str, ...], str]] = {
         "TrueNAS",
         "To update on TrueNAS:",
         (
-            "In TrueNAS, open Apps, then tapiOca. If it offers Update, choose it.",
+            "In TrueNAS, open Apps, then stationplay. If it offers Update, choose it.",
             "If it doesn't, open System, then Shell, and run the command below. Then open Apps, "
-            "choose tapiOca, and choose Edit, then Save.",
+            "choose stationplay, and choose Edit, then Save.",
             "These TrueNAS steps haven't been confirmed yet. If tapiOca still shows this "
             "version afterward, see All the steps.",
         ),
@@ -98,7 +98,7 @@ STEPS: dict[str, tuple[str, str, tuple[str, ...], str]] = {
         "Unraid",
         "To update on Unraid:",
         (
-            "On Unraid's Docker tab, choose Check for Updates. When tapiOca shows an update, "
+            "On Unraid's Docker tab, choose Check for Updates. When stationplay shows an update, "
             "choose apply update.",
         ),
         "",
@@ -109,7 +109,7 @@ STEPS: dict[str, tuple[str, str, tuple[str, ...], str]] = {
         (
             "Connect over SSH, go to tapiOca's folder (such as /volume1/docker/stationplay), "
             "and run the command below.",
-            "Container Manager's own way (open Project, choose tapiOca's project, then Stop "
+            "Container Manager's own way (open Project, choose the stationplay project, then Stop "
             "and Build) hasn't been confirmed yet to fetch the newest image, so these steps "
             "haven't been confirmed yet either way. If tapiOca still shows this version "
             "afterward, see All the steps.",

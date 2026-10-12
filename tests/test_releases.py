@@ -198,6 +198,18 @@ def test_each_kind_of_install_has_its_steps():
         assert "haven't been confirmed yet" in " ".join(releases.steps(install)["steps"]), install
     for install in ("compose", "docker-desktop", "unraid", "docker-run"):
         assert "confirmed" not in " ".join(releases.steps(install)["steps"]), install
+    # Each names what the screen shows: the TrueNAS app and the Synology
+    # project are named stationplay (TrueNAS app names are lowercase only),
+    # and so is the container on Unraid's Docker tab (the audit of 1.34.0).
+    truenas = " ".join(releases.steps("truenas")["steps"])
+    assert "open Apps, then stationplay." in truenas
+    assert "choose stationplay, and choose Edit" in truenas
+    assert "choose the stationplay project" in " ".join(releases.steps("synology")["steps"])
+    assert "When stationplay shows an update" in " ".join(releases.steps("unraid")["steps"])
+    for install in ("truenas", "synology", "unraid"):
+        said = " ".join(releases.steps(install)["steps"])
+        assert "then tapiOca" not in said and "choose tapiOca" not in said, install
+        assert "When tapiOca shows" not in said, install
     unknown = releases.steps("something else")
     assert unknown["install"] == "" and "README" in unknown["steps"][0]
     assert unknown["readme"] == releases.README
@@ -290,7 +302,7 @@ def test_the_page_s_addresses_are_admins_only(tmp_path, monkeypatch):
     version = bump()
     github = GitHub(body={"tag_name": f"v{version}", "html_url": releases.RELEASES})
     monkeypatch.setattr(releases.Releases, "transport", github.transport())
-    monkeypatch.setenv("STATIONPLAY_INSTALL", "Compose")
+    monkeypatch.setenv("TAPIOCA_INSTALL", "Compose")
     settings = Settings.from_env()
     settings.plex_url, settings.plex_token, settings.data_dir = (
         "http://plex.test", "token", tmp_path / "data",
@@ -331,6 +343,8 @@ def test_not_now_hides_the_banner_for_that_version_only():
     version brings it back.) Not now keeps the version it was chosen for, in
     this browser, and the banner stays hidden only while that's the newest."""
     page = UPDATES_JS.read_text(encoding="utf-8")
+    # (New in 1.34.0, so under tapiOca's own name: the audit of 1.34.0.)
+    assert "const UPDATE_NOT_NOW = 'tapioca.updateNotNow';" in page
     assert "localStorage.setItem(UPDATE_NOT_NOW, u.latest.version)" in page
     assert (
         "if (!u.latest || notNowFor() === u.latest.version) { banner.hidden = true; return; }"

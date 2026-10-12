@@ -213,7 +213,7 @@ def library() -> StandInPlex:
 # A newer tapiOca, as the stand-in for GitHub says (see Running), and
 # the page's "Not now" for it (updates.js).
 NEWER = "9.0.0"
-NOT_NOW = "stationplay.updateNotNow"
+NOT_NOW = "tapioca.updateNotNow"
 
 
 class Running:

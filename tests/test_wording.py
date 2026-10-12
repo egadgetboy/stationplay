@@ -20,7 +20,7 @@ libraries are "Media folders."
 The brand (1.34.0, the owner's rename): it fails on "StationPlay", the
 old name, and on "Tapioca", "TAPIOCA" or "TapiOca" (it's always "tapiOca";
 lowercase "tapioca" in names and addresses). These match case and all, so
-the names kept for other programs (STATIONPLAY_INSTALL, stationplay.db;
+the names kept for other programs (STATIONPLAY_SOAK, stationplay.db;
 docs/notes/names-kept.md) and lowercase names (tapioca-server) never count.
 Release notes before 1.34.0 are published history: the brand rule skips
 them.
@@ -606,7 +606,8 @@ def _said(text: str, page_or_code: bool = False, allowed: tuple[str, ...] = ()) 
         ("StationPlay's page, StationPlays", ["StationPlay"]),
         ("Tapioca, TAPIOCA or TapiOca", ["Tapioca", "TAPIOCA", "TapiOca"]),
         ("tapiOca, tapioca-release and ghcr.io/egadgetboy/tapioca-server", []),
-        ("STATIONPLAY_INSTALL, stationplay.db and github.com/egadgetboy/tapioca-server", []),
+        ("STATIONPLAY_SOAK, stationplay.db and github.com/egadgetboy/tapioca-server", []),
+        ("TAPIOCA_INSTALL and tapioca.updateNotNow", []),
     ],
 )
 def test_the_words_it_finds(text, words):

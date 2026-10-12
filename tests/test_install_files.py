@@ -77,13 +77,30 @@ def test_the_unraid_template_runs_stationplay_as_the_compose_file_does():
                  if c.get("Type") == "Variable"}  # fmt: skip
     for name, value in environment(compose).items():
         assert name in variables, name
-        if name not in ("STATIONPLAY_INSTALL", "PLEX_URL", "PLEX_TOKEN", "TZ"):
+        if name not in ("TAPIOCA_INSTALL", "PLEX_URL", "PLEX_TOKEN", "TZ"):
             assert variables[name] == value, name
-    assert variables["STATIONPLAY_INSTALL"] == "unraid"
+    assert variables["TAPIOCA_INSTALL"] == "unraid"
     paths = {c.get("Target"): c.get("Mode") for c in configs if c.get("Type") == "Path"}
     for volume in listed(compose, "volumes"):
         inside = volume.split(":")[1]
         assert paths.get(inside) == ("ro" if volume.endswith(":ro") else "rw"), volume
+    # The container's name, as every install's, so the README's `docker logs
+    # stationplay` works on Unraid too; and the data folder an Unraid
+    # Compose install from before 1.34.0 already uses (the compose file's
+    # ./data, in the folder the README gives), so switching to the template
+    # never starts an empty server with a new tuner (the audit of 1.34.0).
+    assert template.findtext("Name") == setting(compose, "container_name") == "stationplay"
+    assert setting(YAML.read_text(), "container_name") == "stationplay"
+    assert "./data:/data" in listed(compose, "volumes")
+    unraid = README.read_text()
+    unraid = unraid[unraid.index("\n### Unraid\n") : unraid.index("\n### Windows and macOS\n")]
+    assert "steps in `/mnt/user/appdata/stationplay`" in unraid
+    [data] = [c for c in configs if c.get("Target") == "/data"]
+    assert data.get("Default") == data.text == "/mnt/user/appdata/stationplay/data"
+    assert "/mnt/user/appdata/stationplay/data" in (template.findtext("Requires") or "")
+    assert "The data folder is already `/mnt/user/appdata/stationplay/data`" in unraid
+    # The Overview still says tapiOca.
+    assert "tapiOca" in (template.findtext("Overview") or "")
 
 
 def updating() -> str:
@@ -111,6 +128,14 @@ def test_the_readme_s_update_steps():
         assert "haven't been confirmed yet" in rows[install], install
     for install in ("Docker Compose", "Docker Desktop", "Unraid", "docker run"):
         assert "confirmed" not in rows[install], install
+    # The names on the screen: the TrueNAS app and the Synology project
+    # are named stationplay, as the install steps say (TrueNAS app names
+    # are lowercase only), and so is the container on Unraid's Docker tab.
+    assert "open **Apps**, then **stationplay**" in rows["TrueNAS SCALE"]
+    assert "choose the stationplay project" in rows["Synology"]
+    assert "When **stationplay** shows an update" in rows["Unraid"]
+    assert "then tapiOca" not in said and "tapiOca's project" not in said
+    assert "open tapiOca in **Apps**" not in said
     # The update check asks first, and says what GitHub sees.
     assert "GitHub sees your server's internet address" in said
     assert "pull_policy: always" not in README.read_text()
@@ -123,4 +148,24 @@ def test_installs_from_before_1_34_0_are_told_what_to_set():
     assert 'On Synology, set it to `"synology"`' in said
     assert 'On Unraid, set it to `"compose"`' in said
     assert "`sudo docker compose up -d`" in said
+    assert "On TrueNAS, open **Apps**, then **stationplay**, and choose **Edit**." in said
     assert "pull_policy: always" not in said
+
+
+def test_names_new_in_1_34_0_carry_tapioca_s_name():
+    """The install setting and the page's Not now key are new in 1.34.0,
+    never released under the old name, so nothing keeps it (the audit of
+    1.34.0): the old spellings are gone from every file in the repo."""
+    old = ("STATIONPLAY" + "_INSTALL", "stationplay" + ".updateNotNow")
+    kinds = {".py", ".js", ".css", ".html", ".md", ".yml", ".yaml", ".xml", ".txt", ".json", ".sh",
+             ".toml", ".ini", ""}  # fmt: skip
+    found = []
+    for path in ROOT.rglob("*"):
+        parts = path.relative_to(ROOT).parts
+        if any(p in (".git", "__pycache__", "node_modules") for p in parts):
+            continue
+        if not path.is_file() or path.suffix not in kinds:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        found += [f"{path.relative_to(ROOT)}: {name}" for name in old if name in text]
+    assert found == []

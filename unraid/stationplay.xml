@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <Container version="2">
-  <Name>tapiOca</Name>
+  <Name>stationplay</Name>
   <Repository>ghcr.io/egadgetboy/tapioca-server:latest</Repository>
   <Registry>https://github.com/egadgetboy/tapioca-server/pkgs/container/tapioca-server</Registry>
   <Network>bridge</Network>
@@ -20,10 +20,10 @@
   <DateInstalled/>
   <DonateText/>
   <DonateLink/>
-  <Requires>Your own Plex Media Server. The data folder must belong to the user in Extra Parameters (99:100 to start): chown -R 99:100 /mnt/user/appdata/stationplay</Requires>
+  <Requires>Your own Plex Media Server. The data folder must belong to the user in Extra Parameters (99:100 to start): chown -R 99:100 /mnt/user/appdata/stationplay/data</Requires>
   <Config Name="Port for Plex and your home network" Target="3310" Default="3310" Mode="tcp" Description="Plex, other apps and your home network. Never forward it to the internet." Type="Port" Display="always" Required="true" Mask="false">3310</Config>
   <Config Name="Port for the page from the internet" Target="3311" Default="3311" Mode="tcp" Description="The page for the internet, through a Cloudflare Tunnel or other reverse proxy (README: Security and remote access). Plex's addresses aren't on it, and signing in is always required. Remove it if you don't need that, and remove PUBLIC_PORT too." Type="Port" Display="always" Required="false" Mask="false">3311</Config>
-  <Config Name="Data folder" Target="/data" Default="/mnt/user/appdata/stationplay" Mode="rw" Description="Stations, settings, logos, the Broken files list and backups. It must belong to the user tapiOca runs as (99:100 to start)." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/stationplay</Config>
+  <Config Name="Data folder" Target="/data" Default="/mnt/user/appdata/stationplay/data" Mode="rw" Description="Stations, settings, logos, the Broken files list and backups. It must belong to the user tapiOca runs as (99:100 to start)." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/stationplay/data</Config>
   <Config Name="Media folder" Target="/media" Default="" Mode="ro" Description="Your media library, read-only, such as /mnt/user/media. tapiOca matches the paths Plex reports to this folder automatically." Type="Path" Display="always" Required="true" Mask="false"/>
   <Config Name="PLEX_URL" Target="PLEX_URL" Default="http://192.168.1.10:32400" Mode="" Description="Your Plex server's address, such as http://192.168.1.10:32400. Use its network IP address, not localhost." Type="Variable" Display="always" Required="true" Mask="false">http://192.168.1.10:32400</Config>
   <Config Name="PLEX_TOKEN" Target="PLEX_TOKEN" Default="" Mode="" Description="Your Plex token (README: Finding your Plex token). Keep it private: it gives full access to your Plex server." Type="Variable" Display="always" Required="true" Mask="true"/>
@@ -32,6 +32,6 @@
   <Config Name="PORT" Target="PORT" Default="3310" Mode="" Description="The port for Plex and your home network, inside the container. Leave it as 3310." Type="Variable" Display="advanced" Required="false" Mask="false">3310</Config>
   <Config Name="MEDIA_DIR" Target="MEDIA_DIR" Default="/media" Mode="" Description="Where your media is, inside the container. Leave it as /media." Type="Variable" Display="advanced" Required="false" Mask="false">/media</Config>
   <Config Name="HW_ACCEL" Target="HW_ACCEL" Default="auto" Mode="" Description="auto = use a GPU if one passes a test encode, otherwise the CPU. Other values: intel, amd, nvidia, cpu." Type="Variable" Display="always" Required="false" Mask="false">auto</Config>
-  <Config Name="STATIONPLAY_INSTALL" Target="STATIONPLAY_INSTALL" Default="unraid" Mode="" Description="How the page says to update (README: Updating). Leave it as unraid." Type="Variable" Display="advanced" Required="false" Mask="false">unraid</Config>
+  <Config Name="TAPIOCA_INSTALL" Target="TAPIOCA_INSTALL" Default="unraid" Mode="" Description="How the page says to update (README: Updating). Leave it as unraid." Type="Variable" Display="advanced" Required="false" Mask="false">unraid</Config>
   <Config Name="GPU" Target="" Default="" Mode="" Description="Intel or AMD graphics (such as Quick Sync), for GPU encoding: set it to /dev/dri if the server has it (check with: ls -ln /dev/dri). If the Video encoding line on tapiOca's Add to Plex tab names a group, add --group-add and that number to Extra Parameters." Type="Device" Display="advanced" Required="false" Mask="false"/>
 </Container>

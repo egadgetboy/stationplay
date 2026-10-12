@@ -33,7 +33,7 @@ services:
       # PUBLIC_PORT below if you don't need it.
       - "3311:3311"
     environment:
-      STATIONPLAY_INSTALL: "truenas"                 # how the page says to update (README: Updating)
+      TAPIOCA_INSTALL: "truenas"                     # how the page says to update (README: Updating)
       PLEX_URL: "http://192.168.1.10:32400"          # <- CHANGE to your Plex server's address
       PLEX_TOKEN: "paste-your-plex-token-here"       # <- CHANGE (README: "Finding your Plex token")
       TZ: "America/Chicago"                          # <- CHANGE to your time zone
