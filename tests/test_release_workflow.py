@@ -1,5 +1,6 @@
 """The release workflow's own script (.github/workflows/release.yml), run
-with stand-ins for gh and docker, in a git repository of its own.
+with stand-ins for gh, docker, skopeo and ssh-keygen, in a git repository
+of its own.
 
 Releases are source only (the owner, October 12): a version whose tests
 passed is published with its zip, stationplay.yaml, docker-compose.yml and
@@ -8,14 +9,23 @@ passed (the image workflow's "Made of" step, read here for the artifact's
 name and file). No image is built, pushed or pulled, and nothing is
 published without that list, without passed tests, or twice. One version
 that can't be published never stops the next (the audit of 1.32.1).
+
+From 1.34.0 (the owner, October 12, later the same day: D4 is No, U1), the
+image is published too: the very one the image workflow tested, by digest,
+gets the version's tags (C7), and the release carries the arm64 image's
+package list, the source of the images' GPL and LGPL packages (C6), and the
+zip's signature, which is required from 1.35.0. Versions before 1.34.0
+publish as they did.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import stat
 import subprocess
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -48,8 +58,36 @@ esac
 """
 DOCKER = """#!/bin/bash
 echo "docker $*" >> "$LOG"
+# (Fetching the source: a file in the folder mounted at /out, unless the
+# test says it can't be had.)
+if [ "$1" = run ]; then
+  for a in "$@"; do
+    case "$a" in
+      *:/out) [ -e "$ASSETS/no_source" ] && exit 1
+              mkdir -p "${a%:/out}" && echo source > "${a%:/out}/ffmpeg_7.1.5-0+deb13u1.dsc" ;;
+    esac
+  done
+fi
+[ "$1" = run ] || [ "$1" = login ] && cat > /dev/null
 exit 0
 """
+# (The registry: what a tag holds now is $ASSETS/manifest.)
+SKOPEO = """#!/bin/bash
+echo "skopeo $*" >> "$LOG"
+case "$1" in
+  login) cat > /dev/null ;;
+  inspect) cat "$ASSETS/manifest" ;;
+esac
+exit 0
+"""
+# (Signing: the .sig beside the file, unless the test says the key won't do.)
+SSH_KEYGEN = """#!/bin/bash
+echo "ssh-keygen $*" >> "$LOG"
+[ -e "$ASSETS/key_wont_do" ] && exit 1
+if [ "$2" = sign ]; then echo signature > "${@: -1}.sig"; fi
+exit 0
+"""
+MANIFEST = "the two tested images, joined\n"
 
 
 def script() -> str:
@@ -96,7 +134,8 @@ def run(tmp_path):
     `run.version("1.32.2")` adds another version, with its notes."""
     bin_ = tmp_path / "bin"
     bin_.mkdir()
-    for name, text in (("gh", GH), ("docker", DOCKER)):
+    for name, text in (("gh", GH), ("docker", DOCKER), ("skopeo", SKOPEO),
+                       ("ssh-keygen", SSH_KEYGEN)):  # fmt: skip
         (bin_ / name).write_text(text)
         (bin_ / name).chmod((bin_ / name).stat().st_mode | stat.S_IEXEC)
     work = tmp_path / "work"
@@ -105,6 +144,8 @@ def run(tmp_path):
     git(work, "init", "-q", "-b", "main")
     (work / "stationplay.yaml").write_text("services: {}\n")
     (work / "docker-compose.yml").write_text("services: {}\n")
+    (work / "tools").mkdir()
+    (work / "tools" / "gpl_source.py").write_text("# (a stand-in: the image runs it)\n")
     (work / "docs" / "releases" / "v1.32.0.md").write_text("---\ncommit: x\n---\n")
     assets = tmp_path / "assets"
     assets.mkdir()
@@ -128,7 +169,7 @@ def run(tmp_path):
 
     version("1.32.1")
 
-    def go() -> tuple[str, int, str]:
+    def go(**extra: str) -> tuple[str, int, str]:
         env = {
             **os.environ,
             "PATH": f"{bin_}:{os.environ['PATH']}",
@@ -140,6 +181,10 @@ def run(tmp_path):
             "GITHUB_REPOSITORY_OWNER": "EgadgetBoy",
             "GH_TOKEN": "x",
             "FIRST_PUBLIC": "1.32.0",
+            "FIRST_IMAGE": "1.34.0",
+            "FIRST_SIGNED": "1.35.0",
+            "GITHUB_ACTOR": "egadgetboy",
+            **extra,
         }
         done = subprocess.run(
             ["bash", "-e", "-c", script()], cwd=work, env=env, capture_output=True, text=True
@@ -156,10 +201,12 @@ def run(tmp_path):
 
 def image_run(
     run, number: int, version: str = "1.32.1", status: str = "completed",
-    test: str = "success", made: bool = True,
+    test: str = "success", made: bool = True, image: bool = True,
 ) -> None:  # fmt: skip
     """Image run `number`, on that version's commit (newest first, as
-    GitHub lists them: add the oldest first)."""
+    GitHub lists them: add the oldest first). From 1.34.0, with what its
+    image job kept too (`image`): the joined image, by digest, and the
+    arm64 image's package list."""
     runs = run.assets / "runs"
     before = runs.read_text() if runs.exists() else ""
     runs.write_text(f"{run.commits[version]} {number} {status}\n" + before)
@@ -170,6 +217,12 @@ def image_run(
         (folder / run.listed.replace("<version>", version)).write_text(
             f"StationPlay {version}: every package in the image that was tested\n"
         )
+        if image:
+            (folder / f"stationplay-{version}-image.txt").write_text(PINNED + "\n")
+            (folder / f"stationplay-{version}-packages-arm64.txt").write_text(
+                f"StationPlay {version}: every package in the arm64 image that was tested\n"
+            )
+    (run.assets / "manifest").write_text(MANIFEST)
 
 
 def docker(said: str) -> list[str]:
@@ -263,3 +316,104 @@ def test_the_artifact_release_yml_asks_for_is_the_one_image_yml_keeps():
     text = WORKFLOW.read_text()
     assert f'--name {name} --dir "$out/made-$run"' in text
     assert listed.replace("<version>", "$version") in text
+
+
+# From 1.34.0: the image, the sources and the signature -------------------------------------
+
+DIGEST = "sha256:" + hashlib.sha256(MANIFEST.encode()).hexdigest()
+PINNED = f"ghcr.io/egadgetboy/stationplay@{DIGEST}"
+
+
+def skopeo(said: str) -> list[str]:
+    return [line for line in said.splitlines() if line.startswith("skopeo copy")]
+
+
+def test_from_1_34_0_the_tested_image_gets_its_tags(run):
+    run.version("1.34.0")
+    image_run(run, 7, version="1.32.1", image=False)
+    image_run(run, 8, version="1.34.0")
+    said, status, out = run()
+    assert status == 0, said + out
+    # That very image (by digest), copied as it is, each tag checked.
+    assert skopeo(said) == [
+        f"skopeo copy --all --preserve-digests --quiet docker://{PINNED} "
+        f"docker://ghcr.io/egadgetboy/stationplay:{tag}"
+        for tag in ("1.34.0", "1.34", "latest")
+    ]
+    assert said.count("skopeo inspect --raw") == 3 and "docker build" not in said
+    made = [line for line in creates(said) if line.startswith("gh release create v1.34.0 ")]
+    assert len(made) == 1, said
+    for name in ("stationplay-1.34.0-packages.txt", "stationplay-1.34.0-packages-arm64.txt",
+                 "stationplay-1.34.0-source.tar", "stationplay-1.34.0.zip"):  # fmt: skip
+        assert f"/{name}" in made[0], made[0]
+    # The source, fetched in the tested image, with the arm64 image's list.
+    [fetch] = [line for line in said.splitlines() if line.startswith("docker run")]
+    assert PINNED in fetch and "--all --also /in/arm64.txt" in fetch and "--user 0" in fetch
+    with tarfile.open(run.temp / "v1.34.0" / "stationplay-1.34.0-source.tar") as tar:
+        assert "./ffmpeg_7.1.5-0+deb13u1.dsc" in tar.getnames()
+    # (No key yet, before 1.35.0: published unsigned, and said.)
+    assert ".zip.sig" not in made[0] and "zip isn't signed" in out
+    # 1.32.1, before 1.34.0, as before: no image, no source.
+    old = [line for line in creates(said) if line.startswith("gh release create v1.32.1 ")]
+    assert len(old) == 1 and "source.tar" not in old[0] and "arm64" not in old[0]
+
+
+def test_an_older_version_never_takes_the_newer_ones_tags(run):
+    run.version("1.34.0")
+    run.version("1.34.1")
+    (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
+    image_run(run, 8, version="1.34.0")
+    image_run(run, 9, version="1.34.1")
+    said, status, out = run()
+    assert status == 0, said + out
+    tags = [line.rsplit(":", 1)[1] for line in skopeo(said)]
+    assert tags == ["1.34.0", "1.34.1", "1.34", "latest"]
+
+
+def test_signed_with_the_key_and_checked(run):
+    run.version("1.35.0")
+    (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
+    image_run(run, 8, version="1.35.0")
+    said, status, out = run(SIGNING_KEY="-----BEGIN OPENSSH PRIVATE KEY-----\nx\n")
+    assert status == 0, said + out
+    assert "ssh-keygen -Y sign -q -f" in said and "-n stationplay-release" in said
+    assert "ssh-keygen -Y verify -f" in said and "-I stationplay-release" in said
+    [made] = creates(said)
+    assert "/stationplay-1.35.0.zip.sig" in made
+    # (The key is gone once it's done.)
+    assert not (run.temp / "signing-key").exists()
+
+
+def test_from_1_35_0_an_unsigned_zip_isn_t_published(run):
+    run.version("1.35.0")
+    (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
+    image_run(run, 8, version="1.35.0")
+    said, status, out = run()
+    assert status == 1 and not creates(said) and not skopeo(said)
+    assert "couldn't be signed" in out
+    (run.assets / "key_wont_do").write_text("")
+    said, status, out = run(SIGNING_KEY="a key with a passphrase")
+    assert status == 1 and not creates(said) and "couldn't be signed" in out
+
+
+def test_an_image_that_isn_t_the_tested_one_stops_it(run):
+    run.version("1.34.0")
+    (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
+    image_run(run, 8, version="1.34.0")
+    (run.assets / "manifest").write_text("something else\n")
+    said, status, out = run()
+    assert status == 1 and not creates(said)
+    assert "isn't the image that was tested" in out
+
+
+def test_without_its_image_or_its_sources_nothing_is_published(run):
+    run.version("1.34.0")
+    (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
+    image_run(run, 8, version="1.34.0", image=False)
+    said, status, out = run()
+    assert status == 1 and not creates(said) and "kept no image" in out
+    image_run(run, 9, version="1.34.0")
+    (run.assets / "no_source").write_text("")
+    said, status, out = run()
+    assert status == 1 and not creates(said) and not skopeo(said)
+    assert "GPL and LGPL packages couldn't all be fetched" in out

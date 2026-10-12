@@ -4,33 +4,22 @@
 # Name the app "stationplay" and paste this whole file.
 #
 # Before installing (README: Install > TrueNAS SCALE):
-#   1. In System > Shell, make a folder on a pool with a data folder in it,
-#      unzip StationPlay there (it creates src/), and give data to the user
-#      below:
+#   1. In System > Shell, make a data folder on a pool, and give it to the
+#      user below:
 #        sudo mkdir -p /mnt/tank/apps/stationplay/data
-#        cd /mnt/tank/apps/stationplay
-#        sudo unzip -o /path/to/stationplay-<version>.zip
-#        sudo chown -R 1000:1000 data
+#        sudo chown -R 1000:1000 /mnt/tank/apps/stationplay/data
 #   2. Change every line marked  <- CHANGE
 #
 # Paths are case-sensitive: StationPlay and stationplay are different folders.
 #
-# To update later, in this order:
-#   1. Unzip the new version over the src folder:
-#        cd /mnt/tank/apps/stationplay
-#        sudo unzip -o /path/to/stationplay-<version>.zip
-#   2. Edit the app, raise the version in "image:" (e.g. 1.23.0 -> 1.23.1),
-#      change nothing else, and save.
-# A new version number is what tells TrueNAS to rebuild, and it builds from
-# whatever is in src when you save: save first and it builds the old code
-# under the new number (raise the number again to fix that).
+# To update: when StationPlay's page says a new version is out, open Apps,
+# then StationPlay, and choose Update if TrueNAS offers it; if it doesn't,
+# choose Edit, then Save (pull_policy: always fetches the newest image).
 
 services:
   stationplay:
-    build:
-      context: /mnt/tank/apps/stationplay/src       # <- CHANGE to your src folder
-      dockerfile: Dockerfile
-    image: stationplay:1.33.1
+    image: ghcr.io/egadgetboy/stationplay:latest     # the newest release; :1.34 or :1.34.0 stays on one
+    pull_policy: always                              # the newest image whenever the app is saved or updated
     container_name: stationplay
     restart: unless-stopped
     init: true
@@ -45,6 +34,7 @@ services:
       # PUBLIC_PORT below if you don't need it.
       - "3311:3311"
     environment:
+      STATIONPLAY_INSTALL: "truenas"                 # how the page says to update (README: Updating)
       PLEX_URL: "http://192.168.1.10:32400"          # <- CHANGE to your Plex server's address
       PLEX_TOKEN: "paste-your-plex-token-here"       # <- CHANGE (README: "Finding your Plex token")
       TZ: "America/Chicago"                          # <- CHANGE to your time zone

@@ -1,16 +1,21 @@
-"""The source of FFmpeg, x264 and x265, at the exact versions in a
-StationPlay image: Debian's source packages (each one's .dsc and the files
-it names), downloaded into a folder.
+"""The source of the GPL and LGPL packages in a StationPlay image, at the
+exact versions in it: Debian's source packages (each one's .dsc and the
+files it names), downloaded into a folder.
 
-StationPlay's own releases don't use it: they're source only, and publish
-no image (the owner, October 12). It's here for anyone who builds an image
-and hands it on to others, as a start: the GPL asks that the source go with
-it, and that covers more packages than these three (see the image's
-third-party-packages.txt).
+With --all, every source package that an installed package whose copyright
+file names the GPL, the LGPL or the AGPL (any version) is built from; a
+package without a copyright file counts too, as it can't be told. With
+--also <list> too (another image's stationplay-<version>-packages.txt, such
+as the arm64 image's), the source of each package in that list that isn't
+installed here, whatever its license. Without --all, only FFmpeg, x264 and
+x265's.
 
-It runs inside the image, as root, with a folder mounted at /out:
+release.yml runs it for each release from 1.34.0, in the image that was
+tested (the owner, October 12: the image is published, with this source
+attached, C6). It runs inside the image, as root, with a folder mounted at
+/out:
 
-    docker run --rm -i --user 0 -v "$PWD/gpl:/out" stationplay:<version> python - < tools/gpl_source.py
+    docker run --rm -i --user 0 -v "$PWD/gpl:/out" stationplay:<version> python - --all < tools/gpl_source.py
 
 Debian's archive (apt-get source) keeps only each suite's newest version,
 so once Debian updates one of them, an older image's version comes from
@@ -33,6 +38,14 @@ from urllib.parse import quote
 SOURCES = ("ffmpeg", "x264", "x265")
 SNAPSHOT = "https://snapshot.debian.org"
 OUT = Path("/out")
+DOCS = Path("/usr/share/doc")
+# A copyright file naming the GPL, the LGPL or the AGPL, in any version.
+GPL = re.compile(
+    r"\b(?:L|A)?GPL\b|GNU (?:Lesser |Library |Affero )?General Public Licen[cs]e", re.I
+)
+# A line of a package list (tools/sbom.py): a Debian package, its version,
+# and its source package and version.
+LISTED = re.compile(r"^(\S+) (\S+): source (\S+) (\S+), https://snapshot\.debian\.org/")
 
 
 def installed_versions(listing: str) -> dict[str, str]:
@@ -44,6 +57,41 @@ def installed_versions(listing: str) -> dict[str, str]:
         if len(parts) == 2:
             found.setdefault(parts[0], parts[1])
     return found
+
+
+def gpl_sources(listing: str, copyright_of) -> dict[str, str]:
+    """Each source package (and its version) an installed package is built
+    from whose copyright file names the GPL, LGPL or AGPL, or that has none
+    (`listing`: dpkg-query's `${Package} ${source:Package} ${source:Version}`
+    lines; `copyright_of(package)`: its copyright file's text, or None)."""
+    found: dict[str, str] = {}
+    for line in listing.splitlines():
+        parts = line.split()
+        if len(parts) != 3:
+            continue
+        package, source, version = parts
+        text = copyright_of(package)
+        if text is None or GPL.search(text):
+            found.setdefault(source, version)
+    return found
+
+
+def listed_sources(listed: str, installed: set[str]) -> dict[str, str]:
+    """Each source package (and its version) of a package in a package
+    list (tools/sbom.py's) that isn't one of `installed`."""
+    found: dict[str, str] = {}
+    for line in listed.splitlines():
+        if (got := LISTED.match(line)) and got[1] not in installed:
+            found.setdefault(got[3], got[4])
+    return found
+
+
+def _copyright(package: str) -> str | None:
+    path = DOCS / package.split(":")[0] / "copyright"
+    try:
+        return path.read_text(errors="replace")
+    except OSError:
+        return None
 
 
 def snapshot_files(answer: dict) -> list[tuple[str, str]]:
@@ -104,27 +152,49 @@ def from_snapshot(source: str, version: str, out: Path) -> None:
     check(out, files[0][0])
 
 
-def main() -> int:
-    listing = subprocess.run(
-        ["dpkg-query", "-W", "-f", "${source:Package} ${source:Version}\n"],
-        capture_output=True, text=True, check=True,
-    ).stdout  # fmt: skip
-    versions = installed_versions(listing)
+def wanted(args: list[str]) -> dict[str, str] | str:
+    """The source packages to fetch, with their versions (see the module's
+    notes), or why it can't be said."""
+
+    def dpkg(fmt: str) -> str:
+        return subprocess.run(
+            ["dpkg-query", "-W", "-f", fmt], capture_output=True, text=True, check=True
+        ).stdout
+
+    if "--all" not in args:
+        versions = installed_versions(dpkg("${source:Package} ${source:Version}\n"))
+        missing = [s for s in SOURCES if s not in versions]
+        if missing:
+            return f"The image has nothing built from {missing[0]}"
+        return {s: versions[s] for s in SOURCES}
+    listing = dpkg("${Package} ${source:Package} ${source:Version}\n")
+    found = gpl_sources(listing, _copyright)
+    if "--also" in args:
+        at = args.index("--also") + 1
+        if at >= len(args):
+            return "--also needs a package list"
+        installed = {line.split()[0] for line in listing.splitlines() if line.split()}
+        for source, version in listed_sources(Path(args[at]).read_text(), installed).items():
+            found.setdefault(source, version)
+    return found
+
+
+def main(args: list[str] | None = None) -> int:
+    chosen = wanted(sys.argv[1:] if args is None else args)
+    if isinstance(chosen, str):
+        print(chosen, file=sys.stderr)
+        return 1
     sources = Path("/etc/apt/sources.list.d/debian.sources")
     sources.write_text(re.sub(r"(?m)^Types: deb$", "Types: deb deb-src", sources.read_text()))
     apt = subprocess.run(["apt-get", "update", "-qq"], capture_output=True, text=True)
-    for source in SOURCES:
-        version = versions.get(source)
-        if not version:
-            print(f"The image has nothing built from {source}", file=sys.stderr)
-            return 1
+    for source, version in sorted(chosen.items()):
         got = apt.returncode == 0 and subprocess.run(
             ["apt-get", "source", "--download-only", "-qq", f"{source}={version}"],
             cwd=OUT, capture_output=True, text=True,
         ).returncode == 0  # fmt: skip
         try:
             if got:
-                check(OUT, next(p.name for p in OUT.glob(f"{source}_*.dsc")))
+                check(OUT, _dsc_name(source, version))
                 print(f"{source} {version} (from Debian's archive)")
             else:
                 from_snapshot(source, version, OUT)
@@ -133,6 +203,12 @@ def main() -> int:
             print(f"Couldn't get {source} {version}'s source: {e}", file=sys.stderr)
             return 1
     return 0
+
+
+def _dsc_name(source: str, version: str) -> str:
+    """A source package's .dsc, as Debian names it (the version without
+    its epoch)."""
+    return f"{source}_{version.split(':', 1)[-1]}.dsc"
 
 
 if __name__ == "__main__":

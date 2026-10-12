@@ -63,8 +63,9 @@ follow them in every change.
 ## Releases
 - One release per feature, or per small bundle of fixes; tiny wording or
   style fixes wait for the next feature release. Minor version for
-  features, patch for fixes. The version is in `app/__init__.py`,
-  `pyproject.toml`, `stationplay.yaml` and `docker-compose.yml`.
+  features, patch for fixes. The version is in `app/__init__.py` and
+  `pyproject.toml`. (From 1.34.0, `stationplay.yaml` and `docker-compose.yml`
+  ask for the published image at `:latest`.)
 - Each release: a hostile audit before building; build; tests (the area's,
   then the full suite once; real FFmpeg streaming for playback; Playwright
   at 390, 768 and 1440 wide, light and dark, for page changes;
@@ -79,8 +80,13 @@ follow them in every change.
   the tested commit on `main`): one screen. A summary sentence, short New
   and Fixed bullets, Updating, Rolling back. Published by
   `.github/workflows/release.yml`.
-- **Releases are source only** (the owner, October 12): no image is
-  published. Each person's build fetches Debian's packages from Debian.
+- **The image is published** (the owner, October 12, later the same day:
+  D4 is No, U1): `ghcr.io/egadgetboy/stationplay`, amd64 and arm64, with
+  `:<version>`, `:<major.minor>` and `:latest` moved only after the image's
+  tests pass; always the exact image tested, by digest, never rebuilt (C7);
+  with the GPL and LGPL packages' source attached to each release (C6), and
+  each release zip signed. The YAML and compose files use `:latest` with
+  `pull_policy: always` (U2). Building from source stays an advanced choice.
 - **Report** to the owner, 5 lines: version and summary; tests; choices;
   known limits; one suggested improvement to the development process, for
   the owner's approval. Then: which work went to `routine-builder`, and what
