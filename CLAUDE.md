@@ -25,18 +25,21 @@ follow them in every change.
 - **Clear American English.** Friendly, short and plain on the page;
   concise in the logs. Short sentences, one idea each, no jargon. Say
   **PIN**, never "passcode" (the owner's choice, from 1.31.0).
-- **No outside services** beyond those the plan names, and no AI features.
-  Nothing outside the home is required.
+- **No outside services** beyond those the plan names (the plan's Principles
+  list them all), and no AI features. Nothing outside the home is required.
 - **A look unlike Plex or Emby.** Original work only.
 - **Opt-in features, a lean server:** no new dependencies; what an app can
   do itself lives in the app.
 - **No real file names or paths** in anything the apps receive.
-- StationPlay stays labeled **alpha**. No web client for watching, no DVR.
+- StationPlay stays labeled **alpha** until the apps launch. No web client
+  for watching, no DVR.
+- **Parental claims** say "in StationPlay's apps," and the docs say what
+  limits don't cover (Plex, Jellyfin and anything else on the tuner).
 - **No licensing in the server** (the owner's final plan, October 10): it
   stays fully open source and unlimited and never locks anything. The apps
-  are unlocked in their own stores, one purchase per platform, with a demo
-  until then (the apps repo's CLAUDE.md has the details). Never limit Plex,
-  Jellyfin or other clients.
+  are unlocked in their own stores, one purchase per platform, with a free
+  tier until then (the apps repo's CLAUDE.md has the details). Never limit
+  Plex, Jellyfin or other clients.
 
 ## Tests
 - **Every bug gets a failing test first,** then a root-cause fix. The test
@@ -48,6 +51,7 @@ follow them in every change.
   suite (35 to 45 minutes, `python -m pytest -q -p no:cacheprovider`) runs
   once per release, in the main session.
 - Don't edit `tests/fakeplex.py`.
+- The wording scan passes (from 1.33.0).
 
 ## Releases
 - One release per feature, or per small bundle of fixes; tiny wording or
@@ -68,6 +72,8 @@ follow them in every change.
   the tested commit on `main`): one screen. A summary sentence, short New
   and Fixed bullets, Updating, Rolling back. Published by
   `.github/workflows/release.yml`.
+- **Releases are source only** (the owner, October 12): no image is
+  published. Each person's build fetches Debian's packages from Debian.
 - **Report** to the owner, 5 lines: version and summary; tests; choices;
   known limits; one suggested improvement to the development process, for
   the owner's approval. Then: which work went to `routine-builder`, and what

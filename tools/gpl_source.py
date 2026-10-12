@@ -1,14 +1,16 @@
-"""The source of FFmpeg, x264 and x265, at the exact versions in
-StationPlay's image: Debian's source packages (each one's .dsc and the
-files it names), downloaded into a folder. The image includes them under
-the GPL, which asks that their source go with them, so each release
-carries this (stationplay-<version>-gpl-source.tar, made by release.yml).
-Every other package's source is at its link in the release's packages.txt
-(tools/sbom.py).
+"""The source of FFmpeg, x264 and x265, at the exact versions in a
+StationPlay image: Debian's source packages (each one's .dsc and the files
+it names), downloaded into a folder.
+
+StationPlay's own releases don't use it: they're source only, and publish
+no image (the owner, October 12). It's here for anyone who builds an image
+and hands it on to others, as a start: the GPL asks that the source go with
+it, and that covers more packages than these three (see the image's
+third-party-packages.txt).
 
 It runs inside the image, as root, with a folder mounted at /out:
 
-    docker run --rm -i --user 0 -v "$PWD/gpl:/out" ghcr.io/<you>/stationplay:<version> python - < tools/gpl_source.py
+    docker run --rm -i --user 0 -v "$PWD/gpl:/out" stationplay:<version> python - < tools/gpl_source.py
 
 Debian's archive (apt-get source) keeps only each suite's newest version,
 so once Debian updates one of them, an older image's version comes from

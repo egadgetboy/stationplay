@@ -363,7 +363,7 @@ Channels DVR and VLC accept the playlist address, `http://<server-ip>:3310/stati
 
 **StationPlay for Android** is in private testing, in alpha like StationPlay itself. It isn't in any app store yet. The Apple app and the Roku app are coming. The apps connect directly to your StationPlay server, so you can watch your stations without Plex Pass or any other app.
 
-- **Platforms.** In private testing: Android phones and tablets, Google TV, Android TV and Fire TV, in StationPlay for Android. Coming: iPhone, iPad and Apple TV, and Roku.
+- **Platforms.** In private testing: Android phones and tablets, Google TV and Android TV, in StationPlay for Android. Coming: iPhone and iPad, and Roku.
 - **A guide for every screen.** On a TV, you browse it with your remote. On a phone, you see every station at a glance and swipe through the hours. On a tablet, the selected program and a live picture sit above the guide.
 - **Changing stations.** While a station tunes in, you see its card in the same colors as its Intro Bumper. Flip up and down through your stations, enter a station number on your remote, or jump back to the last station you watched. If every tuner is in use, the app says so and lets you join a station that's already playing.
 - **Favorites.** Mark the stations you watch most, and choose to show only those in the guide.
@@ -423,10 +423,10 @@ Subtitles the device can't show are drawn into a copy. If an episode's chosen su
 
 ### Unlocking the apps
 
-StationPlay and its page are free and unlimited. StationPlay's apps will be free to download, with a demo, and unlocked with one purchase in each platform's store:
+StationPlay and its page are free and unlimited. StationPlay's apps will be free to download, with a free tier, and unlocked with one purchase in each platform's store:
 
-- **The demo.** Each server's first station, for up to 2 hours a day on each device, and the first 10 minutes of each title in Media.
-- **The unlock.** A one-time purchase in the App Store, Google Play or Roku's store unlocks everything, on every server, for every user, forever, on that store account's devices. Each platform is bought separately.
+- **Free.** Each server's first station, for up to 2 hours a day on each device, and the first 10 minutes of each title in Media.
+- **The unlock.** One-time purchase, no subscription. Bought in the App Store, Google Play or Roku's store, it unlocks everything, on every server, for every user, on that store account's devices. Each platform is bought separately. Refunds go through each store.
 - **Nothing on the server.** StationPlay itself needs no purchase and never locks anything. Plex, Jellyfin and other apps are never limited.
 
 Unlocking comes with the apps' store releases. Until then, the apps play as they do now.
@@ -1232,7 +1232,7 @@ The tests need ffmpeg on the `PATH`. The HDR and real-world tests also need ffmp
 
 It uses its own ports, stops only what it started, and cleans up afterward. `--from v1.28.1` starts from another release, and `-v` shows every check.
 
-**Releases.** Each release's notes are in `docs/releases/v<version>.md`. Their first lines name the commit of that version (`commit: <its full ID>`), which must be a commit `main` was tested at (for a merge, the merge commit). `.github/workflows/release.yml` runs each time the image workflow finishes on `main`. For each version not yet published, it checks that the commit is on `main`, is that version, and passed the image workflow's tests (on that commit, or on a later one that changed only release notes). Then it publishes the release on GitHub: the tag at that commit, the notes, the files built from that commit (`stationplay-<version>.zip`, `stationplay.yaml` and `docker-compose.yml`), and its image (`ghcr.io/<you>/stationplay:<version>`, and `:latest` for the newest). A version whose tests are still running waits for them, and one whose tests failed isn't published; the run says why in one line. Push and test each version's commit before the next one's. Each release's image is pushed before the release is made, so a release is never left without its image. Each release also carries what its published image is made of: `stationplay-<version>-packages.txt` (every package in the image at its exact version, with a link to its source) and `stationplay-<version>-gpl-source.tar` (the source of FFmpeg, x264 and x265 at the versions in the image; their license, the GPL, asks that their source come with them). The image workflow makes both after its tests on every run, so a release seldom finds out first that it can't. Public releases here start with 1.32.0.
+**Releases.** Each release's notes are in `docs/releases/v<version>.md`. Their first lines name the commit of that version (`commit: <its full ID>`), which must be a commit `main` was tested at (for a merge, the merge commit). `.github/workflows/release.yml` runs each time the image workflow finishes on `main`. For each version not yet published, it checks that the commit is on `main`, is that version, and passed the image workflow's tests (on that commit, or on a later one that changed only release notes). Then it publishes the release on GitHub: the tag at that commit, the notes, the files built from that commit (`stationplay-<version>.zip`, `stationplay.yaml` and `docker-compose.yml`), and `stationplay-<version>-packages.txt`, the list of every package in the image its tests ran in, at its exact version, with a link to its source. The image workflow's run that tested the commit makes that list after its tests and keeps it with the run; without it, nothing is published. A version whose tests are still running waits for them, and one whose tests failed isn't published; the run says why in one line. Push and test each version's commit before the next one's. Releases are source only: no image is published, and each person's build gets Debian's packages from Debian. Public releases here start with 1.32.0.
 
 **Before each push to `main`,** run `python tools/image_check.py` (about 3 minutes). It lays the project out as the image's test stage has it and runs the tests that read the project's own files there, so a file the image hasn't got shows up at once rather than 40 minutes into the image workflow. The image workflow runs the same tests first, in the image itself.
 
@@ -1310,11 +1310,11 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 
 ## Contributing
 
-Bug reports, ideas and fixes are all welcome. A good bug report says what you expected, what happened instead, and what the **Logs** tab showed at the time. Its **Copy** button makes that easy.
+Bug reports and ideas are welcome, as GitHub issues. A good bug report says what you expected, what happened instead, and what the **Logs** tab showed at the time. Its **Copy** button makes that easy. If you've found a fix, describe it in the issue.
 
-Before sending a code change, run the tests and lint checks in [Development](#development), and add a test for anything new. StationPlay aims to be simple and reliable, and to depend on nothing but Plex. It uses plain, friendly American English on its page and in its logs, and says "station" rather than "channel". Changes that keep to those ideas are the easiest to accept.
+StationPlay doesn't take code from outside for now: please don't open pull requests. That may change later, with a contributor agreement.
 
-By sending a change, you agree that it's shared under StationPlay's license (see [License](#license)) and that you have the right to share it.
+To report a security problem, see [SECURITY.md](SECURITY.md). Please don't open a public issue for one.
 
 ## Forks and credit
 
@@ -1323,7 +1323,7 @@ StationPlay is free and open-source software. You're welcome to fork it, change 
 - **Give credit.** Say clearly that your project is based on StationPlay by egadgetboy, with a link back to it, in your README and on your app's About page or footer.
 - **Keep the notices.** Leave the copyright and license notices in place, including the credit line at the bottom of StationPlay's page, and note what you changed.
 - **Use your own name and logo,** so people can tell your version from StationPlay and know where to ask for help with it.
-- **Send improvements back.** If you fix a bug or add something useful, consider offering it to StationPlay too, so everyone's stations get better.
+- **Tell us about improvements.** If you fix a bug or add something useful, consider opening an issue that describes it, so everyone's stations get better.
 
 ## License
 

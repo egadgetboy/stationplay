@@ -1,17 +1,18 @@
-"""What's in StationPlay's image, package by package, with where each one's
-source is kept: the list each release carries
+"""What was in the image StationPlay's tests ran in, package by package,
+with where each one's source is kept: the list each release carries
 (stationplay-<version>-packages.txt).
 
 Every Debian package installed, at its exact version, with the source
 package it's built from and that source's page on snapshot.debian.org
 (which keeps every version Debian has published); and every Python package,
 with its license and its page on PyPI. StationPlay's own source is the
-release's zip.
+release's zip. No image is published (releases are source only): this
+says what the tests ran with.
 
-It runs inside the image (release.yml runs it, piped in, so the image needs
-nothing more):
+It runs inside the image (the image workflow runs it, piped in, after the
+tests, so the image needs nothing more):
 
-    docker run --rm -i ghcr.io/<you>/stationplay:<version> python - <version> < tools/sbom.py
+    docker run --rm -i stationplay:latest python - <version> < tools/sbom.py
 """
 
 from __future__ import annotations
@@ -78,16 +79,15 @@ def report(
     python_version: str = "",
 ) -> str:
     lines = [
-        f"StationPlay {version}: every package in its image",
+        f"StationPlay {version}: every package in the image its tests ran in",
         "",
         "Each Debian package at its exact version, with the source package it's",
         "built from and where Debian keeps that source. Each package's own",
-        "license is in the image, in /usr/share/doc/<package>/copyright. FFmpeg's,",
-        "x264's and x265's source is also in this release's",
-        f"stationplay-{version}-gpl-source.tar. StationPlay's own source is",
-        f"stationplay-{version}.zip, under the AGPL. This is the published",
-        "image's list: an image built from the zip gets Debian's packages as",
-        "they are on the day it's built.",
+        "license is in the image, in /usr/share/doc/<package>/copyright.",
+        f"StationPlay's own source is stationplay-{version}.zip, under the AGPL.",
+        "StationPlay publishes no image: an image built from the zip gets",
+        "Debian's packages from Debian, as they are on the day it's built, and",
+        "lists them in /opt/stationplay/third-party-packages.txt.",
         "",
         f"Debian packages ({len(debian)})",
         "",

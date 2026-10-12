@@ -67,6 +67,11 @@ CMD ["python", "-m", "app.main"]
 # when asked for (--target test).
 FROM stationplay AS test
 RUN pip install --no-cache-dir pytest==9.1.1 pytest-asyncio==1.4.0
+# (git, for the release workflow's own test, which runs its script in a
+# repository: the tests' stage only, never the image people build.)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 COPY pytest.ini pyproject.toml stationplay.yaml docker-compose.yml Dockerfile ./
 COPY docs ./docs
 COPY tools/openapi_spec.py tools/image_check.py tools/sbom.py tools/gpl_source.py ./tools/

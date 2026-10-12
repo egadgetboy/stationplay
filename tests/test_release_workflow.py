@@ -1,7 +1,12 @@
 """The release workflow's own script (.github/workflows/release.yml), run
-with stand-ins for gh and docker: a release published before releases
-carried what their image is made of gets those files, once, and a problem
-with one release never stops the rest (the audit of 1.32.1)."""
+with stand-ins for gh and docker, in a git repository of its own.
+
+Releases are source only (the owner, October 12): a version whose tests
+passed is published with its zip, stationplay.yaml, docker-compose.yml and
+the list of packages in the image its tests ran in, made by that very run.
+No image is built, pushed or pulled, and nothing is published without that
+list, without passed tests, or twice.
+"""
 
 from __future__ import annotations
 
@@ -15,36 +20,28 @@ import pytest
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "release.yml"
 
 # Stand-ins: each logs what it was asked, and answers from files the test
-# writes (assets/<tag>: a release's files, one name a line).
+# writes in $ASSETS: published (the tags out), runs (the image workflow's
+# runs: commit, run, status), tested_<run> (its Test step's conclusion) and
+# made_<run> (the package list that run kept).
 GH = """#!/bin/bash
 echo "gh $*" >> "$LOG"
 case "$1 $2" in
-  "release list") printf 'v1.32.0\\nv1.32.1\\n' ;;
-  "api repos/"*) exit 0 ;;
-  "release view")
-    [ -f "$ASSETS/$3.fail" ] && exit 1
-    # (A name at a time, as gh writes them: a reader that stops early can
-    # make this fail.)
-    while read -r name; do echo "$name" || exit 141; done < "$ASSETS/$3" ;;
-  "release upload")
-    [ -f "$ASSETS/upload.fail" ] && exit 1
-    exit 0 ;;
+  "release list") cat "$ASSETS/published" 2>/dev/null ;;
+  "api repos/"*/workflows/*) cat "$ASSETS/runs" 2>/dev/null ;;
+  "api repos/"*/jobs)
+    run=$(sed 's|.*/runs/\\([0-9]*\\)/jobs|\\1|' <<< "$2")
+    cat "$ASSETS/tested_$run" 2>/dev/null ;;
+  "run download")
+    # (gh run download <run> --name packages --dir <folder>)
+    [ -f "$ASSETS/made_$3" ] || exit 1
+    mkdir -p "$7" && cp "$ASSETS/made_$3" "$7/stationplay-1.32.1-packages.txt" ;;
+  "release create") exit 0 ;;
   *) exit 0 ;;
 esac
 """
 DOCKER = """#!/bin/bash
 echo "docker $*" >> "$LOG"
-case "$1" in
-  pull) exit 0 ;;
-  run)
-    # (python - <version>: the package list; -v <folder>:/out: the source.)
-    for arg in "$@"; do
-      case "$arg" in *:/out) touch "${arg%:/out}/ffmpeg_7.1.dsc" ;; esac
-    done
-    cat > /dev/null
-    echo "a package list" ;;
-  *) exit 0 ;;
-esac
+exit 0
 """
 
 
@@ -62,28 +59,47 @@ def script() -> str:
     return "\n".join(body) + "\n"
 
 
+def git(work: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+        cwd=work, capture_output=True, text=True, check=True,
+    ).stdout.strip()  # fmt: skip
+
+
 @pytest.fixture
 def run(tmp_path):
-    """The script, in a folder with releases 1.32.0 and 1.32.1 published:
-    the log of what gh and docker were asked, and the exit status."""
+    """The script, in a repository where 1.32.0 is out and 1.32.1's commit
+    has its notes on top: the log of what gh and docker were asked, and the
+    exit status. `run.commit` is 1.32.1's commit."""
     bin_ = tmp_path / "bin"
     bin_.mkdir()
     for name, text in (("gh", GH), ("docker", DOCKER)):
         (bin_ / name).write_text(text)
         (bin_ / name).chmod((bin_ / name).stat().st_mode | stat.S_IEXEC)
     work = tmp_path / "work"
+    (work / "app").mkdir(parents=True)
     (work / "docs" / "releases").mkdir(parents=True)
-    (work / "tools").mkdir()
-    for version in ("1.32.0", "1.32.1"):
-        (work / "docs" / "releases" / f"v{version}.md").write_text("---\ncommit: x\n---\n")
-    for tool in ("sbom.py", "gpl_source.py"):
-        (work / "tools" / tool).write_text("# a tool\n")
+    git(work, "init", "-q", "-b", "main")
+    (work / "app" / "__init__.py").write_text('__version__ = "1.32.1"\n')
+    (work / "stationplay.yaml").write_text("services: {}\n")
+    (work / "docker-compose.yml").write_text("services: {}\n")
+    (work / "docs" / "releases" / "v1.32.0.md").write_text("---\ncommit: x\n---\n")
+    git(work, "add", ".")
+    git(work, "commit", "-q", "-m", "StationPlay 1.32.1")
+    commit = git(work, "rev-parse", "HEAD")
+    (work / "docs" / "releases" / "v1.32.1.md").write_text(
+        f"---\ncommit: {commit}\n---\n\nThe notes.\n"
+    )
+    git(work, "add", ".")
+    git(work, "commit", "-q", "-m", "Release notes for 1.32.1")
+    git(work, "update-ref", "refs/remotes/origin/main", "HEAD")
     assets = tmp_path / "assets"
     assets.mkdir()
+    (assets / "published").write_text("v1.32.0\n")
     log = tmp_path / "log"
     (tmp_path / "temp").mkdir()
 
-    def go() -> tuple[str, int]:
+    def go() -> tuple[str, int, str]:
         env = {
             **os.environ,
             "PATH": f"{bin_}:{os.environ['PATH']}",
@@ -98,55 +114,81 @@ def run(tmp_path):
         done = subprocess.run(
             ["bash", "-e", "-c", script()], cwd=work, env=env, capture_output=True, text=True
         )
-        return (log.read_text() if log.exists() else ""), done.returncode
+        return (log.read_text() if log.exists() else ""), done.returncode, done.stdout
 
     go.assets = assets  # type: ignore[attr-defined]
+    go.commit = commit  # type: ignore[attr-defined]
+    go.temp = tmp_path / "temp"  # type: ignore[attr-defined]
     return go
 
 
-def full(version: str) -> str:
-    return "\n".join([
-        "docker-compose.yml", f"stationplay-{version}-gpl-source.tar",
-        f"stationplay-{version}-packages.txt", f"stationplay-{version}.zip", "stationplay.yaml",
-    ])  # fmt: skip
-
-
-def test_a_release_without_its_source_gets_it_and_the_next_is_still_looked_at(run):
-    (run.assets / "v1.32.0").write_text("docker-compose.yml\nstationplay-1.32.0-packages.txt\n")
-    (run.assets / "v1.32.1").write_text(full("1.32.1") + "\n")
-    said, status = run()
-    assert status == 0, said
-    uploads = [line for line in said.splitlines() if line.startswith("gh release upload")]
-    assert len(uploads) == 1 and "--clobber v1.32.0" in uploads[0]  # (replacing a half-upload)
-    assert "ghcr.io/egadgetboy/stationplay:1.32.0" in said  # (its own image, lower case)
-    assert "gh release view v1.32.1" in said
-
-
-def test_a_failed_upload_doesn_t_stop_the_next_release(run):
-    (run.assets / "v1.32.0").write_text("docker-compose.yml\n")
-    (run.assets / "v1.32.1").write_text(full("1.32.1") + "\n")
-    (run.assets / "upload.fail").write_text("")
-    said, status = run()
-    assert status == 1  # (refused, said on the run's page)
-    assert "gh release view v1.32.1" in said
-
-
-def test_a_release_with_its_source_is_left_alone(run):
-    """However its files are listed: its tar first, before others still to
-    come (a grep that stops early mustn't make it look missing)."""
-    for version in ("1.32.0", "1.32.1"):
-        (run.assets / f"v{version}").write_text(
-            f"stationplay-{version}-gpl-source.tar\n" + "\n".join(f"other-{n}" for n in range(500))
+def image_run(run, status: str = "completed", test: str = "success", made: bool = True) -> None:
+    """Image run 7, on 1.32.1's commit."""
+    (run.assets / "runs").write_text(f"{run.commit} 7 {status}\n")
+    (run.assets / "tested_7").write_text(test + "\n")
+    if made:
+        (run.assets / "made_7").write_text(
+            "StationPlay 1.32.1: every package in the image its tests ran in\n"
         )
-    said, status = run()
-    assert status == 0, said
-    assert "gh release upload" not in said and "docker" not in said
 
 
-def test_files_that_can_t_be_listed_aren_t_taken_as_missing(run):
-    (run.assets / "v1.32.0.fail").write_text("")
-    (run.assets / "v1.32.1").write_text(full("1.32.1") + "\n")
-    said, status = run()
+def docker(said: str) -> list[str]:
+    return [line for line in said.splitlines() if line.startswith("docker ")]
+
+
+def creates(said: str) -> list[str]:
+    return [line for line in said.splitlines() if line.startswith("gh release create")]
+
+
+def test_a_tested_version_is_published_with_its_tested_package_list(run):
+    image_run(run)
+    said, status, out = run()
+    assert status == 0, said + out
+    made = creates(said)
+    assert len(made) == 1, said
+    assert f"v1.32.1 --target {run.commit}" in made[0]
+    for name in (
+        "stationplay-1.32.1.zip",
+        "stationplay.yaml",
+        "docker-compose.yml",
+        "stationplay-1.32.1-packages.txt",
+    ):
+        assert f"/{name}" in made[0], made[0]
+    assert "gh run download 7 --name packages" in said  # (the very run that tested it)
+    listed = run.temp / "v1.32.1" / "stationplay-1.32.1-packages.txt"
+    assert listed.read_text() == (run.assets / "made_7").read_text()
+    # (Source only: no image built, pushed or pulled, and no image's source.)
+    assert not docker(said) and "ghcr" not in said and "gpl-source" not in said
+
+
+def test_without_its_tested_package_list_nothing_is_published(run):
+    image_run(run, made=False)
+    said, status, out = run()
     assert status == 1
-    assert "gh release upload" not in said and "docker" not in said
-    assert "gh release view v1.32.1" in said
+    assert not creates(said)
+    assert "has no list of its packages" in out
+
+
+def test_a_version_whose_tests_failed_isn_t_published(run):
+    image_run(run, test="failure")
+    said, status, out = run()
+    assert status == 1
+    assert not creates(said) and "run download" not in said
+    assert "its tests didn't pass" in out
+
+
+def test_a_version_still_being_tested_waits(run):
+    image_run(run, status="in_progress")
+    said, status, out = run()
+    assert status == 0
+    assert not creates(said)
+    assert "waits for its tests" in out
+
+
+def test_a_published_release_is_left_alone(run):
+    image_run(run)
+    (run.assets / "published").write_text("v1.32.0\nv1.32.1\n")
+    said, status, out = run()
+    assert status == 0, said + out
+    assert not creates(said)
+    assert "release upload" not in said and "run download" not in said and not docker(said)

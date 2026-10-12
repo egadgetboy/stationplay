@@ -1,8 +1,10 @@
 # Builds the container image and tests it as built, whenever main changes.
 # The tests run in the image itself (the Dockerfile's test stage: the image
-# that ships, with the tests added), on the FFmpeg, Python and libraries that
-# ship. Nothing is published here: release.yml publishes a release's image,
-# and only once this workflow's tests have passed on its commit.
+# people build, with the tests added), on the FFmpeg, Python and libraries
+# it has. No image is published, here or anywhere: releases are source only
+# (the owner, October 12). release.yml publishes a release only once this
+# workflow's tests have passed on its commit, with the list of packages this
+# run's image had.
 name: image
 
 on:
@@ -11,7 +13,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  test-and-publish:
+  build-and-test:
     runs-on: ubuntu-24.04
     # (The tests take 30 to 50 minutes; building, a few more.)
     timeout-minutes: 75
@@ -23,12 +25,12 @@ jobs:
         run: |
           docker build --tag stationplay:latest .
           docker build --target test --tag stationplay:test .
-          # (The tests run in the very image that's published: the test
-          # stage's layers are its, with the tests' on top.)
+          # (The tests run in the very image people build: the test stage's
+          # layers are its, with the tests' on top.)
           shipped=$(docker image inspect -f '{{join .RootFS.Layers " "}}' stationplay:latest)
           tested=$(docker image inspect -f '{{join .RootFS.Layers " "}}' stationplay:test)
           if [ "${tested#"$shipped "}" = "$tested" ]; then
-            echo "::error::The test stage isn't built on the image that's published"; exit 1
+            echo "::error::The test stage isn't built on the image people build"; exit 1
           fi
       # First, every test collected, and the tests that read the project's
       # own files run (a few minutes): a file the image hasn't got stops it
@@ -73,15 +75,19 @@ jobs:
             [ -n "$why" ] && echo "::error title=Why::$why"
             exit 1
           }
-      # What the image is made of, as release.yml adds it to each release
-      # (tools/sbom.py, tools/gpl_source.py): made here too, after the tests
-      # (it needs Debian's archive, and a hiccup there isn't a failed test),
-      # so a release seldom finds out first that it can't be.
+      # What the tested image was made of (tools/sbom.py), for release.yml
+      # to add to the release: made after the tests, and kept with this run.
       - name: Made of
         timeout-minutes: 10
         run: |
-          docker run --rm -i stationplay:latest python - test < tools/sbom.py > "$RUNNER_TEMP/packages.txt"
-          echo "::notice::$(grep -c snapshot.debian.org "$RUNNER_TEMP/packages.txt") Debian packages listed"
-          mkdir -p "$RUNNER_TEMP/gpl"
-          docker run --rm -i --user 0 -v "$RUNNER_TEMP/gpl:/out" stationplay:latest python - < tools/gpl_source.py
-          ls -l "$RUNNER_TEMP/gpl"
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' app/__init__.py)
+          mkdir -p "$RUNNER_TEMP/made"
+          docker run --rm -i stationplay:latest python - "$version" < tools/sbom.py \
+            > "$RUNNER_TEMP/made/stationplay-$version-packages.txt"
+          echo "::notice::$(grep -c snapshot.debian.org "$RUNNER_TEMP/made/stationplay-$version-packages.txt") Debian packages listed"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: ${{ runner.temp }}/made/
+          if-no-files-found: error
+          retention-days: 90

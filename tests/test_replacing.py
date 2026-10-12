@@ -84,7 +84,7 @@ def world(tmp_path):
     fp.shows["100"]["Guid"] = [{"id": "tvdb://73378"}]
     fp.shows["100"]["librarySectionID"] = 1
     for n in range(1, 6):
-        name = f"Bonanza (1959) - S05E{30 + n} - Title {n} [DVD][MP3 1.0][XviD]-nodlabs.avi"
+        name = f"Bonanza (1959) - S05E{30 + n} - Title {n} [DVD][MP3 1.0][XviD]-first.avi"
         fp.add_episode(f"20{n}", "100", 5, 30 + n, f"Title {n}", f"{SHOW}/{name}", 22 * 60_000,
                        size=1000 + n)  # fmt: skip
     fp.add_section("2", "Movies", "movie")
@@ -155,21 +155,21 @@ def test_the_settings_never_show_the_key_and_are_checked(world):
 def test_a_broken_file_is_blocklisted_before_it_is_removed(world):
     s = world.sonarr
     name = world.file("201").rsplit("/", 1)[1]
-    s.give_file(71, name, 1001, downloaded="Bonanza.S05E31.DVDRip.XviD-NODLABS")
-    s.releases[71] = ["Bonanza.S05E31.DVDRip.XviD-NODLABS", "Bonanza.S05E31.720p.WEB.x264-GOOD"]
+    s.give_file(71, name, 1001, downloaded="Bonanza.S05E31.DVDRip.XviD-FIRST")
+    s.releases[71] = ["Bonanza.S05E31.DVDRip.XviD-FIRST", "Bonanza.S05E31.720p.WEB.x264-GOOD"]
     world.broken("201", "Deep scan: the picture breaks up around 2:00, 9:00 and 14:00")
     world.go()
     # Blocklisted first, then removed, then searched for: in that order.
     failed, deleted = calls_like(s, "POST history/failed/"), calls_like(s, "DELETE episodefile/")
     searched = [n for n, c in enumerate(s.calls) if c == "POST command"]
     assert len(failed) == len(deleted) == 1 and failed[0] < deleted[0] < searched[-1]
-    assert s.blocklist == ["Bonanza.S05E31.DVDRip.XviD-NODLABS"]
+    assert s.blocklist == ["Bonanza.S05E31.DVDRip.XviD-FIRST"]
     assert s.recycled == [f"/tv/Bonanza/{name}"]
     assert [c["name"] for c in s.commands] == ["EpisodeSearch"]
     assert s.commands[0]["body"]["episodeIds"] == [71]
     state = world.entry("201")["replace"]
     assert state["state"] == "searching" and state["tries"] == 1
-    assert "blocklisted Bonanza.S05E31.DVDRip.XviD-NODLABS" in state["note"]
+    assert "blocklisted Bonanza.S05E31.DVDRip.XviD-FIRST" in state["note"]
     assert "(try 1 of 3)" in state["note"]
     # Downloading: nothing else is done.
     world.go()
@@ -548,45 +548,45 @@ def test_a_missing_program_comes_off_the_list_once_no_station_has_it(world):
 
 
 def test_the_two_on_the_list_this_morning(world):
-    """The very entries on the user's list (2026-10-06): an Adventure Time
-    episode the deep scan found cut short, filed by Sonarr straight in its
-    show's folder; and Return of the Jedi, which Plex calls "Star Wars:
-    Episode VI - Return of the Jedi" and Radarr "Return of the Jedi", found
-    damaged. Each found by its TVDB or TMDB id, its very file blocklisted,
-    then removed, then searched for."""
+    """Two entries like those on the owner's list (2026-10-06), with the
+    names made up: an episode the deep scan found cut short, filed by
+    Sonarr straight in its show's folder; and a movie Plex and Radarr name
+    differently ("Harbor Lights: Part Three - Harbor Lights" and "Harbor
+    Lights"), found damaged. Each found by its TVDB or TMDB id, its very
+    file blocklisted, then removed, then searched for."""
     c, fp, s, r = world.client, world.plex, world.sonarr, world.radarr
-    tv = "/mnt/hddpool/mediashare/media/tv/tv-current/Adventure Time (2010) {tvdb-152831}"
-    at = "Adventure Time (2010) - S06E23 - The Pajama War [WEBDL-1080p][AAC 2.0][h264]-NTB.mkv"
-    fp.add_show("600", "Adventure Time", year=2010)
-    fp.shows["600"]["Guid"] = [{"id": "tvdb://152831"}, {"id": "tmdb://15260"}]
+    tv = "/mnt/pool/media/tv/tv-current/Lantern Cove (2010) {tvdb-900001}"
+    at = "Lantern Cove (2010) - S06E23 - The Blanket Fort [1080p][AAC 2.0][h264]-FIRST.mkv"
+    fp.add_show("600", "Lantern Cove", year=2010)
+    fp.shows["600"]["Guid"] = [{"id": "tvdb://900001"}, {"id": "tmdb://900002"}]
     fp.shows["600"]["librarySectionID"] = 1
-    fp.add_episode("623", "600", 6, 23, "The Pajama War", f"{tv}/{at}", 716_000, size=287_311_552)
-    movies = "/mnt/hddpool/mediashare/media/movies/movies-parents/Return of the Jedi (1983)"
-    rotj = ("Return of the Jedi (1983) {tmdb-1892} {edition-Remastered} [ATMOS][Bluray-1080p]"
-            "[TrueHD Atmos 7.1][x265]-TAoE.mkv")  # fmt: skip
-    fp.add_movie("700", "Star Wars: Episode VI - Return of the Jedi", f"{movies}/{rotj}",
+    fp.add_episode("623", "600", 6, 23, "The Blanket Fort", f"{tv}/{at}", 716_000, size=287_311_552)
+    movies = "/mnt/pool/media/movies/movies-family/Harbor Lights (1983)"
+    rotj = ("Harbor Lights (1983) {tmdb-900003} {edition-Remastered} [1080p]"
+            "[TrueHD 7.1][x265]-FIRST.mkv")  # fmt: skip
+    fp.add_movie("700", "Harbor Lights: Part Three - Harbor Lights", f"{movies}/{rotj}",
                  8_040_000, year=1983, section="2")  # fmt: skip
-    fp.episodes["700"]["Guid"] = [{"id": "imdb://tt0086190"}, {"id": "tmdb://1892"}]
+    fp.episodes["700"]["Guid"] = [{"id": "imdb://tt9900003"}, {"id": "tmdb://900003"}]
     fp.episodes["700"]["librarySectionID"] = 2
     fp.episodes["700"]["Media"][0]["Part"][0]["size"] = 14_623_901_234
     for number, source in (
-        (75, {"type": "show", "ratingKey": "600", "title": "Adventure Time"}),
-        (3, {"type": "movie", "ratingKey": "700", "title": "Star Wars: Episode VI - Return of the Jedi"}),
+        (75, {"type": "show", "ratingKey": "600", "title": "Lantern Cove"}),
+        (3, {"type": "movie", "ratingKey": "700", "title": "Harbor Lights: Part Three - Harbor Lights"}),
     ):  # fmt: skip
         made = c.post("/api/channels", json={"number": number, "sources": [source]})
         assert made.status_code == 201, made.text
-    s.add_show(60, "Adventure Time", 152831, year=2010)
-    s.add_episode(623, 60, 6, 23, "The Pajama War")
-    s.add_episode(624, 60, 6, 24, "Wake Up")
+    s.add_show(60, "Lantern Cove", 900001, year=2010)
+    s.add_episode(623, 60, 6, 23, "The Blanket Fort")
+    s.add_episode(624, 60, 6, 24, "Morning Tide")
     s.give_file(623, at, 287_311_552,
-                downloaded="Adventure.Time.S06E23.The.Pajama.War.1080p.WEB-DL.AAC2.0.H.264-NTB")  # fmt: skip
-    s.releases[623] = ["Adventure.Time.S06E23.The.Pajama.War.1080p.WEB-DL.AAC2.0.H.264-NTB",
-                       "Adventure.Time.S06E23.1080p.AMZN.WEB-DL.DDP2.0.H.264-NTb"]  # fmt: skip
-    r.add_movie(19, "Return of the Jedi", 1983, 1892, "tt0086190")
+                downloaded="Lantern.Cove.S06E23.The.Blanket.Fort.1080p.AAC2.0.H.264-FIRST")  # fmt: skip
+    s.releases[623] = ["Lantern.Cove.S06E23.The.Blanket.Fort.1080p.AAC2.0.H.264-FIRST",
+                       "Lantern.Cove.S06E23.1080p.DDP2.0.H.264-SECOND"]  # fmt: skip
+    r.add_movie(19, "Harbor Lights", 1983, 900003, "tt9900003")
     r.give_file(19, rotj, 14_623_901_234,
-                downloaded="Return.of.the.Jedi.1983.Remastered.1080p.BluRay.TrueHD.Atmos.7.1.x265-TAoE")  # fmt: skip
-    r.releases[19] = ["Return.of.the.Jedi.1983.Remastered.1080p.BluRay.TrueHD.Atmos.7.1.x265-TAoE",
-                      "Return.of.the.Jedi.1983.1080p.BluRay.DTS-HD.MA.5.1.x264-OTHER"]  # fmt: skip
+                downloaded="Harbor.Lights.1983.Remastered.1080p.TrueHD.7.1.x265-FIRST")  # fmt: skip
+    r.releases[19] = ["Harbor.Lights.1983.Remastered.1080p.TrueHD.7.1.x265-FIRST",
+                      "Harbor.Lights.1983.1080p.DTS-HD.MA.5.1.x264-SECOND"]  # fmt: skip
     items = jobs.on_stations(world.ctx).by_key
     for key, reason, problem, size in (
         ("623", "Deep scan: nothing plays after 11:41 of its 11:56: it's cut short, or damaged "
@@ -598,28 +598,22 @@ def test_the_two_on_the_list_this_morning(world):
         world.ctx.broken.record(items[key], reason, 75, file, size, problem=problem,
                                 found=DEEP_SCAN)  # fmt: skip
     world.go()
-    # Sonarr: Adventure Time S06E23's release blocklisted, then its file
+    # Sonarr: the episode's release blocklisted, then its file
     # removed, then a search; nothing else touched.
-    assert s.blocklist == ["Adventure.Time.S06E23.The.Pajama.War.1080p.WEB-DL.AAC2.0.H.264-NTB"]
+    assert s.blocklist == ["Lantern.Cove.S06E23.The.Blanket.Fort.1080p.AAC2.0.H.264-FIRST"]
     assert [p.rsplit("/", 1)[1] for p in s.recycled] == [at]
     failed, deleted = calls_like(s, "POST history/failed/"), calls_like(s, "DELETE episodefile/")
     assert failed[0] < deleted[0]
     assert [cmd["body"].get("episodeIds") for cmd in s.commands] == [[623]]
     assert world.entry("623")["replace"]["state"] == "searching"
     # Radarr: the same, for the movie.
-    assert r.blocklist == [
-        "Return.of.the.Jedi.1983.Remastered.1080p.BluRay.TrueHD.Atmos.7.1.x265-TAoE"
-    ]
+    assert r.blocklist == ["Harbor.Lights.1983.Remastered.1080p.TrueHD.7.1.x265-FIRST"]
     assert [p.rsplit("/", 1)[1] for p in r.recycled] == [rotj]
     assert [cmd["body"].get("movieIds") for cmd in r.commands] == [[19]]
     assert world.entry("700")["replace"]["state"] == "searching"
     # The new downloads: grabbed, not the blocklisted releases.
-    assert [q["title"] for q in s.queue] == [
-        "Adventure.Time.S06E23.1080p.AMZN.WEB-DL.DDP2.0.H.264-NTb"
-    ]
-    assert [q["title"] for q in r.queue] == [
-        "Return.of.the.Jedi.1983.1080p.BluRay.DTS-HD.MA.5.1.x264-OTHER"
-    ]
+    assert [q["title"] for q in s.queue] == ["Lantern.Cove.S06E23.1080p.DDP2.0.H.264-SECOND"]
+    assert [q["title"] for q in r.queue] == ["Harbor.Lights.1983.1080p.DTS-HD.MA.5.1.x264-SECOND"]
 
 
 def test_replacing_goes_on_when_plex_is_too_slow_for_the_whole_list(world, monkeypatch):
