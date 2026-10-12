@@ -278,6 +278,32 @@ Nothing new is required.
 4. **Night mode's sound.** `nightHls`, and copies asked for with `night`,
    now only ever turn sound down, never up.
 
+## What 1.34.0 asks of the apps
+
+1. **Automatic subtitles, the new default.** Someone who hasn't turned
+   subtitles on or off gets them in their language when the sound is in
+   another, and not otherwise (see Languages). In Options, offer
+   **Subtitles** as **Automatic**, **On** or **Off**, from
+   `languages.subtitles` in `GET /api/internal/me`, and save a change with
+   `PUT /api/internal/languages` and `{"subtitles": "automatic"}` (or `on`,
+   `off`). Offer **Subtitles language** for Automatic and On. While it's
+   null, show "Your device's language" for Automatic and "Same as the audio"
+   for On.
+2. **The device's language.** Send `language` with
+   `POST /api/internal/play`: the device's own language setting, as the
+   system gives it (such as `en-US`). It's how Automatic subtitles know
+   your language when you haven't chosen a Subtitles language.
+3. **Sticky Audio and Sticky Subtitles.** The player's Audio & subtitles
+   switch, **Remember for the whole show** until now, is called **Sticky
+   Audio & Subtitles**, with the line "Keep these for every episode of this
+   show." It works as before (see What 1.29.0 asks of the apps). The
+   reasons in `chosen` now say so for a show's choice ("Japanese, kept for
+   this show by Sticky Audio"). Show them as they come.
+
+A server before 1.34.0 doesn't send `languages.subtitles` and ignores
+`language`. Without `subtitles`, offer Subtitles On or Off from
+`languages.captions`, as before.
+
 ## POST /api/internal/link
 
 Open to anyone. Starts signing in with a code. Send which app this is, and
@@ -467,8 +493,9 @@ sign-in has ended.
 | `languages.audio` | object or null | The sound's language; null: each file's default track |
 | `languages.audio.code` | string | Its code, such as `jpn` |
 | `languages.audio.name` | string | Its name, such as "Japanese" |
-| `languages.captions` | boolean | Whether subtitles are on |
-| `languages.captionLanguage` | object or null | The subtitles' language; null: the language of the sound that plays |
+| `languages.captions` | boolean | Whether subtitles are On (false for Automatic and Off) |
+| `languages.subtitles` | string | Subtitles: `automatic`, `on` or `off` (from 1.34.0: see Languages) |
+| `languages.captionLanguage` | object or null | The subtitles' language; null: for On, the language of the sound that plays; for Automatic, the device's |
 | `languages.captionLanguage.code` | string | Its code |
 | `languages.captionLanguage.name` | string | Its name |
 | `languages.choices` | list | Every language StationPlay knows, A to Z by name, to choose from |
@@ -488,17 +515,22 @@ sent stays unchanged:
 
 `audio` and `captionLanguage` are a language's code, or null. For `audio`,
 null means each file's default track. For `captionLanguage`, null means the
-sound's language. `captions` (subtitles on or off) is true or false. It
-only ever sets the languages of the person signed in, and anything else
-sent is ignored. Answers 400, with the sentence to show, for a language
-StationPlay doesn't know, and for `captions` that isn't true or false.
+sound's language with subtitles On, and the device's with Automatic.
+`subtitles` (from 1.34.0) is `automatic`, `on` or `off`. An app before
+1.34.0 sends `captions` instead, true (On) or false (Off); send one or the
+other, never both. It only ever sets the languages of the person signed
+in, and anything else sent is ignored. Answers 400, with the sentence to
+show, for a language StationPlay doesn't know, for `subtitles` that isn't
+one of the three, for `captions` that isn't true or false, and for both
+sent at once.
 
 | Field | Type | What it is |
 |---|---|---|
 | `audio` | object or null | The sound's language, as in `GET /api/internal/me` |
 | `audio.code` | string | Its code |
 | `audio.name` | string | Its name |
-| `captions` | boolean | Whether subtitles are on |
+| `captions` | boolean | Whether subtitles are On |
+| `subtitles` | string | `automatic`, `on` or `off` (from 1.34.0, when the app sent `subtitles`) |
 | `captionLanguage` | object or null | The subtitles' language |
 | `captionLanguage.code` | string | Its code |
 | `captionLanguage.name` | string | Its name |
@@ -822,8 +854,8 @@ An alert is raised only once the problem has lasted for some time, such as
 3 checks in a row a minute apart, or a station failing to start 3 times in
 10 minutes. It's marked fixed only once things have been right for some
 time too, so no alert comes and goes. The **Logs** tab and the page's header
-show alerts too, and an Admin can have them sent to a web address (ntfy,
-Gotify, Home Assistant).
+show alerts too, and an Admin can have them sent to up to 3 web addresses
+(ntfy, Gotify, Home Assistant, Discord, Slack).
 
 From 1.30.0, there's one more kind, `files`: something on the **Broken
 files** tab needs an Admin. That's a person's report, a file a station or
@@ -837,7 +869,7 @@ An Admin is told about files at most once an hour. Once an hour has passed
 since the alert was last raised, anything new since then restarts it with a
 new `id`, and the old one is no longer listed. (It isn't fixed, so don't
 say it was.) The apps need nothing new for it: notify once for each `id`,
-as for any alert. The web address gets the same alerts.
+as for any alert. The web addresses get the same alerts.
 
 For an Admin, an app shows the current alerts, with each `sentence`
 unchanged and how long it's lasted, and can show when one is fixed. Ask
@@ -923,13 +955,14 @@ everyone shares one set.)
 
 - **Their own** (`languages` in `GET /api/internal/me`; set with
   `PUT /api/internal/languages`). The sound's language (null: each file's
-  default track), subtitles on or off, and the subtitles' language (null:
-  the language of the sound that plays).
+  default track), subtitles Automatic, On or Off, and the subtitles'
+  language.
 - **For a show, or for an episode or a movie alone** (`languages` in
   `GET /api/internal/items/{key}`; set from the player with
   `PUT /api/internal/items/{key}/languages`, cleared with `DELETE`). Any of
   the three, each null where nothing is chosen there. A show's choice
-  applies to all its episodes. An episode's applies to it alone.
+  applies to all its episodes: that's **Sticky Audio** and **Sticky
+  Subtitles** (named so from 1.34.0). An episode's applies to it alone.
 
 Languages are ISO 639-2 codes, as files carry them (`eng`, `jpn`). For the
 few with two codes, it's the one files use (`fre`, `ger`). Each comes with
@@ -953,9 +986,17 @@ the file's default.
 - **Subtitles off.** Only a forced track in the language of the sound that
   plays. (Forced subtitles cover the parts in another language, meant to
   be read.)
+- **Subtitles Automatic** (from 1.34.0, where nothing turned them on or
+  off, the person's own included). In the person's language when the sound
+  is in another, as with them on; otherwise as with them off. Their
+  language is their subtitles' language, else the device's (`language` in
+  `POST /api/internal/play`), else their sound's. When the sound's language
+  isn't known, a full track in their language that the file has on (its
+  default) shows.
 
 The answer's `chosen` shows what StationPlay chose, and why, in a few words
-to show ("Japanese, as chosen for this show"), and that's what plays. The
+to show ("Japanese, kept for this show by Sticky Audio"; "English
+subtitles, as the sound is Japanese"), and that's what plays. The
 app selects `chosen.audio` and `chosen.subtitle` in its player. A subtitle
 the player can't show itself is drawn into a copy's picture, as an app's
 `subtitle` is, by the same rules. That's one whose format isn't in
@@ -964,7 +1005,8 @@ none.
 
 An app that sends `audio` or `subtitle` (either, even null) gets exactly
 that, as before, and `chosen` is null. So does someone who has chosen
-nothing anywhere: their programs play as they did before 1.29.0. Stations
+nothing anywhere, when the app doesn't send the device's `language`: their
+programs play as they did before 1.29.0. Stations
 don't use these languages yet.
 
 ## Up next and the Resume row
@@ -1345,6 +1387,9 @@ With `device.hls`, a copy is also made when the app sends:
   when no version keeps up. The copy is converted.
 - `night: true`: night mode's sound (as the stations' `nightHls`), for an
   app that can't make it itself.
+- `language` (from 1.34.0): the device's own language setting, such as
+  `en-US`, for Automatic subtitles (see Languages). One StationPlay doesn't
+  know counts as none.
 - `convert: true` (from 1.29.1, when `features` lists `convert-asked`): a
   converted copy, whatever `device` says it plays. This is for when the
   device's decoder failed at the file (Media3's

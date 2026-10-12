@@ -3,21 +3,27 @@ they want, kept by StationPlay so they follow them to every device (see
 docs/internal-api.md, Languages).
 
 A person has their own: a sound language (none: each file's default track),
-subtitles on or off, and a subtitles language (none: the sound's language;
-the API calls these `captions` and `captionLanguage`).
-From the player, they can choose otherwise for a show (the whole show), or
-for an episode or a movie alone. When an app plays an episode or a movie
-without saying which tracks (see applibrary.py), StationPlay chooses, each
-of the three on its own: the episode's (or movie's) choice, else its
-show's, else the person's, else the file's default.
+subtitles Automatic, On or Off, and a subtitles language (the API calls
+these `captions` and `captionLanguage`; `subtitles` says which of the
+three). From the player, they can choose otherwise for a show (the whole
+show: Sticky Audio and Sticky Subtitles, from 1.34.0), or for an episode or
+a movie alone. When an app plays an episode or a movie without saying which
+tracks (see applibrary.py), StationPlay chooses, each of the three on its
+own: the episode's (or movie's) choice, else its show's, else the person's,
+else the file's default.
 
 Sound: the first track in that language (the file's default among them
 first), never a commentary when there's another; with none in it, the
-file's default. Subtitles on: a subtitle track in the subtitles language,
-a full one before a forced one (one for the deaf and hard of hearing is a
-full one). Subtitles off: only a forced track in the language of the sound
-that plays, as forced subtitles are the parts in another language, meant
-to be read.
+file's default. Subtitles On: a subtitle track in the subtitles language
+(none: the sound's), a full one before a forced one (one for the deaf and
+hard of hearing is a full one). Subtitles Off: only a forced track in the
+language of the sound that plays, as forced subtitles are the parts in
+another language, meant to be read. Subtitles Automatic (from 1.34.0; where
+nothing turned them on or off, a person's own included): as On, in their
+language, when the sound is in another; else as Off. Their language: their
+subtitles language, else the device's (as the app says it, playing), else
+their sound language. When the sound's language isn't known, a full track
+in their language the file has on (its default) shows.
 
 Languages are ISO 639-2 codes, as files carry them ("eng", "jpn"; for the
 few with two, the one files use: "fre", "ger"). Two-letter codes ("en",
@@ -88,6 +94,13 @@ LONGEST = 40  # a language as an app sends it, at most
 
 # Where a choice was made, as the apps' players say why.
 EPISODE_LEVEL, MOVIE_LEVEL, SHOW_LEVEL, YOURS = EPISODE, MOVIE, SHOW, "you"
+# A show's choices, as people know them (from 1.34.0).
+STICKY_AUDIO, STICKY_SUBTITLES = "Sticky Audio", "Sticky Subtitles"
+# Subtitles, as the apps choose them (`subtitles`, from 1.34.0), and the
+# `captions` each is kept as (a person's own: None is Automatic).
+AUTOMATIC, ON, OFF = "automatic", "on", "off"
+SUBTITLES = {AUTOMATIC: None, ON: True, OFF: False}
+CHOOSE_SUBTITLES = "Choose subtitles Automatic, On or Off"
 OWN = ""  # (the person's own, by the key they're kept under)
 KEPT = 5000  # choices for shows, episodes and movies kept for each person (the newest)
 
@@ -135,12 +148,14 @@ def commentary(track: Track) -> bool:
 
 
 def changes(given: dict[str, Any], own: bool) -> dict[str, Any]:
-    """What an app sent to change (`given`: audio, captions and
+    """What an app sent to change (`given`: audio, captions, subtitles and
     captionLanguage, as it sent them), as Languages.change takes it: each
     language a code (two-letter codes and the like made one), or None.
     ValueError, with a sentence to show, for a language StationPlay doesn't
     know; and for a person's own (`own`), for captions that aren't true or
-    false (for a show, an episode or a movie, null clears it)."""
+    false (for a show, an episode or a movie, null clears it), and
+    subtitles that aren't automatic, on or off (only for a person's own,
+    and never with captions)."""
     out: dict[str, Any] = {}
     for field, key in (("audio", "audio"), ("captionLanguage", "caption_language")):
         if field not in given:
@@ -154,11 +169,26 @@ def changes(given: dict[str, Any], own: bool) -> dict[str, Any]:
                 "as eng or jpn."
             )
         out[key] = found
+    if "subtitles" in given:
+        if not own:
+            raise ValueError("For a show, an episode or a movie, send captions")
+        if "captions" in given:
+            raise ValueError("Send subtitles or captions, not both")
+        said = given["subtitles"]
+        if not isinstance(said, str) or said not in SUBTITLES:
+            raise ValueError(CHOOSE_SUBTITLES)
+        out["captions"] = SUBTITLES[said]
     if "captions" in given:
         if given["captions"] is None and own:
             raise ValueError("Subtitles must be on or off")
         out["captions"] = given["captions"]
     return out
+
+
+def subtitles(choice: Choice) -> str:
+    """A person's own subtitles, as the apps choose them: automatic, on or
+    off."""
+    return AUTOMATIC if choice.captions is None else ON if choice.captions else OFF
 
 
 @dataclass(frozen=True)
@@ -187,7 +217,10 @@ class Choice:
 @dataclass(frozen=True)
 class Wanted:
     """What a person wants for one episode or movie, each with where it was
-    chosen (EPISODE_LEVEL, MOVIE_LEVEL, SHOW_LEVEL or YOURS; "" for nowhere)."""
+    chosen (EPISODE_LEVEL, MOVIE_LEVEL, SHOW_LEVEL or YOURS; "" for nowhere).
+    `automatic`: subtitles weren't turned on or off anywhere, so they show
+    when the sound isn't in the person's language (`yours`; None: not
+    known)."""
 
     audio: str | None
     audio_from: str
@@ -195,6 +228,8 @@ class Wanted:
     captions_from: str
     caption_language: str | None
     caption_from: str
+    automatic: bool = False
+    yours: str | None = None
 
 
 @dataclass(frozen=True)
@@ -207,9 +242,17 @@ class Picked:
     subtitle_why: str
 
 
-def _as(level: str) -> str:
-    """Where a choice was made, ending a sentence: "as you chose"."""
+def _as(level: str, sticky: str) -> str:
+    """Where a choice was made, ending a sentence: "as you chose"; for a
+    show, kept by Sticky Audio or Sticky Subtitles (`sticky`)."""
+    if level == SHOW_LEVEL:
+        return f"kept for this show by {sticky}"
     return "as you chose" if level == YOURS else f"as chosen for this {level}"
+
+
+def _first(tracks: list[Track]) -> Track:
+    """The file's default among them, else the first."""
+    return next((t for t in tracks if t.default), tracks[0])
 
 
 def pick(media: Media, wanted: Wanted) -> Picked:
@@ -231,30 +274,75 @@ def _pick_audio(media: Media, wanted: Wanted) -> tuple[Track | None, str]:
     if not found:
         return default, f"The file's default: it has no {name(wanted.audio)} sound"
     found = [t for t in found if not commentary(t)] or found
-    best = next((t for t in found if t.default), found[0])
-    return best, f"{name(wanted.audio)}, {_as(wanted.audio_from)}"
+    return _first(found), f"{name(wanted.audio)}, {_as(wanted.audio_from, STICKY_AUDIO)}"
+
+
+def _forced(media: Media, sound: str | None) -> tuple[Track | None, str]:
+    """A forced track in the sound's language (the parts in another
+    language, meant to be read), if there's one."""
+    forced = [t for t in media.subtitles if t.forced and sound and track_code(t) == sound]
+    if not forced:
+        return None, ""
+    return _first(
+        forced
+    ), f"Forced {name(sound or '')} subtitles, for the parts in another language"
+
+
+def _in(media: Media, language: str, said: str) -> tuple[Track | None, str]:
+    """A subtitle track in `language`, a full one before a forced one, with
+    why (`said`, the reason it's in that language), if there's one."""
+    found = [t for t in media.subtitles if track_code(t) == language]
+    full = [t for t in found if not t.forced]
+    if full:
+        return _first(full), said
+    if found:
+        return _first(found), f"{said} (forced only: it has no others in {name(language)})"
+    return None, ""
 
 
 def _pick_subtitle(media: Media, wanted: Wanted, sound: str | None) -> tuple[Track | None, str]:
+    if wanted.automatic:
+        return _automatic(media, wanted.yours, sound)
     if not wanted.captions:
-        forced = [t for t in media.subtitles if t.forced and sound and track_code(t) == sound]
-        if forced:
-            best = next((t for t in forced if t.default), forced[0])
-            return best, f"Forced {name(sound or '')} subtitles, for the parts in another language"
+        forced, why = _forced(media, sound)
+        if forced is not None:
+            return forced, why
         off = "Subtitles are off"
-        return None, f"{off}, {_as(wanted.captions_from)}" if wanted.captions_from else off
+        if not wanted.captions_from:
+            return None, off
+        return None, f"{off}, {_as(wanted.captions_from, STICKY_SUBTITLES)}"
     language = wanted.caption_language or sound
     if language is None:
         return None, "No subtitles: the sound's language isn't known"
-    found = [t for t in media.subtitles if track_code(t) == language]
-    full = [t for t in found if not t.forced]
-    said = f"{name(language)} subtitles, {_as(wanted.captions_from)}"
-    if full:
-        return next((t for t in full if t.default), full[0]), said
-    if found:
-        best = next((t for t in found if t.default), found[0])
-        return best, f"{said} (forced only: it has no others in {name(language)})"
+    said = f"{name(language)} subtitles, {_as(wanted.captions_from, STICKY_SUBTITLES)}"
+    found, why = _in(media, language, said)
+    if found is not None:
+        return found, why
     return None, f"No subtitles: it has none in {name(language)}"
+
+
+def _automatic(media: Media, yours: str | None, sound: str | None) -> tuple[Track | None, str]:
+    """Automatic subtitles: in the person's language (`yours`) when the
+    sound is in another; else only the sound's forced ones (see the
+    module's notes)."""
+    if yours is None:
+        none = "No subtitles: your language isn't known"
+    elif sound is None:
+        on = [t for t in media.subtitles
+              if t.default and not t.forced and track_code(t) == yours]  # fmt: skip
+        if on:
+            return on[0], f"{name(yours)} subtitles, as the file has them on"
+        none = "No subtitles: the sound's language isn't known"
+    elif sound == yours:
+        none = f"No subtitles: the sound is in {name(sound)}, your language"
+    else:
+        said = f"{name(yours)} subtitles, as the sound is {name(sound)}"
+        found, why = _in(media, yours, said)
+        if found is not None:
+            return found, why
+        none = f"No subtitles: it has none in {name(yours)}"
+    forced, why = _forced(media, sound)
+    return (forced, why) if forced is not None else (None, none)
 
 
 class Languages:
@@ -290,18 +378,20 @@ class Languages:
     def clear(self, user_id: int, key: str) -> None:
         self.db.clear_languages(user_id, key)
 
-    def wanted(self, user_id: int, entry: Entry) -> Wanted | None:
+    def wanted(self, user_id: int, entry: Entry, device: str | None = None) -> Wanted | None:
         """What a person wants for an episode or a movie: each of the three
-        from the most particular place it's chosen. None when nothing is
-        chosen anywhere (then nothing is chosen for them: the file plays as
-        it did before StationPlay 1.29.0)."""
+        from the most particular place it's chosen, with the device's
+        language (`device`, a code), if the app said it, for Automatic
+        subtitles. None when nothing is chosen anywhere and the device's
+        language isn't known (then nothing is chosen for them: the file
+        plays as it did before StationPlay 1.29.0)."""
         level = EPISODE_LEVEL if entry.kind == EPISODE else MOVIE_LEVEL
         places = [(entry.key, level)]
         if entry.kind == EPISODE and entry.show_key:
             places.append((entry.show_key, SHOW_LEVEL))
         places.append((OWN, YOURS))
         found = self.db.languages_of(user_id, [key for key, _ in places])
-        if not found:
+        if not found and device is None:
             return None
         said = [(found[key], where) for key, where in places if key in found]
 
@@ -315,6 +405,10 @@ class Languages:
         audio, audio_from = first("audio")
         captions, captions_from = first("captions")
         caption, caption_from = first("caption_language")
+        if captions is None:
+            own = found.get(OWN)
+            yours = caption or device or (own.audio if own else None)
+            return Wanted(audio, audio_from, False, YOURS, caption, caption_from, True, yours)
         return Wanted(audio, audio_from, bool(captions), captions_from, caption, caption_from)
 
     def for_item(self, user_id: int, entry: Entry) -> dict[str, Any]:

@@ -416,7 +416,7 @@ The video stream itself needs no sign-in. Each title an app plays through the pu
 
 Even sound is on by default. To keep each episode's original sound, such as Dolby Atmos or DTS sent on to a receiver, turn off **Even sound for a show's episodes** on the Access tab, under **Media in StationPlay's apps**. With it on, that sound plays as ordinary 5.1 or stereo. Apps that predate the copies in StationPlay 1.24.0 get each file unchanged.
 
-**Languages.** Each person chooses their sound language and subtitles (on or off, and which language) in an app's Options. StationPlay saves the choices, so they follow that person to every device. From the player, a person can choose differently for a whole show, or for one episode or movie.
+**Languages.** Each person chooses their sound language and subtitles in an app's Options. StationPlay saves the choices, so they follow that person to every device. Subtitles are **Automatic** to start: they show in your language when the sound is in another (your Subtitles language if you choose one, else your device's language). Choose **On** to always have them, or **Off** for only the parts meant to be read. From the player, a person can choose differently for one episode or movie, or for a whole show with **Sticky Audio** and **Sticky Subtitles**: what you pick holds for every episode of that show.
 
 StationPlay uses the most specific choice: the episode's or movie's, then the show's, then the person's own, then the file's default. It picks sound in their language, never a commentary track when there's another. With subtitles on, it picks their language, preferring a full track over a forced one. With subtitles off, it shows only forced subtitles, for parts in another language.
 

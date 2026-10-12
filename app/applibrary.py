@@ -158,6 +158,9 @@ class PlayAsk(BaseModel):
     # A converted copy, whatever the device says it plays (from 1.29.1: its
     # decoder failed at the file; see play_copy).
     convert: bool = False
+    # The device's language ("en-US"), for Automatic subtitles (from 1.34.0:
+    # see languages.py). One StationPlay doesn't know is none.
+    language: str | None = Field(default=None, max_length=languages.LONGEST)
 
 
 class ProgressReport(BaseModel):
@@ -1552,7 +1555,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         # for them that the player doesn't show itself is drawn in, as the
         # app's `subtitle` is.
         told = bool({"audio", "subtitle"} & body.model_fields_set)
-        wanted = None if told else ctx.languages.wanted(user_id, e)
+        device_language = languages.code(body.language)
+        wanted = None if told else ctx.languages.wanted(user_id, e, device_language)
         shows = frozenset(catalog.subtitle_codec(f) for f in body.device.subtitles)
         picked = languages.pick(media, wanted) if wanted and media is not None else None
         drawn = drawn_for(picked, shows, copy=False)

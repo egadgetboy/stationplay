@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field, StrictBool
+from pydantic import BaseModel, Field, StrictBool, StrictStr
 
 from . import (
     __version__,
@@ -139,10 +139,12 @@ class PasswordChange(BaseModel):
 class LanguagesIn(BaseModel):
     """Languages for the apps (see languages.py): each a language's code or
     null, and captions true or false (or for a show, an episode or a movie,
-    null); what isn't sent stays as it is."""
+    null); or for a person's own, subtitles (from 1.34.0) automatic, on or
+    off; what isn't sent stays as it is."""
 
     audio: str | None = Field(default=None, max_length=languages.LONGEST)
     captions: StrictBool | None = None
+    subtitles: StrictStr | None = Field(default=None, max_length=20)
     captionLanguage: str | None = Field(default=None, max_length=languages.LONGEST)
 
     def given(self) -> dict[str, Any]:
@@ -439,6 +441,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         return {
             "audio": languages.as_json(own.audio),
             "captions": bool(own.captions),
+            "subtitles": languages.subtitles(own),
             "captionLanguage": languages.as_json(own.caption_language),
             "choices": languages.choices(),
         }
@@ -454,11 +457,16 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
         own = ctx.languages.change(user.id if user else 0, languages.OWN, changes)
-        return {
+        said = {
             "audio": languages.as_json(own.audio),
             "captions": bool(own.captions),
             "captionLanguage": languages.as_json(own.caption_language),
         }
+        # (`subtitles` to an app that sends it, from 1.34.0: an older one
+        # gets the answer it always did.)
+        if "subtitles" in body.model_fields_set:
+            said["subtitles"] = languages.subtitles(own)
+        return said
 
     def own_app(request: Request) -> tuple[User, SignedIn]:
         """Who an app is signed in as, and its sign-in, for what someone
