@@ -28,6 +28,7 @@ import contextlib
 import logging
 import time
 from collections.abc import Awaitable, Callable, Iterable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 from . import ratings
@@ -36,13 +37,19 @@ from .db import Database, Item
 
 log = logging.getLogger("stationplay.titles")
 
+# When the Media answer being made must stop waiting for Plex about tags (the
+# event loop's time; set by applibrary.py for each answer, so the asks of one
+# answer share ENSURE_S, and never run past its own deadline).
+ensure_until: ContextVar[float | None] = ContextVar("ensure_until", default=None)
+
 MOVIE, SHOW, EPISODE = "movie", "show", "episode"
 RECHECK_MS = 7 * 86_400_000  # how often Plex is asked about a title again
 TAGS_RECHECK_MS = 86_400_000  # ...and for its tags, while someone is limited by them
 FILL_AT_ONCE = 200  # titles asked about in one go (Plex is asked 50 at a time)
 ENSURE_AT_ONCE = 50  # Media's titles asked about in one batch
 ENSURE_TURNS = 2  # Media's batches asked about at once
-ENSURE_S = 3.0  # how long Media waits for Plex about tags before answering
+ENSURE_AHEAD = 4  # of one ask's batches, those asked about at once; the rest wait their turn
+ENSURE_S = 3.0  # how long one Media answer waits for Plex about tags, in all
 ABSENT_MS = 3_600_000  # a title Plex didn't have isn't asked about again for this long
 SAY_EVERY_S = 60.0  # (Plex not answering Media is logged at most this often)
 
@@ -94,6 +101,7 @@ class Titles:
         # asked about once from when that began (or StationPlay started).
         self._want_tags = False
         self._tags_since_ms = _now()
+        self._refresh_ms = 0  # (refresh_tags: every title asked about again since then)
         # Bumped whenever anything here changes (so what's worked out from it
         # can tell it's out of date).
         self.version = 0
@@ -101,6 +109,8 @@ class Titles:
         # Media's batches being asked about (by key), when Plex last didn't
         # have a title, and what limits Media's asking at once.
         self._asking: dict[str, asyncio.Task] = {}
+        self._backlog: dict[str, str] = {}  # (key: kind; asked about one batch at a time)
+        self._backlog_task: asyncio.Task | None = None
         self._absent: dict[str, int] = {}
         self._turns: asyncio.Semaphore | None = None
         self._said_s = 0.0
@@ -171,14 +181,14 @@ class Titles:
     def refresh_tags(self) -> None:
         """Asks Plex about every show's and movie's tags again (what's hidden
         changed: a genre or label added in Plex lately counts at once)."""
-        self._tags_since_ms = _now()
+        self._refresh_ms = _now()
 
     def wanted(self, now: int | None = None) -> list[str]:
         """Shows never asked about (or not lately), and movies whose library
         isn't known; and, while anyone is limited by tags, every show and
-        movie not asked about since that began (or since `refresh_tags`), or
-        not in the last day: what `fill` asks Plex about, the longest waiting
-        first."""
+        movie whose tags aren't known and weren't asked for since that began
+        (or StationPlay started), or not since `refresh_tags`, or not in the
+        last day: what `fill` asks Plex about, the longest waiting first."""
         now = _now() if now is None else now
 
         def due(t: Title) -> bool:
@@ -186,18 +196,25 @@ class Titles:
             if (t.kind == SHOW or (t.kind == MOVIE and not t.library)) and stale:
                 return True
             if self._want_tags and t.kind in (SHOW, MOVIE):
-                return now - t.checked_ms >= TAGS_RECHECK_MS or t.checked_ms < self._tags_since_ms
+                return (
+                    now - t.checked_ms >= TAGS_RECHECK_MS
+                    or (t.tags is None and t.checked_ms < self._tags_since_ms)
+                    or t.checked_ms < self._refresh_ms
+                )
             return False
 
         found = [(t.checked_ms, key) for key, t in self._known.items() if due(t)]
         return [key for _, key in sorted(found)]
 
     async def fill(self, ask: Asker) -> None:
-        """Asks Plex about what `wanted` lists, a batch at a time."""
+        """Asks Plex about what `wanted` lists, a batch at a time (each once,
+        whatever the clock does meanwhile)."""
+        asked: set[str] = set()
         while True:
-            batch = self.wanted()[:FILL_AT_ONCE]
+            batch = [k for k in self.wanted() if k not in asked][:FILL_AT_ONCE]
             if not batch:
                 return
+            asked.update(batch)
             found = await ask(batch)
             now = _now()
             changed = {}
@@ -213,11 +230,15 @@ class Titles:
     async def ensure(self, wanted: dict[str, str], wait_s: float = ENSURE_S) -> None:
         """Asks Plex about the shows and movies of `wanted` (key: kind) whose
         tags aren't known (for Media, whose lists don't carry them whole),
-        waiting up to `wait_s` for what Plex says. Each batch is kept as it
-        comes, and carries on if this stops waiting (or is cancelled); one
-        already being asked about isn't asked about twice; one Plex didn't
-        have isn't asked about again for an hour. What's not known yet stays
-        hidden from anyone limited by tags."""
+        waiting up to `wait_s` for what Plex says (or less: `ensure_until`).
+        The first ENSURE_AHEAD batches (`wanted` in the order it's shown)
+        are asked about at once; the rest wait their turn behind other
+        answers' asks, a batch at a time, so one big Media folder doesn't
+        hold up the rest. Each batch is kept as it comes, and carries on if
+        this stops waiting (or is cancelled); one already being asked about
+        isn't asked about twice; one Plex didn't have isn't asked about
+        again for an hour. What's not known yet stays hidden from anyone
+        limited by tags."""
         if self.asker is None:
             return
         now = _now()
@@ -231,16 +252,39 @@ class Titles:
         ]  # fmt: skip
         if not missing:
             return
+        loop = asyncio.get_running_loop()
         waits = {self._asking[k] for k in missing if k in self._asking}
         fresh = [k for k in missing if k not in self._asking]
-        loop = asyncio.get_running_loop()
-        for at in range(0, len(fresh), ENSURE_AT_ONCE):
-            batch = {k: wanted[k] for k in fresh[at : at + ENSURE_AT_ONCE]}
-            task = loop.create_task(self._ask_batch(batch, self.asker))
+        ahead = fresh[: ENSURE_AHEAD * ENSURE_AT_ONCE]
+        for at in range(0, len(ahead), ENSURE_AT_ONCE):
+            batch = {k: wanted[k] for k in ahead[at : at + ENSURE_AT_ONCE]}
             for key in batch:
-                self._asking[key] = task
-            waits.add(task)
-        await asyncio.wait(waits, timeout=wait_s)
+                self._backlog.pop(key, None)  # (asked now, if it was waiting)
+            waits.add(self._start_batch(batch, self.asker))
+        for key in fresh[len(ahead) :]:
+            self._backlog.setdefault(key, wanted[key])
+        if self._backlog and (self._backlog_task is None or self._backlog_task.done()):
+            self._backlog_task = loop.create_task(self._work_backlog(self.asker))
+        until = ensure_until.get()
+        if until is not None:
+            wait_s = min(wait_s, until - loop.time())
+        if wait_s > 0:
+            await asyncio.wait(waits, timeout=wait_s)
+
+    def _start_batch(self, kinds: dict[str, str], ask: Asker) -> asyncio.Task:
+        task = asyncio.get_running_loop().create_task(self._ask_batch(kinds, ask))
+        for key in kinds:
+            self._asking[key] = task
+        return task
+
+    async def _work_backlog(self, ask: Asker) -> None:
+        """Media's asks beyond the first few batches, one batch at a time."""
+        while self._backlog:
+            keys = list(self._backlog)[:ENSURE_AT_ONCE]
+            taken = {k: self._backlog.pop(k) for k in keys}
+            batch = {k: kind for k, kind in taken.items() if k not in self._asking}
+            if batch:
+                await self._start_batch(batch, ask)
 
     async def _ask_batch(self, kinds: dict[str, str], ask: Asker) -> None:
         """One batch of Media's `ensure`, kept as it comes."""

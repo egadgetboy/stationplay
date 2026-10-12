@@ -1834,12 +1834,16 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             raise HTTPException(400, "Those selections contain no playable episodes or movies")
         return items
 
-    async def as_aired(channel: Channel, items: list[Item]) -> list[Item]:
+    async def as_aired(
+        channel: Channel, items: list[Item], sets: dict[str, list[Item]] | None = None
+    ) -> list[Item]:
         """The programs with the station's commercials or trailers, and
-        Station ID card, after each."""
+        Station ID card, after each (judged with the station's specials:
+        `sets`, new ones; by default, as kept)."""
         if channel.breaks:
             await ctx.fillers.ready()
-        return ctx.updater.with_breaks(channel, items)
+        rest = None if sets is None else [i for programs in sets.values() for i in programs]
+        return ctx.updater.with_breaks(channel, items, rest)
 
     def check_logo(logo: str | None) -> None:
         if logo and not ctx.logos.exists(logo):
@@ -2062,9 +2066,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         )
         await ctx.updater.create(
             channel.id,
-            await as_aired(channel, items),
+            await as_aired(channel, items, sets),
             channel.order_mode,
-            await ctx.updater.sets_as_aired(channel, sets),
+            await ctx.updater.sets_as_aired(channel, sets, main=items),
         )
         # Its files are checked straight away (the station's card shows how
         # that's going), and the scanner looks out for new programs.
@@ -2244,7 +2248,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             getattr(after, c) != getattr(channel, c) for c in SPECIAL_SETTINGS
         ) and (specials.has_specials(after) or specials.has_specials(channel))
         items = await gather_items(body.sources, after.skip_intros) if content_changed else None
-        sets = await gather_sets(after) if content_changed or specials_changed else None
+        sets = await gather_sets(after, raw=True) if content_changed or specials_changed else None
         if sets is not None:
             check_specials_play(after, items or ctx.db.latest_items(channel_id), sets)
         # Again: while Plex was asked, the logo may have been deleted, or
@@ -2261,11 +2265,18 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         )
         ctx.icon_cache.pop(channel.number, None)
         ctx.icon_cache.pop(body.number, None)
+        # (The lineup and its specials' programs, each with its breaks,
+        # judged as one station: as they'll be, new or as kept.)
+        now = channel_or_404(channel_id)
+        if sets is not None:
+            sets = await ctx.updater.sets_as_aired(
+                now, sets, main=items if items is not None else ctx.db.latest_items(channel_id)
+            )
         if items is not None:
             # New content (or skipping intros and credits, or different
             # breaks) carries on from what's airing; a new order starts
             # afresh. Either way at the next break a minute or more away.
-            items = await as_aired(channel_or_404(channel_id), items)
+            items = await as_aired(now, items, sets)
             return await change(channel_id, items, "edit", fresh=order_changed, sets=sets)
         if specials_changed:
             return await change(
@@ -2433,8 +2444,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     async def update_from_plex(channel_id: int, request: Request):
         """Update now: follow Plex straight away, even with a held update."""
         channel = changeable(channel_id, request)
-        items = await as_aired(channel, await gather_items(channel.sources, channel.skip_intros))
-        sets = await gather_sets(channel)
+        items, sets = await ctx.updater.as_aired_together(
+            channel,
+            await gather_items(channel.sources, channel.skip_intros),
+            await gather_sets(channel, raw=True),
+        )
         if not ctx.updater.changed(ctx.db.latest_items(channel_id), items)[2] and not (
             ctx.updater.sets_changed(channel_id, sets)
         ):

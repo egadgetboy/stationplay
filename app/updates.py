@@ -344,6 +344,17 @@ class Updater:
             await self.ctx.fillers.ready()
         return self.with_breaks(channel, items)
 
+    async def as_aired_together(
+        self, channel: Channel, items: list[Item], sets: dict[str, list[Item]]
+    ) -> tuple[list[Item], dict[str, list[Item]]]:
+        """A station's programs and its specials' (as gathered, without
+        breaks) as they'd air, each with its breaks, judged as one station."""
+        if channel.breaks:
+            await self.ctx.fillers.ready()
+        rest = [i for programs in sets.values() for i in programs]
+        aired = self.with_breaks(channel, items, rest)
+        return aired, await self.sets_as_aired(channel, sets, main=items)
+
     async def gather_sets(self, channel: Channel, look_s: float = 0.0) -> dict[str, list[Item]]:
         """The programs `channel`'s Feature Presentation (from a library or
         collection) and blocks draw on, as Plex has them right now, as
@@ -351,14 +362,15 @@ class Updater:
         return await self.sets_as_aired(channel, await self.gather_set_programs(channel, look_s))
 
     async def sets_as_aired(
-        self, channel: Channel, sets: dict[str, list[Item]]
+        self, channel: Channel, sets: dict[str, list[Item]], main: list[Item] | None = None
     ) -> dict[str, list[Item]]:
         """`sets` with the station's commercials or trailers, and Station ID
-        card, after each program."""
+        card, after each program: each judged with the whole station, its
+        lineup (`main`: a new one; by default, as kept) and every set."""
         if channel.breaks and sets:
             await self.ctx.fillers.ready()
-        # (Each judged with the whole station: its lineup and every set.)
-        main = self.ctx.db.latest_items(channel.id)
+        if main is None:
+            main = self.ctx.db.latest_items(channel.id)
         return {
             name: self.with_breaks(
                 channel, items, main + [i for n, s in sets.items() if n != name for i in s]
@@ -582,8 +594,11 @@ class Updater:
         channel = self.ctx.db.get_channel(channel_id)
         if channel is None:
             return None
-        items = await self.gather_for(channel)
-        sets = await self.gather_sets(channel)
+        items, sets = await self.as_aired_together(
+            channel,
+            await self.gather(channel.sources, channel.skip_intros),
+            await self.gather_set_programs(channel),
+        )
         current = self.ctx.db.latest_items(channel_id)
         added, removed, changed = self.changed(current, items)
         sets_changed = self.sets_changed(channel_id, sets)

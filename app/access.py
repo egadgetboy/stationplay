@@ -299,7 +299,7 @@ FOR_WATCHERS = {
     "PUT": ("/api/internal/languages", "/api/internal/items/"),
     "DELETE": ("/api/internal/items/",),
 }  # fmt: skip
-WATCHES_ONLY = "Your Viewing Level lets you watch, but not make or change stations"
+WATCHES_ONLY = "You can watch, but your limits don't let you make or change stations"
 
 
 def hash_password(password: str) -> str:

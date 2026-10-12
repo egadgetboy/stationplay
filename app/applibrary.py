@@ -50,6 +50,7 @@ from . import (
     viewing,
 )
 from . import scanner as sc
+from . import titles as titles_module
 from .appapi import APP_MAX, LanguagesIn, app_label, in_sentence, slot_program
 from .broadcaster import now_ms
 from .broken import version_key
@@ -411,6 +412,17 @@ async def shows_of(cat: ondemand.Catalog, entries: list[Entry]) -> dict[str, Ent
     return {e.key: e for e in found if e is not None}
 
 
+def tags_wanted(entries: list[Entry]) -> dict[str, str]:
+    """The shows and movies whose tags limits judge `entries` by (an
+    episode's show's), key: kind, in the order shown."""
+    wanted: dict[str, str] = {}
+    for e in entries:
+        key = (e.show_key or "") if e.kind == catalog.EPISODE else e.key
+        if key:
+            wanted.setdefault(key, catalog.SHOW if e.kind == catalog.EPISODE else e.kind)
+    return wanted
+
+
 async def seen_only(
     cat: ondemand.Catalog, viewer: viewing.Viewer, entries: list[Entry]
 ) -> list[Entry]:
@@ -424,15 +436,9 @@ async def seen_only(
     shows = await shows_of(cat, entries)
     titles = cat.titles
     if viewer.by_tags and titles is not None:
-        wanted = {
-            (e.show_key or "") if e.kind == catalog.EPISODE else e.key: (
-                catalog.SHOW if e.kind == catalog.EPISODE else e.kind
-            )
-            for e in entries
-        }
         # (Waiting a few seconds at most: what's not known by then stays
         # hidden, and is known a moment later.)
-        await titles.ensure({k: kind for k, kind in wanted.items() if k})
+        await titles.ensure(tags_wanted(entries))
 
     def tags(e: Entry) -> catalog.Tags | None:
         if titles is None:
@@ -522,10 +528,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         can't be read, 503."""
         deadline = getattr(request.state, "library_by", None)
         if deadline is None:
-            deadline = request.state.library_by = (
-                asyncio.get_running_loop().time() + ondemand.LIBRARY_WAIT_S
-            )
+            loop_now = asyncio.get_running_loop().time()
+            deadline = request.state.library_by = loop_now + ondemand.LIBRARY_WAIT_S
+            # (What it waits for Plex about tags, in all: see Titles.ensure.)
+            request.state.tags_by = min(loop_now + titles_module.ENSURE_S, deadline - 1.0)
         waiting = asyncio.timeout_at(deadline)
+        until = titles_module.ensure_until.set(request.state.tags_by)
         try:
             async with waiting:
                 yield
@@ -546,6 +554,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             # away, rather than a stack trace for the app.)
             log.exception("What Plex said for a StationPlay app couldn't be read")
             raise HTTPException(503, ondemand.UNREACHABLE) from None
+        finally:
+            titles_module.ensure_until.reset(until)
 
     # What each person can see (see viewing.py) ------------------------------
 
@@ -632,6 +642,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             going = await ondemand.continue_watching(cat, ctx.db, user_id)
             added = await cat.recently_added()
             if not viewer.everything:
+                if viewer.by_tags and cat.titles is not None:
+                    # (One ask for all Home shows, in the order it shows it.)
+                    shown = [e for e, _ in going] + [
+                        e for lib, es in added if library_seen(viewer, lib["key"]) for e in es
+                    ]
+                    await cat.titles.ensure(tags_wanted(shown))
                 seen = {e.key for e in await seen_only(cat, viewer, [e for e, _ in going])}
                 going = [(e, start) for e, start in going if e.key in seen]
                 added = [

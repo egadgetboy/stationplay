@@ -428,7 +428,7 @@ const SETUP_PAGES = {
       me.required ? api('/api/access/viewing').catch(() => null) : null,
     ]);
     setAway(away);
-    const limited = view ? Object.values(view.users).filter(u => { const lv = view.levels.find(l => l.id === u.level); return lv && levelLimited(lv); }).length : 0;
+    const limited = view ? Object.values(view.users).filter(u => { const lv = view.levels.find(l => l.id === u.level); return (lv && levelLimited(lv)) || hidesCount(u.own?.blocks) > 0; }).length : 0;
     const shared = libs ? libs.libraries.filter(l => libs.shared.includes(l.key)).map(l => l.title) : [];
     const w = scan.window;
     const set = [

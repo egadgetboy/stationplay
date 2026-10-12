@@ -257,12 +257,12 @@ async function loadAccess() {
         loadAccess();
       } }, h('option', { value: 'admin' }, 'Admin'), h('option', { value: 'user' }, 'User'));
       role.value = u.role;
-      // Users make as many stations as they may (none on a level with
-      // limits: they only watch); Admins, any number.
+      // Users make as many stations as they may (none with limits, their
+      // level's or their own: they only watch); Admins, any number.
       const made = h('div', { class: 'hint' }, `${u.stationsMade} made`);
       const mine = viewing?.users[u.id] || { level: null, stations: {} };
       const level = viewing?.levels.find(lv => lv.id === mine.level);
-      const watchesOnly = u.role !== 'admin' && level && levelLimited(level);
+      const watchesOnly = u.role !== 'admin' && ((level && levelLimited(level)) || hidesCount(mine.own?.blocks) > 0);
       const stations = u.role === 'admin'
         ? h('td', { class: 'small', 'data-label': 'Stations they make' }, 'Any number', made)
         : watchesOnly

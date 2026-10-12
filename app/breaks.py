@@ -90,12 +90,13 @@ def decade_of(folder: str, path: str) -> int | None:
 def clip_at(kind: str, path: str) -> Clip | None:
     """A clip as its path says it is, before the folders have been looked
     in (as StationPlay starts): in a `kind` folder (`commercials` or
-    `trailers`), and its decade by the folders between; None if it isn't in
-    one."""
+    `trailers`, the first in its path), and its decade by the folders
+    between; None if it isn't in one."""
     parts = path.replace("\\", "/").split("/")[:-1]
     if kind not in parts:
         return None
-    folder = "/".join(parts[: len(parts) - parts[::-1].index(kind)])
+    # (The first: the folder beside a library's, as the folders are found.)
+    folder = "/".join(parts[: parts.index(kind) + 1])
     return Clip(path, 0, 0, 0.0, decade_of(folder, path))
 
 
@@ -118,8 +119,13 @@ class FillerLibrary:
         self._empty_looks = {COMMERCIALS: 0, TRAILERS: 0}
 
     def known(self, path: str) -> Clip | None:
-        """A clip found on disk, by its path."""
-        return self._known.get(path)
+        """A clip in the folders as last looked in, by its path, with its
+        decade (what its rating goes by: see cliprules.py)."""
+        for clips in self.clips.values():
+            for clip in clips:
+                if clip.path == path:
+                    return clip
+        return None
 
     def pool(self, kind: str) -> list[Clip]:
         """The clips of a kind that can be used."""

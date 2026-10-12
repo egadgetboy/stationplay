@@ -280,6 +280,8 @@ def test_rated_clips_play_while_stationplay_is_starting(app):
         admin.put(
             "/api/access/clips", json={"ratings": {"commercials": 0, "commercials/1960s": 14}}
         )
+        # (As StationPlay starts: no folder looked in yet.)
+        ctx.fillers.clips = {COMMERCIALS: [], TRAILERS: []}
         ctx.fillers._known.clear()
         ctx.fillers.refreshed_ms = 0
         playing = SimpleNamespace(ctx=ctx)
@@ -288,6 +290,10 @@ def test_rated_clips_play_while_stationplay_is_starting(app):
         assert Broadcaster._clip_allowed(playing, channel, slot, COMMERCIAL.path)
         assert not Broadcaster._clip_allowed(playing, channel, slot, SIXTIES.path)  # (TV-14)
         assert not Broadcaster._clip_allowed(playing, channel, slot, "/tv/elsewhere/x.mkv")
+        # (The first commercials folder in its path is the clips' own: one
+        # inside a decade's is still that decade's.)
+        nested = "/tv/commercials/1960s/commercials/fizz.mkv"
+        assert not Broadcaster._clip_allowed(playing, channel, slot, nested)
         ctx.fillers.refreshed_ms = 1  # (looked in: one not found is gone)
         assert not Broadcaster._clip_allowed(playing, channel, slot, COMMERCIAL.path)
 
@@ -338,3 +344,123 @@ def test_new_ratings_make_the_stations_lineups_again(app):
         admin.put("/api/access/clips", json={"ratings": {"commercials": 0}})
         admin.portal.call(ctx.updater.check)
         assert dealt(3) == {COMMERCIAL.path, SIXTIES.path}
+
+
+def test_a_decades_rating_counts_for_clips_found_in_the_folders(app, plex, tmp_path, monkeypatch):
+    """The re-check of 1.33.0's audit: the clips found on disk were kept,
+    for the check as each plays, without their decade, so a 1960s
+    commercial rated TV-14 was judged by commercials' own rating (all ages)
+    and played on a TV-Y7 station Kit sees, dealt there because the new
+    station's show wasn't known yet."""
+    from app import ffmpeg as ff
+
+    plex.add_show("110", "Barn Dance", contentRating=["TV-Y7"])
+    for n in range(1, 3):
+        plex.add_episode(f"21{n}", "110", 1, n, f"Dance {n}", f"/tv/b/{n}.mkv", 22 * 60_000)
+        plex.episodes[f"21{n}"]["year"] = 1965
+    folder = tmp_path / "tv" / "commercials"
+    (folder / "1960s").mkdir(parents=True)
+    for f in (folder / "soap.mkv", folder / "1960s" / "cola.mkv"):
+        f.write_bytes(b"a clip")
+
+    async def probe(settings, path, timeout=None, **kw):
+        return ff.ProbeResult(ok=True, duration_s=30.0)
+
+    monkeypatch.setattr(ff, "probe", probe)
+    with TestClient(app) as admin:
+        set_up(admin)
+        ctx = admin.app.state.ctx
+        fillers = ctx.fillers
+        fillers._known.clear()
+        found = admin.portal.call(fillers._clips, [str(folder)])  # (as the folders are looked in)
+        fillers.clips = {COMMERCIALS: found, TRAILERS: []}
+        fillers.refreshed_ms = 1
+        admin.put(
+            "/api/access/clips", json={"ratings": {"commercials": 0, "commercials/1960s": 14}}
+        )
+        made = admin.post("/api/channels", json={"number": 12, "sources": [
+            {"type": "show", "ratingKey": "110"}], "breaks": 2})  # fmt: skip
+        assert made.status_code == 201, made.text
+        channel = ctx.db.get_channel(made.json()["id"])
+        admin.portal.call(ctx.titles.filled)
+        listed = TestClient(app).get("/api/v1/stations", headers=sign_in_app(app, KIT)).json()
+        assert 12 in [s["number"] for s in listed["stations"]]
+        playing = SimpleNamespace(ctx=ctx)
+        slot = SimpleNamespace(item=SimpleNamespace(kind="episode"))
+        sixties, soap = str(folder / "1960s" / "cola.mkv"), str(folder / "soap.mkv")
+        assert not Broadcaster._clip_allowed(playing, channel, slot, sixties)
+        assert Broadcaster._clip_allowed(playing, channel, slot, soap)
+        # (A decade rated on its own, its kind not: it plays, the rest don't.)
+        admin.put(
+            "/api/access/clips", json={"ratings": {"commercials": None, "commercials/1960s": 0}}
+        )
+        assert Broadcaster._clip_allowed(playing, channel, slot, sixties)
+        assert not Broadcaster._clip_allowed(playing, channel, slot, soap)
+
+
+def test_a_new_stations_feature_presentation_is_judged_with_it(app, plex):
+    """The re-check of 1.33.0's audit: as a station was made (or changed),
+    its Feature Presentation was judged with the station as kept, which was
+    nothing yet: a G feature on a station of an R movie, which only Ada can
+    see, lost its unrated trailers as if Kit could see it."""
+    plex.add_section("3", "Family", "movie")
+    plex.add_movie("303", "Kite Day", "/f/kite.mkv", 80 * 60_000, section="3", contentRating=["G"])
+    with TestClient(app) as admin:
+        set_up(admin)
+        ctx = admin.app.state.ctx
+        made = admin.post("/api/channels", json={
+            "number": 5, "sources": [{"type": "movie", "ratingKey": "301"}], "breaks": 2,
+            "featureMode": "on", "featureDays": "0", "featureTime": "20:00",
+            "featureSource": {"type": "section", "key": "3", "sectionType": "movie",
+                              "title": "Family"}})  # fmt: skip
+        assert made.status_code == 201, made.text
+        sets = ctx.db.program_sets(made.json()["id"])
+        assert sets
+        for programs in sets.values():
+            assert {p for i in programs for p, _ in i.breaks or () if p != ID_CARD} == {
+                TRAILER.path
+            }
+
+
+def test_a_lineup_is_judged_with_its_stations_specials_as_kept(app):
+    """Station 9's PG movie, which Kit could see, with a Feature
+    Presentation of the R movie: the whole station is hidden from Kit, so
+    its own lineup plays every trailer too."""
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        ctx = admin.app.state.ctx
+        assert chosen(ctx, ids[9]) == set()
+        heist = [replace(i, breaks=None) for i in ctx.db.latest_items(ids[7])]
+        ctx.db.save_program_sets(ids[9], {"feature": heist})
+        assert chosen(ctx, ids[9]) == {TRAILER.path}
+
+
+def test_clips_are_dealt_while_whats_hidden_by_tags_isnt_known(app):
+    """While someone hides by genre and a station's titles' genres aren't
+    known yet, every clip is dealt (as while its ratings aren't), and each
+    is judged as it plays."""
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        ctx = admin.app.state.ctx
+        kid = kid_level(admin)
+        put = admin.put(f"/api/access/levels/{kid}", json={
+            "name": "Kid", "movieAge": 10, "tvAge": 10, "unrated": False,
+            "blocks": {"genres": ["Westerns"]}})  # fmt: skip
+        assert put.status_code == 200, put.text
+        admin.portal.call(ctx.titles.filled)
+        assert chosen(ctx, ids[9]) == set()  # (known: Kit sees it, trailers unrated)
+        titles = ctx.titles
+        old = titles.get("300")
+        titles._save({"300": replace(old, tags=None)}, old.checked_ms)  # (not known yet)
+        assert chosen(ctx, ids[9]) == {TRAILER.path}
+
+
+def test_the_alert_counts_trailers_after_anything_but_episodes(app):
+    with TestClient(app) as admin:
+        ids = set_up(admin)
+        ctx = admin.app.state.ctx
+        admin.put("/api/access/clips", json={"ratings": {"commercials": 0}})
+        assert alerts.skipping_unrated(ctx) == 1  # (station 9's trailers)
+        other = [replace(i, kind="clip") for i in ctx.db.latest_items(ids[3])]
+        ctx.db.save_program_sets(ids[3], {"feature": other})
+        assert alerts.skipping_unrated(ctx) == 2  # (and station 3's special, trailers after it)

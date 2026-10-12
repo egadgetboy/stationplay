@@ -211,7 +211,7 @@ class Blocks:
             if not isinstance(key, str) or not _KEY.fullmatch(key):
                 raise ValueError("Give each show or movie with its key, as Plex has it")
             if name is not None and not isinstance(name, str):
-                raise ValueError("Give each show or movie's title as words")
+                raise ValueError("Give each show or movie's title as text")
             keyed[key] = plain(name or "").strip()[:200]
         return Blocks(
             lists["genres"], lists["labels"], lists["collections"], lists["studios"],
@@ -531,10 +531,12 @@ class Viewing:
         for user_id, person in self._people.items():
             if person is None:
                 found = self.db.user(user_id)
+                name = found.name if found else f"user {user_id}"
                 log.warning(
-                    "What's hidden or allowed for %s can't be read, so they see nothing "
-                    "limits decide until an Admin saves What they see for them again",
-                    found.name if found else f"user {user_id}",
+                    "What's hidden or allowed for %s can't be read, so %s sees nothing in Media "
+                    "or on stations until an Admin saves What they see for them again",
+                    name,
+                    name,
                 )
         # (Titles' tags are asked for only while someone is limited by them:
         # as soon as someone is, Plex is asked about what's on the stations.)

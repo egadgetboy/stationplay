@@ -402,6 +402,10 @@ def test_new_names_to_hide_by_ask_plex_about_every_titles_tags_again(tmp_path):
     titles._known["300"] = Title("movie", "PG", "1", _now_ms() + 1, NO_TAGS)  # (asked)
     viewing.save_level(kid.id, "Kid", 10, 10, False, None, Blocks(labels=("Grown-ups",)))
     assert titles.wanted() == []  # (the same names: not again)
+    time.sleep(0.01)
+    viewing.save_level(kid.id, "Kid", 10, 10, False, None, Blocks(labels=("Grown-ups", "Gore")))
+    assert titles.wanted() == ["300"]  # (a new name: asked again at once)
+    titles._known["300"] = Title("movie", "PG", "1", _now_ms() + 1, NO_TAGS)  # (asked)
     a_day = _now_ms() + titles_module.TAGS_RECHECK_MS + 1
     assert titles.wanted(a_day) == ["300"]
 
@@ -415,8 +419,10 @@ def test_media_on_a_big_folder_answers_in_time_and_keeps_what_plex_said(tmp_path
     about a whole folder 50 at a time within one 8-second answer, kept
     nothing until all of it was in, and so failed every time on a big
     folder. Now each batch is kept as it comes and carries on after the
-    answer; a title being asked about isn't asked about twice; and Plex is
-    asked a couple of batches at a time."""
+    answer, which waits only so long; a title being asked about isn't asked
+    about twice; Plex is asked a couple of batches at a time; and (the
+    re-check) a big folder's batches beyond the first few wait their turn,
+    so a small folder asked about meanwhile isn't held up behind them."""
     import asyncio
 
     from app import titles as titles_module
@@ -429,32 +435,75 @@ def test_media_on_a_big_folder_answers_in_time_and_keeps_what_plex_said(tmp_path
         asked.append(keys)
         at_once[0] += 1
         at_once[1] = max(at_once[1], at_once[0])
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.2)
         at_once[0] -= 1
-        return {k: ("PG", "2", NO_TAGS) for k in keys if k != "399"}  # (Plex lost 399)
+        return {k: ("PG", "2", NO_TAGS) for k in keys if k != "599"}  # (Plex lost 599)
 
     titles.asker = ask
-    folder = {str(k): "movie" for k in range(400)}
+    big = {str(k): "movie" for k in range(600)}
+    small = {f"s{k}": "movie" for k in range(30)}
 
     async def run():
         started = time.monotonic()
-        await titles.ensure(folder, wait_s=0.12)
+        await titles.ensure(big, wait_s=0.3)
         took = time.monotonic() - started
-        partly = sum(titles.tags(k) is not None for k in folder)
-        await titles.ensure(folder, wait_s=0.0)  # (a second answer meanwhile)
-        await asyncio.sleep(0.6)  # (what was asked about carries on, and is kept)
-        return took, partly
+        partly = sum(titles.tags(k) is not None for k in big)
+        await titles.ensure(big, wait_s=0.0)  # (a second answer meanwhile: nothing asked twice)
+        started = time.monotonic()
+        await titles.ensure(small, wait_s=0.8)
+        small_took = time.monotonic() - started
+        small_known = all(titles.tags(k) is not None for k in small)
+        await asyncio.sleep(2.0)  # (the rest carries on, and is kept)
+        return took, partly, small_took, small_known
 
-    took, partly = asyncio.run(run())
-    assert took < 0.5 and 0 < partly < 400
-    assert all(titles.tags(k) == NO_TAGS for k in folder if k != "399")
+    took, partly, small_took, small_known = asyncio.run(run())
+    assert took < 0.38 and partly == 2 * titles_module.ENSURE_AT_ONCE  # (two batches back in time)
+    assert small_known and small_took < 0.8
+    assert all(titles.tags(k) == NO_TAGS for k in big if k != "599")
     flat = [k for batch in asked for k in batch]
-    assert sorted(flat) == sorted(folder) and len(flat) == len(set(flat))  # (each asked once)
+    assert sorted(flat) == sorted([*big, *small]) and len(flat) == len(set(flat))  # (each once)
     assert max(len(b) for b in asked) == titles_module.ENSURE_AT_ONCE
     assert at_once[1] <= titles_module.ENSURE_TURNS
-    # A title Plex didn't have isn't asked about again for a while.
-    asyncio.run(titles.ensure({"399": "movie"}, wait_s=0.1))
-    assert flat.count("399") == 1 and sum(b.count("399") for b in asked) == 1
+
+    async def again():
+        # A title Plex didn't have isn't asked about again for a while.
+        await titles.ensure({"599": "movie"}, wait_s=0.1)
+        # One answer's asks share its wait (Titles.ensure_until).
+        until = titles_module.ensure_until.set(asyncio.get_running_loop().time() + 0.05)
+        try:
+            started = time.monotonic()
+            await titles.ensure({"t1": "movie"}, wait_s=3.0)
+            return time.monotonic() - started
+        finally:
+            titles_module.ensure_until.reset(until)
+
+    waited = asyncio.run(again())
+    assert sum(b.count("599") for b in asked) == 1 and waited < 0.15
+
+
+def test_titles_plex_couldnt_answer_about_are_asked_again(tmp_path):
+    """When Plex fails, what was being asked about isn't left marked as
+    being asked (or it would stay unknown, and hidden, until a restart)."""
+    import asyncio
+
+    titles = Titles(Database(tmp_path / "db.sqlite"))
+    calls = [0]
+
+    async def ask(keys):
+        calls[0] += 1
+        if calls[0] == 1:
+            raise RuntimeError("Plex is restarting")
+        return {k: ("PG", "2", NO_TAGS) for k in keys}
+
+    titles.asker = ask
+
+    async def run():
+        await titles.ensure({"300": "movie"}, wait_s=1.0)
+        assert titles.tags("300") is None
+        await titles.ensure({"300": "movie"}, wait_s=1.0)
+
+    asyncio.run(run())
+    assert calls[0] == 2 and titles.tags("300") == NO_TAGS
 
 
 def test_whats_allowed_for_someone_and_whats_hidden_for_them(app):
@@ -468,3 +517,41 @@ def test_whats_allowed_for_someone_and_whats_hidden_for_them(app):
     assert not kit.sees(Judged(False, 0, "2", True, "301", HORROR))
     assert kit.sees(Judged(False, 0, "2", True, "302", HORROR))
     assert not kit.sees(Judged(False, 0, "2", True, "303", HORROR))
+
+
+def test_a_restart_doesnt_ask_plex_about_every_titles_tags_again(tmp_path, monkeypatch):
+    """The re-check of 1.33.0's audit: while anyone hid by tags, every
+    restart asked Plex about every show and movie kept; and if the clock
+    stepped back, `fill` asked about the same titles again and again. Now a
+    restart asks only about titles whose tags aren't known, and `fill` asks
+    about each title once."""
+    import asyncio
+
+    from app import titles as titles_module
+    from app.titles import Title
+
+    db = Database(tmp_path / "db.sqlite")
+    now = _now_ms()
+    Titles(db)._save({"300": Title("movie", "PG", "1", now, NO_TAGS),
+                      "301": Title("movie", "R", "1", now, None)}, now)  # fmt: skip
+    later = Titles(db)  # (StationPlay started again)
+    later.want_tags = True
+    assert later.wanted() == ["301"]
+
+    clock = [now + 10_000]
+
+    def backwards() -> int:
+        clock[0] -= 1_000
+        return clock[0]
+
+    later.refresh_tags()  # (every title wanted again, as of now + 10 s)
+    later._refresh_ms = now + 10_000
+    monkeypatch.setattr(titles_module, "_now", backwards)
+    asked: list[str] = []
+
+    async def ask(keys):
+        asked.extend(keys)
+        return {k: ("PG", "1", NO_TAGS) for k in keys}
+
+    asyncio.run(asyncio.wait_for(later.fill(ask), 2.0))
+    assert sorted(asked) == ["300", "301"]
