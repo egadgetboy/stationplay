@@ -34,10 +34,12 @@ follow them in every change.
 - StationPlay stays labeled **alpha** until the apps launch. No web client
   for watching, no DVR.
 - **Personal use, on hardware you own** (the owner, October 12): the README
-  and first-run setup say StationPlay works with your own Plex Media Server,
-  for your household, on hardware you own, as Plex's terms require. The
-  privacy notice (PRIVACY.md, served at /privacy) and the copyright notice
-  in the source stay, as Plex's terms ask of software that calls Plex.
+  and first-run setup's Plex step say StationPlay works with your own Plex
+  Media Server, and that Plex's terms license it for personal use, on
+  hardware and storage you own. They state it as Plex's terms, never as a
+  limit StationPlay sets. The privacy notice (PRIVACY.md, served at
+  /privacy) and the copyright notice in the source stay, as Plex's terms
+  ask of software that calls Plex.
 - **Parental claims** say "in StationPlay's apps," and the docs say what
   limits don't cover (Plex, Jellyfin and anything else on the tuner).
 - **No licensing in the server** (the owner's final plan, October 10): it
