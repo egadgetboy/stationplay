@@ -1555,8 +1555,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         # for them that the player doesn't show itself is drawn in, as the
         # app's `subtitle` is.
         told = bool({"audio", "subtitle"} & body.model_fields_set)
-        device_language = languages.code(body.language)
-        wanted = None if told else ctx.languages.wanted(user_id, e, device_language)
+        # (Automatic subtitles only for an app that sends the device's
+        # language: see languages.py.)
+        wanted = None if told else ctx.languages.wanted(user_id, e, body.language)
         shows = frozenset(catalog.subtitle_codec(f) for f in body.device.subtitles)
         picked = languages.pick(media, wanted) if wanted and media is not None else None
         drawn = drawn_for(picked, shows, copy=False)

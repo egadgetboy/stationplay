@@ -3,9 +3,15 @@ languages.py, and through appapi.py and applibrary.py).
 
 Automatic subtitles: someone who hasn't turned subtitles on or off gets
 them in their language when the sound is in another (their language: their
-Subtitles language, else the device's, else their Audio language). Sticky
-Subtitles and Sticky Audio: what they choose in the player for a show holds
-for every episode, and the answer's reasons say so."""
+Subtitles language, else the device's). Sticky Subtitles and Sticky Audio:
+what they choose in the player for a show holds for every episode, and the
+answer's reasons say so.
+
+The audit of 1.34.0 (the lead developer's decision): Automatic only when
+the play asks with the device's `language`, as newer apps do; without it,
+exactly as 1.33.1 (subtitles nobody turned on are off). And a person's
+Audio language is never taken as their language: someone who watches with
+Japanese sound doesn't get Japanese subtitles on an English movie."""
 
 from __future__ import annotations
 
@@ -51,23 +57,28 @@ def test_automatic_subtitles_are_in_your_language_when_the_sound_is_in_another(c
     assert picked(chosen.wanted(1, EP, "eng")) == (
         "s1", "English, as you chose", "Forced English subtitles, for the parts in another language"
     )  # fmt: skip
-    # Without a device's language, their Audio language is theirs.
-    assert picked(chosen.wanted(1, EP))[0] == "s1"
+    # Without the device's language (an older app): as 1.33.1, subtitles
+    # off, so only the forced ones.
+    assert picked(chosen.wanted(1, EP)) == (
+        "s1", "English, as you chose", "Forced English subtitles, for the parts in another language"
+    )  # fmt: skip
     # Nothing chosen and no language known: nothing chosen, as before.
     assert chosen.wanted(2, EP) is None
 
 
-def test_your_language_is_your_subtitles_language_then_the_devices_then_your_audio(chosen):
+def test_your_language_is_your_subtitles_language_then_the_devices(chosen):
     spanish = Media(
         container="mkv", video="h264", audio=FILE.audio,
         subtitles=(*FILE.subtitles, track("s5", "srt", "spa")),
     )  # fmt: skip
     # Japanese sound for someone whose Audio language is Japanese: the
-    # device's English comes first.
+    # device's English is their language.
     chosen.change(1, languages.OWN, {"audio": "jpn"})
     assert picked(chosen.wanted(1, EP, "eng"), spanish)[0] == "s2"
+    # Without the device's language: as 1.33.1 (their Audio language isn't
+    # taken as theirs).
     assert picked(chosen.wanted(1, EP), spanish) == (
-        None, "Japanese, as you chose", "No subtitles: the sound is in Japanese, your language"
+        None, "Japanese, as you chose", "Subtitles are off"
     )  # fmt: skip
     # Their Subtitles language comes before the device's.
     chosen.change(1, languages.OWN, {"caption_language": "spa"})
@@ -107,8 +118,90 @@ def test_when_the_sounds_language_isnt_known_the_file_says(chosen):
 
 def test_your_language_unknown_with_something_chosen(chosen):
     chosen.change(1, "100", {"audio": "jpn"})
-    assert picked(chosen.wanted(1, EP)) == (
+    # (The device's language sent, but not one StationPlay knows.)
+    assert picked(chosen.wanted(1, EP, "Klingon")) == (
         None, "Japanese, kept for this show by Sticky Audio", "No subtitles: your language isn't known"
+    )  # fmt: skip
+    # None sent (an older app): as 1.33.1.
+    assert picked(chosen.wanted(1, EP)) == (
+        None, "Japanese, kept for this show by Sticky Audio", "Subtitles are off"
+    )  # fmt: skip
+
+
+# An English movie: English sound only, with Japanese subtitles (and English
+# forced ones).
+ENGLISH = Media(
+    container="mkv", video="h264", audio=(track("a5", "aac", "eng", default=True, index=1),),
+    subtitles=(track("s1", "pgs", "eng", forced=True, index=2), track("s6", "srt", "jpn", index=3)),
+)  # fmt: skip
+
+
+def test_audio_japanese_on_an_english_movie_gets_no_japanese_subtitles(chosen):
+    """(The audit of 1.34.0: someone who chose Japanese sound, subtitles
+    never turned on or off, got Japanese subtitles on every English movie,
+    their Audio language taken as theirs.)"""
+    chosen.change(1, languages.OWN, {"audio": "jpn"})
+    movie = replace(FILM, media=(ENGLISH,))
+    # An older app, sending no language: exactly as 1.33.1.
+    assert picked(chosen.wanted(1, movie), ENGLISH) == (
+        "s1", "The file's default: it has no Japanese sound",
+        "Forced English subtitles, for the parts in another language",
+    )  # fmt: skip
+    # A newer one, on an English device: the sound is in their language.
+    assert picked(chosen.wanted(1, movie, "en-US"), ENGLISH) == (
+        "s1", "The file's default: it has no Japanese sound",
+        "Forced English subtitles, for the parts in another language",
+    )  # fmt: skip
+    # On a Japanese device, Japanese subtitles: their language is the device's.
+    assert picked(chosen.wanted(1, movie, "ja-JP"), ENGLISH)[::2] == (
+        "s6", "Japanese subtitles, as the sound is English"
+    )  # fmt: skip
+
+
+def as_1_33_1(wanted: languages.Wanted | None) -> tuple:
+    """What 1.33.1 chose with what's kept (its Wanted: subtitles on or off,
+    None counting as off)."""
+    assert wanted is not None and not wanted.automatic
+    return (wanted.audio, wanted.audio_from, wanted.captions, wanted.caption_language)
+
+
+@pytest.mark.parametrize(
+    "own",
+    [
+        {"audio": "jpn"},
+        {"caption_language": "spa"},
+        {"audio": "eng", "caption_language": "jpn"},
+        {"captions": True},
+        {"captions": False, "caption_language": "eng"},
+    ],
+)
+def test_partly_chosen_languages_without_the_devices_are_as_1_33_1(chosen, own):
+    """Someone's own languages, some chosen and subtitles never turned on or
+    off (or turned on or off), with an older app: what 1.33.1 chose."""
+    chosen.change(1, languages.OWN, own)
+    got = chosen.wanted(1, EP)
+    assert as_1_33_1(got) == (
+        own.get("audio"), "you" if own.get("audio") else "", bool(own.get("captions")),
+        own.get("caption_language"),
+    )  # fmt: skip
+    assert got.captions_from == ("you" if "captions" in own else "")
+
+
+def test_partly_chosen_languages_with_the_devices_are_automatic(chosen):
+    spanish = Media(
+        container="mkv", video="h264", audio=FILE.audio,
+        subtitles=(*FILE.subtitles, track("s5", "srt", "spa")),
+    )  # fmt: skip
+    # Only a Subtitles language: theirs, before the device's.
+    chosen.change(1, languages.OWN, {"caption_language": "spa"})
+    assert picked(chosen.wanted(1, EP, "en-US"), spanish) == (
+        "s5", "The file's default", "Spanish subtitles, as the sound is Japanese"
+    )  # fmt: skip
+    # Only an Audio language: the device's is theirs.
+    chosen.clear(1, languages.OWN)
+    chosen.change(1, languages.OWN, {"audio": "eng"})
+    assert picked(chosen.wanted(1, EP, "ja"), spanish)[::2] == (
+        "s4", "Japanese subtitles, as the sound is English"
     )  # fmt: skip
 
 

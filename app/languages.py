@@ -21,9 +21,14 @@ language of the sound that plays, as forced subtitles are the parts in
 another language, meant to be read. Subtitles Automatic (from 1.34.0; where
 nothing turned them on or off, a person's own included): as On, in their
 language, when the sound is in another; else as Off. Their language: their
-subtitles language, else the device's (as the app says it, playing), else
-their sound language. When the sound's language isn't known, a full track
-in their language the file has on (its default) shows.
+subtitles language, else the device's (as the app says it, playing). When
+the sound's language isn't known, a full track in their language the file
+has on (its default) shows. Automatic is only for an app that sends the
+device's language when it plays, as apps from StationPlay 1.34.0 do: for an
+older one, nothing changes from 1.33.1 (subtitles nothing turned on are
+off). A person's sound language is never taken as their language (the
+audit of 1.34.0: Japanese sound chosen gave Japanese subtitles on every
+English movie).
 
 Languages are ISO 639-2 codes, as files carry them ("eng", "jpn"; for the
 few with two, the one files use: "fre", "ger"). Two-letter codes ("en",
@@ -195,8 +200,9 @@ def subtitles(choice: Choice) -> str:
 class Choice:
     """What's chosen in one place (a person's own, or for a show, an episode
     or a movie): each None where nothing is chosen there. (A person's own:
-    None for the sound is each file's default; for captions, off; for the
-    captions language, the sound's.)"""
+    None for the sound is each file's default; for captions, Automatic, with
+    an app that sends the device's language, else off; for the captions
+    language, the sound's with captions on, else the device's.)"""
 
     audio: str | None = None
     captions: bool | None = None
@@ -378,13 +384,17 @@ class Languages:
     def clear(self, user_id: int, key: str) -> None:
         self.db.clear_languages(user_id, key)
 
-    def wanted(self, user_id: int, entry: Entry, device: str | None = None) -> Wanted | None:
+    def wanted(self, user_id: int, entry: Entry, sent: str | None = None) -> Wanted | None:
         """What a person wants for an episode or a movie: each of the three
-        from the most particular place it's chosen, with the device's
-        language (`device`, a code), if the app said it, for Automatic
-        subtitles. None when nothing is chosen anywhere and the device's
+        from the most particular place it's chosen. `sent`: the device's
+        language, as the app sent it playing (None: it sent none, as apps
+        before StationPlay 1.34.0 don't). Only then are subtitles nothing
+        turned on or off Automatic, in the person's language (their
+        subtitles language, else the device's); otherwise they're off, as
+        in 1.33.1. None when nothing is chosen anywhere and the device's
         language isn't known (then nothing is chosen for them: the file
         plays as it did before StationPlay 1.29.0)."""
+        device = code(sent) if sent is not None else None
         level = EPISODE_LEVEL if entry.kind == EPISODE else MOVIE_LEVEL
         places = [(entry.key, level)]
         if entry.kind == EPISODE and entry.show_key:
@@ -392,7 +402,7 @@ class Languages:
         places.append((OWN, YOURS))
         found = self.db.languages_of(user_id, [key for key, _ in places])
         if not found and device is None:
-            return None
+            return None  # (as 1.33.1, with or without a language StationPlay doesn't know)
         said = [(found[key], where) for key, where in places if key in found]
 
         def first(field: str) -> tuple[Any, str]:
@@ -405,9 +415,8 @@ class Languages:
         audio, audio_from = first("audio")
         captions, captions_from = first("captions")
         caption, caption_from = first("caption_language")
-        if captions is None:
-            own = found.get(OWN)
-            yours = caption or device or (own.audio if own else None)
+        if captions is None and sent is not None:
+            yours = caption or device
             return Wanted(audio, audio_from, False, YOURS, caption, caption_from, True, yours)
         return Wanted(audio, audio_from, bool(captions), captions_from, caption, caption_from)
 

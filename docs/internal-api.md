@@ -292,7 +292,9 @@ Nothing new is required.
 2. **The device's language.** Send `language` with
    `POST /api/internal/play`: the device's own language setting, as the
    system gives it (such as `en-US`). It's how Automatic subtitles know
-   your language when you haven't chosen a Subtitles language.
+   your language when you haven't chosen a Subtitles language. Without it,
+   Automatic doesn't apply: subtitles nobody turned on or off are off, as
+   before 1.34.0, so an older app plays exactly as it did.
 3. **Sticky Audio and Sticky Subtitles.** The player's Audio & subtitles
    switch, **Remember for the whole show** until now, is called **Sticky
    Audio & Subtitles**, with the line "Keep these for every episode of this
@@ -990,9 +992,11 @@ the file's default.
   off, the person's own included). In the person's language when the sound
   is in another, as with them on; otherwise as with them off. Their
   language is their subtitles' language, else the device's (`language` in
-  `POST /api/internal/play`), else their sound's. When the sound's language
-  isn't known, a full track in their language that the file has on (its
-  default) shows.
+  `POST /api/internal/play`); their sound's language never counts. When
+  the sound's language isn't known, a full track in their language that
+  the file has on (its default) shows. Automatic needs `language`: a play
+  without it (from an app before 1.34.0) gets subtitles nobody turned on
+  or off as off, exactly as before 1.34.0.
 
 The answer's `chosen` shows what StationPlay chose, and why, in a few words
 to show ("Japanese, kept for this show by Sticky Audio"; "English
@@ -1388,8 +1392,9 @@ With `device.hls`, a copy is also made when the app sends:
 - `night: true`: night mode's sound (as the stations' `nightHls`), for an
   app that can't make it itself.
 - `language` (from 1.34.0): the device's own language setting, such as
-  `en-US`, for Automatic subtitles (see Languages). One StationPlay doesn't
-  know counts as none.
+  `en-US`, for Automatic subtitles, which apply only when it's sent (see
+  Languages). One StationPlay doesn't know leaves your language unknown, so
+  Automatic shows only the sound's forced subtitles.
 - `convert: true` (from 1.29.1, when `features` lists `convert-asked`): a
   converted copy, whatever `device` says it plays. This is for when the
   device's decoder failed at the file (Media3's
