@@ -131,6 +131,7 @@ log = logging.getLogger("stationplay")
 WEB_DIR = Path(__file__).parent / "web"
 # The open-source notices, beside LICENSE (in the image, too: see Dockerfile).
 NOTICES = Path(__file__).parent.parent / "THIRD_PARTY_NOTICES.md"
+PRIVACY = Path(__file__).parent.parent / "PRIVACY.md"
 # StationPlay's own guide covers the same two days as Plex's.
 STATION_GUIDE_MAX_HOURS = GUIDE_FUTURE_MS / 3_600_000
 SOURCE_TYPES = ("show", "movie", "section", "filter", "collection")
@@ -1550,6 +1551,14 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         if not NOTICES.is_file():
             raise HTTPException(404)
         return FileResponse(NOTICES, media_type="text/plain; charset=utf-8")
+
+    @app.get("/privacy")
+    async def privacy():
+        """StationPlay's privacy notice (PRIVACY.md, beside LICENSE), as
+        plain text: the link at the foot of the page."""
+        if not PRIVACY.is_file():
+            raise HTTPException(404)
+        return FileResponse(PRIVACY, media_type="text/plain; charset=utf-8")
 
     @app.get("/web/{name:path}")
     async def page_file(name: str, v: str = ""):

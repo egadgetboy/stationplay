@@ -28,6 +28,8 @@ function showSignIn(idle = false) {
   const note = me.notSetUp || (idle ? ACCESS.idleSignedOut : '');
   $('#signinNote').hidden = !note;
   $('#signinNote').textContent = note;
+  // (From the internet: where the PIN works instead.)
+  $('#signinWhere').hidden = !me.outside || !!me.notSetUp;
   signInBy('');
   $('#signinName').focus();
   // At home, on a browser someone signed in on with their password: their PIN

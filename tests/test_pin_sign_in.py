@@ -254,45 +254,6 @@ def test_browsers_known_before_1_32_need_the_password_once(tmp_path):
         upgraded.close()
 
 
-def test_a_browser_signed_in_since_before_1_32_offers_the_pin_after_an_hour_unused(
-    pat, app, monkeypatch
-):
-    """The owner's report (October 12, on 1.32.0): signed in since before
-    1.32.0, he was signed out after an hour without activity, and the page
-    asked for his password, not his PIN. A browser that's signed in as
-    someone is theirs, since they last signed out there and their password
-    last changed (either ends its sign-in), so it's as good as their
-    password used there: their PIN signs them in again there."""
-    ctx = app.state.ctx
-    browser = signed_in_with_password(app)
-    # (As upgrading to 1.32.0 left it: known, but not since a password.)
-    ctx.db._conn.execute("UPDATE devices SET pin_ok = 0")
-    ctx.db._conn.commit()
-    assert browser.get("/api/access/me").json()["user"]["name"] == "Pat"  # (the page asks)
-    real = access._now
-    monkeypatch.setattr(access, "_now", lambda: real() + 61 * 60_000)
-    me = browser.get("/api/access/me").json()
-    assert me["user"] is None and me["idle"] is True
-    assert me.get("pinFor") == "Pat"
-    assert browser.post("/api/access/pin-sign-in", json={"pin": "4321"}).status_code == 200
-
-
-def test_a_browser_signed_in_before_browsers_were_remembered_is_too(pat, app, monkeypatch):
-    """The same for a browser signed in before StationPlay remembered
-    browsers at all (it has no browser cookie): it's given one while signed
-    in."""
-    ctx = app.state.ctx
-    browser = signed_in_with_password(app)
-    browser.cookies.delete(access.DEVICE_COOKIE)
-    ctx.db._conn.execute("DELETE FROM devices")
-    ctx.db._conn.commit()
-    assert browser.get("/api/access/me").json()["user"]["name"] == "Pat"
-    assert browser.cookies.get(access.DEVICE_COOKIE)
-    real = access._now
-    monkeypatch.setattr(access, "_now", lambda: real() + 61 * 60_000)
-    assert browser.get("/api/access/me").json().get("pinFor") == "Pat"
-
-
 def test_signing_out_on_purpose_still_needs_the_password_after_the_page_asked(pat, app):
     """Being signed in makes a browser theirs only while it is: signed out
     on purpose, it needs the password, however often the page asks."""
@@ -301,3 +262,53 @@ def test_signing_out_on_purpose_still_needs_the_password_after_the_page_asked(pa
     assert browser.post("/api/access/sign-out").status_code == 200
     for _ in range(2):
         assert "pinFor" not in browser.get("/api/access/me").json()
+
+
+def _cookie_from(response, name: str) -> str | None:
+    for header in response.headers.get_list("set-cookie"):
+        if header.startswith(name + "="):
+            return header.split(";", 1)[0].split("=", 1)[1]
+    return None
+
+
+def test_a_copied_sign_in_never_makes_a_browser_for_the_pin(pat, app):
+    """The audit of 1.33.1's first try (never shipped): a page sign-in
+    copied to another browser made browsers there that took Pat's PIN, even
+    after he signed out on purpose. Only a password typed on a browser makes
+    it take the PIN."""
+    victim = signed_in_with_password(app)
+    thief = TestClient(app)
+    thief.cookies.set(access.COOKIE, victim.cookies.get(access.COOKIE))
+    for _ in range(3):
+        got = thief.get("/api/access/me")
+        assert got.json()["user"]["name"] == "Pat"
+        assert _cookie_from(got, access.DEVICE_COOKIE) is None
+    assert victim.post("/api/access/sign-out").status_code == 200
+    thief.cookies.delete(access.COOKIE)
+    assert "pinFor" not in thief.get("/api/access/me").json()
+    assert thief.post("/api/access/pin-sign-in", json={"pin": "4321"}).status_code == 400
+
+
+def test_ten_wrong_pins_need_the_password_however_often_the_page_asks(pat, app):
+    browser = signed_in_with_password(app)
+    picker = app.state.ctx.access.picker
+    for _ in range(2):
+        picker._wrong.clear()
+        for _ in range(5):
+            browser.post("/api/access/pin-sign-in", json={"pin": "0000"})
+    device = browser.cookies.get(access.DEVICE_COOKIE)
+    assert app.state.ctx.access.pin_browser(device) is None
+    browser.get("/api/access/me")
+    assert app.state.ctx.access.pin_browser(device) is None
+
+
+def test_the_sign_in_page_says_where_the_pin_works(pat, app):
+    """The owner's report (October 12): at home, through his internet
+    address (his proxy, so StationPlay's public port), the page asked for
+    his password, not his PIN. From the internet it always does; the page
+    now says the PIN works at StationPlay's home address."""
+    home = signed_out(signed_in_with_password(app))
+    assert "outside" not in home.get("/api/access/me").json()
+    away = TestClient(app, base_url=f"http://testserver:{PUBLIC_PORT}")
+    me = away.get("/api/access/me").json()
+    assert me["user"] is None and me.get("outside") is True and "pinFor" not in me

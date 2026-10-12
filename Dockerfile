@@ -35,8 +35,9 @@ COPY app ./app
 # The AGPL's text goes wherever StationPlay does, the image included, with
 # the open-source notices of what's built in. The exact Debian packages
 # installed (FFmpeg's among them) are listed too, so each one's source can
-# be found. (Each package's copyright file stays in /usr/share/doc.)
-COPY LICENSE THIRD_PARTY_NOTICES.md ./
+# be found. (Each package's copyright file stays in /usr/share/doc.) And
+# StationPlay's privacy notice, which its page links to.
+COPY LICENSE THIRD_PARTY_NOTICES.md PRIVACY.md ./
 RUN dpkg-query -W -f='${Package} ${Version} (source: ${source:Package} ${source:Version})\n' \
     > third-party-packages.txt
 # COPY keeps whatever permissions the files had on the NAS, which may not

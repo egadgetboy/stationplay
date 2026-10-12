@@ -32,6 +32,7 @@ If you find it useful, you can [buy me a coffee](https://buymeacoffee.com/egadge
 
 ## What you need
 
+- **For your personal use, on hardware you own.** StationPlay works with your own Plex Media Server, for you and your household, as Plex's terms require: they license Plex Media Server to individuals, for personal use, on hardware and storage they own. Don't run StationPlay or Plex as a service for others. StationPlay's [privacy notice](PRIVACY.md) says what it keeps, and that it sends nothing to its developer.
 - **Plex Media Server** with your shows and movies. To watch in Plex, you also need **Plex Pass**, because Plex's Live TV & DVR feature requires it. Jellyfin, Emby, Kodi and other apps don't need Plex Pass.
 - **A computer that runs Docker** on the same home network as Plex. It can be a NAS (TrueNAS SCALE, Synology, Unraid), a Linux server or virtual machine, a Raspberry Pi 4 or 5 with a 64-bit OS, or a Windows or Mac computer with Docker Desktop. Both x86-64 (Intel/AMD) and ARM64 work.
 - **Access to your media folder** from that computer. StationPlay reads files directly from disk. If it can't see a file, it streams it from Plex instead, which works but adds load to Plex.
@@ -980,7 +981,7 @@ When StationPlay is first installed, its page is open to anyone on your network.
 - **Your own account.** Choose your name at the top of the page, or Options in StationPlay's apps, to change your password or sign out.
 - **Permissions.** **Can change their own password**, next to each person's **New password**, and **Can report problems**, below it (see [People's reports](#peoples-reports)), are on by default. Admins can always do both. A new password signs that person out everywhere else.
 - **Sign-in limits.** A sign-in lasts 30 days after it was last used. After 5 wrong passwords from one address within 15 minutes, that address has to wait. Passwords are stored only as salted hashes.
-- **Page timeout.** StationPlay's page signs you out after an hour without activity. StationPlay's apps stay signed in. At home, on a browser you've signed in on, you can sign in again with just your PIN (if you have one). From the internet, it's always your password. After 5 wrong PINs, wait 15 minutes. If you sign out on purpose, or your password changes, that browser needs your password next time.
+- **Page timeout.** StationPlay's page signs you out after an hour without activity. StationPlay's apps stay signed in. At home, on a browser where you've signed in with your password, you can sign in again with just your PIN (if you have one). "At home" means StationPlay's address on your home network: through its internet address (your reverse proxy or tunnel), it's always your password, even from home, and the sign-in page says so. After updating to 1.32.0 or later, each browser needs your password once before the PIN works there. After 5 wrong PINs, wait 15 minutes. If you sign out on purpose, or your password changes, that browser needs your password next time.
 - **No password for Plex.** Plex, Jellyfin and other apps never need a password, just like a real HDHomeRun. The tuner, guide, streams, logos and playlist stay open on your network. To limit all but the logos to devices you list, choose **Only these devices** under [Tuner access](#tuner-access).
 
 ### Viewing Levels

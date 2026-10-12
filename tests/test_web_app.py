@@ -365,3 +365,29 @@ def test_the_access_tab_has_tuner_access():
     assert ": null" not in shown and ") : null" not in shown
     assert "reachIcon('down')" in tuner and "h('p', { class: 'what' }, got.warning)" in tuner
     assert "channel" not in tuner.lower()
+
+
+def test_the_privacy_notice_is_served_and_linked(client):
+    """Plex's terms ask software that calls Plex Media Server to include a
+    privacy notice (or link to one), and a copyright notice in its source
+    (the owner, October 12: "just do it"). PRIVACY.md is served as plain
+    text at /privacy, to anyone (the sign-in page links to it), and linked
+    from the foot of the page and the sign-in page; the source says whose
+    it is."""
+    from fastapi.testclient import TestClient
+
+    import app as package
+
+    root = WEB_DIR.parent.parent
+    notice = (root / "PRIVACY.md").read_text(encoding="utf-8")
+    client.post("/api/access/users", json={"name": "Pat", "password": "correct horse"})
+    stranger = TestClient(client.app)
+    got = stranger.get("/privacy")
+    assert got.status_code == 200 and got.text == notice
+    assert got.headers["content-type"] == "text/plain; charset=utf-8"
+    assert "sends nothing to its developer" in notice and "personal use" in notice
+    assert (
+        PAGE.count('<a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy</a>') == 2
+    )
+    assert "Copyright © 2026 egadgetboy" in (package.__doc__ or "")
+    assert "COPY LICENSE THIRD_PARTY_NOTICES.md PRIVACY.md ./" in (root / "Dockerfile").read_text()

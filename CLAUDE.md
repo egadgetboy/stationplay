@@ -33,6 +33,11 @@ follow them in every change.
 - **No real file names or paths** in anything the apps receive.
 - StationPlay stays labeled **alpha** until the apps launch. No web client
   for watching, no DVR.
+- **Personal use, on hardware you own** (the owner, October 12): the README
+  and first-run setup say StationPlay works with your own Plex Media Server,
+  for your household, on hardware you own, as Plex's terms require. The
+  privacy notice (PRIVACY.md, served at /privacy) and the copyright notice
+  in the source stay, as Plex's terms ask of software that calls Plex.
 - **Parental claims** say "in StationPlay's apps," and the docs say what
   limits don't cover (Plex, Jellyfin and anything else on the tuner).
 - **No licensing in the server** (the owner's final plan, October 10): it
@@ -79,12 +84,17 @@ follow them in every change.
   the owner's approval. Then: which work went to `routine-builder`, and what
   `cold-auditor` found and what was done about each item.
 - **Every 3 releases, stop** and tell the owner, who runs an independent
-  audit before work continues.
+  audit before work continues. (Suspended by the owner on October 12 until
+  the apps reach their beta: keep going, decide as the lead developer, and
+  don't stop for anything aesthetic. He audits at the beta.)
 - **Stop and ask** when a decision isn't covered by the plan or these
   rules, or two parts of the plan conflict; when an error can't be fixed at
   its root; when a step would touch anything outside the repos (the owner's
   TrueNAS server, router or Plex: the owner installs releases); or when a
-  step can't be undone.
+  step can't be undone. (Until the beta, the owner said on October 12:
+  decide what the plan and earlier decisions leave open as the lead
+  developer, the way that fits them, and list each choice in the report;
+  only the last two still stop the work.)
 
 ## High-risk areas
 Always built by the main session, never handed to `routine-builder`: the
