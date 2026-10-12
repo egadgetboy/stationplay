@@ -79,6 +79,10 @@ class Settings:
     # How long a station keeps running after the last viewer leaves, so
     # flipping back to it is instant.
     idle_grace_seconds: int = 20
+    # The kind of install (STATIONPLAY_INSTALL: truenas, compose, unraid,
+    # synology, docker-desktop or docker-run), for the steps the page gives
+    # to update StationPlay's image (see releases.py). "": not said.
+    install: str = ""
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -101,6 +105,7 @@ class Settings:
             ffmpeg_path=os.environ.get("FFMPEG_PATH", "ffmpeg"),
             ffprobe_path=os.environ.get("FFPROBE_PATH", "ffprobe"),
             idle_grace_seconds=_int("IDLE_GRACE_SECONDS", 20),
+            install=os.environ.get("STATIONPLAY_INSTALL", "").strip().lower(),
         )
 
     def map_path(self, plex_path: str) -> str:

@@ -34,7 +34,7 @@ from fastapi.responses import (
     Response,
     StreamingResponse,
 )
-from pydantic import AfterValidator, BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field, StrictBool
 
 from . import (
     __version__,
@@ -64,6 +64,7 @@ from . import (
     playing,
     problems,
     reach,
+    releases,
     replacing,
     reports,
     setup,
@@ -388,6 +389,12 @@ class NotifyAddressIn(BaseModel):
     format: str = Field(default=notify.TEXT, max_length=10)
 
 
+class UpdateCheckIn(BaseModel):
+    """The update check (see releases.py): on or off."""
+
+    on: StrictBool
+
+
 class NotifyIn(BaseModel):
     """Alert notifications (see notify.py): on or off, the first web
     address and its format ("text", "json", "discord" or "slack"), and the
@@ -520,6 +527,7 @@ class AppContext:
     languages: languages.Languages = field(init=False)  # each person's, in the apps
     # What's wrong that an Admin can act on, and the web address told of it.
     notify: notify.Notify = field(init=False)
+    releases: releases.Releases = field(init=False)
     alerts: alerts.Alerts = field(init=False)
     # Your shows and movies, wherever they come from (see library.py).
     library: Library = field(init=False)
@@ -556,6 +564,7 @@ class AppContext:
         self.problems = problems.Problems(self.db)
         self.languages = languages.Languages(self.db)
         self.notify = notify.Notify(self.db)
+        self.releases = releases.Releases(self.db, self.settings.install)
         self.alerts = alerts.Alerts(self.notify, self.db)
         self.access.judge_watching_by(self.viewing.watches_only)
         self.updater = Updater(self)
@@ -756,6 +765,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             asyncio.create_task(ctx.health.run_forever(lambda: stats.on_gpu(ctx))),
             asyncio.create_task(stats.count_plays_forever(ctx)),
             asyncio.create_task(ctx.notify.run_forever()),
+            asyncio.create_task(ctx.releases.run_forever()),
             asyncio.create_task(ctx.alerts.run_forever(ctx)),
         ]
         yield
@@ -3199,6 +3209,32 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                     {"url": url, "format": fmt, "last": its.as_dict() if its else None}
                 )
         return said
+
+    # StationPlay's own new versions: the update check (see releases.py) ------
+
+    @app.get("/api/updates")
+    async def updates_get():
+        return ctx.releases.as_json()
+
+    @app.put("/api/updates")
+    async def updates_save(body: UpdateCheckIn, request: Request):
+        ctx.releases.save(body.on)
+        who = access.signed_in(request)
+        log.info(
+            "The update check: %s%s",
+            "on (StationPlay asks GitHub once a day whether a new version is out)"
+            if body.on
+            else "off",
+            f" (set by {who.name})" if who else "",
+        )
+        return ctx.releases.as_json()
+
+    @app.post("/api/updates/check")
+    async def updates_check():
+        if not ctx.releases.on:
+            raise HTTPException(400, "Turn on the update check first")
+        await ctx.releases.check_now()
+        return ctx.releases.as_json()
 
     @app.get("/api/notify")
     async def notify_get():

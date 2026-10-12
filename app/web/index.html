@@ -35,6 +35,8 @@
     <button class="pill alerts" id="alertsPill" type="button" hidden aria-haspopup="dialog"><span class="dot bad"></span><span class="count"></span></button>
     <button class="pill userpill" id="userPill" type="button" hidden title="Your account"><span></span></button>
   </header>
+  <!-- A new StationPlay is out (for Admins: see updates.js). -->
+  <div class="panel update-banner" id="updateBanner" hidden role="status"></div>
 
   <div class="tabrow">
   <nav class="tabs" role="tablist">
@@ -300,6 +302,8 @@
     </div>
     <p class="muted small">Every night, StationPlay backs up your stations, settings, the Broken files list, your logos (uploaded or from Plex), who can sign in, and the viewing stats. It keeps the last 7 backups in the <code>backups</code> folder inside its data folder. To keep backups small, Intro Bumper videos aren’t included; they stay in the <code>bumpers</code> folder. Restoring a backup replaces all of this with the backup’s copy, and StationPlay restarts to finish.</p>
     <div class="panel" id="backupList"></div>
+    <div class="section-head" style="margin-top:22px"><h2>New versions</h2></div>
+    <div class="panel setup" id="updatesPanel"></div>
   </section>
 
   <footer class="foot"><span id="appVersion"></span><span id="footSetupWrap" hidden><button type="button" class="linkish" id="footSetup">Setup</button> · </span>© 2026 egadgetboy · Open source under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer">GNU AGPL v3</a> · <a href="https://github.com/egadgetboy/stationplay" target="_blank" rel="noopener noreferrer">Source</a> · <a href="/open-source-notices" target="_blank" rel="noopener noreferrer">Open-source notices</a> · No warranty · <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy</a><br><span class="appearance"><label for="appearance">Appearance</label><select id="appearance"><option value="">Automatic</option><option value="light">Light</option><option value="dark">Dark</option></select></span></footer>
@@ -946,6 +950,7 @@ const ACCESS = __ACCESS__;
 <script src="/web/js/access.js?v=__VERSION__"></script>
 <script src="/web/js/viewing.js?v=__VERSION__"></script>
 <script src="/web/js/stats.js?v=__VERSION__"></script>
+<script src="/web/js/updates.js?v=__VERSION__"></script>
 <script src="/web/js/boot.js?v=__VERSION__"></script>
 </body>
 </html>

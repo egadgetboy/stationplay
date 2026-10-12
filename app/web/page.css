@@ -801,3 +801,9 @@ table.now tr:last-child td { border-bottom: 0; }
     width: max(100%, 40px); height: max(100%, 40px); transform: translate(-50%, -50%);
   }
 }
+
+/* A new StationPlay is out (updates.js): for Admins, above the tabs. */
+.update-banner { margin: 0 0 14px; display: grid; gap: 8px; border-color: var(--brand); }
+.update-banner p { margin: 0; }
+.update-banner .update-steps { display: grid; gap: 4px; }
+.update-banner .copyrow code { flex: 1 1 260px; overflow-wrap: anywhere; }
