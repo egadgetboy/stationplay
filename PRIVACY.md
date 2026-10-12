@@ -8,7 +8,7 @@ StationPlay runs on your own hardware, with your own Plex Media Server. Its deve
 
 On your hardware, in StationPlay's data folder:
 
-- Your stations and settings. These include Sonarr's and Radarr's keys and the alert web address, if an Admin sets them. (The Plex token is in StationPlay's app settings, not in its data folder.)
+- Your stations and settings. These include Sonarr's and Radarr's keys and the alert web addresses, if an Admin sets them. (The Plex token is in StationPlay's app settings, not in its data folder.)
 - The people who can sign in: their names, Viewing Levels, sign-ins and linked devices, and their passwords and PINs, stored only as salted hashes.
 - What each person watches in StationPlay's apps (history and Resume), and viewing stats for each person.
 - The names of Plex users, and what each watched on StationPlay's stations in Plex, for the viewing stats.
@@ -33,7 +33,7 @@ StationPlay clears out old viewing stats (after 400 days), problems the apps rep
 Only what you set up:
 
 - Your Plex Media Server: StationPlay reads your libraries and, if you add it to Plex, serves Plex its guide and streams. Plex's own privacy policy covers Plex.
-- A web address for alerts, if an Admin sets one (such as Discord or ntfy). It receives each alert's sentence, which can name a person, a title and a station, and give your Plex server's home-network address and your away-from-home address.
+- Up to 3 web addresses for alerts, if an Admin sets them (such as Discord, Slack or ntfy). Each one receives every alert's sentence, which can name a person, a title and a station, and give your Plex server's home-network address and your away-from-home address.
 - Sonarr and Radarr, if an Admin connects them, to replace broken files.
 - Your own away-from-home address, which StationPlay checks it can reach, if watching away from home is on. Your reverse proxy or tunnel provider carries what's watched away from home.
 

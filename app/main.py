@@ -381,13 +381,25 @@ class AwayIn(BaseModel):
     mediaMbps: int | None = None
 
 
+class NotifyAddressIn(BaseModel):
+    """One more web address for alert notifications, and its format."""
+
+    url: str = Field(default="", max_length=notify.ADDRESS_MAX * 2)
+    format: str = Field(default=notify.TEXT, max_length=10)
+
+
 class NotifyIn(BaseModel):
-    """Notify a web address of alerts (see notify.py): on or off, the
-    address, and its format ("text" or "json")."""
+    """Alert notifications (see notify.py): on or off, the first web
+    address and its format ("text", "json", "discord" or "slack"), and the
+    others (`more`: left out, they stay as they are; an empty address
+    removes one). For a test, `which`: the address's place on the page's
+    list (0 for the first)."""
 
     on: bool = False
     url: str = Field(default="", max_length=notify.ADDRESS_MAX * 2)
     format: str = Field(default=notify.TEXT, max_length=10)
+    more: list[NotifyAddressIn] | None = Field(default=None, max_length=10)
+    which: int | None = Field(default=None, ge=0, lt=notify.ADDRESSES_MOST)
 
 
 class LimitsIn(BaseModel):
@@ -3169,16 +3181,24 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         )
         return await limits_json()
 
-    # Notify a web address of alerts (see notify.py and alerts.py) ------------
+    # Alert notifications to web addresses (see notify.py and alerts.py) ------
 
     def notify_json() -> dict:
         last = ctx.notify.last
-        return {
+        said: dict[str, Any] = {
             "on": ctx.notify.on,
             "url": ctx.notify.url,
             "format": ctx.notify.format,
             "last": last.as_dict() if last else None,
         }
+        if ctx.notify.more:  # (only when there are others, as before 1.34.0 otherwise)
+            said["more"] = []
+            for url, fmt in ctx.notify.more:
+                its = ctx.notify.last_of(url)
+                said["more"].append(
+                    {"url": url, "format": fmt, "last": its.as_dict() if its else None}
+                )
+        return said
 
     @app.get("/api/notify")
     async def notify_get():
@@ -3186,16 +3206,19 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.put("/api/notify")
     async def notify_save(body: NotifyIn, request: Request):
+        more = None if body.more is None else [(m.url, m.format) for m in body.more]
         try:
-            ctx.notify.save(body.on, body.url, body.format)
+            ctx.notify.save(body.on, body.url, body.format, more)
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
         who = access.signed_in(request)
+        to = "; ".join(
+            f"{notify.shown(url)}, as {notify.FORMAT_NAMES[fmt]}"
+            for url, fmt in ctx.notify.addresses()
+        )
         log.info(
-            "Notify a web address of alerts: %s%s",
-            f"on, to {notify.shown(ctx.notify.url)}, as {notify.FORMAT_NAMES[ctx.notify.format]}"
-            if ctx.notify.on
-            else "off",
+            "Alert notifications: %s%s",
+            f"on, to {to}" if ctx.notify.on else "off",
             f" (set by {who.name})" if who else "",
         )
         return notify_json()
@@ -3203,9 +3226,15 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     @app.post("/api/notify/test")
     async def notify_test(body: NotifyIn):
         """Send a test, to the address given (as it's typed, before it's
-        saved) or else the one saved: how it went."""
+        saved) or else the one saved in that place (`which`; the first by
+        default): how it went."""
+        url = body.url
+        if not url.strip():
+            saved = ctx.notify.addresses()
+            which = body.which or 0
+            url = saved[which][0] if which < len(saved) else ""
         try:
-            sent = await ctx.notify.test(body.url or ctx.notify.url, body.format)
+            sent = await ctx.notify.test(url, body.format, body.which)
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
         return {**notify_json(), "sent": sent.as_dict()}
