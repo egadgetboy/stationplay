@@ -47,6 +47,14 @@ one on its data folder, then back again, and a fresh install.
 6. A fresh install of this checkout: it starts, takes its first Admin, and
    makes no copy; new people show only on devices they sign in on.
 
+From 1.36.0: updated with signing in on, nothing is trusted and the setup
+asks Who can use tapiOca again; a trusted network, a name for home and
+Tuner access by network are listed, which the release before ignores (any
+device at home uses the tuner there, as the notes say) and an update brings
+back; and an install with signing in off keeps working at home, answers a
+name that isn't home's with only its page, asks that one setup question
+again, and alerts an Admin.
+
 From 1.34.0: this checkout's update check never reaches GitHub here (a
 stand-in answers, and notes each time it's asked), and must ask nothing
 at all, as no Admin answers whether it may; the first start after the
@@ -541,6 +549,41 @@ def own_folders(checks: Checks, page: httpx.Client) -> None:
               (keys, station.text[:200]))  # fmt: skip
 
 
+HOME_NET = {"network": "192.168.1.0/24", "label": "Home Wi-Fi", "gives": "picker"}
+
+
+def trusted_after_update(checks: Checks, page: httpx.Client) -> None:
+    """(From 1.36.0) Updated with signing in on: nothing is trusted, and
+    the setup asks Who can use tapiOca again (to offer the network). Then a
+    trusted network, a name for home, and Tuner access by network only (so
+    the release before is started below on a database that has them)."""
+    got = page.get("/api/access/trusted").json()
+    checks.ok(got.get("entries") == [] and got.get("proxies") == [],
+              "nothing is trusted after the update", got)  # fmt: skip
+    pending = page.get("/api/setup").json().get("pending", [])
+    checks.ok("signIn" in pending, "the setup asks Who can use tapiOca again", pending)
+    listed = page.put("/api/access/trusted", json={"entries": [HOME_NET],
+                                                   "homeNames": ["tv.home.example.com"]})  # fmt: skip
+    tuner = page.put("/api/tuner", json={"only": True, "devices": [],
+                                         "networks": [{"network": "192.168.1.0/24", "name": "Home"}]})  # fmt: skip
+    checks.ok((listed.status_code, tuner.status_code) == (200, 200),
+              "what's new works (a trusted network, a name for home, Tuner access by network)",
+              (listed.text[:200], tuner.text[:200]))  # fmt: skip
+    refused = page.get("/discover.json").status_code
+    checks.ok(refused == 403, "this computer, off that network, can't use the tuner", refused)
+
+
+def trusted_kept(checks: Checks, page: httpx.Client, where: str) -> None:
+    """(From 1.36.0) What trusted_after_update listed, there."""
+    got = page.get("/api/access/trusted").json()
+    tuner = page.get("/api/tuner").json()
+    checks.ok([e["network"] for e in got.get("entries", [])] == [HOME_NET["network"]]
+              and [n["network"] for n in tuner.get("networks", [])] == ["192.168.1.0/24"]
+              and page.get("/discover.json").status_code == 403,
+              f"{where}: the trusted network and Tuner access by network are back",
+              (got, tuner))  # fmt: skip
+
+
 def stopped(checks: Checks, sp: tapiOca, version: str) -> None:
     """It stops when asked, its database closed (nothing left in its -wal).
     (Uvicorn raises SIGTERM again once it has shut down, as Docker expects.)"""
@@ -580,6 +623,13 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         made = give_data(checks, sp.url)
         # (From 1.34.1, a new install has INFO, station 99.)
         made["info"] = version_of(before) >= (1, 34, 1)
+        if version_of(__version__) >= (1, 36, 0):
+            # (Its setup answered, as a real install's is: so the update asks
+            # again only what changed since.)
+            page = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
+            asked = page.get("/api/setup").json().get("questions", [])
+            checks.ok(page.put("/api/setup", json={"answered": asked}).status_code == 200,
+                      "its setup is answered")  # fmt: skip
         stopped(checks, sp, before)
         # (What this version changes in that database, if anything: a release
         # that changes nothing in it makes no copy, as the README says.)
@@ -636,6 +686,8 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                       "ratings)", (teen.text[:200], own.text[:200], rated.text[:200]))  # fmt: skip
         if version_of(__version__) >= (1, 35, 0):
             own_folders(checks, page)
+        if version_of(__version__) >= (1, 36, 0):
+            trusted_after_update(checks, page)
         sent = page.post("/api/internal/problem", json={
             "kind": "crashed", "detail": "after the update", "journal": "a\nb", **APP})  # fmt: skip
         checks.ok(sent.status_code == 200, "what's new works (a problem with its journal)",
@@ -753,9 +805,23 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         changed = page.put(f"/api/access/levels/{made['teen']}", json={
             "name": "Teen", "movieAge": 13, "tvAge": 14, "unrated": False})  # fmt: skip
         checks.ok(changed.status_code == 200, "a level can still be changed", changed.text[:200])
+        if version_of(__version__) >= (1, 36, 0) and version_of(before) < (1, 36, 0):
+            # (As the notes' Rolling back says: it doesn't know Tuner access
+            # by network, so with only networks listed, any device at home
+            # can use the tuner there.)
+            tuner = page.get("/discover.json").status_code
+            checks.ok(tuner == 200, "it ignores Tuner access by network: any device at home "
+                      "uses the tuner, as the notes say", tuner)  # fmt: skip
         stopped(checks, sp, before)
         checks.ok(kept_alerts(as_is) == kept, "it leaves the alerts as they were",
                   kept_alerts(as_is))  # fmt: skip
+        if version_of(__version__) >= (1, 36, 0) and version_of(before) < (1, 36, 0):
+            sp = start(ROOT, as_is, f"{__version__}-as-is-again")
+            if sp is None:
+                return
+            trusted_kept(checks, httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"]),
+                         "updated again with no copy put back")  # fmt: skip
+            stopped(checks, sp, __version__)
         shutil.rmtree(as_is)
 
         checks.section(f"Rolled back to {before}, as the README says")
@@ -806,6 +872,43 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                   "at home", default)  # fmt: skip
         stopped(checks, sp, __version__)
 
+        if version_of(__version__) >= (1, 36, 0):
+            checks.section(f"{before} with signing in off, updated to {__version__}")
+            open_ = work / "open"
+            sp = start(old_code, open_, f"{before}-open")
+            if sp is None:
+                return
+            page = httpx.Client(base_url=sp.url, timeout=30)
+            asked = page.get("/api/setup").json().get("questions", [])
+            page.put("/api/setup", json={"answered": asked})
+            stopped(checks, sp, before)
+            sp = start(ROOT, open_, f"{__version__}-open")
+            if sp is None:
+                return
+            page = httpx.Client(base_url=sp.url, timeout=30)
+            status = page.get("/api/status").status_code
+            tuner = page.get("/discover.json").status_code
+            checks.ok((status, tuner) == (200, 200), "it keeps working at home, with no signing "
+                      "in, the tuner and all", (status, tuner))  # fmt: skip
+            rebound = page.get("/api/status", headers={"Host": "evil.example"})
+            me = page.get("/api/access/me", headers={"Host": "evil.example"}).json()
+            checks.ok(rebound.status_code == 403 and me.get("notSetUp"),
+                      "asked for by a name that isn't home's, only the page (DNS rebinding)",
+                      (rebound.status_code, me))  # fmt: skip
+            pending = page.get("/api/setup").json().get("pending", [])
+            checks.ok(pending == ["signIn"], "the setup asks Who can use tapiOca again, and only "
+                      "that", pending)  # fmt: skip
+
+            def open_alert() -> bool:
+                got = (
+                    httpx.get(f"{sp.url}/api/internal/alerts", timeout=10).json().get("alerts", [])
+                )
+                return any(a["kind"] == "access" and "Signing in is off" in a["sentence"]
+                           for a in got)  # fmt: skip
+
+            checks.ok(waited(open_alert), "an Admin alert says signing in is off")
+            stopped(checks, sp, __version__)
+
         checks.section(f"A fresh install of {__version__}")
         fresh = work / "fresh"
         sp = start(ROOT, fresh, f"{__version__}-fresh")
@@ -828,6 +931,9 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         choices = page.get("/api/internal/report-choices").json().get("choices") or []
         checks.ok(len(choices) == 12, "people can report problems", choices)
         checks.ok(not list(fresh.glob("backups/before-*")), "no copy is made of a new database")
+        if version_of(__version__) >= (1, 36, 0):
+            got = page.get("/api/access/trusted").json()
+            checks.ok(got.get("entries") == [], "nothing is trusted to start", got)
         if version_of(__version__) >= (1, 34, 0):
             said = page.get("/api/updates").json()
             checks.ok(said.get("on") is None and said.get("ask") is False,

@@ -53,6 +53,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import dataclasses
 import hashlib
 import hmac
 import ipaddress
@@ -71,14 +72,18 @@ from typing import TYPE_CHECKING, Any
 from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from .db import Channel, Database, User
+from . import networks
+from .db import Channel, Database, SignedIn, User
 from .text import plain
 from .tuner import is_tuner
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterator
+    from collections.abc import Awaitable, Callable, Collection, Iterator
     from pathlib import Path
 
+    from .doors import Doors
+    from .relays import Relays
+    from .trusted import Trusted
     from .tuner import TunerAccess
 
 log = logging.getLogger("stationplay.access")
@@ -174,6 +179,29 @@ NOT_HTTPS = (
 # is on, in its apps and on its page: someone watching, not an Admin, in the
 # owner's words, October 13.)
 NOT_SET_UP = "This tapiOca client can't reach the server. Please check back later."
+# A sign-in made without a password (by a trusted network, with a PIN or
+# nothing; or picking someone with no PIN: SignedIn.unlocked) is for
+# watching: it never makes a credential that works anywhere else (a
+# password, a PIN, a person, an API token or an invite code:
+# refuse_without_secret), never links an app, and for an Admin, anything
+# only an Admin may do asks for their password (Gate._decide). An address
+# isn't a password, nor is a 4-digit PIN typed on a shared screen (the cold
+# audit of 1.36.0).
+STEP_UP = (
+    "This sign-in was made without your password, so it can't change passwords, PINs or "
+    "sign-ins. Sign in with your password to do that."
+)
+ADMIN_PASSWORD_NEEDED = (
+    "This device signed you in without your password. For Admin tasks, sign out, then choose "
+    "Sign in with a password."
+)
+LINK_BOUND = "To link an app, sign in with your name and password first."
+# Signing in off, and asked for by a name that isn't home's (see
+# name_not_home): only the page, saying this, the tuner and the outside check.
+NAME_NOT_HOME = (
+    "tapiOca doesn't know this name yet. Open tapiOca by its home network address instead, "
+    "then add the name on the Access tab, under Names for tapiOca at home."
+)
 
 # API tokens (see the module's notes, and api.py): "spk_" and 43 random
 # characters; what each may do (its scope).
@@ -213,7 +241,7 @@ PAGE_FILES = (
     "page.css", "js/core.js", "js/status.js", "js/setup.js", "js/addtoplex.js", "js/logs.js",
     "js/stations.js", "js/editor.js", "js/logos.js", "js/smart.js", "js/backups.js",
     "js/filter.js", "js/broken.js", "js/apps.js", "js/checking.js", "js/access.js",
-    "js/viewing.js", "js/stats.js", "js/updates.js", "js/folders.js", "js/boot.js",
+    "js/trusted.js", "js/viewing.js", "js/stats.js", "js/updates.js", "js/folders.js", "js/boot.js",
 )  # fmt: skip
 # The page's fonts (in app/web/fonts, see page.css), each at /fonts/<file>.
 FONT_FILES = (
@@ -246,6 +274,9 @@ OPEN = (
     | {"/api/internal/sign-in", "/api/internal/link", "/api/internal/link/check"}
     # (A linked device's picker: its key, not a sign-in, says who may ask.)
     | {"/api/internal/picker", "/api/internal/picker/choose", "/api/internal/picker/sign-in"}
+    # (A trusted network's: where the request comes from says who may: see
+    # trustedapi.py, 1.36.0.)
+    | {"/api/access/trusted-sign-in", "/api/internal/trusted"}
     | FOR_PLEX
 )
 # Programs played on demand in tapiOca's apps: each at an address of its
@@ -341,8 +372,16 @@ def _unb64(text: str) -> bytes:
 _DUMMY_HASH = hash_password(secrets.token_urlsafe(12))
 
 
+# A sign-in or linked device made through a trusted network (1.36.0) has a
+# token of its own kind, kept in a form 1.35.0 never looks up: rolled back,
+# it signs in nowhere.
+TRUSTED_TOKEN_PREFIX = "tt_"
+
+
 def session_hash(token: str) -> str:
     """What a session's token is kept as."""
+    if token.startswith(TRUSTED_TOKEN_PREFIX):
+        return "t:" + _token_hash(token)
     return _token_hash(token)
 
 
@@ -371,57 +410,28 @@ def address(scope: dict) -> str:
     it came from (a reverse proxy's, if it came through one), as that can't
     be faked; on the public port, the visitor's, as the nearest proxy saw it
     (see _visitor), or failing that, the address it came from."""
-    if outside(scope) and (found := _visitor(scope)):
-        return found
+    verdict = scope.get("state", {}).get("verdict")
+    if verdict is not None:
+        # (As judged: a trusted proxy's visitor, or Cloudflare's on the
+        # public port, otherwise the peer itself, whatever its headers say:
+        # 1.36.0. On the home port, tries are counted by the peer unless it's
+        # a trusted proxy.)
+        if verdict.via_proxy and scope["state"].get("relay") and not on_public_port(scope):
+            # (A relay listed as a trusted proxy, at home: counted as itself,
+            # whoever it names, as anyone it carries could name anyone. On the
+            # public port, the internet's own limit holds too: PUBLIC_TRIES.)
+            return str(verdict.peer)
+        if verdict.via_proxy and verdict.visitor is None and verdict.peer is not None:
+            # (A trusted proxy that didn't clearly say who: never the
+            # proxy's own address, which everyone through it shares, so a
+            # visitor sending a header of their own can't run up wrong
+            # passwords for them all.)
+            return f"an unnamed visitor via {verdict.peer}"
+        found = verdict.visitor if verdict.via_proxy or on_public_port(scope) else verdict.peer
+        if found is not None:
+            return str(found)
     client = scope.get("client")
     return client[0] if client else "unknown"
-
-
-def _visitor(scope: dict) -> str | None:
-    """Who a request on the public port is from, as the nearest proxy saw
-    them: X-Real-IP (which NGINX-style proxies, NPMplus included, set to
-    the address they saw), or else the last address in X-Forwarded-For (the
-    one the nearest proxy added: those before it can be anything a visitor
-    sent). CF-Connecting-IP only when the request came through Cloudflare:
-    the address found is one of Cloudflare's own, or there's neither header
-    (a Cloudflare Tunnel straight to tapiOca). Otherwise anyone could
-    send that header, and a proxy would pass it on. None if what's there
-    isn't an IP address."""
-    real: bytes | None = None
-    forwarded: bytes | None = None
-    connecting: bytes | None = None
-    for name, value in scope.get("headers") or ():
-        if name == b"x-real-ip":
-            real = value
-        elif name == b"x-forwarded-for":
-            forwarded = value if forwarded is None else forwarded + b"," + value
-        elif name == b"cf-connecting-ip":
-            connecting = value
-    if real is not None:
-        found = _ip(real)
-    elif forwarded is not None:
-        found = _ip(forwarded.rsplit(b",", 1)[-1])
-    else:
-        return _ip(connecting) if connecting is not None else None
-    if found and connecting is not None and _cloudflares(found):
-        return _ip(connecting)
-    return found
-
-
-def _ip(value: bytes) -> str | None:
-    """A header's value as an IP address, if that's what it is (no zone,
-    which no visitor's address has; an IPv4 address in IPv6 form as
-    itself)."""
-    text = value.decode("latin-1").strip()
-    if "%" in text:
-        return None
-    try:
-        ip = ipaddress.ip_address(text)
-    except ValueError:
-        return None
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
-        return str(ip.ipv4_mapped)
-    return str(ip)
 
 
 def _cloudflares(address_: str) -> bool:
@@ -430,8 +440,28 @@ def _cloudflares(address_: str) -> bool:
 
 
 def outside(scope: dict) -> bool:
-    """Whether a request came in on the public port (see Gate)."""
+    """Whether a request is treated as from the internet: it came in on the
+    public port, or on the home port in a way that can't be home (see
+    networks.py: the doors left open). It's given only what the public port
+    gives."""
     return bool(scope.get("state", {}).get("outside"))
+
+
+def name_not_home(scope: dict) -> bool:
+    """Whether a request at home asked for tapiOca by a name that isn't
+    home's (see networks.host_kind): with signing in off, it gets only the
+    page, the tuner and the outside check. That closes DNS rebinding, where
+    a web page elsewhere points a name of its own at tapiOca's home address
+    and has a browser at home send it what it likes (1.36.0)."""
+    verdict = scope.get("state", {}).get("verdict")
+    return verdict is not None and not verdict.outside and verdict.host != "home"
+
+
+def on_public_port(scope: dict) -> bool:
+    """Whether a request came in on the public port itself (see Gate): for
+    the outside check and an app's last time in from outside, which a proxy
+    pointed at the home port must never satisfy."""
+    return scope.get("state", {}).get("port") == "public"
 
 
 def counted_as(address_: str) -> str:
@@ -450,29 +480,27 @@ def counted_as(address_: str) -> str:
 
 def where(scope: dict) -> str:
     """Where a request came from, for the access log: its address (see
-    address); and on the home network, the address it says it came from
-    first when it came through a proxy (as a reverse proxy says; anyone
-    could say so, so it's only for reading)."""
+    address); and at home through a trusted proxy, the visitor it named,
+    via the proxy. (Never what a device that isn't a trusted proxy says:
+    1.36.0. Before, anyone's X-Forwarded-For was shown, an address only.)"""
     address_ = address(scope)
+    state = scope.get("state", {})
+    why = state.get("why", "")
+    if why in ("home-port", "proxy", "unknown"):
+        # (A door left open: see networks.py.)
+        return f"{address_} (from the internet, on the home port)"
     if outside(scope):
         return f"{address_} (over the internet)"
-    for name, value in scope.get("headers") or ():
-        if name == b"x-forwarded-for":
-            first = value.decode("latin-1").split(",")[0].strip()[:60]
-            # (Only an address: the header can say anything, and what it says
-            # is kept and shown as where someone was. The 1.34.0 re-audit.)
-            if first and first != address_ and _is_address(first):
-                return f"{first} (via {address_})"
+    verdict = state.get("verdict")
+    if (
+        verdict is not None
+        and verdict.via_proxy
+        and verdict.visitor is not None
+        and verdict.peer not in (None, verdict.visitor)
+        and not state.get("relay")  # (at home, a relay's own: see address)
+    ):
+        return f"{address_} (via {verdict.peer})"
     return address_
-
-
-def _is_address(text: str) -> bool:
-    """Whether `text` is an IPv4 or IPv6 address, and nothing else."""
-    try:
-        ipaddress.ip_address(text)
-    except ValueError:
-        return False
-    return True
 
 
 class Busy(Exception):
@@ -514,6 +542,12 @@ class Access:
     # signed-in app started there (applibrary.py, which sets this). Until
     # it's set, none may.
     play_outside: Callable[[str], bool] | None = field(init=False, default=None)
+    # Someone removed, or their role changed (see trustedapi.py, 1.36.0).
+    on_people_changed: Callable[[], None] | None = field(init=False, default=None)
+    # What the page is told on a trusted network (see trustedapi.py, 1.36.0).
+    trusted_info: Callable[[dict[str, Any]], dict[str, Any]] | None = field(
+        init=False, default=None
+    )
     # When a signed-in app last came in through the public port over HTTPS
     # (time.monotonic(); None: not since tapiOca started), as proof that
     # apps reach tapiOca from outside (see reach.py). In memory only.
@@ -661,13 +695,17 @@ class Access:
             )
 
     def remove_user(self, user: User) -> None:
-        """Removes a user; ValueError if they're the last Admin and others
-        remain (removing the very last user turns signing in off)."""
+        """Removes a user; ValueError if they're the last Admin. (Until
+        1.36.0, removing the very last user turned signing in off, opening
+        tapiOca to anyone at home: the owner, October 13, "don't allow delete
+        admin". The reset-access file is the way back in.)"""
         others = [u for u in self.db.users() if u.id != user.id]
-        if user.role == ADMIN and others and self._last_admin(user):
+        if user.role == ADMIN and self._last_admin(user):
             raise ValueError("tapiOca needs at least one Admin. Make someone else an Admin first.")
         self.db.delete_user(user.id)
         self._users_exist = bool(others)
+        if self.on_people_changed is not None:
+            self.on_people_changed()
 
     async def change_user(
         self,
@@ -710,6 +748,20 @@ class Access:
             except sqlite3.IntegrityError:
                 raise ValueError(f"There's already a user called {name}") from None
         self.db.update_user(user.id, password_hash=hashed, role=role)
+        if (
+            role == ADMIN
+            and current.role != ADMIN
+            and (ended := self.db.end_unlocked_sessions(user.id))
+        ):
+            # (An Admin always gives a PIN or password: what was signed in
+            # for them with neither ends. The cold audit of 1.36.0.)
+            self.record(
+                logging.INFO,
+                f"{current.name} is an Admin now: {ended} sign-in(s) made without their PIN or "
+                "password ended",
+            )
+        if role is not None and role != current.role and self.on_people_changed is not None:
+            self.on_people_changed()
 
     def own_password_refusal(self, user: User) -> str | None:
         """Why someone can't change their own password, if they can't: they
@@ -819,16 +871,19 @@ class Access:
         device_id: int | None = None,
         unlocked: bool = False,
         at: str | None = None,
+        trusted: str = "",
     ) -> str:
         """A new token for a browser (or `app`, one of tapiOca's: which,
         on what device; `device_id`: a linked device, from its picker, and
         `unlocked` when someone without a PIN was picked there: see
         devices.py) that's signed in as `user`, there (`at`, as the access
-        log says where: by default, where this request came from)."""
-        token = secrets.token_urlsafe(32)
+        log says where: by default, where this request came from).
+        `trusted`: the trusted network it was made through, the only one it
+        works on (see trusted.py)."""
+        token = (TRUSTED_TOKEN_PREFIX if trusted else "") + secrets.token_urlsafe(32)
         self.db.add_session(
-            _token_hash(token), user.id, _now(), SESSIONS_KEPT, app, device_id, unlocked,
-            asked_from.get() if at is None else at,
+            session_hash(token), user.id, _now(), SESSIONS_KEPT, app, device_id, unlocked,
+            asked_from.get() if at is None else at, trusted,
         )  # fmt: skip
         return token
 
@@ -877,6 +932,20 @@ class Access:
         if token:
             self.db.device_signed_out(_token_hash(token))
 
+    def sign_in_made(self, request: Request) -> SignedIn | None:
+        """How the request's sign-in was made (see SignedIn): unlocked, or
+        through a trusted network. None for none, or an API token."""
+        hashed = sign_in_of(request)
+        return self.db.session_user(hashed, 0) if hashed else None
+
+    def refuse_without_secret(self, request: Request) -> None:
+        """HTTPException 403 (STEP_UP) for a sign-in a trusted network made,
+        or one made by picking someone with no PIN (unlocked): it can't make
+        a credential that works elsewhere."""
+        made = self.sign_in_made(request)
+        if by_network(made) or (made is not None and made.unlocked):
+            raise HTTPException(403, STEP_UP)
+
     def known_device(self, token: str | None, name: str) -> bool:
         """Whether a browser is one the user called `name` has signed in on."""
         if not token:
@@ -893,22 +962,36 @@ class Access:
         needs only the first)."""
         return self.session_user_hashed(session_hash(token))
 
-    def session_user_hashed(self, hashed: str) -> User | None:
+    def session_user_hashed(self, hashed: str, anywhere: bool = False) -> User | None:
         """session_user, for a session known by its token's hash (an API
-        token's too)."""
-        return self.session_of(hashed)[0]
+        token's too). `anywhere`: whether it's still good, wherever it was
+        made (for a stream's key, made where it could be: see away.py)."""
+        return self.session_of(hashed, where=None if anywhere else "")[0]
 
-    def session_of(self, hashed: str, *, active: bool = False) -> tuple[User | None, bool]:
+    def session_of(
+        self,
+        hashed: str,
+        *,
+        active: bool = False,
+        where: str | None = "",
+        made: list[SignedIn] | None = None,
+    ) -> tuple[User | None, bool]:
         """session_user_hashed, and whether the sign-in ended because no one
         used its browser for IDLE_SIGN_OUT_S (the access log says so, once).
-        `active`: someone is using it now."""
+        `active`: someone is using it now. `where`: the trusted network the
+        request comes from ("" for none): a sign-in made through one works
+        only there (1.36.0). `made`: given, how it was made goes in it."""
         now = _now()
         found = self.db.session_user(hashed, now - SESSION_DAYS * 86_400_000)
+        if found is not None and made is not None:
+            made.append(found)
         if found is None:
             if hashed in self._idled:
                 return None, True
             token = self._api_token_hashed(hashed)
             return (token.as_user() if token else None), False
+        if found.trusted and where is not None and found.trusted != where:
+            return None, False  # (made through a trusted network: only there)
         user = found.user
         if found.device_id is not None and now - found.seen_ms > PICKED_MS:
             return None, False  # (a sign-in from a device's picker lasts a day unused)
@@ -1088,6 +1171,12 @@ def may_change(user: User | None, channel: Channel) -> bool:
     return user is None or user.role == ADMIN or channel.created_by == user.id
 
 
+def by_network(made: SignedIn | None) -> bool:
+    """Whether a trusted network made a sign-in (with a PIN, or nothing):
+    for watching only (see STEP_UP)."""
+    return made is not None and bool(made.trusted)
+
+
 def signed_in(request: Request) -> User | None:
     """Who made a request (None while signing in is off)."""
     return getattr(request.state, "user", None)
@@ -1111,12 +1200,29 @@ class Gate:
     `public_port`: the port the internet reaches tapiOca on (0: none)."""
 
     def __init__(
-        self, app: Callable, access: Access, public_port: int = 0, tuner: TunerAccess | None = None
+        self,
+        app: Callable,
+        access: Access,
+        public_port: int = 0,
+        tuner: TunerAccess | None = None,
+        hosts: Callable[[], tuple[Collection[str], Collection[str]]] | None = None,
+        trusted: Trusted | None = None,
+        doors: Doors | None = None,
+        relays: Relays | None = None,
     ) -> None:
         self.app = app
         self.access = access
         self.public_port = public_port
         self.tuner = tuner  # (which devices may use the tuner: see tuner.py)
+        # The hosts that are home's (BASE_URL's), and never home's (the Away
+        # from home address's, when it isn't the home port's: see
+        # networks.host_kind).
+        self.hosts = hosts or (lambda: ((), ()))
+        # (Trusted proxies, networks and names for home: see trusted.py; and
+        # the doors left open, noted: see doors.py.)
+        self.trusted = trusted
+        self.doors = doors
+        self.relays = relays  # (never trusted; when they hide everyone, trust is off)
 
     async def __call__(
         self, scope: dict, receive: Callable[[], Awaitable[Any]], send: Callable
@@ -1126,13 +1232,70 @@ class Gate:
             return
         path = scope["path"]
         server = scope.get("server")
-        public = bool(self.public_port and server and server[1] == self.public_port)
-        scope.setdefault("state", {})["outside"] = public
+        port_public = bool(self.public_port and server and server[1] == self.public_port)
+        client = scope.get("client")
+        also_home, never_home = self.hosts()
+        listed = self.trusted
+        verdict = networks.judge(
+            public_port=port_public,
+            peer=client[0] if client else None,
+            host=_header(scope, b"host"),
+            headers=scope.get("headers") or (),
+            proxies=listed.proxy_networks() if listed else (),
+            cloudflare=CLOUDFLARE,
+            home_names=listed.home_names if listed else (),
+            also_home=also_home,
+            never_home=never_home,
+        )
+        state = scope.setdefault("state", {})
+        state["port"] = "public" if port_public else "home"
+        state["outside"], state["why"], state["verdict"] = verdict.outside, verdict.why, verdict
+        if self.doors is not None:
+            self.doors.note(verdict, _header(scope, b"host"))
+        # (A relay carries others' connections: Docker's gateway, tapiOca's
+        # own addresses. See relays.py.)
+        relay = self.relays is not None and self.relays.is_relay(verdict.peer)
+        state["relay"] = relay
+        normal = posixpath.normpath(path)
+        page_or_api = not (is_tuner(normal) or normal.startswith(OPEN_UNDER) or normal in FOR_PLEX)
+        if self.relays is not None and not port_public and page_or_api:
+            # (Only the page and the API: Plex or Jellyfin in Docker fetch
+            # the tuner, icons and logos through the gateway. What a relay
+            # names is never taken as seen.)
+            self.relays.note(verdict.visitor if verdict.via_proxy and not relay else verdict.peer)
+        state["trusted"] = self._trusted(verdict)
+        public = verdict.outside
         said = asked_from.set(where(scope))
         try:
             await self._let_through(scope, receive, send, path, public)
         finally:
             asked_from.reset(said)
+
+    def _trusted(self, verdict: networks.Verdict) -> dict[str, Any] | None:
+        """The trusted network a request comes from, if it may be trusted
+        (see trusted.py): signing in on; at home, asking for a home name;
+        and by its own address, or a trusted proxy's visitor; never a device
+        sending forwarding headers that isn't a trusted proxy."""
+        listed = self.trusted
+        if (
+            listed is None
+            or not self.access.required
+            or verdict.outside
+            or verdict.host != "home"
+            or (verdict.untrusted_headers and not verdict.via_proxy)
+        ):
+            return None
+        # (Never through a relay, which carries others' connections, even
+        # listed as a trusted proxy: anyone it carries could name a trusted
+        # address. And nothing while connections all seem to come from
+        # relays: see relays.py.)
+        if self.relays is not None and (
+            self.relays.trust_off() or self.relays.is_relay(verdict.peer)
+        ):
+            return None
+        if verdict.via_proxy:
+            return listed.entry_for(verdict.visitor, through_proxy=True)
+        return listed.entry_for(verdict.peer)
 
     async def _let_through(
         self, scope: dict, receive: Callable[[], Awaitable[Any]], send: Callable, path: str,
@@ -1181,6 +1344,9 @@ class Gate:
         if not self.access.required:
             if state["outside"] and path not in PAGE and path != REACH:
                 return 403, NOT_SET_UP
+            tuner = is_tuner(posixpath.normpath(path))
+            if name_not_home(scope) and path not in PAGE and path != REACH and not tuner:
+                return 403, NAME_NOT_HOME
             return None
         if path.startswith(PLAY_UNDER) and state["outside"] and not self._plays_outside(path):
             return 404, "Not Found"  # (made at home, ended, or never there)
@@ -1192,12 +1358,27 @@ class Gate:
             refused = self._api_token(scope, token)
             return None if path in OPEN else refused
         user, idle = None, False
+        made: list[SignedIn] = []
         if token:
             # (Anything but reading is someone using tapiOca: see IDLE_SIGN_OUT_S.)
             active = scope["method"] not in SAFE_METHODS
-            user, idle = self.access.session_of(session_hash(token), active=active)
+            entry = state.get("trusted")
+            user, idle = self.access.session_of(
+                session_hash(token), active=active, where=entry["id"] if entry else "", made=made
+            )
+        # A sign-in a trusted network made (with a PIN, or nothing) is for
+        # watching: an Admin's acts as a User's, and anything only an Admin
+        # may do asks for their password (see STEP_UP; what they may watch
+        # is still an Admin's: viewing.py reads their role afresh).
+        network = user is not None and bool(made) and by_network(made[0])
+        state["by_network"] = network
+        if network and user is not None and user.role == ADMIN:
+            if path not in OPEN and not _for_users(path, scope["method"]):
+                state["user"], state["idle"] = user, idle
+                return 403, ADMIN_PASSWORD_NEEDED
+            user = dataclasses.replace(user, role=USER)
         state["user"], state["idle"] = user, idle
-        if user is not None and app_token and state["outside"] and over_https(scope):
+        if user is not None and app_token and on_public_port(scope) and over_https(scope):
             self.access.app_came_from_outside()
         if path in OPEN:
             return None
@@ -1296,13 +1477,20 @@ def _length(scope: dict) -> int:
 def over_https(scope: dict) -> bool:
     """Whether a request came over HTTPS: itself, or to the reverse proxy or
     Cloudflare in front of tapiOca, as it says (X-Forwarded-Proto,
-    CF-Visitor)."""
+    CF-Visitor): believed only from a trusted proxy an Admin listed, or
+    Cloudflare's own addresses (1.36.0: never from a device because it sends
+    them)."""
     if scope.get("scheme") == "https":
         return True
+    verdict = scope.get("state", {}).get("verdict")
+    if verdict is None:
+        return False
+    proxy = verdict.via_proxy
+    edge = verdict.peer is not None and _cloudflares(str(verdict.peer))
     for name, value in scope.get("headers") or ():
-        if name == b"x-forwarded-proto" and value.split(b",")[0].strip() == b"https":
+        if proxy and name == b"x-forwarded-proto" and value.split(b",")[0].strip() == b"https":
             return True
-        if name == b"cf-visitor" and b'"https"' in value:
+        if (proxy or edge) and name == b"cf-visitor" and b'"https"' in value:
             return True
     return False
 
@@ -1430,6 +1618,11 @@ def _stations_text(limit: int | None) -> str:
     return "any number of stations" if limit is None else f"up to {_stations(limit)}"
 
 
+def set_sign_in_cookie(response: Response, request: Request, token: str) -> None:
+    """The cookie a sign-in on tapiOca's page is kept in (see _set_cookie)."""
+    _set_cookie(response, request, token)
+
+
 def _set_cookie(
     response: Response, request: Request, token: str, name: str = COOKIE, days: int = SESSION_DAYS
 ) -> None:
@@ -1474,10 +1667,18 @@ def routes(app: FastAPI, access: Access) -> None:
             # there's only this to say (and where it's said from, so the
             # page never shows the at-home PIN note here).
             return {"required": True, "user": None, "notSetUp": NOT_SET_UP, "outside": True}
+        if name_not_home(request.scope) and not access.required:
+            # (Nor by a name that isn't home's: see name_not_home.)
+            return {"required": True, "user": None, "notSetUp": NAME_NOT_HOME, "outside": True}
         said: dict[str, Any] = {
             "required": access.required,
             "user": _user_json(user, access.db.stations_made()) if user else None,
         }
+        if user is not None:
+            # (As they are, and whether a trusted network signed them in, for
+            # watching: see STEP_UP.)
+            said["user"] = _user_json(access.db.user(user.id) or user, access.db.stations_made())
+            said["user"]["byNetwork"] = bool(request.scope.get("state", {}).get("by_network"))
         # When this browser is signed out unless someone uses it, as
         # tapiOca's clock says (so a page open in several tabs agrees);
         # or that it was signed out that way (see IDLE_SIGN_OUT_S).
@@ -1496,6 +1697,11 @@ def routes(app: FastAPI, access: Access) -> None:
             found = access.pin_browser(request.cookies.get(DEVICE_COOKIE))
             if found is not None:
                 said["pinFor"] = found.name
+            # On a trusted network: who may pick themselves, or who it signs
+            # in as (see trustedapi.py, 1.36.0).
+            entry = request.scope.get("state", {}).get("trusted")
+            if entry is not None and access.trusted_info is not None:
+                said["trusted"] = access.trusted_info(entry)
         return said
 
     @app.post("/api/access/active")
@@ -1619,6 +1825,7 @@ def routes(app: FastAPI, access: Access) -> None:
     @app.post("/api/access/users", status_code=201)
     async def add_user(body: NewUser, request: Request, response: Response):
         by = signed_in(request)
+        access.refuse_without_secret(request)
         with _refusing():
             # (Their PIN and where they're shown are worked out first and
             # set as they're added: no device lists them without their PIN.)
@@ -1668,6 +1875,8 @@ def routes(app: FastAPI, access: Access) -> None:
     async def change_user(user_id: int, body: UserChange, request: Request, response: Response):
         user = user_or_404(user_id)
         by = signed_in(request)
+        if body.password is not None:
+            access.refuse_without_secret(request)
         limit_given = "maxStations" in body.model_fields_set
         with _refusing():
             if limit_given:
@@ -1711,17 +1920,10 @@ def routes(app: FastAPI, access: Access) -> None:
         return _user_json(user_or_404(user_id), access.db.stations_made())
 
     @app.delete("/api/access/users/{user_id}", status_code=204)
-    async def remove_user(user_id: int, request: Request, response: Response):
+    async def remove_user(user_id: int, request: Request):
         user = user_or_404(user_id)
         with _refusing():
             access.remove_user(user)
         by = signed_in(request)
-        if not access.required:
-            response.delete_cookie(COOKIE, path="/")
-            access.record(
-                logging.WARNING,
-                f"Sign-in was turned off because {by.name if by else 'someone'} "
-                "removed the last user",
-            )
-        else:
-            access.record(logging.INFO, f"{by.name if by else 'Someone'} removed {user.name}")
+        # (Never the last Admin, so signing in stays on: see remove_user.)
+        access.record(logging.INFO, f"{by.name if by else 'Someone'} removed {user.name}")

@@ -38,7 +38,7 @@ def test_what_isnt_an_address(typed):
 class NoSignIns:
     """Access, as far as Away asks it: nobody's signed in."""
 
-    def session_user_hashed(self, hashed: str):
+    def session_user_hashed(self, hashed: str, anywhere: bool = False):
         return None
 
     def record(self, level: int, message: str) -> None:

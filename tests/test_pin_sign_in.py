@@ -86,7 +86,7 @@ def test_a_pin_signs_in_again_at_home(pat, app):
     assert me["user"]["name"] == "Pat" and "pinFor" not in me
     assert browser.get("/api/logs").status_code == 200  # (an Admin, as with a password)
     log = pat.get("/api/logs?access_log=true").json()["text"]
-    assert "Pat (Admin) signed in with their PIN from testclient" in log
+    assert "Pat (Admin) signed in with their PIN from 192.168.1.50" in log
 
 
 def test_a_user_with_a_pin_too(pat, app):
@@ -128,7 +128,7 @@ def test_wrong_pins_wait_15_minutes(pat, app):
     assert waits.json()["detail"].startswith("Too many wrong PINs for Pat. Try again in")
     assert browser.get("/api/access/me").json()["user"] is None
     log = pat.get("/api/logs?access_log=true").json()["text"]
-    assert "Wrong PIN for Pat on tapiOca's page, from testclient" in log
+    assert "Wrong PIN for Pat on tapiOca's page, from 192.168.1.50" in log
     assert "Too many wrong PINs for Pat: they wait 15 minutes" in log
     # Not a PIN at all counts as wrong too.
     assert (
@@ -217,7 +217,7 @@ def test_ten_wrong_pins_on_a_browser_need_the_password(pat, app):
     picker._wrong.clear()
     assert browser.post("/api/access/pin-sign-in", json={"pin": "4321"}).status_code == 400
     log = pat.get("/api/logs?access_log=true").json()["text"]
-    assert "10 wrong PINs for Pat on a browser at testclient: it needs the password now" in log
+    assert "10 wrong PINs for Pat on a browser at 192.168.1.50: it needs the password now" in log
     # The password there again: its PIN works there again, with ten tries,
     # counted until the password signs in there again (a right PIN, perhaps
     # its person's, between someone else's guesses doesn't start them over).

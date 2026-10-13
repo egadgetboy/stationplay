@@ -35,7 +35,7 @@ async function api(path, opts = {}) {
       msg = typeof j.detail === 'string' ? j.detail : (j.detail?.[0]?.msg || msg);
     } catch {}
     // (A wrong password when signing in is a 401 too.)
-    if (res.status === 401 && !['/api/access/sign-in', '/api/access/pin-sign-in'].includes(path)) showSignIn(msg === ACCESS.idleSignedOut);
+    if (res.status === 401 && !['/api/access/sign-in', '/api/access/pin-sign-in', '/api/access/trusted-sign-in'].includes(path)) showSignIn(msg === ACCESS.idleSignedOut);
     throw Object.assign(new Error(msg), { status: res.status });
   }
   // (Nothing to say: 204, or a 202 with no body.)
@@ -125,7 +125,7 @@ function showTab(name) {
   if (name === 'logs') { loadLogs(true); loadProblems(); loadNotify(); }
   if (name === 'setup') { loadBackups(); renderPlaybackPanel(); loadUpdates(); loadInfoStation(); loadFolderLibraries(); }
   if (name === 'stats') { loadStats(); loadNow(); }
-  if (name === 'access') { loadAccess(); loadApps(); loadTuner(); loadLimits(); loadAway(); loadAppLimits(); loadAppLibraries(); loadApiTokens(); }
+  if (name === 'access') { loadAccess(); loadApps(); loadTuner(); loadLimits(); loadAway(); loadAppLimits(); loadAppLibraries(); loadApiTokens(); loadTrusted(); }
   history.replaceState(null, '', '#' + name);
 }
 

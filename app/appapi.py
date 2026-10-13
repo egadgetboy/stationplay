@@ -367,8 +367,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         """The device an app with a picker is: the one its key says, or a
         new one, linked now (and its key). Whoever signed in is on its
         picker from now on."""
-        found = ctx.devices.device(key, label)
+        # (Signing in on a device a trusted network linked makes it an
+        # ordinary linked device: that person's own choice, 1.36.0.)
+        found = ctx.devices.device(key, label, where=None)
         new_key = None
+        if found is not None and found.trusted:
+            ctx.db.unbind_device(found.id)
         if found is None:
             found, new_key = ctx.devices.link(label, user)
         ctx.devices.note_signed_in(found, user)
@@ -424,16 +428,18 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         mine = own_languages(user.id if user else 0)
         if user is None:
             return {"user": None, "languages": mine}
-        return {
-            "user": {
-                "name": user.name,
-                "role": user.role,
-                "pin": user.has_pin,
-                "canChangePassword": ctx.access.own_password_refusal(user) is None,
-                "canReport": ctx.access.may_report(user),
-            },
-            "languages": mine,
+        said: dict[str, Any] = {
+            "name": user.name,
+            "role": user.role,
+            "pin": user.has_pin,
+            "canChangePassword": ctx.access.own_password_refusal(user) is None,
+            "canReport": ctx.access.may_report(user),
         }
+        if request.scope.get("state", {}).get("by_network"):
+            # (A trusted network signed them in, for watching: an Admin is a
+            # User here then. See access.STEP_UP. Only when so.)
+            said["byNetwork"] = True
+        return {"user": said, "languages": mine}
 
     def own_languages(user_id: int) -> dict[str, Any]:
         """Someone's own languages, for the apps' Options: with every
@@ -490,6 +496,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         or in its Options. Not on a sign-in made by picking them without
         one."""
         user, signed = own_app(request)
+        if signed.trusted:
+            # (A trusted network's sign-in, made with a PIN or nothing: for
+            # watching, never for changing a PIN. See access.STEP_UP.)
+            raise HTTPException(403, access.STEP_UP)
         try:
             has = await ctx.devices.set_own_pin(user, body.pin, unlocked=signed.unlocked)
         except devices.Refused as e:
@@ -550,10 +560,25 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     def this_device(request: Request) -> devices.Device:
         if not ctx.access.required:
             raise HTTPException(400, "Signing in to tapiOca is off, so there's no need to")
-        found = ctx.devices.device(request.headers.get(devices.DEVICE_HEADER))
+        entry = request.scope.get("state", {}).get("trusted")
+        try:
+            found = ctx.devices.device(
+                request.headers.get(devices.DEVICE_HEADER), where=entry["id"] if entry else ""
+            )
+        except devices.Refused as e:
+            raise HTTPException(e.status, str(e)) from None
         if found is None:
             raise HTTPException(401, "This device isn't linked to tapiOca. Sign in again.")
         return found
+
+    def as_signed_in(user: User, token: str) -> dict[str, Any]:
+        """Who a new sign-in is, as /api/internal/me says it: a trusted
+        network's (a PIN or nothing) is for watching, an Admin a User
+        there (access.STEP_UP)."""
+        made = ctx.db.session_user(access.session_hash(token), 0)
+        if access.by_network(made):
+            return {"name": user.name, "role": access.USER, "byNetwork": True}
+        return {"name": user.name, "role": user.role}
 
     def person_json(user: User) -> dict[str, Any]:
         return {
@@ -593,7 +618,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         except access.Busy as e:
             raise HTTPException(429, str(e)) from None
         log.info("%s is watching on %s", user.name, device.name)
-        return {"token": token, "user": {"name": user.name, "role": user.role}}
+        return {"token": token, "user": as_signed_in(user, token)}
 
     @app.post("/api/internal/picker/sign-in")
     async def picker_sign_in(body: PickerSignIn, request: Request):
@@ -649,15 +674,24 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         except LookupError as e:
             raise HTTPException(404, str(e)) from None
 
+    def never_from_a_network(request: Request) -> None:
+        """No sign-in a trusted network gave (or made with no password or
+        PIN) links an app: the app's would work anywhere (access.LINK_BOUND)."""
+        made = ctx.access.sign_in_made(request)
+        if made is not None and (made.unlocked or made.trusted):
+            raise HTTPException(403, access.LINK_BOUND)
+
     @app.get("/api/access/link/{code}")
     async def link_preview(code: str, request: Request):
         """Which app on which device is waiting with a code: shown before
         it's linked, so no one links a stranger's TV by mistake."""
+        never_from_a_network(request)
         _user, pending = linking(code, request)
         return {"app": pending.app}
 
     @app.post("/api/access/link")
     async def link_app(body: LinkCode, request: Request):
+        never_from_a_network(request)
         user, pending = linking(body.code, request)
         # (Signed in where the device is, not where its code was entered.)
         if pending.picker:

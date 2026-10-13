@@ -15,8 +15,12 @@ On your hardware, in tapiOca's data folder:
 - What each person watches in tapiOca's apps (history and Resume), and viewing stats for each person.
 - The names of Plex users, and what each watched on tapiOca's stations in Plex, for the viewing stats.
 - The access log: sign-ins (failed ones too, with the name typed), changes, and the addresses they came from. It keeps the newest 2,000 lines.
+- Trusted networks, if an Admin adds them: each network or address, its name, what it gives, the person it signs in as, and who added it and when. Also the trusted proxies and the names for tapiOca at home an Admin lists.
+- Devices linked by a trusted network (the names the app and the device give), and sign-ins made on one. These work only on that network.
 - Problems tapiOca's apps report (with the device's name), and problems people report, with who reported them and the address and device each came from.
 - Nightly backups of all this (the newest 7), and a copy of the database made before each update that changes it.
+
+Kept only in memory, for Admins: the latest address that reached tapiOca's home port from the internet, through a proxy, or by an internet name (with that name), the latest device to send forwarding headers that tapiOca ignored, and the latest address, such as Docker's, that carries other devices' connections. The access log notes each at most once an hour. Alerts about how tapiOca is reached never include an address or a name.
 
 The activity log on the Logs tab is kept only in memory (the newest 500 lines) and is gone when tapiOca restarts. Its lines, and the access log's, also go to the container's own output, which Docker keeps until it rotates it or the container is replaced.
 

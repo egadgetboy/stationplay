@@ -51,7 +51,7 @@ META_ANSWERED = "setup_answered"  # {question: its version when answered} (JSON)
 QUESTIONS: dict[str, int] = {
     "playback": 1,  # how stations play: the picture size and the tuners
     "newStation": 1,  # what new stations start with
-    "signIn": 1,  # who can use tapiOca
+    "signIn": 2,  # who can use tapiOca (2: trusted networks, 1.36.0)
     "viewing": 1,  # who sees what: Viewing Levels (1.23)
     "away": 1,  # tapiOca's apps away from home
     "library": 2,  # Media in tapiOca's apps (2: on to start, 1.34.1)

@@ -248,7 +248,7 @@ def test_a_key_for_home_is_no_good_from_the_internet(tmp_path):
     db = Database(tmp_path / "db.sqlite")
 
     class SignedIn:
-        def session_user_hashed(self, hashed: str):
+        def session_user_hashed(self, hashed: str, anywhere: bool = False):
             return "Pat"
 
         def record(self, level: int, message: str) -> None:
@@ -455,3 +455,45 @@ def test_a_tuner_path_with_dot_steps_is_the_tuners(tmp_path):
     assert reached == []
     assert asyncio.run(status("/./discover.json", "10.0.0.2")) == 200  # (listed)
     assert reached == ["/./discover.json"]
+
+
+def test_only_these_devices_takes_networks_too(admin, app):
+    """(1.36.0) A network, in CIDR form (a home network, or one VPN's), as
+    well as single devices: a friend's VPN, or another VLAN, gets nothing.
+    Only home addresses, as for trusted networks."""
+    saved = admin.put(
+        "/api/tuner",
+        json={
+            "only": True,
+            "devices": [],
+            "networks": [{"network": "192.168.1.0/24", "name": "Home"}],
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["networks"] == [{"network": "192.168.1.0/24", "name": "Home"}]
+    assert device(app, "192.168.1.9").get("/discover.json").status_code == 200
+    assert refused(device(app, "192.168.2.9").get("/discover.json"))
+    assert refused(device(app, "10.8.0.5").get("/discover.json"))
+    for bad in ("8.8.8.0/24", "0.0.0.0/0", "192.168.1.0/24 x"):
+        said = admin.put("/api/tuner", json={"only": True, "networks": [{"network": bad}]})
+        assert said.status_code == 400, bad
+    # Kept as it was by 1.35.0's reading too: the devices list has none.
+    import json as json_
+
+    kept = json_.loads(app.state.ctx.db.get_meta(tuner.META))
+    assert kept["devices"] == [] and kept["networks"][0]["network"] == "192.168.1.0/24"
+    # Plex server only lists just Plex's address: the networks go.
+    assert device(app, "192.168.1.9", PLEX).get("/discover.json").status_code == 200
+    only = admin.post("/api/tuner/plex-only")
+    assert only.status_code == 200, only.text
+    assert only.json()["networks"] == [] and only.json()["devices"][0]["address"] == "192.168.1.9"
+    assert refused(device(app, "192.168.1.10").get("/discover.json"))
+
+
+def test_the_internet_never_uses_the_tuner(admin, app):
+    """(1.36.0) Even with Tuner access open to any device on the home
+    network, an internet address on the home port (a port forward to it)
+    gets nothing: not the tuner, guide, playlist or streams."""
+    for address in ("203.0.113.9", "8.8.8.8"):
+        assert device(app, address).get("/discover.json").status_code == 404
+        assert device(app, address).get("/guide.xml").status_code == 404

@@ -461,8 +461,9 @@ class Reach:
         if outside and not https:
             detail = (
                 f"{address} reaches tapiOca's public port, but your reverse proxy doesn't "
-                "say the request came over HTTPS, so tapiOca turns apps away there. Have the "
-                "proxy send the X-Forwarded-Proto header."
+                "say the request came over HTTPS, so tapiOca turns apps away there. Make sure "
+                "the proxy is listed under Trusted proxies on the Access tab, and sends the "
+                "X-Forwarded-Proto header."
                 if secure
                 else f"{address} reaches tapiOca's public port, which takes apps only over "
                 f"HTTPS. Through a VPN, use the home port instead: {_with_port(address, port)}."

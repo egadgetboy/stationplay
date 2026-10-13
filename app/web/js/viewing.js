@@ -345,11 +345,9 @@ function newPassword(u, cell) {
     h('button', { class: 'btn', type: 'button', onclick: loadAccess }, 'Cancel')));
   input.focus();
 }
-async function removeUser(u, count) {
-  const last = count === 1;
-  if (!confirm(last
-    ? `Remove ${u.name}? They’re the last user, so sign-in turns off and anyone on your network who can reach tapiOca can use it.`
-    : `Remove ${u.name}? They won’t be able to sign in anymore. Stations they made stay, and only Admins can change them.`)) return;
+// (The last Admin is never removed: the server says so, 1.36.0.)
+async function removeUser(u) {
+  if (!confirm(`Remove ${u.name}? They won’t be able to sign in anymore. Stations they made stay, and only Admins can change them.`)) return;
   try { await api(`/api/access/users/${u.id}`, { method: 'DELETE' }); toast(`${u.name} removed`); }
   catch (err) { toast(err.message, true); return; }
   await loadMe();

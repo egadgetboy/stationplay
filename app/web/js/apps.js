@@ -84,10 +84,13 @@ async function loadTuner() {
 }
 // `said`: what to show beside the controls (why a change wasn't made).
 function renderTuner(got, said = '') {
-  if (got.only || got.devices.length) tunerOnlyChosen = false;
+  const nets = got.networks || [];  // (networks, such as 192.168.1.0/24: 1.36.0)
+  const listedCount = got.devices.length + nets.length;
+  if (got.only || listedCount) tunerOnlyChosen = false;
   const only = got.only || tunerOnlyChosen;
-  if (only && !got.devices.length && !said) said = TUNER_NONE;
-  $('#tunerSum').textContent = got.only ? `Only ${plural(got.devices.length, 'device')}` : 'Any device on my home network';
+  if (only && !listedCount && !said) said = TUNER_NONE;
+  $('#tunerSum').textContent = !got.only ? 'Any device on my home network'
+    : nets.length ? `Only ${plural(got.devices.length, 'device')} and ${plural(nets.length, 'network')}` : `Only ${plural(got.devices.length, 'device')}`;
   const result = h('span', { class: 'hint', role: 'status' }, said);
   // Saves, then shows what's answered; or shows why not, with what was saved.
   const send = async (path, opts, done, clearTyped = false) => {
@@ -101,10 +104,14 @@ function renderTuner(got, said = '') {
   };
   const put = (onlyThese, devices, done, clearTyped = false) =>
     send('/api/tuner', { method: 'PUT', body: { only: onlyThese, devices } }, done, clearTyped);
+  // (Networks, such as 192.168.1.0/24: sent only when they change.)
+  const putNets = (networks, done, clearTyped = false) =>
+    send('/api/tuner', { method: 'PUT', body: { only: true, devices: got.devices, networks } }, done, clearTyped);
   const choice = (value, label, hint) => h('label', { class: 'choice' },
     h('input', { type: 'radio', name: 'tunerOnly', value, checked: only === (value === 'only'), onchange: () => {
       if (value === 'only') {
         if (got.devices.length) put(true, got.devices, 'Saved. Only the devices listed can use the tuner.');
+        else if (nets.length) putNets(nets, 'Saved. Only the networks listed can use the tuner.');
         else { tunerOnlyChosen = true; renderTuner(got); }
       } else if (got.only) put(false, got.devices, 'Saved. Any device on your home network can use the tuner.');
       else { tunerOnlyChosen = false; renderTuner(got); }
@@ -114,7 +121,14 @@ function renderTuner(got, said = '') {
   const listed = [];
   if (only) {
     const remove = d => {
-      if (got.devices.length === 1) { result.textContent = TUNER_NONE; return; }
+      if (d.network) {
+        if (listedCount === 1) { result.textContent = TUNER_NONE; return; }
+        putNets(nets.filter(x => x.network !== d.network), `${d.name || d.network} is off the list`);
+        return;
+      }
+      if (!nets.length) {
+        if (got.devices.length === 1) { result.textContent = TUNER_NONE; return; }
+      }
       put(true, got.devices.filter(x => x.address !== d.address), `${named(d)} is off the list`);
     };
     const address = h('input', { type: 'text', id: 'tunerAddress', value: tunerTyped.address, placeholder: '192.168.1.20', maxlength: 60, required: true,
@@ -123,10 +137,17 @@ function renderTuner(got, said = '') {
       oninput: () => { tunerTyped.name = name.value; } });
     const add = h('form', { class: 'adduser', onsubmit: e => {
       e.preventDefault();
-      const d = { address: address.value.trim(), name: name.value.trim() };
+      const typed = address.value.trim();
+      // (With a slash, a whole network: 192.168.1.0/24.)
+      if (typed.includes('/')) {
+        const n = { network: typed, name: name.value.trim() };
+        putNets([...nets, n], `${n.name || n.network} is on the list`, true);
+        return;
+      }
+      const d = { address: typed, name: name.value.trim() };
       put(true, [...got.devices, d], `${named(d)} is on the list`, true);
     } },
-      h('div', { class: 'field' }, h('label', { for: 'tunerAddress' }, 'Device’s IP address'), address),
+      h('div', { class: 'field' }, h('label', { for: 'tunerAddress' }, 'Device’s IP address, or a network'), address),
       h('div', { class: 'field' }, h('label', { for: 'tunerName' }, 'Name (optional)'), name),
       h('button', { type: 'submit', class: 'btn primary' }, 'Add'));
     // (It asks first, naming the addresses it would list: anything can call
@@ -135,7 +156,8 @@ function renderTuner(got, said = '') {
       if (got.plex.length) {
         const others = got.devices.filter(d => !got.plex.includes(d.address));
         const where = got.plex.length === 1 ? `Plex’s address, ${got.plex[0]}` : `Plex’s addresses, ${got.plex.join(', ')}`;
-        const lose = others.length ? ` ${plural(others.length, 'other device')} can’t use the tuner then.` : '';
+        const gone = [others.length ? plural(others.length, 'other device') : '', nets.length ? plural(nets.length, 'network') : ''].filter(Boolean);
+        const lose = gone.length ? ` ${gone.join(' and ')} can’t use the tuner then.` : '';
         if (!confirm(`Plex server only lists just ${where}.${lose} Go ahead?`)) return;
       }
       send('/api/tuner/plex-only', { method: 'POST' }, 'Saved. Only Plex can use the tuner.');
@@ -143,14 +165,15 @@ function renderTuner(got, said = '') {
     // (Where Plex is used, or has been seen using the tuner.)
     plexOnly.hidden = !got.plex.length && !plexUsed();
     listed.push(
-      got.devices.length ? h('table', { class: 'users' },
-        h('thead', {}, h('tr', {}, h('th', {}, 'Device'), h('th', {}, 'Address'), h('th', {}, ''))),
-        h('tbody', {}, ...got.devices.map(d => h('tr', {},
-          h('td', {}, h('strong', {}, named(d))),
-          h('td', { class: 'small', 'data-label': 'Address' }, d.address),
+      listedCount ? h('table', { class: 'users' },
+        h('thead', {}, h('tr', {}, h('th', {}, 'Device or network'), h('th', {}, 'Address'), h('th', {}, ''))),
+        h('tbody', {}, ...[...got.devices, ...nets].map(d => h('tr', {},
+          h('td', {}, h('strong', {}, d.network ? d.name || 'A network' : named(d))),
+          h('td', { class: 'small', 'data-label': 'Address' }, d.network || d.address),
           h('td', {}, h('button', { class: 'btn danger', type: 'button', onclick: () => remove(d) }, 'Remove'))))))
-        : h('p', { class: 'muted small', style: 'margin:0' }, 'No devices are listed yet.'),
+        : h('p', { class: 'muted small', style: 'margin:0' }, 'No devices or networks are listed yet.'),
       add,
+      h('p', { class: 'hint', style: 'margin:0' }, 'A whole network, entered as 192.168.1.0/24, lists every device on it. Home addresses only.'),
       h('div', { class: 'scan-set' }, plexOnly, result));
   }
   const allow = r => send('/api/tuner/allow', { method: 'POST', body: { address: r.address } }, `${r.name || r.address} is on the list`);

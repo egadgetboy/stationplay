@@ -19,6 +19,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex import FakePlex
+from .helpers import through_proxy
 
 ROOT = Path(__file__).resolve().parent.parent
 PUBLIC_PORT = 8443
@@ -144,7 +145,8 @@ def test_api_tokens_from_the_internet_only_once_allowed_and_over_https(app):
         assert page.post("/api/channels", json={"number": 4, "sources": [
             {"type": "show", "ratingKey": "100"}]}).status_code == 201  # fmt: skip
         token = bearer(make(page, "Away", "viewer"))
-        internet = TestClient(
+        # (Through the tests' reverse proxy, a trusted proxy: 1.36.0.)
+        internet = through_proxy(
             app, base_url=f"http://testserver:{PUBLIC_PORT}", headers={"X-Forwarded-Proto": "https"}
         )
         refused = internet.get("/api/v1/stations", headers=token)

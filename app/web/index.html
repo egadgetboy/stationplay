@@ -234,6 +234,18 @@
       </div>
       <span class="hint" id="addUserHint"></span>
     </form>
+    <details class="panel arr" id="trustedPanel">
+      <summary><strong>Trusted networks</strong><span class="muted" id="trustedSum"></span></summary>
+      <div class="arr-body" id="trustedBody"></div>
+    </details>
+    <details class="panel arr" id="proxiesPanel">
+      <summary><strong>Trusted proxies</strong><span class="muted" id="proxiesSum"></span></summary>
+      <div class="arr-body" id="proxiesBody"></div>
+    </details>
+    <details class="panel arr" id="homeNamesPanel">
+      <summary><strong>Names for tapiOca at home</strong><span class="muted" id="homeNamesSum"></span></summary>
+      <div class="arr-body" id="homeNamesBody"></div>
+    </details>
     <details class="panel arr" id="viewingPanel" hidden>
       <summary><strong>Viewing Levels</strong><span class="muted" id="viewingSum"></span></summary>
       <div class="arr-body" id="viewingBody"></div>
@@ -327,6 +339,11 @@
     <div class="brand stacked"><svg class="word" viewBox="0 0 472.70 99.00" role="img" aria-label="tapiOca"><use href="#tp-word"/></svg></div>
     <p class="hint" id="signinWhere" hidden>At this address, tapiOca always asks for your password, even at home. Your PIN works at its home-network address, once you’ve signed in there with your password.</p>
     <p class="hint" id="signinHome" hidden>Have a PIN? It works here after you sign in once on this browser with your password.</p>
+    <div id="signinTrusted" hidden>
+      <h2 class="signin-who" id="signinTrustedTitle">Who’s tuning in?</h2>
+      <div class="who-list" id="signinPeople" role="list"></div>
+      <button class="btn primary" type="button" id="signinContinue" hidden style="justify-content:center"></button>
+    </div>
     <div id="signinByPassword">
       <div class="field"><label for="signinName">Name</label><input type="text" id="signinName" autocomplete="username" required></div>
       <div class="field"><label for="signinPassword">Password</label><input type="password" id="signinPassword" autocomplete="current-password" required></div>
@@ -335,6 +352,7 @@
       <div class="field"><label for="signinPin" id="signinPinLabel">PIN</label><input type="password" id="signinPin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off"></div>
     </div>
     <button class="btn primary" type="submit" id="signinGo" style="justify-content:center">Sign in</button>
+    <button class="linkish" type="button" id="signinSomeoneElse" hidden>Sign in with a password</button>
     <button class="linkish" type="button" id="signinOther" hidden>Use your password instead</button>
     <button class="linkish" type="button" id="signinSwitch" hidden>Switch user</button>
     <span class="hint" id="signinStatus" role="alert"></span>
@@ -983,6 +1001,7 @@ const ACCESS = __ACCESS__;
 <script src="/web/js/apps.js?v=__VERSION__"></script>
 <script src="/web/js/checking.js?v=__VERSION__"></script>
 <script src="/web/js/access.js?v=__VERSION__"></script>
+<script src="/web/js/trusted.js?v=__VERSION__"></script>
 <script src="/web/js/viewing.js?v=__VERSION__"></script>
 <script src="/web/js/stats.js?v=__VERSION__"></script>
 <script src="/web/js/updates.js?v=__VERSION__"></script>

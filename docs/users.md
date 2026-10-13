@@ -480,6 +480,70 @@ Admin, showing who sent it and from which device, as their sign-in records.
   10 a day in all. While signing in is off, the limits apply to each
   address.
 
+## Trusted networks
+
+From 1.36.0, devices on a trusted network skip signing in. Nothing is
+trusted until an Admin lists it (`app/trusted.py`).
+
+- **Entries.** Kept in `meta["trusted_networks"]` with the trusted proxies
+  and names for home. Each is a network or one address (home ranges only,
+  never loopback or the internet), a name, what it gives, the person, who
+  added it and when. At most 50; wider than a /24 (or /64) only with
+  `confirmWide`. What can't be read trusts nothing.
+- **The two choices.** `picker`: Who's tuning in?. `person`: Signed in as
+  that person; an Admin only on a single address. The longest prefix wins.
+- **When it applies.** Signing in on; at home (`app/networks.py`'s
+  `judge`); a home name in the Host; the peer not a relay, even a relay
+  listed as a trusted proxy (anyone it carries could name anyone); relays
+  readable and addresses not hidden (`app/relays.py`); no forwarding
+  headers, unless the peer is a trusted proxy. Headers only ever take
+  trust away. Wrong passwords on the home port through a relay count as
+  the relay.
+- **Through a proxy.** A trusted proxy's visitor gets its own entry, but
+  never one that signs in an Admin: the next wider entry applies, if any.
+- **Bound sign-ins and devices.** Made on an entry, they carry its id
+  (`sessions.trusted`, `linked_devices.trusted`) and work only on it. Their
+  tokens and keys start `tt_` and are stored under `"t:" + sha256`, so
+  1.35.0 never finds them. One made without a PIN or password is
+  `unlocked`. A bound or unlocked sign-in is for watching
+  (`access.by_network`): it can't change a password or PIN, add people,
+  or make API tokens or invite codes (`access.STEP_UP`), or link an app
+  (`access.LINK_BOUND`). An Admin's acts as a User's (the Gate puts a
+  User-role copy in the request), and anything only an Admin may do is
+  refused (`access.ADMIN_PASSWORD_NEEDED`); what they may watch is still an
+  Admin's. A PIN sign-in from a network can't change that PIN. A password
+  given on a picker, the page's or an app's, makes an ordinary sign-in.
+  (An unbound sign-in made with nothing, an Admin on their own linked
+  device as in 1.35.0, is as before.) Stream keys and play sessions made for a bound
+  sign-in work only on its entry. A password or invite code used on a
+  network-bound device clears its entry. An entry links at most 100
+  devices, then one only in place of a device no one was ever picked on,
+  or one unused for 30 days. One
+  address asks at most 20 times in 15 minutes, and bound sign-ins are kept
+  apart from a person's others (`SESSIONS_KEPT` each).
+- **Reconcile.** When a person is removed or their role changes, and at
+  each start (after reset-access, or a restore): an entry whose person is
+  gone goes; an Admin's wider entry, or one listed before its person was
+  made an Admin, becomes `picker`; and someone made an Admin loses their
+  unlocked sign-ins. Then, and on each
+  save, an entry changed or removed ends what it gave. Each is logged.
+- **The picker.** Lists people on Every device at home or Every device.
+  Anyone with a PIN gives it; an Admin always gives a PIN or password;
+  anyone with a password may give it instead.
+- **PIN limits.** Each person's own (5 wrong, then 15 minutes, everywhere).
+  On the page's picker, 10 wrong from one address in an hour, then a
+  password there (or a wait).
+  An Admin's PIN locked is an `access` alert, fixed once it's unlocked.
+- **Relays.** Every gateway in the routing table, tapiOca's own addresses
+  and loopback are never trusted. When relays carry every request for an
+  hour (20 page or API requests, with fewer than 5 from anything else;
+  never the tuner, icons or logos, which Plex in Docker fetches through the
+  gateway), trust is off for everyone. If the routing table can't be read,
+  trust is off too, with an alert.
+- **The apps.** `POST /api/internal/trusted` gives a `picker` app a
+  network-bound device key, or a `person` app a bound sign-in. Off its
+  network, a bound key gets 403.
+
 ## The addresses
 
 The apps' own addresses (`docs/internal-api.md`):

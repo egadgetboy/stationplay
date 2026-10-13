@@ -35,7 +35,7 @@ If you find it useful, you can [buy me a coffee](https://buymeacoffee.com/egadge
 - [How stations play](#how-stations-play)
 - [Station features](#station-features): logos, corner logo, Up Next Banner, Station ID card, commercials, Intro Bumper, subtitles, specials
 - [Keeping stations on the air](#keeping-stations-on-the-air): safeguards, the Broken files list, file checks, Sonarr and Radarr, people's reports
-- [Who can use tapiOca](#who-can-use-tapioca): [Viewing Levels](#viewing-levels) · [Parental limits](#parental-limits-what-tapioca-enforces-and-what-it-cant) · [Linked devices and Who's tuning in?](#linked-devices-and-whos-tuning-in) · [Tuner access](#tuner-access)
+- [Who can use tapiOca](#who-can-use-tapioca): [Trusted networks](#trusted-networks) · [Trusted proxies](#trusted-proxies) · [Names for tapiOca at home](#names-for-tapioca-at-home) · [Doors left open](#doors-left-open) · [When tapiOca can't see where connections come from](#when-tapioca-cant-see-where-connections-come-from) · [Viewing Levels](#viewing-levels) · [Parental limits](#parental-limits-what-tapioca-enforces-and-what-it-cant) · [Linked devices and Who's tuning in?](#linked-devices-and-whos-tuning-in) · [Tuner access](#tuner-access)
 - [Stats](#stats) · [tapiOca's API](#tapiocas-api) · [Settings](#settings) · [Troubleshooting](#troubleshooting) · [Development](#development)
 - [Contributing](#contributing) · [Forks and credit](#forks-and-credit) · [License](#license)
 
@@ -269,13 +269,13 @@ If your media share takes more than 8 seconds to answer, tapiOca treats it as te
 
 ### Security and remote access
 
-**Keep port 3310 on your home network.** It serves Plex's tuner, guide and video streams, which never ask for a password, because Plex can't sign in to a tuner. Never forward it on your router or point a tunnel or reverse proxy at it. Plex only needs it inside your network. Plex users away from home can still watch, because Plex relays the stream. To choose which devices at home can use it, see [Tuner access](#tuner-access) on the **Access** tab.
+**Keep port 3310 on your home network.** It serves Plex's tuner, guide and video streams, which never ask for a password, because Plex can't sign in to a tuner. Never forward it on your router or point a tunnel or reverse proxy at it. If that happens anyway, tapiOca treats those connections as from the internet and alerts Admins (see [Doors left open](#doors-left-open)). Plex only needs it inside your network. Plex users away from home can still watch, because Plex relays the stream. To choose which devices at home can use it, see [Tuner access](#tuner-access) on the **Access** tab.
 
 **Using tapiOca's page and apps from the internet.** tapiOca can open a second port for its page and for tapiOca's apps away from home, set with `PUBLIC_PORT`. It's 3311 in the YAML and Compose files, and it must differ from `PORT`. On that port:
 
 - **No Plex addresses.** The addresses Plex and other apps use (the tuner, guides, streams and playlist) don't exist there.
 - **Sign-in always required.** Before signing in, visitors see only the sign-in page, its icons, what a browser needs to install the page as an app (see **As an app** under [First-time setup](#first-time-setup)), tapiOca's name and version, its open-source notices and its privacy notice. tapiOca's apps also ask it the server's name, its away-from-home address and which features are on, to connect. Until signing in is on, the page there says only "This tapiOca client can't reach the server. Please check back later.", as tapiOca's apps do, and no one can sign in or make themselves the first Admin from outside.
-- **Wrong passwords limited.** The limits are 5 in 15 minutes per visitor address, and 100 in 15 minutes for the internet as a whole. A browser or app that has signed in before isn't held up by the internet-wide limit.
+- **Wrong passwords limited.** The limits are 5 in 15 minutes per address, and 100 in 15 minutes for the internet as a whole. tapiOca knows a visitor's own address only through a [trusted proxy](#trusted-proxies) or Cloudflare's own network. Otherwise it counts the address that connected, so through a proxy you haven't listed, every visitor shares the proxy's address. A browser or app that has signed in before isn't held up by the internet-wide limit.
 
 Put `PUBLIC_PORT` behind a Cloudflare Tunnel or a reverse proxy with HTTPS. [Reaching tapiOca from outside your home](#reaching-tapioca-from-outside-your-home) explains each, and the other ways in. If you don't need it, remove the `3311` port line and `PUBLIC_PORT`.
 
@@ -559,8 +559,9 @@ The proxy (such as Caddy or Nginx Proxy Manager) takes HTTPS connections from th
 1. **A domain name** pointing at your home's internet address, such as `tv.example.com`. Use dynamic DNS if that address changes.
 2. **Port 443 forwarded** on your router to the computer running the proxy.
 3. **The proxy**, with a certificate (both proxies below get a free one from Let's Encrypt). It passes requests to `http://<your-server-ip>:3311` and passes on each visitor's address in `X-Real-IP` or `X-Forwarded-For`. Nginx Proxy Manager and NPMplus do both by default. tapiOca counts wrong passwords by that address and shows it in the access log, so the proxy must set it itself, replacing any value a visitor sends. tapiOca accepts `CF-Connecting-IP` only when a request came through Cloudflare, so a visitor can't send it to pose as someone else.
+4. **The proxy listed under Trusted proxies.** At home, on the **Access** tab, add the proxy's address on your home network under **Trusted proxies** (see [Trusted proxies](#trusted-proxies)). tapiOca believes forwarding headers only from a proxy listed there. Until it's listed, every visitor counts as the proxy's own address for wrong passwords, and tapiOca can't tell that the proxy received HTTPS, so it turns the apps away. From a listed proxy, the last address in each of `X-Real-IP`, `X-Forwarded-For` and `Forwarded` must name the same visitor. If they don't, tapiOca can't tell who it is.
 
-**Caddy** (the whole `Caddyfile`):
+**Caddy** (the whole `Caddyfile`). Caddy passes a visitor's own `X-Real-IP` through untouched, so this sets it itself, which keeps it in agreement with `X-Forwarded-For`:
 
 ```
 tv.example.com {
@@ -572,7 +573,7 @@ tv.example.com {
 
 **Nginx Proxy Manager** (or NPMplus): add a proxy host for `tv.example.com` that forwards to `192.168.1.20` port `3311`. On its **SSL** tab, request a Let's Encrypt certificate and turn on **Force SSL**. It passes on each visitor's address by itself.
 
-Then, at home, open the **Access** tab. If you haven't yet, add the first user (an Admin) with a long password. Turn on **tapiOca's apps away from home** with `https://tv.example.com`. Leave out the port, because that's the proxy's address, and tapiOca itself never speaks HTTPS. Within a few seconds, the status under it should show **Ready**. If it says the proxy points at the wrong port, point it at 3311, never 3310.
+Then, at home, open the **Access** tab. If you haven't yet, add the first user (an Admin) with a long password. List the proxy's address under **Trusted proxies** (step 4). Turn on **tapiOca's apps away from home** with `https://tv.example.com`. Leave out the port, because that's the proxy's address, and tapiOca itself never speaks HTTPS. Within a few seconds, the status under it should show **Ready**. If it says the proxy points at the wrong port, point it at 3311, never 3310.
 
 Besides the public port's sign-in and password limits (see [Security and remote access](#security-and-remote-access)), tapiOca is protected there by these rules:
 
@@ -587,7 +588,8 @@ A Cloudflare Tunnel reaches tapiOca's page without opening any port. It's not fo
 1. At home, on the **Access** tab, add the first user (an Admin) with a long password.
 2. Keep `PUBLIC_PORT: "3311"` and the `"3311:3311"` port line.
 3. In Cloudflare **Zero Trust**, add a public hostname to your tunnel (such as `tv.example.com`) with the service `http://<your-server-ip>:3311`. Never use 3310. Cloudflare passes on each visitor's address in `CF-Connecting-IP` by itself.
-4. **Strongly recommended:** in Zero Trust **Access**, add that hostname as a self-hosted application, with a policy that allows only your people's email addresses. Cloudflare then asks for a one-time email code before anyone reaches tapiOca. tapiOca's sign-in becomes a second lock rather than the only one. This is free for up to 50 people.
+4. On the **Access** tab, list the address `cloudflared` reaches tapiOca from under **Trusted proxies** (see [Trusted proxies](#trusted-proxies)). That's its device's address on your home network, or `127.0.0.1` if it runs in tapiOca's own container (or Docker's own address, if it's another container on the same server: see [Trusted proxies](#trusted-proxies)). Otherwise every visitor through the tunnel counts as one address for wrong passwords. (Cloudflare's own addresses are believed for `CF-Connecting-IP` only when they connect to the public port directly.)
+5. **Strongly recommended:** in Zero Trust **Access**, add that hostname as a self-hosted application, with a policy that allows only your people's email addresses. Cloudflare then asks for a one-time email code before anyone reaches tapiOca. tapiOca's sign-in becomes a second lock rather than the only one. This is free for up to 50 people.
 
 ## First-time setup
 
@@ -596,7 +598,7 @@ The first time an Admin opens tapiOca's page, the setup opens right away. It doe
 1. **Checking your server:** the server itself. It never waits on Plex, which has a step of its own (step 9). It reads your media folder directly: `MEDIA_DIR`, and any folder `PATH_MAPPINGS` names. It checks whether the folder is there, whether tapiOca can read it, whether it holds anything, and whether tapiOca can read a video in it. If nothing is at `MEDIA_DIR`, it looks at the folders mounted into tapiOca and says where your media seems to be, and what to set `MEDIA_DIR` to: the folder's place inside tapiOca, not on your server. It also checks how tapiOca encodes video, whether its clock matches your browser's, and its backups. Anything marked **Needs a look** or **Not working** says what to do. After changing tapiOca's app settings, restart it, then choose **Check again**.
 2. **How stations play:** the picture size for new stations and the number of tuners, with **Test this server** to help you choose.
 3. **New station settings:** the defaults for new stations. These cover subtitles, commercials and trailers, the Station ID card, the Intro Bumper, the Up Next Banner, and what goes in the corner. Stations you already have don't change.
-4. **Who can use tapiOca:** **Anyone on my network**, or **Only people who sign in**. With the second, you become the first Admin right away (see [Who can use tapiOca](#who-can-use-tapioca)).
+4. **Who can use tapiOca:** everyone signs in, at home and away. Enter your name and a password (at least 8 characters) to become the first Admin, and you're signed in right away. To let your home's devices skip signing in, tick **Devices on my home network skip signing in**. It offers the network tapiOca sees you on (such as `192.168.1.0/24`), with a name you can change. Its devices then open on **Who's tuning in?**, and **New people show on** becomes **Every device at home**. Never use a guest network (see [Trusted networks](#trusted-networks)). A tapiOca updated with signing in off offers both choices here: **Anyone on my network**, or **Only people who sign in** (see [Who can use tapiOca](#who-can-use-tapioca)).
 5. **Who sees what:** the Viewing Level **New people start on** (Unrestricted until you choose another), and each person's Viewing Level (see [Viewing Levels](#viewing-levels)).
 6. **Watching away from home:** whether tapiOca's own apps can watch your stations away from home, and the address they use there (see [Reaching tapiOca from outside your home](#reaching-tapioca-from-outside-your-home)).
 7. **Media in tapiOca's apps:** which Media folders the apps can browse and play in Media. Every Media folder is shared to start. Untick any you'd rather keep out (see [tapiOca's own apps](#tapiocas-own-apps)). If Plex isn't answering, the step says so within a few seconds, and Media folders already shared stay shared.
@@ -1103,25 +1105,92 @@ A report never takes anything off the air, or out of Media, by itself. Only tapi
 
 ## Who can use tapiOca
 
-**At home and from the internet.** tapiOca tells them apart by the port a connection comes in on, not by its address. Anything reaching `PORT` (3310 unless you change it) is at home: your network, and devices on a VPN into it, such as Tailscale or WireGuard. Anything reaching `PUBLIC_PORT` (3311), where your reverse proxy or Cloudflare Tunnel points, is from the internet, even from inside your home. So never forward 3310, or point a reverse proxy at it: tapiOca would take the internet for home.
+**At home and from the internet.** Anything reaching `PUBLIC_PORT` (3311), where your reverse proxy or Cloudflare Tunnel points, is from the internet, even from inside your home. A connection to `PORT` (3310 unless you change it) is at home only when all of these hold:
 
-When tapiOca is first installed, its page and apps are open to anyone at home with no signing in, and they can change anything, as an Admin can. Nobody can use them from the internet until signing in is on, even with **Away from home** on: tapiOca's apps there say "This tapiOca client can't reach the server. Please check back later." To use them from the internet, and to require signing in at home too, choose **Only people who sign in** during setup, or add a user on the **Access** tab with a name and a password of at least 8 characters. **The first user is always an Admin**, and you're signed in right away. After that, everyone else sees a sign-in page. tapiOca's apps work from the internet once **Away from home** is on, on the **Access** tab. Neither choice changes who can watch in Plex, Jellyfin, Emby or Kodi: each app decides that itself.
+- **A home address.** It comes from an address on your home network or your own VPN, such as 192.168.x.x, 10.x.x.x, 172.16.x.x to 172.31.x.x, or Tailscale's 100.64.x.x.
+- **Not by an internet address.** It doesn't ask for tapiOca by an internet address, such as your home's own internet address.
+- **Nothing says otherwise.** No forwarding header from a proxy says it's from the internet.
+
+Anything else is treated as from the internet: it gets exactly what the public port gives. So a port forward or a proxy pointed at 3310 by mistake doesn't open tapiOca to the internet (see [Doors left open](#doors-left-open)). Still, never forward 3310, or point a reverse proxy at it.
+
+**Home names.** [Trusted networks](#trusted-networks) also need tapiOca asked for by a home name: an address on your network, a single-word name (such as `nas`), a name ending in `.local`, `.lan`, `.home`, `.home.arpa`, `.internal`, `.localdomain` or `.ts.net`, `BASE_URL`'s name, or a name listed under [Names for tapiOca at home](#names-for-tapioca-at-home). Asked for by any other name, such as `tv.example.com`, a connection at home is never trusted, and Admins get an alert. With signing in off, it gets only tapiOca's page, saying to add the name, and the tuner: a web page elsewhere can't point a name of its own at tapiOca and use your browser to change it (this is called DNS rebinding).
+
+**Signing in.** A new tapiOca has everyone sign in, at home and away. The setup's step 4 makes you the first Admin, and can let your home network's devices skip signing in (see [Trusted networks](#trusted-networks)). You can also add the first user on the **Access** tab, with a name and a password of at least 8 characters. **The first user is always an Admin**, and you're signed in right away. After that, everyone else sees a sign-in page, or **Who's tuning in?** on a trusted network. Until there's an Admin, tapiOca's page and apps are open to anyone at home, and they can change anything, as an Admin can. Nobody can use them from the internet then, even with **Away from home** on: tapiOca's apps there say "This tapiOca client can't reach the server. Please check back later." tapiOca's apps work from the internet once **Away from home** is on, on the **Access** tab. Signing in doesn't change who can watch in Plex, Jellyfin, Emby or Kodi: each app decides that itself.
+
+**Updated with signing in off.** A tapiOca that had signing in off (**Anyone on my network**) before 1.36.0 keeps working the same way at home. Admins get an alert suggesting signing in, with your home network trusted so its devices skip it (see [Doors left open](#doors-left-open)).
 
 | Role | Can do |
 |---|---|
 | **Admin** | Everything. |
 | **User** | Watch the stations and Media their Viewing Level allows, and see the Stats tab. Make stations (3 by default; an Admin can choose none, 1, 3, 5, 10, 25 or no limit) and change or delete only their own. On a Viewing Level with limits, they can only watch. Add logos and Intro Bumper videos (only Admins can delete them). Can't open **Setup**, **Broken files**, **Logs** or **Access**. |
 
-- **Always an Admin.** There's always at least one Admin. Removing the last user turns sign-in off again.
+- **Always an Admin.** There's always at least one Admin: the last one can't be removed or made a User. Removing people never turns signing in off. Locked out? See **Locked out?** below.
 - **Older stations.** Stations made before sign-in was turned on, or by a removed user, can be changed only by Admins.
 - **Managing people.** On the **Access** tab, an Admin can rename people (including themselves and other Admins), change roles and set new passwords.
 - **Renaming.** A new name must differ from everyone else's, ignoring capitalization, as for a new user. The person signs in with it from then on and keeps everything: their sign-ins and linked devices, the stations they made, their Viewing Level, where they are in what they watch, and their stats. tapiOca's apps show the new name the next time they check.
 - **Your own account.** Choose your name at the top of the page, or Options in tapiOca's apps, to change your password or sign out.
 - **Permissions.** **Can change their own password**, next to each person's **New password**, and **Can report problems**, below it (see [People's reports](#peoples-reports)), are on by default. Admins can always do both. A new password signs that person out everywhere else.
-- **Last signed in.** Each person's last sign-in shows its date and time, and below it the address it came from, as the access log has it. (Through a reverse proxy at home, that's the proxy's address. From the internet, it's the visitor's, as your proxy saw it.)
-- **Sign-in limits.** A sign-in lasts 30 days after it was last used. After 5 wrong passwords from one address within 15 minutes, that address has to wait. Passwords are stored only as salted hashes.
-- **Page timeout.** tapiOca's page signs you out after an hour without activity. tapiOca's apps stay signed in. At home, you can sign in again with just your PIN (if you have one), on a browser where you've signed in with your password before. "At home" means tapiOca's address on your home network. Through its internet address (your reverse proxy or tunnel), it's always your password, even from home. The sign-in page says which. After updating from a version before 1.32.0, each browser needs your password once before the PIN works there. After 5 wrong PINs, wait 15 minutes. If you sign out on purpose, or your password changes, that browser needs your password next time.
-- **No password for Plex.** Plex, Jellyfin and other apps never need a password, just like a real HDHomeRun. The tuner, guide, streams, logos and playlist stay open on your network. To limit all but the logos to devices you list, choose **Only these devices** under [Tuner access](#tuner-access).
+- **Last signed in.** Each person's last sign-in shows its date and time, and below it the address it came from, as the access log has it. (Through a [trusted proxy](#trusted-proxies), it's the visitor's, as the proxy saw it. Through a proxy you haven't listed, it's the proxy's own address.)
+- **Sign-in limits.** A sign-in lasts 30 days after it was last used. After 5 wrong passwords from one address within 15 minutes, that address has to wait. That's the visitor's own address only through a trusted proxy, or Cloudflare's own network. Passwords are stored only as salted hashes.
+- **Page timeout.** tapiOca's page signs you out after an hour without activity. tapiOca's apps stay signed in. At home, you can sign in again with just your PIN (if you have one), on a browser where you've signed in with your password before. "At home" means tapiOca's address on your home network, as above. Through its internet address (your reverse proxy or tunnel), or anything tapiOca treats as from the internet, it's always your password, even from home. The sign-in page says which. After updating from a version before 1.32.0, each browser needs your password once before the PIN works there. After 5 wrong PINs, wait 15 minutes. If you sign out on purpose, or your password changes, that browser needs your password next time.
+- **No password for Plex.** Plex, Jellyfin and other apps never need a password, just like a real HDHomeRun. The tuner, guide, streams, logos and playlist stay open on your network. To limit all but the logos to devices and networks you list, choose **Only these devices** under [Tuner access](#tuner-access).
+
+### Trusted networks
+
+Devices on a trusted network skip signing in. Nothing is trusted until an Admin adds it, under **Trusted networks** on the **Access** tab (or in the setup's step 4). Add your own home network, one device, or your own VPN. **Never add a guest network.**
+
+- **What to add.** A whole home network, such as `192.168.1.0/24`. One device's address, such as `192.168.1.44`. Your own VPN's network, such as `10.8.0.0/24`. Give it a name if you like, such as "Home Wi-Fi". **Add the network you're on** adds yours in one step. The tab says where you are: "You're at 192.168.1.44, on Home Wi-Fi."
+- **What each one gives.** **Who's tuning in?** (the default): each person picks themselves, and kids get their own limits. It lists people shown on **Every device at home** or **Every device, at home and away**. Anyone with a PIN is asked for it, and an Admin always is (their PIN, or their password if they have none). Or **Signed in as** a person: the device is signed in as them. An Admin can be signed in only on one device's address. Whoever has that address is that person, so reserve it for the device in your router's DHCP settings.
+- **Anyone can still sign in as someone else.** **Sign in with a password** is always there.
+- **Home addresses only.** Internet addresses are refused. A network wider than 256 addresses, such as `192.168.0.0/16`, asks first, because it often takes in guest networks too. List up to 50. When two overlap, the narrower one wins: `192.168.1.44` signed in as Ada works inside a `192.168.1.0/24` on Who's tuning in?
+- **Where it works.** In tapiOca's apps (1.36.0 and later) and on tapiOca's page. Plex, Jellyfin and other apps use [Tuner access](#tuner-access) instead.
+- **Only there.** Sign-ins and devices a trusted network makes work only on that network: never on another, away from home, or on the public port. Changing or removing the network ends them. So does removing the person it signs in as. Making that person an Admin ends what was signed in for them with no PIN or password, and turns a network that signs them in into **Who's tuning in?**, until you choose **Signed in as** them again.
+- **Only when tapiOca can be sure.** Trust needs an Admin (signing in on), a connection at home asking for a home name (see [Who can use tapiOca](#who-can-use-tapioca)), and tapiOca able to see where connections come from (see [When tapiOca can't see where connections come from](#when-tapioca-cant-see-where-connections-come-from)). A device that sends forwarding headers, and isn't a [trusted proxy](#trusted-proxies), is never trusted. Through a trusted proxy, the visitor's address counts, but a network that signs in an Admin never applies there. The network around it does, if there is one. Nothing is ever trusted through Docker's own address, even listed as a trusted proxy.
+- **Wrong PINs.** Each person's own limit applies: after 5 wrong PINs, they wait 15 minutes, on every device. After 10 wrong PINs from one device's address in an hour, that device needs a password, or a wait. Anyone with a password may give it instead of a PIN. When an Admin's PIN is locked, Admins get an alert: "An Admin's PIN was entered wrong 5 times, so it's locked for 15 minutes. If that wasn't them, change it on the Access tab."
+- **For watching.** A sign-in a trusted network makes (with a PIN, or nothing) is for watching. It can't change passwords or PINs, add people, make API tokens or invite codes, or link an app. An Admin signed in this way is a User there, and gives their password for anything only an Admin does, such as the **Access**, **Setup** and **Logs** tabs: sign out, then choose **Sign in with a password**. Admin alerts don't show there either; they show after a password sign-in, and go to the alert web addresses as always. Picking yourself on Who's tuning in? with your password is an ordinary sign-in.
+- **Limits.** One device's address can ask a trusted network for 20 sign-ins in 15 minutes. A network's sign-ins never sign anyone out elsewhere, and a network with 100 devices linked links another only in place of one never used, or unused for 30 days.
+
+### Trusted proxies
+
+List your reverse proxy or tunnel under **Trusted proxies** on the **Access** tab, by its address on your home network. List up to 10. Home addresses only, or `127.0.0.1` for a tunnel in tapiOca's own container.
+
+- **Never by headers alone.** tapiOca never decides a device is a proxy because it sends forwarding headers. Only a listed proxy is believed.
+- **Who the visitor is.** From a listed proxy, tapiOca reads the last address in each of `X-Real-IP`, `X-Forwarded-For` and `Forwarded` it sends. They must all name the same visitor. If they don't, or the proxy names no one, tapiOca can't tell who it is, and treats the request as from the internet. The access log calls it "an unnamed visitor via" the proxy, and its wrong passwords count on their own, never as the proxy's address, which everyone through it shares.
+- **Headers from anything else.** They're ignored: they never say who a visitor is, and never give trust. They can only take trust away. If they name an internet address, or can't be read, the request is treated as from the internet. Admins get an alert: "tapiOca is ignoring forwarding headers from a device that isn't a trusted proxy. If it's your reverse proxy, add it under Trusted proxies on the Access tab." The alert never gives the address. The **Access** tab shows it to Admins: "tapiOca ignored forwarding headers from 192.168.50.2: it isn't a trusted proxy."
+- **HTTPS.** tapiOca believes a proxy saying a request came over HTTPS only from a listed proxy. So tapiOca's apps from the internet need their proxy listed.
+- **A proxy in another container on the same server.** It reaches tapiOca from Docker's own address (its gateway, such as `172.17.0.1`), which carries other connections too: other containers, and devices over IPv6. List that address for your public port, so wrong passwords count by each visitor there (the internet's own limit holds too). But nothing is ever trusted through it, wrong passwords on the home port through it count as it, and anything else arriving from it that names no visitor is treated as from the internet. The **Access** tab marks such an entry. For trusted networks through your proxy, put it on a Docker network shared with tapiOca, with an address of its own, and list that.
+- **One address.** A proxy has one address: listing more (a network) asks first, as every device there could say who a visitor is.
+
+### Names for tapiOca at home
+
+If you open tapiOca at home by a name such as `tapioca.example.com` (split DNS, where your home's own DNS answers with tapiOca's home address), add it under **Names for tapiOca at home** on the **Access** tab. Your away-from-home address's name can't be one: that's how the internet reaches tapiOca (made the away address later, it comes off this list). tapiOca then knows that's you at home and not a tunnel, so trusted networks work by that name. List up to 10. Names that are always home's, such as `nas.local`, need no listing (see [Who can use tapiOca](#who-can-use-tapioca)).
+
+### Doors left open
+
+tapiOca is built to stay safe when a door is left open by mistake. When it can't be sure a connection is from home, it treats it as from the internet: it gets exactly what the public port gives. The alerts never include an address or a name. For the first four below, the **Access** tab shows Admins the last address and time, and the access log notes each, with its address, at most once an hour.
+
+| Left open | What tapiOca does | Admins' alert |
+|---|---|---|
+| **The home port forwarded on the router**, or opened by your internet address | Treats it as from the internet | "tapiOca is being reached from the internet on its home port. Close that port forward. Until then, tapiOca treats those connections as from the internet." |
+| **A reverse proxy or tunnel pointed at 3310** | Treats what it sends from the internet, or can't name, as from the internet | "A reverse proxy or tunnel is sending internet visitors to tapiOca's home port, 3310. Point it at the public port, 3311, instead. Until then, tapiOca treats them as from the internet." (With your own ports. With no public port, it says to set `PUBLIC_PORT`.) |
+| **An internet name on 3310**, with no forwarding headers | Never trusts it. With signing in on, it isn't refused, as it may be a name your home's DNS gives. With signing in off, it gets only the page and the tuner | "Something reached tapiOca's home port by an internet name. If a tunnel or proxy points at port 3310, point it at the public port instead. If it's a name you use at home, add it under Names for tapiOca at home on the Access tab." |
+| **Forwarding headers from a device that isn't a trusted proxy** | Ignores them, and never trusts that device | "tapiOca is ignoring forwarding headers from a device that isn't a trusted proxy. If it's your reverse proxy, add it under Trusted proxies on the Access tab." |
+| **Docker hiding every device's address** | Turns trusted networks off | "tapiOca can't see where connections come from: they all arrive from Docker's own address. Trusted networks are off, and tapiOca can't tell the internet from home. The Access tab says how to fix it." |
+| **Signing in left off** | Open at home only. Anything treated as from the internet gets "This tapiOca client can't reach the server. Please check back later.", and no one can make the first Admin from there | "Signing in is off, so anyone on your home network can change anything in tapiOca. Add a user on the Access tab to turn it on, and trust your home network so its devices skip signing in." |
+| **The tuner and an internet address** | Never gives it the tuner, even if it's listed under **Only these devices** | None |
+
+The first four alerts are marked fixed after a day without. The Docker alert is fixed once tapiOca can see where connections come from again, and the signing-in alert once signing in is on.
+
+### When tapiOca can't see where connections come from
+
+Some Docker setups pass every connection through Docker's own address (its gateway, such as `172.17.0.1`). That hides each device's own address. Docker's userland proxy does this, often for IPv6, and Docker Desktop for Mac and Windows always does.
+
+- **Hidden.** In an hour, if 20 page or app requests on the home port (not the tuner, icons or logos, which Plex or Jellyfin in Docker fetch that way) come from Docker's address and fewer than 5 from anywhere else, tapiOca calls addresses hidden. Trusted networks are then off for everyone, the setup offers no network, the **Access** tab says why, and Admins get an alert. It ends once 5 requests come from devices seen as themselves, or when tapiOca restarts.
+- **Partly hidden.** When some requests come through Docker's address and some don't, the **Access** tab says so. Open tapiOca by its IPv4 address, such as `http://192.168.1.20:3310`.
+- **Never trusted.** Docker's gateway and tapiOca's own addresses carry other devices' connections, so they're never trusted, even inside a trusted network. tapiOca can't tell your router's address apart this way: a router that forwards a port to tapiOca and rewrites where it came from, or a VPN that does (masquerading), shows as the router itself. Don't trust a network with such an address in it, and never forward the home port.
+- **The fix.** Run tapiOca with host networking (`network_mode: host` in the YAML or Compose file, in place of its `ports:` lines). Or turn off Docker's userland proxy (`"userland-proxy": false` in Docker's `daemon.json`), then restart Docker and tapiOca.
+- **No fix.** On Docker Desktop for Mac or Windows, there's none: every device signs in.
+- **Run from source.** When tapiOca can't read the machine's routing table (run from source on a computer that isn't Linux, say), trusted networks are off too, and Admins with networks listed get an alert.
 
 ### Viewing Levels
 
@@ -1189,13 +1258,14 @@ tapiOca's apps can share one device among several people, such as the living roo
 - **Choosing a PIN.** The first time someone signs in on a device with their password or an invite code, the app asks them to choose a PIN or none. They can change it in the app's Options. An Admin who has a PIN keeps one. An Admin can set, change or remove anyone's PIN on the **Access** tab, with **Set PIN** (or **Change PIN**, for someone who has one, however they set it) beside **New password**, or under **Devices**.
 - **No password needed.** A User can have no password, such as a "Kids" user who only picks themselves on the TV. Without a password or a PIN, they can't sign in by name, so they can only be on **Every device at home** or **Only devices you choose**.
 - **Sign in on a new device.** Choose **Sign in** on Who's tuning in?, then enter your name and password, or an **invite code** an Admin made for you under **Devices**. An invite code works once, for 7 days. You're then on that device's list. Anyone can take themselves off a device's list.
+- **Linked by a trusted network.** On a [trusted network](#trusted-networks) that gives **Who's tuning in?**, tapiOca's apps (1.36.0 and later) link the device by themselves. The **Access** tab lists it as "Linked by the trusted network Home Wi-Fi". It works only on that network. Elsewhere it says "This device skips signing in only on its trusted network. Sign in to use tapiOca here." A password or invite code used on it makes it an ordinary linked device. A network links up to 100 devices, and then another only in place of one never used, or unused for 30 days.
 - **Unlinking.** **Linked devices** on the **Access** tab lists each device and who's on its list. **Unlink** signs the device out at once.
 
 A sign-in from Who's tuning in? lasts a day from when it was last used, so a shared device returns to the list instead of staying signed in as someone.
 
 **Access log.** On the **Logs** tab, check **Access** to see sign-ins, failed sign-ins, sign-outs and changes to users. The newest 2,000 entries are kept across restarts.
 
-**Locked out?** Create an empty file named `reset-access` in tapiOca's data folder (for example, `sudo touch data/reset-access`) and restart the app. Every user is removed, the page is open again, and the file is deleted.
+**Locked out?** Create an empty file named `reset-access` in tapiOca's data folder (for example, `sudo touch data/reset-access`) and restart the app. Every user is removed, and so is every trusted network that signed in a person. The page is open again at home, and the file is deleted.
 
 ### Blocking stations for some Plex users
 
@@ -1214,10 +1284,10 @@ tapiOca only stops a stream when it's sure which station it is: only one station
 
 ### Tuner access
 
-The **tuner** is what Plex, Jellyfin and other apps use, and none of them can sign in. It's the HDHomeRun tuner itself, the guide, the list of stations, the stations' streams and the guide's pictures. All of it is on tapiOca's home port (3310, unless you set `PORT`), never the public port. Station logos aren't part of it. On the **Access** tab, under **Tuner access**, choose who can use it:
+The **tuner** is what Plex, Jellyfin and other apps use, and none of them can sign in. It's the HDHomeRun tuner itself, the guide, the list of stations, the stations' streams and the guide's pictures. All of it is on tapiOca's home port (3310, unless you set `PORT`), never the public port, and never for anything tapiOca treats as from the internet. Station logos aren't part of it. On the **Access** tab, under **Tuner access**, choose who can use it:
 
 - **Any device on my home network.** This is the default.
-- **Only these devices.** Only the devices you list, by IP address, with a name if you like. **Plex server only** lists just Plex's own address, in one step, after showing you which address that is.
+- **Only these devices.** Only the devices and networks you list, with a name if you like: a device by its IP address, such as `192.168.1.44`, or a whole network, such as `192.168.1.0/24`. Networks must be home addresses. List up to 50 devices and networks in all. **Plex server only** lists just Plex's own address, in one step, after showing you which address that is.
 
 **Recent tuner connections** shows each device that used the tuner in the last 7 days: its name (what it calls itself), its address, what it asked for, when, and whether it was refused. **Allow**, beside one, lists it. Each refused request is logged in plain words, once an hour for each address, and ten addresses an hour at most.
 
@@ -1225,6 +1295,7 @@ The **tuner** is what Plex, Jellyfin and other apps use, and none of them can si
 - **What a device calls itself.** Any device can call itself Plex. So tapiOca takes Plex's address from `PLEX_URL` when Plex uses the tuner from there, and never from a device it turned away. When something calling itself Plex is turned away, the tab says just that. Check the address before you choose **Allow**.
 - **The Docker network's address.** Every container on the same server reaches tapiOca from that one address, not just Plex: listing it lets them all use the tuner, including a reverse proxy.
 - **An IP address isn't a password.** On your home network, a device can take another's address. Tuner access keeps out devices that shouldn't use the tuner by mistake, such as a smart TV app finding it on its own. It can't stop someone at home who means to get in.
+- **Never an internet address.** A device at an internet address never gets the tuner, even if it's listed (see [Doors left open](#doors-left-open)).
 - **Sign-in.** With sign-in off, anyone on your home network can open tapiOca's page and change Tuner access, so turn sign-in on first. The tab reminds you.
 - **tapiOca's own apps.** Signed in, they never need listing: at home too, each gets stream addresses of its own, so changing Tuner access never stops one. With signing in off, an app is a device like any other.
 - **Scripts.** For scripts using [tapiOca's API](#tapiocas-api), a program's `art` address is part of the tuner.

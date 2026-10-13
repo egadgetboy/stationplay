@@ -675,6 +675,20 @@ table.stats .station img.shaped { padding: 2px; }
 .signin { width: min(380px, 100%); padding: 24px; display: grid; gap: 14px; }
 /* (Use your password, and Switch user: far enough apart for a finger.) */
 .signin .linkish + .linkish { margin-top: 6px; }
+/* Who's tuning in?, on a trusted network (see trusted.js) */
+#signinTrusted { display: grid; gap: 12px; }
+#signinTrusted[hidden] { display: none; }
+.signin-who { margin: 0; font-size: 18px; text-align: center; }
+.who-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
+.who { display: grid; justify-items: center; gap: 6px; padding: 12px 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--ink); font: inherit; cursor: pointer; min-height: 44px; }
+.who:hover { border-color: var(--accent); }
+.who:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.who[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.who .face { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 18px; }
+.who .who-name { font-weight: 600; overflow-wrap: anywhere; text-align: center; }
+.who .who-note { font-size: 12px; color: var(--ink-3); }
+.trusted-you { margin: 0; }
+.trusted-list td .hint { display: block; }
 .brand.stacked { flex-direction: column; margin: 6px 0 16px; }
 .brand.stacked .word { height: 40px; }
 .userpill { cursor: pointer; }

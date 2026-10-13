@@ -49,6 +49,8 @@ from .db import Database, User
 from .text import and_list, plain
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from fastapi import FastAPI
 
     from .main import AppContext
@@ -72,6 +74,17 @@ CODE_LETTERS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 NAME_MOST = 120
 DEVICE_HEADER = "stationplay-device"
 WRONG_PIN = "That PIN isn't right"
+# A device linked by a trusted network (1.36.0), used anywhere else.
+OFF_ITS_NETWORK = (
+    "This device skips signing in only on its trusted network. Sign in to use tapiOca here."
+)
+# The most devices a trusted network links (then one unused this long goes).
+TRUSTED_DEVICES_MOST = 100
+UNUSED_DAYS = 30
+NETWORK_FULL = (
+    "This trusted network has linked as many devices as it can. An Admin can unlink some on "
+    "the Access tab."
+)
 ADMIN_PASSWORD = (
     "Enter your password: on a device others use too, an Admin needs a PIN or their password"
 )
@@ -113,6 +126,7 @@ class Device:
     seen_ms: int
     linked_by: str  # who linked it, by name (kept if they're removed)
     linked_by_id: int | None = None  # and by id, which is what says it's theirs
+    trusted: str = ""  # the trusted network that linked it, the only one it works on (1.36.0)
 
 
 @dataclass
@@ -122,6 +136,8 @@ class Devices:
     # Wrong PINs lately, by person, and wrong sign-ins by name, by device: when.
     _wrong: dict[int, deque[float]] = field(default_factory=dict)
     _wrong_here: dict[int, deque[float]] = field(default_factory=dict)
+    # (An Admin's PIN locked: see admins_locked. Set by main, for the alert.)
+    on_admin_locked: Callable[[], None] | None = None
 
     def __post_init__(self) -> None:
         self._move_home()
@@ -157,21 +173,59 @@ class Devices:
         device_id = self.db.add_linked_device(access.session_hash(key), name, now, by.name, by.id)
         return Device(device_id, name, now, now, by.name, by.id), key
 
-    def device(self, key: str | None, name: str | None = None) -> Device | None:
+    def link_trusted(self, name: str, entry: dict[str, Any]) -> tuple[Device, str]:
+        """Links a device on a trusted network that opens on Who's tuning in?
+        (see trusted.py): it works only there. It and its key (shown once).
+        A network keeps at most TRUSTED_DEVICES_MOST: when it's full, one
+        never used goes, or one unused for UNUSED_DAYS, or (none) Refused: a
+        device in use is never pushed out by new ones (the cold audit of
+        1.36.0)."""
+        key = access.TRUSTED_TOKEN_PREFIX + secrets.token_urlsafe(KEY_BYTES)
+        now = _now()
+        name = plain(name)[:NAME_MOST] or "A tapiOca app"
+        by = f"the trusted network {entry.get('label') or entry['network']}"
+        mine = [r for r in self.db.linked_devices() if r["trusted"] == entry["id"]]
+        if len(mine) >= TRUSTED_DEVICES_MOST:
+            # (Room is made by a device never used since it was linked, as
+            # a flood of asks leaves, then one unused for UNUSED_DAYS; never
+            # one in use.)
+            never = [r for r in mine if r["seen_ms"] == r["created_ms"]]
+            oldest = min(never or mine, key=lambda r: r["seen_ms"])
+            if not never and now - oldest["seen_ms"] < UNUSED_DAYS * 86_400_000:
+                raise Refused(NETWORK_FULL)
+            self.db.unlink_device(oldest["id"])
+        device_id = self.db.add_linked_device(
+            access.session_hash(key), name, now, plain(by)[:NAME_MOST], None, entry["id"]
+        )
+        return Device(device_id, name, now, now, by, None, entry["id"]), key
+
+    def device(
+        self, key: str | None, name: str | None = None, where: str | None = None
+    ) -> Device | None:
         """The linked device with this key (noting that it was used, and its
-        name if it says a new one), or None."""
+        name if it says a new one), or None. `where`: the trusted network
+        the request comes from ("" for none): a device a trusted network
+        linked works only there (Refused, 403, anywhere else; None: any)."""
         if not key:
             return None
         row = self.db.linked_device(access.session_hash(key))
         if row is None:
             return None
+        if row["trusted"] and where is not None and row["trusted"] != where:
+            raise Refused(OFF_ITS_NETWORK, 403)
         now = _now()
         name = plain(name)[:NAME_MOST] if name else None
-        if now - row["seen_ms"] > access.SEEN_EVERY_MS or (name and name != row["name"]):
-            self.db.device_seen(row["id"], now, name if name != row["name"] else None)
+        renamed = name if name and name != row["name"] else None
+        if row["trusted"] and row["seen_ms"] == row["created_ms"]:
+            # (A network's device no one was ever picked on stays "never
+            # used", however often it asks: see link_trusted and choose.)
+            if renamed:
+                self.db.device_seen(row["id"], row["created_ms"], renamed)
+        elif now - row["seen_ms"] > access.SEEN_EVERY_MS or renamed:
+            self.db.device_seen(row["id"], max(now, row["created_ms"] + 1), renamed)
         return Device(
             row["id"], name or row["name"], row["created_ms"], now, row["linked_by"],
-            row["linked_by_id"],
+            row["linked_by_id"], row["trusted"],
         )  # fmt: skip
 
     def devices(self) -> list[Device]:
@@ -330,7 +384,7 @@ class Devices:
         here = self.db.device_people().get(device.id, {})
         if user is None or not self.on_picker(user, here.get(user.id), at_home=not public):
             raise Refused("That person isn't on this device's list", 404)
-        unlocked = False
+        unlocked = by_password = False
         if user.has_pin:
             await self._check_pin(user, pin or "")
         elif user.role == ADMIN and self._shared(device, user, here):
@@ -339,11 +393,23 @@ class Devices:
             )
             if not right:
                 raise Refused(ADMIN_PASSWORD)
+            by_password = True
         else:
             # (Anyone at the device may pick them, so the sign-in says nothing
             # about who's there: see set_own_pin.)
             unlocked = True
-        return user, self.access.start_session(user, device.name, device.id, unlocked)
+        # (Someone picked on it: a device in use, never the first to go when
+        # its trusted network is full. See link_trusted.)
+        self.db.device_seen(device.id, max(_now(), device.created_ms + 1))
+        return user, self.access.start_session(
+            user,
+            device.name,
+            device.id,
+            unlocked,
+            # (With their password: an ordinary sign-in, as on the page's
+            # picker. Otherwise, on a network's device, only there.)
+            trusted="" if by_password else device.trusted,
+        )
 
     def _shared(self, device: Device, user: User, here: dict[int, str]) -> bool:
         """Whether a device is one others use too, for an Admin picking
@@ -389,8 +455,20 @@ class Devices:
                     logging.WARNING,
                     f"Too many wrong PINs for {user.name}: they wait 15 minutes",
                 )
+                if user.role == ADMIN and self.on_admin_locked is not None:
+                    self.on_admin_locked()
             raise Refused(WRONG_PIN)
         wrong.clear()
+
+    def admins_locked(self) -> bool:
+        """Whether an Admin's PIN is locked now (PIN_TRIES wrong in the last
+        PIN_WAIT_S): for the alert (see alerts.Alerts.doors)."""
+        now = time.monotonic()
+        for user_id, wrong in self._wrong.items():
+            recent = sum(1 for t in wrong if now - t <= PIN_WAIT_S)
+            if recent >= PIN_TRIES and (u := self.db.user(user_id)) and u.role == ADMIN:
+                return True
+        return False
 
     async def sign_in_by_name(
         self,
@@ -461,6 +539,11 @@ class Devices:
                 "ask an Admin.",
             )
         self.note_signed_in(device, user)
+        if device.trusted:
+            # (A password or invite code on a device a trusted network
+            # linked: an ordinary linked device now, as appapi's sign-in
+            # makes it. The cold audit of 1.36.0.)
+            self.db.unbind_device(device.id)
         return user, self.access.start_session(user, device.name, device.id)
 
     # Someone's own PIN, in an app ------------------------------------------------------------
@@ -621,6 +704,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         people = {dev.id: [u.name for u in d.people(dev)] for dev in found}
         away = {dev.id: [u.name for u in d.people(dev, at_home=False)] for dev in found}
         names = {u.id: u.name for u in ctx.db.users()}  # (as they're named now)
+        # (Linked by a trusted network: its name, or the network.)
+        networks = {e["id"]: e.get("label") or e["network"] for e in ctx.trusted.entries}
         return {
             "default": d.default_show_on,
             "devices": [
@@ -632,6 +717,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     "seenMs": dev.seen_ms,
                     "people": people[dev.id],  # (at home)
                     "peopleAway": away[dev.id],
+                    "trustedNetwork": networks.get(dev.trusted, "") if dev.trusted else None,
                 }
                 for dev in found
             ],
@@ -676,6 +762,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     @app.put("/api/access/users/{user_id}/picker")
     async def change_picker(user_id: int, body: PickerChange, request: Request):
         user = user_or_404(user_id)
+        if body.pin is not None:
+            ctx.access.refuse_without_secret(request)
         said = []
         try:
             if body.pin is not None:
@@ -700,6 +788,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     @app.post("/api/access/users/{user_id}/invite")
     async def invite(user_id: int, request: Request):
         user = user_or_404(user_id)
+        ctx.access.refuse_without_secret(request)
         code, expires = d.make_invite(user)
         ctx.access.record(logging.INFO, f"{who(request)} made an invite code for {user.name}")
         return {"code": code, "expiresMs": expires}

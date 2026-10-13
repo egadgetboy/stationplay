@@ -95,6 +95,9 @@ TUNER_SEEN = [
     ("192.168.1.41", "VLC/3.0.21 LibVLC/3.0.21", "/stream/4", 15, False),
     ("172.17.0.5", "PlexMediaServer/1.41.3", "/lineup.json", 2, False),
 ]
+# Trusted networks: a device on the home Wi-Fi (Who's tuning in?), and Sam's
+# laptop (signed in as Sam), where the sign-in screen is looked at from (AsPeer).
+TRUSTED_DEVICE, SAMS_LAPTOP = "192.168.1.60", "192.168.1.44"
 # A Discord webhook's address, typed on the Logs tab (Format then says Discord).
 DISCORD = "https://discord.com/api/webhooks/123456789012345678/abcDEF-ghi_jkl"
 SLACK = "https://hooks.slack.com/services/T000/B000/example-key"
@@ -238,6 +241,25 @@ def media_folder(data: Path) -> Path:
     return media
 
 
+class AsPeer:
+    """Tool only: a request's X-Page-Peer header (taken off before tapiOca
+    sees it) says the address it comes from, so the sign-in screen can be
+    looked at from a device on a trusted network (1.36.0)."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http":
+            headers = scope.get("headers") or []
+            said = [v for k, v in headers if k == b"x-page-peer"]
+            if said:
+                client = scope.get("client") or ("127.0.0.1", 0)
+                scope = {**scope, "client": (said[-1].decode("latin-1"), client[1]),
+                         "headers": [(k, v) for k, v in headers if k != b"x-page-peer"]}  # fmt: skip
+        await self.app(scope, receive, send)
+
+
 class Running:
     """tapiOca on its home-network port and its public one, in a thread
     of its own; `call` runs something on its event loop."""
@@ -262,7 +284,9 @@ class Running:
                 "tag_name": f"v{self.newest}", "html_url": f"{RELEASES}/tag/v{self.newest}"})
         )  # fmt: skip
         self.ctx.play_transport = plex.transport()
-        config = uvicorn.Config(self.app, log_level="warning", lifespan="on", proxy_headers=False)
+        config = uvicorn.Config(
+            AsPeer(self.app), log_level="warning", lifespan="on", proxy_headers=False
+        )
         self.server = uvicorn.Server(config)
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(
@@ -477,6 +501,24 @@ def fill(sp: Running, data: Path) -> None:
 
         # Tuner access: any device on the home network, with two devices listed.
         ok(home.put("/api/tuner", json={"only": False, "devices": TUNER_LISTED}))
+
+        # Trusted networks (1.36.0): the home Wi-Fi, on Who's tuning in? (Jo
+        # shown there, with a PIN), and Sam's laptop, signed in as Sam (the
+        # sign-in screen is looked at from them: see AsPeer); the reverse
+        # proxy; a name for home. First, a device that isn't a trusted proxy
+        # sends forwarding headers (seen lately, on the tab).
+        ok(home.get("/api/status", headers={"X-Forwarded-For": "192.168.1.7"}))
+        people = {u["name"]: u["id"] for u in ok(home.get("/api/access/users"))}
+        ok(home.put(f"/api/access/users/{people[JO['name']]}/picker", json={"showOn": "home"}))
+        ok(home.put("/api/access/trusted", json={
+            "entries": [
+                {"network": "192.168.1.0/24", "label": "Home Wi-Fi", "gives": "picker"},
+                {"network": SAMS_LAPTOP, "label": "Sam’s laptop", "gives": "person",
+                 "person": people[USER["name"]]},
+            ],
+            "proxies": [{"network": "192.168.1.2", "label": "Nginx Proxy Manager"}],
+            "homeNames": ["tv.home.example.com"],
+        }))  # fmt: skip
 
         # tapiOca's apps away from home, through a reverse proxy.
         ctx.reach.transport = Proxy(sp.app, sp.ports[1]).transport
@@ -1166,6 +1208,43 @@ def short_dialog(page: Page, look: Look) -> None:
     close_dialogs(page)
 
 
+def signin_trusted(browser: Any, base: str, context_of: Callable[..., Any], look: Look) -> None:
+    """The sign-in screen on a trusted network (1.36.0): Who's tuning in?,
+    with Jo's PIN asked when Jo is picked; and on Sam's laptop, Continue as
+    Sam (shown, not pressed: as after signing out on purpose)."""
+    context = context_of({"X-Page-Peer": TRUSTED_DEVICE})
+    page = context.new_page()
+    page.goto(base + "/")
+    if not until(page, "() => !document.querySelector('#signinTrusted').hidden"):
+        look.expect(
+            "Who's tuning in? shows on a trusted network",
+            page.evaluate("() => JSON.stringify(me)"),
+            True,
+        )
+        context.close()
+        return
+    look.page = page
+    look("signin-trusted")
+    names = page.locator("#signinPeople .who-name").all_inner_texts()
+    look.expect("Who's tuning in? lists Jo", JO["name"] in names, True)
+    page.locator("#signinPeople .who", has_text=JO["name"]).click()
+    until(page, "() => !document.querySelector('#signinByPin').hidden")
+    look.expect("Jo's PIN asked", page.inner_text("#signinPinLabel"), f"PIN for {JO['name']}")
+    look("signin-trusted-pin")
+    context.close()
+    context = context_of({"X-Page-Peer": SAMS_LAPTOP})
+    context.add_init_script("try { sessionStorage.setItem('tapioca.signedOut', '1'); } catch {}")
+    page = context.new_page()
+    page.goto(base + "/")
+    until(page, "() => !document.querySelector('#signinContinue').hidden")
+    look.page = page
+    look.expect(
+        "Continue as Sam", page.inner_text("#signinContinue"), f"Continue as {USER['name']}"
+    )
+    look("signin-trusted-person")
+    context.close()
+
+
 def signin_by_pin(page: Page, look: Look) -> None:
     """The sign-in screen's PIN form: at home, on a browser Jo signed in on
     with her password (her session's cookie gone, the browser's kept)."""
@@ -1698,7 +1777,7 @@ def main() -> None:
     ap.add_argument("--sizes", default=",".join(every), help="WxH, separated by commas")
     ap.add_argument("--themes", default=",".join(THEMES))
     ap.add_argument("--only", default="", help="views, separated by commas (stations, editor...)")
-    ap.add_argument("--who", default="admin,user,signin,signin-pin")
+    ap.add_argument("--who", default="admin,user,signin,signin-pin,signin-trusted")
     args = ap.parse_args()
     sizes = args.sizes.split(",")
     # Touch screens: phones and tablets (and any other size as small as a phone's).
@@ -1726,11 +1805,21 @@ def main() -> None:
                     folder.mkdir(parents=True, exist_ok=True)
                     for theme in args.themes.split(","):
                         for person in who:
-                            context = browser.new_context(
-                                viewport={"width": width, "height": height},
-                                device_scale_factor=1, is_mobile=size in touch,
-                                has_touch=size in touch, color_scheme=theme,
-                            )  # fmt: skip
+
+                            def context_of(headers=None, size=size, width=width, height=height,
+                                           theme=theme):  # fmt: skip
+                                return browser.new_context(
+                                    viewport={"width": width, "height": height},
+                                    device_scale_factor=1, is_mobile=size in touch,
+                                    has_touch=size in touch, color_scheme=theme,
+                                    extra_http_headers=headers,
+                                )  # fmt: skip
+
+                            if person == "signin-trusted":
+                                look = Look(None, folder, f"{person}-{theme}", size in touch, said)
+                                signin_trusted(browser, sp.home, context_of, look)
+                                continue
+                            context = context_of()
                             # (The update banner is shown in one view only.)
                             context.add_init_script(
                                 f"try {{ localStorage.setItem('{NOT_NOW}', '{NEWER}'); }} catch {{}}"

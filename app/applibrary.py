@@ -1747,6 +1747,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     # The play sessions' own addresses (a player can't sign in) ---------------
 
+    bound_of: dict[str, str] = {}  # (each play session's trusted network: "" for none)
+
     def session_or_404(session_id: str, request: Request) -> ondemand.PlaySession:
         """A play session that's still good, now marked as used: its library
         still shared, and its sign-in (if signing in is on) still good.
@@ -1756,6 +1758,16 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         outside = access.outside(request.scope)
         session = ctx.plays.find(session_id)
         if session is None or (outside and not session.away):
+            raise HTTPException(404, PLAY_ENDED)
+        # (Started with a sign-in a trusted network gave: good only there,
+        # 1.36.0. Looked up once for each session.)
+        if session.sign_in and session_id not in bound_of:
+            made = ctx.db.session_user(session.sign_in, 0)
+            bound_of[session_id] = made.trusted if made is not None else ""
+            while len(bound_of) > 1000:  # (the oldest go)
+                del bound_of[next(iter(bound_of))]
+        here = (request.scope.get("state", {}).get("trusted") or {}).get("id", "")
+        if bound_of.get(session_id) and bound_of[session_id] != here:
             raise HTTPException(404, PLAY_ENDED)
         now = time.monotonic()
         ended = (
@@ -1768,7 +1780,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             and session.sign_in
             and (outside or now - session.checked > ondemand.RECHECK_S)
         ):
-            ended = ctx.access.session_user_hashed(session.sign_in) is None
+            ended = ctx.access.session_user_hashed(session.sign_in, anywhere=True) is None
             session.checked = now
         if ended:
             ctx.plays.end(session_id)

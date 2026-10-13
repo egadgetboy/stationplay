@@ -19,6 +19,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex_library import LibraryPlex
+from .helpers import through_proxy
 
 PUBLIC_PORT = 8443
 ADMIN = {"name": "Pat", "password": "correct horse"}
@@ -684,7 +685,7 @@ def test_one_more_device_than_the_limits_allow_is_told_why(app):
         assert refused.status_code == 503
         assert refused.json()["limit"] == "devices" and refused.json()["most"] == 1
         # The device already watching a station may play something instead.
-        app.state.ctx.hls_streams.watchers = lambda: {"testclient": False}
+        app.state.ctx.hls_streams.watchers = lambda: {"192.168.1.50": False}
         assert play(home, "300").status_code == 200
 
 
@@ -774,7 +775,7 @@ AWAY = {"on": True, "address": "https://tv.example.com"}
 def internet(app, **headers) -> TestClient:
     """An app away from home: through a reverse proxy with HTTPS, to the
     public port."""
-    return TestClient(
+    return through_proxy(
         app,
         base_url=f"http://testserver:{PUBLIC_PORT}",
         headers={"X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.7", **headers},
@@ -881,7 +882,7 @@ def test_media_plays_away_from_home(app, plex, tmp_path, caplog):
         watching = home.get("/api/stats/now").json()["watching"]
         row = next(r for r in watching if r["media"] and r["media"]["title"] == "The Movie (1999)")
         assert (row["who"], row["where"], len(row["address"])) == ("Pat", "away", 6)
-        assert row["address"] != "testclient" and row["address"] in [
+        assert row["address"] != "192.168.1.50" and row["address"] in [
             k[:6] for k in app.state.ctx.away._keys
         ]
         # Leaving ends it; then its address is as good as never there.

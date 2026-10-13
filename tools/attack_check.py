@@ -43,7 +43,14 @@ clock says); a file whose name and tags read like ffmpeg's own words
 (where the deep scan finds damage stays where it is); and Media folders of
 tapiOca's own (only an Admin adds one, only from inside the media folder;
 browsing never leaves it; a video, poster or folder linked from outside it
-is never read or served; the apps never get a file's name or a path).
+is never read or served; the apps never get a file's name or a path); and
+from 1.36.0, the doors left open (the home port forwarded, a proxy pointed
+at it, headers from a device that isn't a trusted proxy, an internet name,
+Docker hiding addresses: each treated as the internet, or not trusted, with
+alerts that never give an address) and trusted networks (what can't be
+listed, what's never trusted, a sign-in a network gives working only there,
+the PIN limits, Tuner access by network). The public port's requests come
+from a reverse proxy at home, listed as a trusted proxy (see AsPeer).
 
 It's a tool, not part of CI (the test suite covers these as unit tests). Run
 it from the repo root:  python -m tools.attack_check   (add -v to see every
@@ -160,6 +167,36 @@ def build_plex(tmp: Path) -> LibraryPlex:
     return fp
 
 
+# (1.36.0) Where the public port's requests come from: a reverse proxy at
+# home, listed as a trusted proxy (as the README says to), whose headers say
+# who each visitor is. Only a listed proxy's headers are believed.
+PROXY_PEER = "192.168.1.2"
+GATEWAY, OWN = "172.17.0.1", "172.17.0.2"  # Docker's gateway, and tapiOca's own address
+
+
+class AsPeer:
+    """Harness only: requests to the public port come from PROXY_PEER, and
+    any request's X-Attack-Peer header (taken off before tapiOca sees it)
+    says the address it comes from, for the doors left open and trusted
+    networks, which a test on one machine can't otherwise reach."""
+
+    def __init__(self, app, public_port: int) -> None:
+        self.app, self.public_port = app, public_port
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http":
+            headers = scope.get("headers") or []
+            said = [v for k, v in headers if k == b"x-attack-peer"]
+            client = scope.get("client") or ("127.0.0.1", 0)
+            if said:
+                client = (said[-1].decode("latin-1"), client[1])
+            elif scope.get("server") and scope["server"][1] == self.public_port:
+                client = (PROXY_PEER, client[1])
+            scope = {**scope, "client": client,
+                     "headers": [(k, v) for k, v in headers if k != b"x-attack-peer"]}  # fmt: skip
+        await self.app(scope, receive, send)
+
+
 async def run(checks: Checks) -> None:
     tmp = Path(tempfile.mkdtemp(prefix="attack-check-"))
     fp = build_plex(tmp)
@@ -176,7 +213,12 @@ async def run(checks: Checks) -> None:
     )
     app = create_app(settings, PlexClient("http://plex.test", "token", transport=fp.transport()))
     app.state.ctx.play_transport = fp.transport()
-    server = uvicorn.Server(uvicorn.Config(app, log_level="error", proxy_headers=False))
+    import ipaddress as _ip
+
+    app.state.ctx.relays.found = lambda: {_ip.ip_address(GATEWAY), _ip.ip_address(OWN)}
+    server = uvicorn.Server(
+        uvicorn.Config(AsPeer(app, public_port), log_level="error", proxy_headers=False)
+    )
     task = asyncio.create_task(server.serve(sockets=[lan_sock, public_sock]))
     try:
         while not server.started:  # noqa: ASYNC110
@@ -209,6 +251,10 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
     admin_h = sam_h = kit_h = {}
     async with httpx.AsyncClient(base_url=home) as c:
         await c.post("/api/access/users", json=ADMIN)
+        # (The reverse proxy, as the README says: see PROXY_PEER.)
+        app.state.ctx.trusted.save(
+            {"proxies": [{"network": PROXY_PEER, "label": "Proxy"}]}, by=None
+        )
         sam = (await c.post("/api/access/users", json=USER)).json()
         kit = (await c.post("/api/access/users", json=KID)).json()
         admin_h = {
@@ -618,6 +664,13 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
     # one, only from inside the media folder; nothing linked from outside it
     # is read or served; the apps never get a file's name or a path.
     await _folders(checks, app, home, net, admin_h, sam_h, kit_h)
+
+    # 25) From 1.36.0: doors left open, and trusted networks. Whatever the
+    # mistake (the home port forwarded, a proxy pointed at it, an internet
+    # name, headers from a device that isn't a trusted proxy, Docker hiding
+    # addresses), it's treated as the internet, or simply not trusted; and
+    # what a trusted network gives works only there.
+    await _doors_and_trust(checks, app, home, net, admin_h, device_key)
 
 
 async def _media_away(
@@ -2018,6 +2071,331 @@ async def _tuner_access(checks: Checks, home: str, net: str, admin_h: dict, sam_
         r = await c.get("/discover.json")
         checks.ok(r.status_code == 200, "Allowed, it uses the tuner", f"got {r.status_code}")
         await c.put("/api/tuner", json={"only": False, "devices": []}, headers=admin_h)
+
+
+TUNER_PATHS = ("/discover.json", "/lineup.json", "/xmltv.xml", "/stations.m3u", "/stream/3",
+               "/hls/3/index.m3u8", "/art/201")  # fmt: skip
+
+
+async def _doors_and_trust(
+    checks: Checks, app, home: str, net: str, admin_h: dict, device_key: str
+) -> None:
+    ctx = app.state.ctx
+    port = home.rsplit(":", 1)[1]
+
+    def peer(address: str, **more: str) -> dict[str, str]:
+        return {"X-Attack-Peer": address, **more}
+
+    async def internet_like(c: httpx.AsyncClient, what: str, h: dict[str, str]) -> None:
+        """What the public port gives, and no more: no tuner, no PIN, no
+        at-home picker list, signing in asked for."""
+        for path in TUNER_PATHS:
+            r = await c.get(path, headers=h)
+            checks.ok(r.status_code == 404, f"{what}: {path} gets nothing", f"got {r.status_code}")
+        r = await c.get("/api/status", headers=h)
+        checks.ok(r.status_code == 401, f"{what}: the API asks to sign in", f"got {r.status_code}")
+        r = await c.post("/api/access/pin-sign-in", json={"pin": "4321"}, headers=h)
+        checks.ok(r.status_code == 404, f"{what}: no PIN sign-in", f"got {r.status_code}")
+        r = await c.get("/api/internal/picker", headers={**h, "StationPlay-Device": device_key})
+        listed = [p["name"] for p in r.json().get("people", [])] if r.is_success else []
+        checks.ok("Kit" not in listed, f"{what}: no at-home picker list", str(listed))
+        r = await c.get("/api/access/me", headers=h)
+        checks.ok(r.json().get("outside") is True and "trusted" not in r.json(),
+                  f"{what}: the page says it's from the internet", r.text[:200])  # fmt: skip
+
+    checks.section("Doors left open (1.36.0)")
+    async with httpx.AsyncClient(base_url=home, timeout=30) as c:
+        # Door 1: the home port forwarded on the router (IPv4, mapped, IPv6).
+        for address in ("203.0.113.9", "::ffff:203.0.113.9", "2001:db8::9"):
+            await internet_like(c, f"door 1 from {address}", peer(address))
+        # Door 1b: a home device asking for tapiOca by an internet address.
+        await internet_like(c, "door 1b", peer("192.168.1.9", Host=f"203.0.113.50:{port}"))
+        # Door 2: a device that isn't a trusted proxy, naming the internet
+        # (or what can't be read) in any forwarding header.
+        for name, value in (
+            ("X-Forwarded-For", "203.0.113.5"), ("X-Real-IP", "203.0.113.5"),
+            ("CF-Connecting-IP", "203.0.113.5"), ("True-Client-IP", "203.0.113.5"),
+            ("Forwarded", 'for="203.0.113.5:443"'), ("Forwarded", 'for="[2001:db8::5]:443"'),
+            ("Forwarded", "for=unknown"), ("Forwarded", "for=_hidden"), ("X-Forwarded-For", "x"),
+        ):  # fmt: skip
+            r = await c.get("/discover.json", headers=peer("192.168.1.5", **{name: value}))
+            checks.ok(r.status_code == 404, f"door 2 ({name}: {value}) gets no tuner",
+                      f"got {r.status_code}")  # fmt: skip
+        codes = []
+        for n in range(6):
+            r = await c.post("/api/access/sign-in", json={"name": "Ada", "password": "wrong"},
+                             headers=peer("192.168.1.5", **{"X-Forwarded-For": f"203.0.113.{n + 1}"}))  # fmt: skip
+            codes.append(r.status_code)
+        checks.ok(
+            codes[-1] == 429, "door 2: a new forwarded address each try gains nothing", str(codes)
+        )
+        ctx.alerts.doors(ctx.doors, open_=False, home_port=int(port), public_port=1)
+        now = [a for a in ctx.alerts.now() if a.kind == "access"]
+        checks.ok({"home-port", "proxy"} <= {a.about for a in now}, "doors 1 and 2 are Admin alerts",
+                  str([a.about for a in now]))  # fmt: skip
+        checks.ok(not any("203.0.113" in a.sentence or "192.168.1." in a.sentence for a in now),
+                  "the alerts never give an address", str([a.sentence for a in now])[:200])  # fmt: skip
+
+    checks.section("Trusted networks (1.36.0)")
+    async with httpx.AsyncClient(base_url=home, timeout=30) as c:
+        # Door 4: what can't be trusted.
+        for bad in ("0.0.0.0/0", "::/0", "8.8.8.0/24", "2001:db8::/64", "127.0.0.0/8",
+                    "fe80::1%eth0", "::ffff:192.168.1.0/120", "192.168.1.0/24 x"):  # fmt: skip
+            r = await c.put(
+                "/api/access/trusted", json={"entries": [{"network": bad}]}, headers=admin_h
+            )
+            checks.ok(r.status_code == 400, f"{bad} can't be trusted", f"got {r.status_code}")
+        many = [{"network": f"10.0.{n}.0/24"} for n in range(51)]
+        r = await c.put("/api/access/trusted", json={"entries": many}, headers=admin_h)
+        checks.ok(r.status_code in (400, 422), "a 51st network is refused", f"got {r.status_code}")
+        ada = next(u for u in ctx.db.users() if u.name == "Ada")
+        sam = next(u for u in ctx.db.users() if u.name == "Sam")
+        r = await c.put("/api/access/trusted", json={"entries": [
+            {"network": "192.168.1.0/24", "gives": "person", "person": ada.id}]}, headers=admin_h)  # fmt: skip
+        checks.ok(
+            r.status_code == 400,
+            "an Admin is never signed in on a whole network",
+            f"got {r.status_code}",
+        )
+        r = await c.put(
+            "/api/access/trusted",
+            json={"entries": [{"network": "192.168.0.0/16"}]},
+            headers=admin_h,
+        )
+        checks.ok(
+            r.status_code == 409, "a network wider than a home's asks first", f"got {r.status_code}"
+        )
+        r = await c.put("/api/access/trusted", json={"entries": []})
+        checks.ok(
+            r.status_code in (401, 403), "no one signed out lists networks", f"got {r.status_code}"
+        )
+        entries = [
+            {"network": "192.168.1.0/24", "label": "Home", "gives": "picker"},
+            {"network": "192.168.1.44", "gives": "person", "person": ada.id},
+            {"network": "192.168.1.70", "gives": "person", "person": sam.id},
+            {"network": "172.16.0.0/12", "gives": "picker"},
+        ]
+        r = await c.put(
+            "/api/access/trusted", json={"entries": entries, "confirmWide": True}, headers=admin_h
+        )
+        checks.ok(r.status_code == 200, "an Admin lists trusted networks", r.text[:200])
+        me = (await c.get("/api/access/me", headers=peer("192.168.1.60"))).json()
+        checks.ok(me.get("trusted", {}).get("gives") == "picker", "a device on the network: Who's tuning in?",
+                  str(me)[:200])  # fmt: skip
+        # Not trusted: another VLAN, the public port, a trusted /32's
+        # neighbor, an internet name (door 3), headers from a device that
+        # isn't a trusted proxy (even claiming the Admin's laptop).
+        for what, h in (
+            ("another VLAN", peer("192.168.20.5")),
+            ("an internet name (door 3)", peer("192.168.1.60", Host="nas.example.net")),
+            ("a LAN device claiming the Admin's laptop", peer("192.168.1.61", **{"X-Forwarded-For": "192.168.1.44"})),
+            ("a LAN device claiming it in X-Real-IP", peer("192.168.1.61", **{"X-Real-IP": "192.168.1.44"})),
+        ):  # fmt: skip
+            me = (await c.get("/api/access/me", headers=h)).json()
+            checks.ok(
+                "trusted" not in me or me["trusted"].get("name") != "Ada",
+                f"{what}: never the Admin",
+                str(me)[:200],
+            )
+            if what != "a LAN device claiming it in X-Real-IP":
+                checks.ok("trusted" not in me, f"{what}: not trusted", str(me)[:200])
+        me = (await c.get("/api/access/me", headers=peer("192.168.1.45"))).json()
+        checks.ok(
+            me.get("trusted", {}).get("gives") == "picker",
+            "the Admin's laptop's neighbor gets only its network's choice",
+            str(me)[:200],
+        )
+        # Door 3, fixed: the name listed for home.
+        r = await c.put(
+            "/api/access/trusted", json={"homeNames": ["nas.example.net"]}, headers=admin_h
+        )
+        me = (
+            await c.get("/api/access/me", headers=peer("192.168.1.60", Host="nas.example.net"))
+        ).json()
+        checks.ok("trusted" in me, "door 3: once listed as a home name, trusted", str(me)[:200])
+        # (Never the away-from-home address's name, even listed: that's how
+        # the internet reaches tapiOca.)
+        await c.put(
+            "/api/access/trusted",
+            json={"homeNames": ["nas.example.net", "tv.example.com"]},
+            headers=admin_h,
+        )
+        me = (
+            await c.get("/api/access/me", headers=peer("192.168.1.60", Host="tv.example.com"))
+        ).json()
+        checks.ok("trusted" not in me, "the away address's name is never home's", str(me)[:200])
+        # Through the trusted proxy: the visitor's network, never the
+        # Admin's laptop, and nothing when its headers disagree.
+        me = (
+            await c.get(
+                "/api/access/me", headers=peer(PROXY_PEER, **{"X-Forwarded-For": "192.168.1.44"})
+            )
+        ).json()
+        checks.ok(
+            me.get("trusted", {}).get("gives") == "picker",
+            "through a proxy, never the Admin's laptop",
+            str(me)[:200],
+        )
+        me = (
+            await c.get(
+                "/api/access/me", headers=peer(PROXY_PEER, **{"X-Forwarded-For": "192.168.1.70"})
+            )
+        ).json()
+        checks.ok(
+            me.get("trusted", {}).get("name") == "Sam",
+            "through a proxy, a User's device as listed",
+            str(me)[:200],
+        )
+        me = (
+            await c.get(
+                "/api/access/me",
+                headers=peer(
+                    PROXY_PEER, **{"X-Forwarded-For": "192.168.1.70", "X-Real-IP": "192.168.1.60"}
+                ),
+            )
+        ).json()
+        checks.ok("trusted" not in me, "a proxy's headers that disagree: nothing", str(me)[:200])
+        # On the public port: never trusted.
+        async with httpx.AsyncClient(base_url=net, timeout=30) as out:
+            me = (
+                await out.get("/api/access/me", headers={"X-Forwarded-For": "192.168.1.60"})
+            ).json()
+            checks.ok(
+                "trusted" not in me, "a trusted address on the public port: nothing", str(me)[:200]
+            )
+        # A sign-in a network gives works only there; it ends with the entry.
+        r = await c.post("/api/access/trusted-sign-in", json={}, headers=peer("192.168.1.70"))
+        checks.ok(r.status_code == 200, "Sam's device signs in as Sam", r.text[:200])
+        token = r.cookies.get(access.COOKIE) or ""
+        checks.ok(
+            token.startswith(access.TRUSTED_TOKEN_PREFIX),
+            "it's a sign-in of its own kind",
+            token[:4],
+        )
+        ck = {"Cookie": f"{access.COOKIE}={token}"}
+        r = await c.get("/api/channels", headers={**peer("192.168.1.70"), **ck})
+        checks.ok(r.status_code == 200, "it works there", f"got {r.status_code}")
+        for what, h in (
+            ("on another network", peer("192.168.1.71")),
+            ("on another VLAN", peer("192.168.20.5")),
+        ):
+            r = await c.get("/api/channels", headers={**h, **ck})
+            checks.ok(r.status_code == 401, f"it's no good {what}", f"got {r.status_code}")
+        async with httpx.AsyncClient(base_url=net, timeout=30) as out:
+            r = await out.get("/api/channels", headers={**ck, **_cf("192.168.1.70")})
+            checks.ok(
+                r.status_code == 401, "it's no good on the public port", f"got {r.status_code}"
+            )
+        # Made with no PIN or password: no credential that leaves its
+        # network (a password, a PIN, an API token, a linked app).
+        h = {**peer("192.168.1.70"), **ck}
+        for what, method, path, body in (
+            ("set a password", "PUT", f"/api/access/users/{sam.id}", {"password": "x" * 14}),
+            ("set a PIN", "PUT", f"/api/access/users/{sam.id}/picker", {"pin": "0000"}),
+            ("link an app", "POST", "/api/access/link", {"code": "ABCD-EFGH"}),
+        ):  # fmt: skip
+            r = await c.request(method, path, json=body, headers=h)
+            checks.ok(
+                r.status_code == 403, f"a network's sign-in can't {what}", f"got {r.status_code}"
+            )
+        import hashlib
+
+        plain = hashlib.sha256(token.encode()).hexdigest()
+        checks.ok(ctx.db.session_user(plain, 0) is None, "1.35.0's lookup never finds it", "found")
+        kept = [e for e in (await c.get("/api/access/trusted", headers=admin_h)).json()["entries"]
+                if e["network"] != "192.168.1.70/32"]  # fmt: skip
+        r = await c.put("/api/access/trusted", json={"entries": kept}, headers=admin_h)
+        r = await c.get("/api/channels", headers={**peer("192.168.1.70"), **ck})
+        checks.ok(r.status_code == 401, "removing its network ends it", f"got {r.status_code}")
+        # A PIN on the page's Who's tuning in?: Sam's 5, then a wait; Ada's
+        # (an Admin) always asked.
+        r = await c.post(
+            "/api/access/trusted-sign-in", json={"id": ada.id}, headers=peer("192.168.1.62")
+        )
+        checks.ok(
+            r.status_code == 403, "an Admin always gives a PIN or password", f"got {r.status_code}"
+        )
+        codes = [
+            (await c.post("/api/access/trusted-sign-in", json={"id": sam.id, "pin": "0000"},
+                          headers=peer("192.168.1.63"))).status_code for _ in range(6)
+        ]  # fmt: skip
+        checks.ok(codes[-1] == 429, "wrong PINs on a trusted picker are limited", str(codes))
+
+    checks.section("Door 5: Docker hiding where connections come from (1.36.0)")
+    async with httpx.AsyncClient(base_url=home, timeout=30) as c:
+        # Docker's gateway listed as a trusted proxy (a proxy in another
+        # container): what it names is never trusted, and wrong passwords
+        # at home through it count as it.
+        r = await c.put("/api/access/trusted", headers=admin_h,
+                        json={"proxies": [{"network": PROXY_PEER}, {"network": GATEWAY}]})  # fmt: skip
+        checks.ok(
+            r.status_code == 200, "the gateway can be listed (for the public port)", r.text[:200]
+        )
+        me = (
+            await c.get(
+                "/api/access/me", headers=peer(GATEWAY, **{"X-Forwarded-For": "192.168.1.60"})
+            )
+        ).json()
+        checks.ok(
+            "trusted" not in me,
+            "nothing is trusted through the gateway, listed or not",
+            str(me)[:200],
+        )
+        codes = [
+            (await c.post("/api/access/sign-in", json={"name": "Ada", "password": "wrong"},
+                          headers=peer(GATEWAY, **{"X-Forwarded-For": f"192.168.1.{n + 100}"}))).status_code
+            for n in range(6)
+        ]  # fmt: skip
+        checks.ok(
+            codes[-1] == 429,
+            "naming a new address each try through the gateway gains nothing",
+            str(codes),
+        )
+        await c.put(
+            "/api/access/trusted", json={"proxies": [{"network": PROXY_PEER}]}, headers=admin_h
+        )
+        ctx.relays.reset()
+        me = (await c.get("/api/access/me", headers=peer(GATEWAY))).json()
+        checks.ok(
+            "trusted" not in me,
+            "Docker's gateway, in a trusted 172.16.0.0/12, isn't trusted",
+            str(me)[:200],
+        )
+        me = (await c.get("/api/access/me", headers=peer(OWN))).json()
+        checks.ok("trusted" not in me, "nor is tapiOca's own address", str(me)[:200])
+        for _ in range(25):
+            await c.get("/api/access/me", headers=peer(GATEWAY))
+        me = (await c.get("/api/access/me", headers=peer("192.168.1.60"))).json()
+        checks.ok(
+            "trusted" not in me,
+            "with every device hidden, trust is off, even for a trusted device",
+            str(me)[:200],
+        )
+        got = (await c.get("/api/access/trusted", headers=admin_h)).json()
+        checks.ok(got["seeing"] == "hidden" and got["you"]["offer"] is None, "the Access tab says so, and offers no network",
+                  str(got.get("seeing")))  # fmt: skip
+        ctx.alerts.doors(ctx.doors, open_=False, home_port=int(port), public_port=1, hidden=True)
+        checks.ok(any(a.about == "hidden" for a in ctx.alerts.now()), "an Admin alert says so", "")
+        ctx.relays.reset()
+
+    checks.section("Door 7: Tuner access by network (1.36.0)")
+    async with httpx.AsyncClient(base_url=home, timeout=30) as c:
+        r = await c.put("/api/tuner", json={"only": True, "devices": [],
+                        "networks": [{"network": "192.168.1.0/24"}]}, headers=admin_h)  # fmt: skip
+        checks.ok(r.status_code == 200, "an Admin lists a network for the tuner", r.text[:200])
+        r = await c.get("/discover.json", headers=peer("192.168.1.9"))
+        checks.ok(r.status_code == 200, "a device on it uses the tuner", f"got {r.status_code}")
+        r = await c.get("/discover.json", headers=peer("192.168.2.9"))
+        checks.ok(r.status_code == 403, "a device off it doesn't", f"got {r.status_code}")
+        for bad in ("8.8.8.0/24", "0.0.0.0/0"):
+            r = await c.put(
+                "/api/tuner", json={"only": True, "networks": [{"network": bad}]}, headers=admin_h
+            )
+            checks.ok(r.status_code == 400, f"the tuner never lists {bad}", f"got {r.status_code}")
+        await c.put(
+            "/api/tuner", json={"only": False, "devices": [], "networks": []}, headers=admin_h
+        )
+        await c.put("/api/access/trusted", json={"entries": [], "homeNames": []}, headers=admin_h)
 
 
 SECRET = b"root:x:0:0:the secret outside the media folder"

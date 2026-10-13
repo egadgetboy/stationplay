@@ -603,6 +603,7 @@ class SignedIn:
     app: str  # which of tapiOca's apps; "" for a browser
     active_ms: int  # when someone last used it, in a browser (see access.IDLE_SIGN_OUT_S)
     unlocked: bool  # made by picking someone without a PIN (see devices.choose)
+    trusted: str = ""  # the trusted network it works only on (1.36.0; "" for any)
 
 
 @dataclass
@@ -838,6 +839,10 @@ _ADDED_COLUMNS = (
     ("titles", "tags", "TEXT NOT NULL DEFAULT ''"),
     ("levels", "blocks", "TEXT NOT NULL DEFAULT ''"),
     ("users", "blocks", "TEXT NOT NULL DEFAULT ''"),
+    # Added in 1.36.0: the trusted network a sign-in or linked device was
+    # made through (see trusted.py), which it works only on ('' for any).
+    ("sessions", "trusted", "TEXT NOT NULL DEFAULT ''"),
+    ("linked_devices", "trusted", "TEXT NOT NULL DEFAULT ''"),
 )
 
 
@@ -1976,6 +1981,7 @@ class Database:
         device_id: int | None = None,
         unlocked: bool = False,
         where: str = "",
+        trusted: str = "",
     ) -> None:
         """Signs a browser (or `app`, one of tapiOca's; on a linked
         device, from its picker: `device_id`, and `unlocked` when picked
@@ -1987,14 +1993,16 @@ class Database:
                 self._conn.execute("DELETE FROM sessions WHERE device_id = ?", (device_id,))
             self._conn.execute(
                 "INSERT INTO sessions (token_hash, user_id, created_ms, seen_ms, app, device_id, "
-                "active_ms, unlocked) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (token_hash, user_id, now, now, app, device_id, now, int(unlocked)),
+                "active_ms, unlocked, trusted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (token_hash, user_id, now, now, app, device_id, now, int(unlocked), trusted),
             )
+            # (Kept apart by where they work: a trusted network's sign-ins
+            # never push out someone's others, 1.36.0.)
             self._conn.execute(
-                "DELETE FROM sessions WHERE user_id = ? AND token_hash NOT IN ("
-                "SELECT token_hash FROM sessions WHERE user_id = ? ORDER BY created_ms DESC, rowid DESC "
-                "LIMIT ?)",
-                (user_id, user_id, keep),
+                "DELETE FROM sessions WHERE user_id = ? AND trusted = ? AND token_hash NOT IN ("
+                "SELECT token_hash FROM sessions WHERE user_id = ? AND trusted = ? "
+                "ORDER BY created_ms DESC, rowid DESC LIMIT ?)",
+                (user_id, trusted, user_id, trusted, keep),
             )
             self._conn.execute(
                 "UPDATE users SET signed_in_ms = ?, signed_in_from = ? WHERE id = ?",
@@ -2007,7 +2015,7 @@ class Database:
         with self._lock:
             row = self._conn.execute(
                 "SELECT users.*, sessions.seen_ms, sessions.device_id, sessions.app, "
-                "sessions.active_ms, sessions.unlocked FROM sessions JOIN users "
+                "sessions.active_ms, sessions.unlocked, sessions.trusted FROM sessions JOIN users "
                 "ON users.id = sessions.user_id WHERE token_hash = ? AND seen_ms >= ?",
                 (token_hash, since_ms),
             ).fetchone()
@@ -2020,6 +2028,7 @@ class Database:
             row["app"],
             row["active_ms"],
             bool(row["unlocked"]),
+            row["trusted"],
         )
 
     def session_app(self, token_hash: str) -> str | None:
@@ -2119,15 +2128,56 @@ class Database:
     # Linked devices and their pickers (see devices.py) ----------------------------
 
     def add_linked_device(
-        self, key_hash: str, name: str, now: int, linked_by: str, linked_by_id: int
+        self,
+        key_hash: str,
+        name: str,
+        now: int,
+        linked_by: str,
+        linked_by_id: int | None,
+        trusted: str = "",
     ) -> int:
         with self._lock, self._conn:
             cur = self._conn.execute(
                 "INSERT INTO linked_devices (key_hash, name, created_ms, seen_ms, linked_by, "
-                "linked_by_id) VALUES (?, ?, ?, ?, ?, ?)",
-                (key_hash, name, now, now, linked_by, linked_by_id),
+                "linked_by_id, trusted) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (key_hash, name, now, now, linked_by, linked_by_id, trusted),
             )
         return int(cur.lastrowid or 0)
+
+    def unbind_device(self, device_id: int) -> None:
+        """A device a trusted network linked, made an ordinary linked device
+        (someone signed in on it: see appapi.py)."""
+        with self._lock, self._conn:
+            self._conn.execute("UPDATE linked_devices SET trusted = '' WHERE id = ?", (device_id,))
+
+    def end_trusted(self, entry_ids: list[str]) -> int:
+        """Ends the sign-ins and linked devices made through these trusted
+        networks (see trusted.py): how many."""
+        if not entry_ids:
+            return 0
+        marks = ", ".join("?" for _ in entry_ids)
+        with self._lock, self._conn:
+            ended = self._conn.execute(
+                f"DELETE FROM sessions WHERE trusted IN ({marks})", entry_ids
+            ).rowcount
+            # (And anyone signed in on those devices, however: as unlink_device.)
+            self._conn.execute(
+                "DELETE FROM sessions WHERE device_id IN (SELECT id FROM linked_devices "
+                f"WHERE trusted IN ({marks}))",
+                entry_ids,
+            )
+            ended += self._conn.execute(
+                f"DELETE FROM linked_devices WHERE trusted IN ({marks})", entry_ids
+            ).rowcount
+        return ended
+
+    def end_unlocked_sessions(self, user_id: int) -> int:
+        """Ends someone's sign-ins made with no password or PIN (see
+        SignedIn.unlocked): how many. For someone made an Admin."""
+        with self._lock, self._conn:
+            return self._conn.execute(
+                "DELETE FROM sessions WHERE user_id = ? AND unlocked = 1", (user_id,)
+            ).rowcount
 
     def linked_device(self, key_hash: str) -> sqlite3.Row | None:
         with self._lock:

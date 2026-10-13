@@ -23,6 +23,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -48,6 +49,7 @@ from . import (
     capacity,
     cliprules,
     devices,
+    doors,
     folders,
     hdhr,
     health,
@@ -66,6 +68,7 @@ from . import (
     playing,
     problems,
     reach,
+    relays,
     releases,
     replacing,
     reports,
@@ -75,6 +78,8 @@ from . import (
     stats,
     subtitles,
     titles,
+    trusted,
+    trustedapi,
     tuner,
     upnext,
     viewing,
@@ -371,12 +376,19 @@ class TunerDeviceIn(BaseModel):
     name: str = Field(default="", max_length=200)
 
 
+class TunerNetworkIn(BaseModel):
+    network: str = Field(max_length=60)
+    name: str = Field(default="", max_length=200)
+
+
 class TunerIn(BaseModel):
     """Tuner access (see tuner.py): any device on the home network (only
-    false), or only the devices listed."""
+    false), or only the devices and networks listed (networks: 1.36.0;
+    not sent, they stay as they are)."""
 
     only: bool
     devices: list[TunerDeviceIn] = Field(default_factory=list, max_length=200)
+    networks: list[TunerNetworkIn] | None = Field(default=None, max_length=200)
 
 
 class TunerAllowIn(BaseModel):
@@ -563,6 +575,11 @@ class AppContext:
         self.library = Library(lambda: self.plex, lambda: self.folders)
         self.bumpers = BumperLibrary(self.settings.data_dir / "bumpers")
         self.access = access.Access(self.db)
+        # (Trusted networks and proxies, as Admins listed them; and the doors
+        # left open that something came through: 1.36.0.)
+        self.trusted = trusted.Trusted(self.db, lambda: {u.id: u.role for u in self.db.users()})
+        self.doors = doors.Doors(self.access.record)
+        self.relays = relays.Relays(relays.from_proc)  # (looked up now: tests use a fake)
         self.devices = devices.Devices(self.db, self.access)
         self.access.picker = self.devices
         self.away = away.Away(self.db, self.access)
@@ -586,6 +603,7 @@ class AppContext:
             self.db, self.settings.install, set_up=lambda: not setup.pending(self.db)
         )
         self.alerts = alerts.Alerts(self.notify, self.db)
+        self.devices.on_admin_locked = self.alerts.admin_pin_locked
         self.access.judge_watching_by(self.viewing.watches_only)
         self.updater = Updater(self)
         # (Media asks for the tags of what it shows someone limited by them.)
@@ -913,15 +931,40 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         title="tapiOca", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
     )
     app.state.ctx = ctx
+
     # Signing in, if it's on: in front of everything else (see access.py).
+    def gate_hosts() -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """BASE_URL's host is home's; the Away from home address's never is,
+        unless it's the home port's (a VPN's, such as Tailscale's): a request
+        on the home port by that name is a tunnel pointed at the wrong port."""
+        base = urlsplit(settings.base_url).hostname if settings.base_url else None
+        away, away_port = None, None
+        if ctx.away.address:
+            parts = urlsplit(ctx.away.address)
+            away = parts.hostname
+            with contextlib.suppress(ValueError):
+                away_port = parts.port or (443 if parts.scheme == "https" else 80)
+        never = (away,) if away and away_port != settings.port else ()
+        return ((base,) if base else (), never)
+
+    ctx.gate_hosts = gate_hosts  # (for the Access tab's names for home: trustedapi.py)
+
     app.add_middleware(
-        access.Gate, access=ctx.access, public_port=settings.public_port, tuner=ctx.tuner
+        access.Gate,
+        access=ctx.access,
+        public_port=settings.public_port,
+        tuner=ctx.tuner,
+        hosts=gate_hosts,
+        trusted=ctx.trusted,
+        doors=ctx.doors,
+        relays=ctx.relays,
     )
     access.routes(app, ctx.access)
     viewing.routes(app, ctx)  # (who sees what: Viewing Levels)
     cliprules.routes(app, ctx)  # (and commercials and trailers' ratings)
     devices.routes(app, ctx)  # (linked devices, and their pickers)
     appapi.routes(app, ctx)  # (for tapiOca's apps)
+    trustedapi.routes(app, ctx)  # (signing in on a trusted network: 1.36.0)
     applibrary.routes(app, ctx)  # (your library in them)
     folders.routes(app, ctx)  # (folder libraries: on the Setup tab)
     reports.routes(app, ctx)  # (people's reports, from them)
@@ -1200,11 +1243,17 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     # The same, away from home through the public port: each signed-in app's
     # streams at an address of their own (see away.py).
 
+    def trusted_id(request: Request) -> str:
+        """The trusted network a request comes from ("" for none: 1.36.0)."""
+        return (request.scope.get("state", {}).get("trusted") or {}).get("id", "")
+
     def away_user(key: str, number: int, request: Request, *, recheck: bool = False) -> User:
         """Whose an app's own address is, while it's good where it's asked
         for (one for home only at home: see away.py) and they can see the
         station (see viewing.py)."""
-        user = ctx.away.user_of(key, recheck=recheck, outside=access.outside(request.scope))
+        user = ctx.away.user_of(
+            key, recheck=recheck, outside=access.outside(request.scope), where=trusted_id(request)
+        )
         if user is None:
             raise HTTPException(
                 404, "That stream address has ended. Ask tapiOca for its stations again."
@@ -1238,7 +1287,12 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     def own_left(key: str, number: int, request: Request, night: bool = False) -> Response:
         """An app tuned away from a station at its own address."""
-        if ctx.away.user_of(key, recheck=False, outside=access.outside(request.scope)) is None:
+        if (
+            ctx.away.user_of(
+                key, recheck=False, outside=access.outside(request.scope), where=trusted_id(request)
+            )
+            is None
+        ):
             return Response(status_code=204, headers=hls.HEADERS)
         return hls_left(number, away.client(key), night=night)
 
@@ -3552,6 +3606,18 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             raise HTTPException(400, str(e)) from None
         if not ctx.away.on:
             ctx.plays.end_all(away=True)  # (Media playing away from home stops too)
+        # (Its name is never a name for home: the Gate never takes it for
+        # home, so one listed before goes, saying so. 1.36.0.)
+        never = {h.lower() for h in gate_hosts()[1]}
+        kept = [n for n in ctx.trusted.home_names if n.lower() not in never]
+        if kept != ctx.trusted.home_names:
+            gone = ", ".join(n for n in ctx.trusted.home_names if n not in kept)
+            ctx.trusted.save({"homeNames": kept}, by=None)
+            ctx.access.record(
+                logging.INFO,
+                f"{gone} is the away-from-home address's name now, so it's no longer a name for "
+                "tapiOca at home",
+            )
         ctx.reach.saved()  # (checked at once)
         ctx.access.record(
             logging.INFO,
@@ -3582,13 +3648,17 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     @app.put("/api/tuner")
     async def tuner_save(body: TunerIn, request: Request):
         try:
-            ctx.tuner.save(body.only, [(d.address, d.name) for d in body.devices])
+            ctx.tuner.save(
+                body.only,
+                [(d.address, d.name) for d in body.devices],
+                None if body.networks is None else [(n.network, n.name) for n in body.networks],
+            )
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
-        n = len(ctx.tuner.devices)
+        n = len(ctx.tuner.devices) + len(ctx.tuner.networks)
         tuner_said(
             request,
-            f"Tuner access: only {n} device{'' if n == 1 else 's'}"
+            f"Tuner access: only {n} device{'' if n == 1 else 's'} or network{'' if n == 1 else 's'}"
             if ctx.tuner.only
             else "Tuner access: any device on the home network",
         )
@@ -3626,7 +3696,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         reach.py): for the value a check is waiting for, that it's
         tapiOca, which port the request came in on, and whether it came
         over HTTPS; for anything else, 404."""
-        outside, https = access.outside(request.scope), access.over_https(request.scope)
+        # (The port itself: a proxy pointed at the home port never passes
+        # for the public one, 1.36.0.)
+        outside, https = access.on_public_port(request.scope), access.over_https(request.scope)
         if not ctx.reach.answer(request.query_params.get("n", ""), outside, https):
             raise HTTPException(404, "Not Found")
         return {"stationplay": True, "port": "public" if outside else "home", "https": https}

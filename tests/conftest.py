@@ -9,6 +9,35 @@ from .test_e2e import media  # noqa: F401  (the test media files the end-to-end 
 
 
 @pytest.fixture(autouse=True)
+def test_clients_at_home(monkeypatch):
+    """(1.36.0) A request whose peer isn't an address is from the internet
+    (fail closed: see networks.py), and Starlette's test client's own peer
+    is "testclient": so the tests' clients are a device at home,
+    192.168.1.50, unless a test says where they are."""
+    from starlette.testclient import TestClient
+
+    real = TestClient.__init__
+
+    def at_home(self, *args, client=("192.168.1.50", 50000), **kw):
+        real(self, *args, client=client, **kw)
+
+    monkeypatch.setattr(TestClient, "__init__", at_home)
+
+
+@pytest.fixture(autouse=True)
+def fixed_relays(monkeypatch):
+    """(1.36.0) What's a relay (see relays.py) is the same on every machine
+    the tests run on: Docker's gateway, 172.17.0.1, and tapiOca's own
+    address, 172.17.0.2 (and loopback), not this machine's own tables."""
+    import ipaddress
+
+    from app import relays
+
+    fake = {ipaddress.ip_address("172.17.0.1"), ipaddress.ip_address("172.17.0.2")}
+    monkeypatch.setattr(relays, "from_proc", lambda: set(fake))
+
+
+@pytest.fixture(autouse=True)
 def no_background_scans(monkeypatch):
     """Checking files in the background would get in the way of other tests;
     the scanner's own tests run it by hand, and the tests of checking a new

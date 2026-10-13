@@ -1,8 +1,8 @@
 {
-  "version": "1.35.0",
+  "version": "1.36.0",
   "new": [
-    "Media folders of your own, with or without Plex",
-    "Stations and Media straight from your folders",
-    "Details from NFO files, tags and file names"
+    "Trusted networks: devices at home skip signing in",
+    "Safe when a door is left open by mistake",
+    "Trusted proxies, listed by an Admin"
   ]
 }

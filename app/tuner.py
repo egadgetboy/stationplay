@@ -43,6 +43,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
+from . import networks as networks_module
+from . import trusted
+
 if TYPE_CHECKING:
     from .db import Database
 
@@ -160,6 +163,9 @@ class TunerAccess:
         self.plex_url = plex_url
         self.only = False
         self.devices: dict[str, str] = {}  # address -> its name ("" if none given)
+        # Networks too (1.36.0): CIDR -> its name. Kept apart from devices,
+        # which 1.35.0 reads (and would drop these from).
+        self.networks: dict[str, str] = {}
         self.recent: OrderedDict[str, Seen] = OrderedDict()
         # Where something calling itself Plex was let in, and turned away, lately.
         self._plex_seen: dict[str, float] = {}
@@ -185,9 +191,19 @@ class TunerAccess:
                 continue
             devices[address] = str(d.get("name") or "")[:NAME_MAX]
         self.devices = dict(list(devices.items())[:DEVICES_MOST])
+        networks_: dict[str, str] = {}
+        for n in got.get("networks") or []:
+            if not isinstance(n, dict):
+                continue
+            try:
+                net = trusted.network_of(n.get("network"))
+            except trusted.Refused:
+                continue  # (what can't be read allows nothing)
+            networks_[str(net)] = str(n.get("name") or "")[:NAME_MAX]
+        self.networks = dict(list(networks_.items())[: max(0, DEVICES_MOST - len(self.devices))])
         # (Only listed devices, with none listed, would shut everything out:
         # it's never kept that way.)
-        self.only = got.get("only") is True and bool(self.devices)
+        self.only = got.get("only") is True and bool(self.devices or self.networks)
 
     def _keep(self) -> None:
         self.db.set_meta(
@@ -195,27 +211,48 @@ class TunerAccess:
             json.dumps({
                 "only": self.only,
                 "devices": [{"address": a, "name": n} for a, n in self.devices.items()],
+                "networks": [{"network": k, "name": n} for k, n in self.networks.items()],
             }),
         )  # fmt: skip
 
     # Who may ----------------------------------------------------------------
 
     def allows(self, address: str) -> bool:
-        """Whether a device at `address` may use the tuner."""
-        return not self.only or as_kept(address) in self.devices
+        """Whether a device at `address` may use the tuner: listed, or on a
+        listed network."""
+        if not self.only or as_kept(address) in self.devices:
+            return True
+        ip = networks_module.parse_peer(address)
+        return ip is not None and any(
+            ip.version == net.version and ip in net
+            for net in map(ipaddress.ip_network, self.networks)
+        )
 
-    def save(self, only: bool, devices: list[tuple[str, str]]) -> None:
+    def save(
+        self,
+        only: bool,
+        devices: list[tuple[str, str]],
+        networks: list[tuple[str, str]] | None = None,
+    ) -> None:
         """Any device on the home network (`only` False), or only `devices`
-        (address, name). ValueError if one isn't an address, or there are
-        too many, or none while only they may."""
+        (address, name) and those on `networks` (CIDR, name: home addresses
+        only, 1.36.0; None keeps them as they are). ValueError if one isn't
+        an address or a home network, or there are too many, or none while
+        only they may."""
         kept: dict[str, str] = {}
         for address, name in devices:
             kept[normalize(address)] = name.strip()[:NAME_MAX]
-        if len(kept) > DEVICES_MOST:
-            raise ValueError(f"List {DEVICES_MOST} devices at most")
-        if only and not kept:
+        nets: dict[str, str] = dict(self.networks) if networks is None else {}
+        for network, name in networks or []:
+            try:
+                nets[str(trusted.network_of(network))] = name.strip()[:NAME_MAX]
+            except trusted.Refused as e:
+                raise ValueError(str(e)) from None
+        if len(kept) + len(nets) > DEVICES_MOST:
+            raise ValueError(f"List {DEVICES_MOST} devices and networks at most")
+        if only and not (kept or nets):
             raise ValueError("List at least one device, or choose Any device on my home network")
-        self.only, self.devices = only, kept
+        self.only, self.devices, self.networks = only, kept, nets
         self._keep()
 
     def allow(self, address: str) -> None:
@@ -246,7 +283,7 @@ class TunerAccess:
                 "tapiOca doesn't know Plex's address yet. Open Live TV & DVR in Plex "
                 "(so it uses tapiOca's tuner), then try again."
             )
-        self.save(True, [(a, PLEX) for a in addresses])
+        self.save(True, [(a, PLEX) for a in addresses], networks=[])  # (just Plex's)
 
     # Who did ----------------------------------------------------------------
 
@@ -349,6 +386,7 @@ class TunerAccess:
         return {
             "only": self.only,
             "devices": [{"address": a, "name": n} for a, n in self.devices.items()],
+            "networks": [{"network": k, "name": n} for k, n in self.networks.items()],
             "recent": [
                 {
                     "address": s.address,

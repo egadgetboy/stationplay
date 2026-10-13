@@ -76,6 +76,7 @@ class _Key:
     user: User
     checked: float  # when the sign-in was last found good
     home: bool = False  # for use at home only (see tuner.py), not away
+    bound: str | None = None  # the trusted network its sign-in works only on ("": none)
 
 
 def normalize_address(text: str) -> str:
@@ -234,19 +235,28 @@ class Away:
         found = self._keys.get(key)
         return found is not None and found.home
 
-    def user_of(self, key: str, *, recheck: bool, outside: bool = True) -> User | None:
+    def user_of(
+        self, key: str, *, recheck: bool, outside: bool = True, where: str | None = None
+    ) -> User | None:
         """Whose a key is, while it's good; None if it isn't (anymore), or
         isn't good where it's used (`outside`: on the public port; a key for
-        home is good only at home). `recheck`: ask whether its sign-in is
-        still good now, rather than within RECHECK_S."""
+        home is good only at home; `where`: the trusted network it's used
+        from, "" for none: one whose sign-in a trusted network gave is good
+        only there, 1.36.0). `recheck`: ask whether its sign-in is still
+        good now, rather than within RECHECK_S."""
         found = self._keys.get(key)
         if found is None:
             return None
         if (found.home and outside) or (not found.home and not self.on):
             return None
+        if found.bound is None:
+            made = self.db.session_user(found.session, 0)
+            found.bound = made.trusted if made is not None else ""
+        if found.bound and where is not None and found.bound != where:
+            return None
         now = time.monotonic()
         if recheck or now - found.checked > RECHECK_S:
-            user = self.access.session_user_hashed(found.session)
+            user = self.access.session_user_hashed(found.session, anywhere=True)
             if user is None:
                 self.forget(key)
                 return None

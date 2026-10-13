@@ -299,15 +299,59 @@ const SETUP_PAGES = {
     } };
   },
 
-  async signIn() {
-    // Signing in turned on makes the first Admin, when this step is left.
-    let signIn = me.required ? 'on' : 'off';
+  async signIn({ why } = {}) {
+    // Signing in turned on makes the first Admin, when this step is left. A
+    // new tapiOca has everyone sign in (1.36.0, the owner's D4); one updated
+    // with signing in off keeps both choices. Either way, the network you're
+    // on can be trusted, so its devices skip signing in (see trusted.js).
+    const fresh = why === 'new' && !me.required;
+    let signIn = me.required || fresh ? 'on' : 'off';
+    let lists = null;
+    try { lists = await api('/api/access/trusted'); } catch {}
+    const offer = lists?.you?.offer || '';
+    const listed = lists?.entries || [];
     const who = h('div', { class: 'playback' });
     const adminName = h('input', { type: 'text', autocomplete: 'username', maxlength: 40, 'aria-label': 'Your sign-in name' });
     const adminPassword = h('input', { type: 'password', autocomplete: 'new-password', minlength: ACCESS.passwordMin, maxlength: ACCESS.passwordMax, 'aria-label': 'Password' });
+    const trust = h('input', { type: 'checkbox', onchange: () => paint() });
+    const trustNetwork = h('input', { type: 'text', value: offer, maxlength: 50, 'aria-label': 'Your home network', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' });
+    const trustName = h('input', { type: 'text', value: 'Home network', maxlength: 40, 'aria-label': 'Its name' });
+    const addresses = net => {
+      const [, bits] = net.split('/');
+      return net.includes(':') ? 'a whole IPv6 network' : `${(2 ** (32 - Number(bits || 32))).toLocaleString()} addresses`;
+    };
+    // The network to trust: offered when tapiOca can see where you are.
+    const trustRows = () => {
+      if (listed.length) {
+        return [h('p', { class: 'hint', style: 'margin:0' }, `Trusted networks: ${listed.map(e => e.label || e.network).join(', ')}. Change them on the Access tab.`)];
+      }
+      if (!offer) {
+        return [h('p', { class: 'hint', style: 'margin:0' }, 'tapiOca can’t see your device’s own address here, so it can’t offer your network. The Access tab says why.')];
+      }
+      return [
+        h('label', { class: 'choice' }, trust, h('span', {}, h('strong', {}, 'Devices on my home network skip signing in'))),
+        trust.checked ? h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'Network'), h('div', { class: 'opt-ctl' }, trustNetwork)) : null,
+        trust.checked ? h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'Name'), h('div', { class: 'opt-ctl' }, trustName)) : null,
+        h('p', { class: 'hint', style: 'margin:0' }, `That’s the network tapiOca sees you on: ${addresses(offer)}. Its devices open on Who’s tuning in?, where each person picks themselves, and kids get their own limits. Anyone with a PIN is asked for it, and an Admin always is. Never use a guest network.`),
+      ];
+    };
+    const admin = () => [
+      h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'Your name'), h('div', { class: 'opt-ctl' }, adminName)),
+      h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'Password'), h('div', { class: 'opt-ctl' }, adminPassword,
+        h('span', { class: 'hint' }, `At least ${ACCESS.passwordMin} characters.`))),
+    ];
+    const neither = h('span', { class: 'hint' }, 'Signing in doesn’t change who can watch in Plex, Jellyfin, Emby or Kodi: each app decides that itself.');
     function paint() {
       if (me.required) {
-        who.replaceChildren(h('p', { style: 'margin:0' }, `Sign-in is on, so only people you add can use tapiOca${me.user ? ` (you’re signed in as ${me.user.name})` : ''}. Add or remove people on the Access tab.`));
+        who.replaceChildren(
+          h('p', { style: 'margin:0' }, `Sign-in is on, so only people you add can use tapiOca${me.user ? ` (you’re signed in as ${me.user.name})` : ''}. Add or remove people on the Access tab.`),
+          ...trustRows().filter(Boolean));
+        return;
+      }
+      if (fresh) {
+        who.replaceChildren(...[
+          h('p', { style: 'margin:0' }, 'Everyone signs in to tapiOca, at home and away. Make yourself the first Admin now, and you’ll be signed in right away.'),
+          ...admin(), ...trustRows(), neither].filter(Boolean));
         return;
       }
       const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Who can use tapiOca' },
@@ -318,26 +362,43 @@ const SETUP_PAGES = {
           // (Said plainly, the owner, October 13: "Does the first one allow
           // remote users too?" No: nobody, from the internet.)
           h('span', { class: 'hint' }, signIn === 'off'
-            ? 'No signing in. Anyone at home, on your network or through a VPN into it (port 3310), can use tapiOca’s page and apps and change anything, as an Admin can. Nobody can from the internet (port 3311), even with Away from home on.'
+            ? 'No signing in. Anyone at home, on your network or through a VPN into it (port 3310), can use tapiOca’s page and apps and change anything, as an Admin can. Nobody can from the internet (port 3311), even with Away from home on. tapiOca suggests Only people who sign in, with your home network trusted so its devices skip it.'
             : 'Everyone signs in, at home and away, as an Admin or a User. Make yourself the first Admin now, and you’ll be signed in right away. On the Access tab, you can add other people as Admins, or as Users who can make and change only their own stations. To use tapiOca’s apps from the internet (port 3311), also turn on Away from home on the Access tab.'),
           h('span', { class: 'hint' }, 'Neither changes who can watch in Plex, Jellyfin, Emby or Kodi: each app decides that itself.'))),
-        signIn === 'on' ? h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'Your name'), h('div', { class: 'opt-ctl' }, adminName)) : null,
-        signIn === 'on' ? h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'Password'), h('div', { class: 'opt-ctl' }, adminPassword,
-          h('span', { class: 'hint' }, `At least ${ACCESS.passwordMin} characters.`))) : null,
+        ...(signIn === 'on' ? [...admin(), ...trustRows()] : []),
       ].filter(Boolean));
     }
     paint();
     return { node: who, save: async () => {
-      if (me.required || signIn === 'off') return;
-      const name = adminName.value.trim();
-      if (!name || adminPassword.value.length < ACCESS.passwordMin) {
-        return `Enter a name and a password of at least ${ACCESS.passwordMin} characters, or choose Anyone on my network.`;
+      if (!me.required && signIn === 'on') {
+        const name = adminName.value.trim();
+        if (!name || adminPassword.value.length < ACCESS.passwordMin) {
+          return fresh
+            ? `Enter a name and a password of at least ${ACCESS.passwordMin} characters.`
+            : `Enter a name and a password of at least ${ACCESS.passwordMin} characters, or choose Anyone on my network.`;
+        }
+        try {
+          await api('/api/access/users', { method: 'POST', body: { name, password: adminPassword.value, role: 'admin', maxStations: null } });
+        } catch (e) { return e.message; }
+        await loadMe();
+        toast(`Sign-in is on, and you’re signed in as ${name}`);
       }
-      try {
-        await api('/api/access/users', { method: 'POST', body: { name, password: adminPassword.value, role: 'admin', maxStations: null } });
-      } catch (e) { return e.message; }
-      await loadMe();
-      toast(`Sign-in is on, and you’re signed in as ${name}`);
+      // The network ticked: trusted, and new people show on every device
+      // at home (else its Who's tuning in? lists no one new).
+      if (me.required && trust.checked && !listed.length) {
+        const entry = { network: trustNetwork.value.trim(), label: trustName.value.trim(), gives: 'picker', person: null };
+        let body = { entries: [entry] };
+        for (;;) {
+          try { await api('/api/access/trusted', { method: 'PUT', body }); break; }
+          catch (e) {
+            if (e.status === 409 && !body.confirmWide && confirm(e.message)) { body = { ...body, confirmWide: true }; continue; }
+            return e.message;
+          }
+        }
+        listed.push(entry);
+        try { await api('/api/access/devices/default', { method: 'PUT', body: { showOn: 'home' } }); } catch {}
+        toast(`${entry.label || entry.network} is trusted: its devices skip signing in`);
+      }
     } };
   },
 

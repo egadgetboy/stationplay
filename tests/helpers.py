@@ -63,6 +63,29 @@ def like_plex(fp: FakePlex) -> httpx.MockTransport:
     return httpx.MockTransport(handler)
 
 
+# The tests' reverse proxy (1.36.0: only a trusted proxy an Admin listed is
+# believed about who a request is for, or that it came over HTTPS).
+PROXY_PEER = "192.168.1.2"
+
+
+def list_proxy(app, address: str = PROXY_PEER) -> None:
+    """Lists `address` as a trusted proxy, as an Admin would (keeping any
+    others)."""
+    trusted = app.state.ctx.trusted
+    kept = trusted.proxies
+    if not any(p["network"].split("/")[0] == address for p in kept):
+        trusted.save({"proxies": [*kept, {"network": address, "label": "Proxy"}]}, by=None)
+
+
+def through_proxy(app, **given):
+    """A client of `app` through the tests' reverse proxy, listed as a
+    trusted proxy."""
+    from fastapi.testclient import TestClient
+
+    list_proxy(app)
+    return TestClient(app, client=(PROXY_PEER, 50000), **given)
+
+
 class Proxy:
     """A reverse proxy in front of tapiOca (`app`), as tapiOca's check
     of its outside address meets one (see reach.py): it passes each request
@@ -72,7 +95,8 @@ class Proxy:
     def __init__(self, app, port: int, https: bool = True) -> None:
         self.port, self.https = port, https
         self.answers: list[httpx.Response] = []
-        stationplay = httpx.ASGITransport(app=app)
+        list_proxy(app)
+        stationplay = httpx.ASGITransport(app=app, client=(PROXY_PEER, 123))
 
         async def handler(request: httpx.Request) -> httpx.Response:
             url = request.url.copy_with(scheme="http", host="testserver", port=self.port)

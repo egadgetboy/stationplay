@@ -17,6 +17,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex import FakePlex
+from .helpers import list_proxy
 
 PAT = {"name": "Pat", "password": "correct horse"}
 SAM = {"name": "Sam", "password": "battery staple", "role": "user"}
@@ -66,6 +67,7 @@ def test_where_each_person_last_signed_in_from(app):
         assert person(admin, "Sam")["signedInFrom"] == "192.168.1.40"
         # From the internet, through a proxy: the visitor's, as it saw them,
         # marked as from the internet.
+        list_proxy(app, "172.18.0.2")  # (a trusted proxy, as an Admin listed it: 1.36.0)
         away = TestClient(app, base_url=f"https://testserver:{PUBLIC_PORT}",
                           client=("172.18.0.2", 5000))  # fmt: skip
         signed = away.post("/api/access/sign-in", json=SAM, headers={"X-Real-IP": "203.0.113.9"})
@@ -81,19 +83,30 @@ def test_where_each_person_last_signed_in_from(app):
         signed = away.post("/api/access/sign-in", json=SAM, headers={"X-Real-IP": "192.168.1.5"})
         assert signed.status_code == 200, signed.text
         assert person(admin, "Sam")["signedInFrom"] == "192.168.1.5 (over the internet)"
-        # At home through a proxy: the address it says it came from, but only
-        # an address (the 1.34.0 re-audit: X-Forwarded-For can say anything,
-        # and showed as if it were where someone was).
+        # At home, a device that isn't a trusted proxy is shown as itself,
+        # whatever its X-Forwarded-For says (1.36.0: before, it was shown
+        # as the address that header named first, an address only, the
+        # 1.34.0 re-audit); one naming the internet, or anything that isn't
+        # an address, is from the internet.
+        door = "192.168.1.66 (from the internet, on the home port)"
         home = TestClient(app, client=("192.168.1.66", 5000))
         for said, shown in (
-            ("Admin laptop in the kitchen, 1.2.3.4", "192.168.1.66"),
-            ("<b>1.2.3.4</b>", "192.168.1.66"),
-            ("192.168.1.23, 10.0.0.1", "192.168.1.23 (via 192.168.1.66)"),
-            ("2001:db8::5", "2001:db8::5 (via 192.168.1.66)"),
+            ("Admin laptop in the kitchen, 1.2.3.4", door),
+            ("<b>1.2.3.4</b>", door),
+            ("192.168.1.23, 10.0.0.1", "192.168.1.66"),
+            ("2001:db8::5", door),
         ):
             signed = home.post("/api/access/sign-in", json=SAM, headers={"X-Forwarded-For": said})
             assert signed.status_code == 200, signed.text
             assert person(admin, "Sam")["signedInFrom"] == shown, said
+        # Through a trusted proxy at home: the visitor it added (the last
+        # address: those before it are anything a visitor sent), via it.
+        list_proxy(app, "192.168.1.66")
+        signed = home.post(
+            "/api/access/sign-in", json=SAM, headers={"X-Forwarded-For": "192.168.1.23, 10.0.0.1"}
+        )
+        assert signed.status_code == 200, signed.text
+        assert person(admin, "Sam")["signedInFrom"] == "10.0.0.1 (via 192.168.1.66)"
         # Only Admins see the list.
         sam = TestClient(app)
         assert sam.post("/api/access/sign-in", json=SAM).status_code == 200
@@ -117,6 +130,7 @@ def test_an_app_linked_with_a_code_is_where_the_device_is(app):
         assert browser.post("/api/access/link", json={"code": started["code"]}).status_code == 200
         assert person(admin, "Sam")["signedInFrom"] == "192.168.1.77"
         # A TV away from home, asking through the public port: marked so.
+        list_proxy(app, "172.18.0.2")  # (a trusted proxy, as an Admin listed it: 1.36.0)
         away = TestClient(app, base_url=f"https://testserver:{PUBLIC_PORT}",
                           client=("172.18.0.2", 5000))  # fmt: skip
         started = away.post("/api/internal/link", headers={"X-Real-IP": "198.51.100.4"},

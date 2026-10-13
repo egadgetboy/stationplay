@@ -322,6 +322,58 @@ Nothing new is required.
    may have no picture (`/api/internal/art` answers 404): show what the
    app shows for any title without one.
 
+## What 1.36.0 asks of the apps
+
+Nothing is required: an app that does nothing new signs in as before.
+
+1. **Trusted networks.** An Admin may list home networks, or single
+   devices, whose devices skip signing in. When an app has no sign-in (or
+   its sign-in gets 401), it asks `POST /api/internal/trusted` (below)
+   before showing Sign in. A 403 or 404 (a server before 1.36.0) means:
+   sign in as before.
+   - `"gives": "picker"`: keep the `deviceKey` and open on Who's tuning
+     in?, as any linked device does (`GET /api/internal/picker`). People
+     with a PIN are asked for it, and an Admin always gives their PIN or
+     password. The key works only on that network: anywhere else the
+     picker's addresses answer 403 ("This device skips signing in only on
+     its trusted network. Sign in to use tapiOca here."): keep the key,
+     and offer Sign in.
+   - `"gives": "person"`: keep the `token`, as after `POST
+     /api/internal/sign-in`. It works only on that network (401
+     elsewhere).
+   - After someone signs out on purpose, show Sign in, and don't ask again
+     until the app is opened again.
+2. **A new alert kind, `access`:** how tapiOca is reached (the home port
+   reached from the internet, a proxy pointed at it, forwarding headers
+   from a device that isn't a trusted proxy, signing in off). Show its
+   sentence as it comes, as for every kind.
+
+## POST /api/internal/trusted
+
+What an app gets on a trusted network (1.36.0). Open to anyone; refused
+(403, "This device isn't on a trusted network. Sign in to tapiOca.")
+anywhere but on one. Send:
+
+```json
+{"app": "tapiOca for Roku", "deviceName": "Living Room Roku", "picker": true,
+ "deviceKey": "..."}
+```
+
+`picker`: the app has Who's tuning in? (a network that opens on it answers
+403 to an app without it). `deviceKey`, optional: a key this network gave
+before; if it's still good, none new is made.
+
+| Field | Type | What it is |
+|---|---|---|
+| `gives` | string | `picker` (open on Who's tuning in?) or `person` (signed in as someone) |
+| `deviceKey` | string or null | For `picker`: the device's key, to keep (null: the one sent is still good) |
+| `token` | string | For `person`: the sign-in, as `POST /api/internal/sign-in` gives |
+| `user` | object | For `person`: who |
+| `user.name` | string | Their name |
+| `user.role` | string | Always `user`: a network's sign-in is for watching, an Admin a User there |
+| `user.byNetwork` | boolean | Always true (see `GET /api/internal/me`) |
+| `askPin` | boolean | For `person`: always false |
+
 ## POST /api/internal/link
 
 Open to anyone. Starts signing in with a code. Send which app this is, and
@@ -444,7 +496,8 @@ than one person).
 | `token` | string | Send it as `Authorization: Bearer <token>` |
 | `user` | object | Who was picked |
 | `user.name` | string | Their name |
-| `user.role` | string | `admin` or `user` |
+| `user.role` | string | `admin` or `user` (`user` for an Admin picked with a PIN, or nothing, on a device a trusted network linked) |
+| `user.byNetwork` | boolean | (From 1.36.0; only when true) Picked on a device a trusted network linked, with a PIN or nothing: for watching (see `GET /api/internal/me`). Take the role from this answer, or from `GET /api/internal/me` |
 
 Answers 403 for a wrong PIN or password (with the sentence to show).
 Answers 429 after 5 wrong PINs for that person in 15 minutes, on any
@@ -507,6 +560,7 @@ sign-in has ended.
 | `user.pin` | boolean | Whether they have a PIN (from 1.28.0) |
 | `user.canChangePassword` | boolean | Whether they may change their password in the app (from 1.28.0): false for someone without a password, and for someone an Admin turned that off for. Offer Change password only when it's true |
 | `user.canReport` | boolean | Whether they may report a problem (from 1.30.0: see Reporting a problem): false for someone an Admin turned that off for. Offer Report a problem only when it's true (and while signing in is off, always) |
+| `user.byNetwork` | boolean | (From 1.36.0; only when true) A trusted network signed them in (with a PIN, or nothing): the sign-in is for watching. An Admin is a User then (`user.role` says `user`), with no Admin alerts; for Admin tasks they sign in with their password |
 | `languages` | object | Their own languages, for Options (from 1.29.0: see Languages); while signing in is off, everyone's |
 | `languages.audio` | object or null | The sound's language; null: each file's default track |
 | `languages.audio.code` | string | Its code, such as `jpn` |

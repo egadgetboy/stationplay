@@ -23,9 +23,11 @@ from app import alerts, backups, notify, reach
 from app.alerts import Alerts
 from app.config import Settings
 from app.db import Database
+from app.doors import Doors
 from app.main import create_app
 from app.notify import Notify
 from app.plex import PlexClient, PlexError
+from app.relays import Relays
 
 from .fakeplex import FakePlex
 
@@ -90,13 +92,21 @@ def status(state: str, short: str = "Ready") -> reach.Status:
 
 def checks(tmp_path, plex: Plex | None = None, outside: str = reach.OFF) -> SimpleNamespace:
     """What the checks look at: Plex, the data folder, the outside check,
-    the Broken files tab (nothing on it needs an Admin), and commercials and
-    trailers (none: see test_clips_under_limits.py)."""
+    the Broken files tab (nothing on it needs an Admin), commercials and
+    trailers (none: see test_clips_under_limits.py), and how tapiOca is
+    reached (no door left open, signing in on, no relay hiding devices: see
+    test_doors.py and test_relays.py)."""
     folder = tmp_path / "data"
     folder.mkdir(exist_ok=True)
     return SimpleNamespace(
         plex=plex or Plex(),
-        settings=SimpleNamespace(data_dir=folder),
+        settings=SimpleNamespace(data_dir=folder, port=3310, public_port=0),
+        doors=Doors(),
+        relays=Relays(lambda: set()),
+        trusted=SimpleNamespace(entries=[]),
+        devices=SimpleNamespace(admins_locked=lambda: False),
+        access=SimpleNamespace(required=True),
+        db=SimpleNamespace(get_meta=lambda key, default="": default),
         reach=SimpleNamespace(status=lambda: status(outside, "Proxy error")),
         away=SimpleNamespace(address="https://tv.example.com"),
         reports=SimpleNamespace(needing=list),

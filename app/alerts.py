@@ -40,6 +40,15 @@ only once things have been right a while too, so none comes and goes:
               there) has it end, unsaid, and start again with a new ID (the
               apps notify once for each ID; the web address is told the
               same); until then, it only says what it is now.
+  access      How tapiOca is reached (1.36.0): a door left open that
+              something came through in the last day (doors.py: the home
+              port reached from the internet, a proxy sending the internet
+              to it, an internet name asked for on it, forwarding headers
+              from a device that isn't a trusted proxy), each its own
+              (`about`), fixed a day after the last; signing in off, once
+              setup has asked; trusted networks off while relays hide every
+              device (relays.py); an Admin's PIN locked by wrong tries
+              (fixed once it's unlocked, 15 minutes on). Never an address.
   clips       Stations someone with limits can see skip commercials or
               trailers that aren't rated (see cliprules.py): it says how
               many stations. Fixed when none does (their folders rated, or
@@ -73,7 +82,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-from . import playing, reach
+from . import doors as door_module
+from . import playing, reach, setup
 from .notify import FIXED, STARTED
 from .plex import PlexError, trouble
 
@@ -81,6 +91,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .db import Database
+    from .doors import Doors
     from .main import AppContext
     from .notify import Notify
 
@@ -88,8 +99,13 @@ log = logging.getLogger(__name__)
 
 PLEX, DATA_FULL, DATA_WRITE = "plex", "data-full", "data-write"
 STATION, BACKUPS, CLOCK, OUTSIDE = "station", "backups", "clock", "outside"
-FILES, CLIPS = "files", "clips"
-KINDS = (PLEX, DATA_FULL, DATA_WRITE, STATION, BACKUPS, CLOCK, OUTSIDE, FILES, CLIPS)
+FILES, CLIPS, ACCESS = "files", "clips", "access"
+KINDS = (PLEX, DATA_FULL, DATA_WRITE, STATION, BACKUPS, CLOCK, OUTSIDE, FILES, CLIPS, ACCESS)
+PIN_LOCKED = (
+    "An Admin's PIN was entered wrong 5 times, so it's locked for 15 minutes. If that wasn't "
+    "them, change it on the Access tab."
+)
+PIN_UNLOCKED = "The Admin's PIN that was locked can be used again."
 CHECK_S = 60.0  # how often what's checked is looked at
 FIRST_S = 20.0  # the first look, after tapiOca starts
 PLEX_WAIT_S = 10.0  # the longest Plex is waited for, in a check
@@ -482,6 +498,104 @@ class Alerts:
         self._look_outside(ctx.reach.status(), ctx.away.address)
         self.files(await asyncio.to_thread(ctx.reports.needing))
         self.clips(await asyncio.to_thread(skipping_unrated, ctx))
+        self.doors(
+            ctx.doors,
+            open_=not ctx.access.required and "signIn" in setup.answered(ctx.db),
+            home_port=ctx.settings.port,
+            public_port=ctx.settings.public_port,
+            hidden=ctx.relays.state() == "hidden",
+            unreadable=ctx.relays.state() == "unreadable" and bool(ctx.trusted.entries),
+            pin_locked=ctx.devices.admins_locked(),
+        )
+
+    def doors(
+        self,
+        doors: Doors,
+        open_: bool,
+        home_port: int,
+        public_port: int,
+        hidden: bool = False,
+        pin_locked: bool = False,
+        unreadable: bool = False,
+    ) -> None:
+        """How tapiOca is reached (1.36.0): each door left open that
+        something came through in the last day (see doors.py), signing in
+        off once setup has asked, trusted networks off while every
+        connection comes through a relay (see relays.py), and an Admin's PIN
+        locked by wrong tries (see devices.Devices.admins_locked; started
+        as it happens: admin_pin_locked). Never an address or a name: these
+        go to the web addresses an Admin chose."""
+        to_public = (
+            f"Point it at the public port, {public_port}, instead."
+            if public_port
+            else "Set PUBLIC_PORT (3311 in the YAML and Compose files), and point it there."
+        )
+        said = {
+            door_module.HOME_PORT: (
+                "tapiOca is being reached from the internet on its home port. Close that port "
+                "forward. Until then, tapiOca treats those connections as from the internet.",
+                "tapiOca's home port hasn't been reached from the internet for a day.",
+            ),
+            door_module.PROXY: (
+                "A reverse proxy or tunnel is sending internet visitors to tapiOca's home port, "
+                f"{home_port}. {to_public} Until then, tapiOca treats them as from the internet.",
+                "No reverse proxy has sent internet visitors to tapiOca's home port for a day.",
+            ),
+            door_module.NAME: (
+                "Something reached tapiOca's home port by an internet name. If a tunnel or proxy "
+                f"points at port {home_port}, point it at the public port instead. If it's a name "
+                "you use at home, add it under Names for tapiOca at home on the Access tab.",
+                "tapiOca's home port hasn't been reached by an unknown internet name for a day.",
+            ),
+            door_module.PROXY_UNKNOWN: (
+                "tapiOca is ignoring forwarding headers from a device that isn't a trusted proxy. "
+                "If it's your reverse proxy, add it under Trusted proxies on the Access tab.",
+                "No device that isn't a trusted proxy has sent tapiOca forwarding headers for a "
+                "day.",
+            ),
+        }
+        for door, (sentence, fixed) in said.items():
+            self.checked(ACCESS, doors.recent(door), sentence, fixed, 1, 1, about=door)
+        self.checked(
+            ACCESS,
+            open_,
+            "Signing in is off, so anyone on your home network can change anything in tapiOca. "
+            "Add a user on the Access tab to turn it on, and trust your home network so its "
+            "devices skip "
+            "signing in.",
+            "Signing in is on.",
+            1,
+            1,
+            about="open",
+        )
+        self.checked(
+            ACCESS,
+            hidden,
+            "tapiOca can't see where connections come from: they all arrive from Docker's own "
+            "address. Trusted networks are off, and tapiOca can't tell the internet from home. "
+            "The Access tab says how to fix it.",
+            "tapiOca can see where connections come from again.",
+            1,
+            1,
+            about="hidden",
+        )
+        self.checked(
+            ACCESS,
+            unreadable,
+            "tapiOca can't read this computer's network settings, so it can't tell which "
+            "connections come through Docker or a router. Trusted networks are off.",
+            "tapiOca can read this computer's network settings again, so trusted networks are "
+            "back on.",
+            1,
+            1,
+            about="unreadable",
+        )
+        self.checked(ACCESS, pin_locked, PIN_LOCKED, PIN_UNLOCKED, 1, 1, about="pin")
+
+    def admin_pin_locked(self) -> None:
+        """An Admin's PIN was just locked by wrong tries: said now, not at
+        the next check (fixed by doors, once it's unlocked)."""
+        self.start(ACCESS, PIN_LOCKED, "pin")
 
     async def _look_at_plex(self, ctx: AppContext) -> None:
         plex = ctx.plex

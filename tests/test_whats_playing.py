@@ -243,7 +243,7 @@ def test_media_playing_says_who_what_and_how(app, caplog):
         assert night.status_code == 200, night.text
         # (Just after the other: a step down, said as one.)
         assert lines(caplog) == [
-            "Pat's tapiOca for Android on Pixel at home (testclient) switched Northbound · "
+            "Pat's tapiOca for Android on Pixel at home (192.168.1.50) switched Northbound · "
             "S2 E4 to a smaller copy, from 1080p H.264 at 8 Mbps on the CPU to 480p H.264 at 1.8 "
             "Mbps on the CPU: to fit its connection (about 3 Mbps)"
         ]
@@ -287,7 +287,7 @@ def test_a_step_down_in_quality_and_stopping(app, caplog):
         )
         assert smaller.status_code == 200, smaller.text
         assert lines(caplog) == [
-            "Pat's tapiOca for Android TV on Den at home (testclient) switched Jaws (1975) "
+            "Pat's tapiOca for Android TV on Den at home (192.168.1.50) switched Jaws (1975) "
             "to a smaller version, from 1080p at 8 Mbps to 720p at 4 Mbps: to fit its connection "
             "(about 6 Mbps); the app said: It kept stopping to load"
         ]
@@ -416,7 +416,7 @@ def test_whos_watching_now(app):
             "Pat",
             "tapiOca for Android TV on Den",
             "home",
-            "testclient",
+            "192.168.1.50",
         )
         assert movie["how"] == {"method": "direct", "picture": "1080p", "mbps": 8.0, "on": None,
                                 "notes": []}  # fmt: skip

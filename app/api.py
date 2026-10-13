@@ -323,6 +323,7 @@ def routes(app: FastAPI, ctx: AppContext, actions: Actions) -> None:
 
     @app.post("/api/api-tokens", status_code=201)
     async def make_api_token(body: NewToken, request: Request):
+        ctx.access.refuse_without_secret(request)
         who = access.signed_in(request)
         if who is None:
             raise HTTPException(

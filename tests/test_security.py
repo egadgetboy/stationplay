@@ -272,10 +272,22 @@ def test_uploads_are_limited(client, monkeypatch):
 # The public port ------------------------------------------------------------------------
 
 
+TUNNEL = "127.0.0.2"  # (a Cloudflare Tunnel on this same machine)
+
+
+def through_tunnel(base_url: str, headers: dict[str, str]) -> httpx.AsyncClient:
+    """A visitor, as the tunnel passes them on to tapiOca."""
+    return httpx.AsyncClient(
+        base_url=base_url, headers=headers,
+        transport=httpx.AsyncHTTPTransport(local_address=TUNNEL),
+    )  # fmt: skip
+
+
 @contextlib.asynccontextmanager
-async def both_ports(tmp_path):
+async def both_ports(tmp_path, tunnel: bool = False):
     """tapiOca listening on its home-network port and its public one:
-    (the home network's address, the internet's)."""
+    (the home network's address, the internet's). `tunnel`: a Cloudflare
+    Tunnel on this same machine (127.0.0.1), listed as a trusted proxy."""
     lan, public = (socket.create_server(("127.0.0.1", 0)) for _ in range(2))
     ports = lan.getsockname()[1], public.getsockname()[1]
     fp = plex()
@@ -283,6 +295,11 @@ async def both_ports(tmp_path):
         settings(tmp_path, port=ports[0], public_port=ports[1]),
         PlexClient("http://plex.test", "token", transport=fp.transport()),
     )
+    if tunnel:
+        # (From 127.0.0.2: see through_tunnel. A trusted proxy on the home
+        # port naming nobody is from the internet, 1.36.0, and the home
+        # clients here come from 127.0.0.1.)
+        app.state.ctx.trusted.save({"proxies": [{"network": TUNNEL}]}, by=None)
     server = uvicorn.Server(uvicorn.Config(app, log_level="warning", proxy_headers=False))
     task = asyncio.create_task(server.serve(sockets=[lan, public]))
     while not server.started:
@@ -323,14 +340,14 @@ async def test_from_the_internet_theres_nothing_until_signing_in_is_set_up(tmp_p
 
 async def test_signing_in_from_the_internet(tmp_path, monkeypatch):
     monkeypatch.setattr(access, "PUBLIC_TRIES", 3)
-    async with both_ports(tmp_path) as (home, internet):
+    async with both_ports(tmp_path, tunnel=True) as (home, internet):
         async with httpx.AsyncClient(base_url=home) as inside:
             await inside.post("/api/access/users", json=PAT)
             assert (await inside.get("/logos/x.png")).status_code == 404  # (open at home)
 
         def visitor(address: str) -> httpx.AsyncClient:
             # As the tunnel passes it on: who's visiting.
-            return httpx.AsyncClient(base_url=internet, headers={"CF-Connecting-IP": address})
+            return through_tunnel(internet, {"CF-Connecting-IP": address})
 
         async with visitor("203.0.113.5") as pats:
             assert (await pats.get("/api/channels")).status_code == 401
@@ -375,11 +392,11 @@ def test_a_user_sees_only_what_the_stations_tab_needs(client):
 
 
 async def test_cookies_are_only_sent_over_https_when_its_used(tmp_path):
-    async with both_ports(tmp_path) as (home, internet):
+    async with both_ports(tmp_path, tunnel=True) as (home, internet):
         async with httpx.AsyncClient(base_url=home) as inside:
             await inside.post("/api/access/users", json=PAT)
         tunnel = {"CF-Connecting-IP": "203.0.113.5", "CF-Visitor": '{"scheme":"https"}'}
-        async with httpx.AsyncClient(base_url=internet, headers=tunnel) as outside:
+        async with through_tunnel(internet, tunnel) as outside:
             signed = await outside.post("/api/access/sign-in", json=PAT)
         cookies = signed.headers.get_list("set-cookie")
         assert len(cookies) == 2  # signed in, and the browser remembered

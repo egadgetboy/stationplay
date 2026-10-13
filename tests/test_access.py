@@ -4,6 +4,7 @@ Admins and Users, what each may do, and the access log."""
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import sqlite3
 import time
 import zipfile
@@ -12,7 +13,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app import access, backups
+from app import access, backups, networks
 from app.config import Settings
 from app.db import Database
 from app.main import create_app
@@ -88,8 +89,10 @@ def test_signing_in_and_out(pat, app):
     assert client.get("/api/channels").status_code == 401
     log = pat.get("/api/logs?access_log=true").json()["text"]
     assert "Sign-in was turned on, with Pat as the first Admin" in log
-    assert "Failed sign-in as 'Sam' from testclient" in log
-    assert "Pat (Admin) signed in from testclient" in log and "Pat signed out" in log
+    assert (
+        "Failed sign-in as 'Sam' from 192.168.1.50" in log
+    )  # (the tests' device at home: conftest)
+    assert "Pat (Admin) signed in from 192.168.1.50" in log and "Pat signed out" in log
     # Only the access log, when that's all that's asked for.
     assert all(
         e["source"] == "stationplay.access"
@@ -160,11 +163,18 @@ def test_there_is_always_an_admin(pat, app):
         assert pat.post("/api/access/users", json=bad).status_code in (400, 403), bad
 
 
-def test_removing_the_last_user_turns_signing_in_off(pat):
+def test_the_last_admin_is_never_removed(pat):
+    """(The owner, October 13: "don't allow delete admin".) Until 1.36.0,
+    removing the very last user turned signing in off, which opened tapiOca
+    to anyone at home: a door left open by one tap. Now the last Admin stays;
+    the reset-access file is the way back in for someone locked out."""
     me = pat.get("/api/access/me").json()["user"]
-    assert pat.delete(f"/api/access/users/{me['id']}").status_code == 204
-    assert pat.get("/api/access/me").json() == {"required": False, "user": None}
-    assert pat.get("/api/logs").status_code == 200
+    refused = pat.delete(f"/api/access/users/{me['id']}")
+    assert refused.status_code == 400
+    assert refused.json()["detail"] == (
+        "tapiOca needs at least one Admin. Make someone else an Admin first."
+    )
+    assert pat.get("/api/access/me").json()["required"] is True
 
 
 def test_a_new_password_signs_out_everywhere_else(pat, app):
@@ -370,15 +380,26 @@ def test_ipv6_addresses_are_counted_by_network():
 
 PROXY = "172.16.39.1"  # NPMplus, as its Docker network's gateway
 CLOUDFLARE_EDGE, CLOUDFLARE_EDGE_6 = "172.70.42.9", "2a06:98c0:3600::103"
+UNNAMED = f"an unnamed visitor via {PROXY}"  # (a trusted proxy that didn't say who)
 
 
-def coming(headers: dict[str, str] | list[tuple[str, str]], *, public: bool = True) -> dict:
+def coming(
+    headers: dict[str, str] | list[tuple[str, str]], *, public: bool = True, listed: bool = True
+) -> dict:
     """A request as it reaches tapiOca from the proxy, with these headers:
-    on the public port, or the home port."""
+    on the public port, or the home port; and judged as the Gate judges it,
+    with the proxy a trusted proxy an Admin listed (`listed`), or not (1.36.0:
+    only a listed proxy's headers are believed)."""
     pairs = headers.items() if isinstance(headers, dict) else headers
+    said = [(name.lower().encode(), value.encode()) for name, value in pairs]
+    verdict = networks.judge(
+        public_port=public, peer=PROXY, host=None, headers=said,
+        proxies=[ipaddress.ip_network(PROXY)] if listed else (), cloudflare=access.CLOUDFLARE,
+    )  # fmt: skip
     return {
-        "type": "http", "client": (PROXY, 51234), "state": {"outside": public},
-        "headers": [(name.lower().encode(), value.encode()) for name, value in pairs],
+        "type": "http", "client": (PROXY, 51234), "headers": said,
+        "state": {"outside": verdict.outside, "port": "public" if public else "home",
+                  "why": verdict.why, "verdict": verdict},
     }  # fmt: skip
 
 
@@ -408,17 +429,20 @@ VISITORS = [
     ({"X-Real-IP": "2001:DB8::5"}, "2001:db8::5"),
     ({"X-Forwarded-For": "203.0.113.9, 2001:db8::5"}, "2001:db8::5"),
     ({"X-Real-IP": "::ffff:203.0.113.5"}, "203.0.113.5"),
-    # Anything but an IP address: where the request came from, then.
-    ({"X-Real-IP": "not an address", "X-Forwarded-For": "203.0.113.5"}, PROXY),
-    ({"X-Forwarded-For": "203.0.113.5, unknown"}, PROXY),
-    ({"X-Forwarded-For": "203.0.113.5:4711"}, PROXY),
-    ({"X-Forwarded-For": "203.0.113.5,"}, PROXY),
-    ({"X-Real-IP": "[2001:db8::5]"}, PROXY),
-    ({"X-Real-IP": "fe80::1%eth0 is me"}, PROXY),
-    ({"X-Real-IP": ""}, PROXY),
-    ({"CF-Connecting-IP": "203.0.113.5<b>"}, PROXY),
-    ({"CF-Connecting-IP": "garbage", "X-Real-IP": CLOUDFLARE_EDGE}, PROXY),
-    ({}, PROXY),
+    # Anything but an IP address: the proxy didn't say who. Never the proxy's
+    # own address, which everyone through it shares (1.36.0: one visitor's
+    # junk headers would use up the limits for them all), and never an
+    # address the visitor chose.
+    ({"X-Real-IP": "not an address", "X-Forwarded-For": "203.0.113.5"}, UNNAMED),
+    ({"X-Forwarded-For": "203.0.113.5, unknown"}, UNNAMED),
+    ({"X-Forwarded-For": "203.0.113.5:4711"}, UNNAMED),
+    ({"X-Forwarded-For": "203.0.113.5,"}, UNNAMED),
+    ({"X-Real-IP": "[2001:db8::5]"}, UNNAMED),
+    ({"X-Real-IP": "fe80::1%eth0 is me"}, UNNAMED),
+    ({"X-Real-IP": ""}, UNNAMED),
+    ({"CF-Connecting-IP": "203.0.113.5<b>"}, UNNAMED),
+    ({"CF-Connecting-IP": "garbage", "X-Real-IP": CLOUDFLARE_EDGE}, UNNAMED),
+    ({}, PROXY),  # (nothing sent at all: the proxy itself, as listed)
 ]  # fmt: skip
 
 
@@ -427,9 +451,11 @@ def test_a_visitors_address_is_the_one_the_nearest_proxy_saw(headers, visitor):
     request = coming(headers)
     assert access.address(request) == visitor
     assert access.where(request) == f"{visitor} (over the internet)"
-    # The home port never takes a header's word for it.
-    at_home = coming(headers, public=False)
-    assert access.address(at_home) == PROXY
+    # A device an Admin hasn't listed as a trusted proxy is who it is,
+    # whatever its headers say, on either port (the owner, October 13:
+    # "Don't just assume its your reverse proxy because it has the headers").
+    for public in (True, False):
+        assert access.address(coming(headers, public=public, listed=False)) == PROXY
 
 
 def test_the_access_log_names_visitors_through_a_reverse_proxy(tmp_path):
@@ -448,6 +474,9 @@ def test_the_access_log_names_visitors_through_a_reverse_proxy(tmp_path):
 
     with TestClient(app) as home:
         assert home.post("/api/access/users", json=PAT).status_code == 201
+        # (NPMplus, at the tests' home address, listed by an Admin as a
+        # trusted proxy: only a listed proxy says who, 1.36.0.)
+        app.state.ctx.trusted.save({"proxies": [{"network": "192.168.1.50"}]}, by=None)
         guesser = through_npmplus("198.51.100.7")
         for _ in range(access.TRIES):
             wrong = guesser.post("/api/access/sign-in", json={**PAT, "password": "nope nope"})
@@ -459,14 +488,16 @@ def test_the_access_log_names_visitors_through_a_reverse_proxy(tmp_path):
         # Others aren't held up by it.
         signed = through_npmplus("203.0.113.5").post("/api/access/sign-in", json=PAT)
         assert signed.status_code == 200
-        # At home, the proxy's word isn't taken.
-        lying = TestClient(app, headers={"X-Real-IP": "203.0.113.5"})
+        # At home, a device that isn't the proxy isn't taken at its word.
+        lying = TestClient(app, headers={"X-Real-IP": "203.0.113.5"}, client=("192.168.1.60", 5))
         wrong = lying.post("/api/access/sign-in", json={**PAT, "password": "nope nope"})
         assert wrong.status_code == 401
         log = home.get("/api/logs?access_log=true").json()["text"]
     assert "Failed sign-in as 'Pat' from 198.51.100.7 (over the internet)" in log
     assert "Pat (Admin) signed in from 203.0.113.5 (over the internet)" in log
-    assert "Failed sign-in as 'Pat' from testclient" in log
+    # (A home-port request naming an internet address is from the internet
+    # now, and said to be, still by the address it really came from: 1.36.0.)
+    assert "Failed sign-in as 'Pat' from 192.168.1.60 (from the internet, on the home port)" in log
     assert "203.0.113.99" not in log
 
 

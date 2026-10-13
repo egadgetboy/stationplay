@@ -3,7 +3,9 @@
 // Signing in may be off (anyone using the page can do everything) or on, as
 // an Admin or a User.
 let me = { required: false, user: null };
-const isAdmin = () => !me.required || me.user?.role === 'admin';
+// (An Admin a trusted network signed in without their password is for
+// watching: Admin tasks ask for it. See access.STEP_UP on the server.)
+const isAdmin = () => !me.required || (me.user?.role === 'admin' && !me.user.byNetwork);
 const roleName = role => role === 'admin' ? 'Admin' : 'User';
 const aRole = role => role === 'admin' ? 'an Admin' : 'a User';
 const signedOut = () => !$('#signinView').hidden;
@@ -33,16 +35,22 @@ function showSignIn(idle = false) {
   // when the PIN is what's asked: see signInBy.)
   $('#signinWhere').hidden = !me.outside || !!me.notSetUp;
   $('#signinHome').hidden = !!me.outside || !me.required;
+  $('#signinName').closest('.field').hidden = false;
   signInBy('');
+  trustedSignIn(null);
   // (From the internet before signing in is on, there's nothing to sign in
   // to: the owner's sentence alone. The fourth audit of 1.35.0.)
   if (me.notSetUp) for (const id of ['#signinByPassword', '#signinByPin', '#signinGo']) $(id).hidden = true;
   else { $('#signinGo').hidden = false; $('#signinName').focus(); }
+  // On a trusted network: Who's tuning in?, or the person it signs in as
+  // (see trusted.js).
+  if (me.trusted && !me.notSetUp) trustedSignIn(me.trusted, idle);
   // At home, on a browser someone signed in on with their password: their PIN
   // will do (see pin_sign_in in access.py). And the notes again, from this
   // answer, in case the page's first one never came.
   api('/api/access/me').then(now => {
-    if (!signedOut()) return;
+    if (!signedOut() || trustedFor) return;
+    if (now.trusted && !now.notSetUp) { trustedSignIn(now.trusted, idle); return; }
     if (now.outside && !now.notSetUp) $('#signinWhere').hidden = false;
     if (now.outside) $('#signinHome').hidden = true;
     if (now.pinFor) signInBy(now.pinFor);
@@ -115,13 +123,20 @@ for (const kind of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
 $('#signinForm').addEventListener('submit', async e => {
   e.preventDefault();
   try {
-    if (pinFor) await api('/api/access/pin-sign-in', { method: 'POST', body: { pin: $('#signinPin').value } });
+    if (trustedFor) await trustedSubmit();  // (on a trusted network: see trusted.js)
+    else if (pinFor) await api('/api/access/pin-sign-in', { method: 'POST', body: { pin: $('#signinPin').value } });
     else await api('/api/access/sign-in', { method: 'POST', body: { name: $('#signinName').value, password: $('#signinPassword').value } });
   } catch (err) {
     $('#signinStatus').textContent = err.message;
     $('#signinPin').value = '';
     return;
   }
+  await signedInNow();
+});
+// Signed in, however it was: the page, as that person sees it.
+async function signedInNow() {
+  try { sessionStorage.removeItem('tapioca.signedOut'); } catch {}
+  trustedFor = null;
   $('#signinPassword').value = '';
   $('#signinPin').value = '';
   $('#signinView').hidden = true;
@@ -131,16 +146,18 @@ $('#signinForm').addEventListener('submit', async e => {
   loadStatus();
   loadChannels();
   linkWanted();
-});
+}
 $('#userPill').addEventListener('click', () => {
   $('#accountTitle').textContent = `${me.user.name} (${roleName(me.user.role)})`;
   $('#accountForm').reset();
   // (An Admin can turn this off for a User; an Admin can always change their own.)
   const may = me.user.role === 'admin' || me.user.canChangePassword !== false;
   document.querySelectorAll('#pwCurrent, #pwNew, #accountForm [type=submit]').forEach(el => { el.disabled = !may; });
-  $('#accountStatus').textContent = may
-    ? `At least ${ACCESS.passwordMin} characters. Changing your password signs you out of other browsers and apps.`
-    : 'An Admin has turned off changing your own password. Ask an Admin if it needs changing.';
+  $('#accountStatus').textContent = !may
+    ? 'An Admin has turned off changing your own password. Ask an Admin if it needs changing.'
+    : me.user.byNetwork
+      ? `This network signed you in without your password, for watching.${me.user.role === 'admin' ? ' For Admin tasks, sign out, then choose Sign in with a password.' : ''}`
+      : `At least ${ACCESS.passwordMin} characters. Changing your password signs you out of other browsers and apps.`;
   $('#account').showModal();
 });
 $('#closeAccount').addEventListener('click', () => $('#account').close());
@@ -237,6 +254,9 @@ async function loadApps() {
       } }, 'Sign out'))))));
 }
 $('#signOut').addEventListener('click', async () => {
+  // (Signed out on purpose: a trusted network's sign-in isn't pressed for
+  // them again in this tab. See trusted.js.)
+  try { sessionStorage.setItem('tapioca.signedOut', '1'); } catch {}
   try { await api('/api/access/sign-out', { method: 'POST' }); } catch {}
   location.reload();
 });
@@ -342,7 +362,7 @@ async function loadAccess() {
         h('button', { class: 'btn', type: 'button', onclick: () => openUserDevices(u) }, 'Devices'), ' ',
         h('button', { class: 'btn', type: 'button', onclick: () => newPassword(u, actions) }, u.hasPassword ? 'New password' : 'Add a password'), ' ',
         h('button', { class: 'btn', type: 'button', onclick: () => editPin(u, actions) }, u.pin ? 'Change PIN' : 'Set PIN'), ' ',
-        h('button', { class: 'btn danger', type: 'button', onclick: () => removeUser(u, users.length) }, 'Remove'),
+        h('button', { class: 'btn danger', type: 'button', onclick: () => removeUser(u) }, 'Remove'),
         ownPassword, canReport);
       return h('tr', {},
         named,
@@ -369,7 +389,9 @@ function renderDevices() {
       h('td', { class: 'small', 'data-label': 'On its list' }, d.people.length ? d.people.join(', ') : 'No one',
         // (Away from home, only who's on every device, signed in on it or was chosen for it.)
         d.peopleAway.join() !== d.people.join() ? h('div', { class: 'hint' }, `Away from home: ${d.peopleAway.join(', ') || 'no one'}`) : null),
-      h('td', { class: 'small', 'data-label': 'Linked' }, d.linkedBy ? `By ${d.linkedBy}, ${when(d.linkedMs)}` : when(d.linkedMs)),
+      h('td', { class: 'small', 'data-label': 'Linked' }, d.trustedNetwork != null
+        ? `By the trusted network ${d.trustedNetwork}, ${when(d.linkedMs)}`
+        : d.linkedBy ? `By ${d.linkedBy}, ${when(d.linkedMs)}` : when(d.linkedMs)),
       h('td', { class: 'small', 'data-label': 'Last used' }, when(d.seenMs)),
       h('td', {}, h('button', { class: 'btn danger', type: 'button', onclick: async () => {
         if (!confirm(`Unlink ${d.name}? It will be signed out.`)) return;

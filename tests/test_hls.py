@@ -351,6 +351,9 @@ async def start_with_public_port(tmp_path, plex: FakePlex):
         port=ports[0], public_port=ports[1],
     )  # fmt: skip
     app = create_app(settings, PlexClient("http://plex.test", "token", transport=plex.transport()))
+    # (The reverse proxy in front, on this same machine, from 127.0.0.2: a
+    # trusted proxy, 1.36.0. Home's clients here come from 127.0.0.1.)
+    app.state.ctx.trusted.save({"proxies": [{"network": "127.0.0.2"}]}, by=None)
     srv = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="on"))
     task = asyncio.create_task(srv.serve(sockets=[lan, public]))
     while not srv.started:
@@ -381,6 +384,7 @@ async def test_an_app_away_from_home_watches_through_the_public_port(
                 base_url=internet,
                 timeout=60,
                 headers={"CF-Connecting-IP": "203.0.113.7", "X-Forwarded-Proto": "https"},
+                transport=httpx.AsyncHTTPTransport(local_address="127.0.0.2"),
             ) as phone,
         ):
             assert (await inside.post("/api/access/users", json=PAT)).status_code == 201

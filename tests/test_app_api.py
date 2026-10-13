@@ -21,7 +21,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex_library import LibraryPlex
-from .helpers import Proxy
+from .helpers import Proxy, through_proxy
 
 DOCS = Path(__file__).resolve().parent.parent / "docs"
 API_DOC, INTERNAL_DOC = DOCS / "api.md", DOCS / "internal-api.md"
@@ -171,7 +171,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
     assert served(app, "/api/internal/") == addresses(INTERNAL_DOC)
     with TestClient(app) as home:
         # (Through a reverse proxy with HTTPS, as it says.)
-        internet = TestClient(
+        internet = through_proxy(
             app, base_url=f"http://testserver:{PUBLIC_PORT}", headers={"X-Forwarded-Proto": "https"}
         )
         server = check.answer(home.get("/api/v1/server"), "GET /api/v1/server")
@@ -757,6 +757,46 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         # stores, and the server has no licensing at all).
         for method in ("get", "post", "delete"):
             assert getattr(phone, method)("/api/internal/license", headers=pat).status_code == 404
+
+        # On a trusted network (1.36.0): a device key for Who's tuning in?,
+        # or a sign-in as the person it signs in as; anywhere else, 403.
+        pat_id = home.get("/api/access/me").json()["user"]["id"]
+        app.state.ctx.trusted.save({"entries": [
+            {"network": "192.168.7.0/24", "gives": "picker"},
+            {"network": "192.168.7.44", "gives": "person", "person": pat_id},
+        ]}, by=None)  # fmt: skip
+        tv = {"app": "tapiOca for Roku", "deviceName": "Den", "picker": True}
+        picker = check.answer(
+            TestClient(app, client=("192.168.7.9", 5)).post("/api/internal/trusted", json=tv),
+            "POST /api/internal/trusted",
+        )
+        assert picker["gives"] == "picker" and picker["deviceKey"].startswith("tt_")
+        # (Someone picked there with no PIN: for watching, by the network.)
+        on_tv = TestClient(app, client=("192.168.7.9", 5),
+                           headers={"StationPlay-Device": picker["deviceKey"]})  # fmt: skip
+        listed = on_tv.get("/api/internal/picker").json()["people"]
+        free = next(p for p in listed if not p["pin"] and not p["admin"])
+        chosen = check.answer(
+            on_tv.post("/api/internal/picker/choose", json={"id": free["id"]}),
+            "POST /api/internal/picker/choose",
+        )
+        assert chosen["user"]["byNetwork"] is True and chosen["user"]["role"] == "user"
+        as_pat = check.answer(
+            TestClient(app, client=("192.168.7.44", 5)).post("/api/internal/trusted", json=tv),
+            "POST /api/internal/trusted",
+        )
+        assert as_pat["gives"] == "person" and as_pat["user"]["name"] == "Pat"
+        # (Signed in by the network, for watching: an Admin is a User there.)
+        at_44 = TestClient(app, client=("192.168.7.44", 5))
+        pat_by_network = check.answer(
+            at_44.get("/api/internal/me", headers=bearer(as_pat["token"])), "GET /api/internal/me"
+        )
+        assert pat_by_network["user"]["role"] == "user" and pat_by_network["user"]["byNetwork"]
+        check.answer(
+            TestClient(app, client=("192.168.8.9", 5)).post("/api/internal/trusted", json=tv),
+            "POST /api/internal/trusted",
+            403,
+        )
     check.everything_seen()
 
 

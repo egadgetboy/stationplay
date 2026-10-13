@@ -24,7 +24,7 @@ from app.plex import PlexClient
 from app.reach import Reach
 
 from .fakeplex import FakePlex
-from .helpers import Proxy
+from .helpers import Proxy, through_proxy
 
 PORT, PUBLIC_PORT = 3310, 8443
 PAT = {"name": "Pat", "password": "correct horse"}
@@ -635,7 +635,7 @@ def test_an_apps_own_requests_from_outside_count_as_getting_in(app):
     with TestClient(app) as home:
         assert home.post("/api/access/users", json=PAT).status_code == 201
         home.put("/api/away", json={"on": True, "address": "https://tv.example.com"})
-        internet = TestClient(app, base_url=f"http://testserver:{PUBLIC_PORT}", headers=https)
+        internet = through_proxy(app, base_url=f"http://testserver:{PUBLIC_PORT}", headers=https)
         signed = internet.post("/api/internal/sign-in", json=PAT)
         token = bearer(signed.json()["token"])
         # Not an app's sign-in itself, a browser signed in through the public

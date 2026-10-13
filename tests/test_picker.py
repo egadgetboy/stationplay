@@ -16,6 +16,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex import FakePlex
+from .helpers import through_proxy
 
 ADA = {"name": "Ada", "password": "correct horse"}
 TV = {"app": "tapiOca for Roku", "deviceName": "Living Room Roku", "picker": True}
@@ -46,7 +47,7 @@ def two_ports(tmp_path):
 def away_from_home(app) -> TestClient:
     """A device away from home: through the public port, over HTTPS, as
     the reverse proxy in front says."""
-    return TestClient(
+    return through_proxy(
         app,
         base_url=f"http://testserver:{PUBLIC_PORT}",
         headers={"X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.5"},
