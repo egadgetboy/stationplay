@@ -264,16 +264,27 @@ async def test_night_mode_sound_is_made_beside_the_station(tmp_path, media, monk
             assert stations[0]["nightHls"] == "/hls/7/night/index.m3u8"
             assert "night" in (await client.get("/api/v1/server")).json()["features"]
 
+            recorded = asyncio.Event()
+
+            async def plex_watches(seconds: float) -> bytes:
+                try:
+                    return await record(f"{base}/stream/7", seconds)
+                finally:
+                    recorded.set()
+
             async def watch() -> dict[str, bytes]:
                 """Night mode's stream, played along for two and a half
-                programs, while the usual one is watched too."""
+                programs, while the usual one is watched too: both apps keep
+                asking until Plex is done too, as watching apps do. (With
+                IDLE_S at 3 seconds here, a longer pause counts them gone:
+                1.34.1's arm64 run, where Plex's stream ran on past them.)"""
                 first = await client.get("/hls/7/night/index.m3u8")
                 assert first.status_code == 200, first.text
                 assert (await usual_app.get("/hls/7/index.m3u8")).status_code == 200
                 got: dict[str, bytes] = {}
                 playlist = first.text
                 deadline = time.monotonic() + 2.5 * CLIP_S
-                while time.monotonic() < deadline:
+                while time.monotonic() < deadline or not recorded.is_set():
                     for name in pieces(playlist):
                         if name not in got:
                             piece = await client.get(f"/hls/7/night/{name}")
@@ -284,7 +295,7 @@ async def test_night_mode_sound_is_made_beside_the_station(tmp_path, media, monk
                     assert (await usual_app.get("/hls/7/index.m3u8")).status_code == 200
                 return got
 
-            plex, got = await asyncio.gather(record(f"{base}/stream/7", 2.5 * CLIP_S + 4), watch())
+            plex, got = await asyncio.gather(plex_watches(2.5 * CLIP_S + 4), watch())
             assert len(plex) > 100_000
 
             # One station, on one tuner (Plex has gone now): the app with the
