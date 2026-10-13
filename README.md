@@ -1,4 +1,9 @@
-<p align="center"><img src="docs/logo.svg" alt="tapiOca: Stations &amp; Media" width="360"></p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-on-dark.svg">
+    <img src="docs/logo-on-light.svg" alt="tapiOca: Stations &amp; Media" width="360">
+  </picture>
+</p>
 
 > [!WARNING]
 > ## tapiOca is in BETA
