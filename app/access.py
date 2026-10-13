@@ -4,7 +4,7 @@ A new tapiOca is open: anyone who can reach its page can use it. Adding
 the first user in the Access tab turns signing in on, and that first user is
 always an Admin. There are two roles:
 
-  Admin  Everything: every station, Add to Plex (and backups), Broken files,
+  Admin  Everything: every station, Setup (and backups), Broken files,
          Logs, Stats, and Access (who can sign in).
   User   Stations: watching their guides, making new ones (as many as an
          Admin lets them: 3 to start with), and changing or deleting only the
@@ -170,7 +170,10 @@ NOT_HTTPS = (
     "From outside your home, tapiOca's apps connect only over HTTPS. Use an https:// "
     "address, through a reverse proxy with HTTPS (see tapiOca's README)."
 )
-NOT_SET_UP = "Signing in to tapiOca isn't set up yet. Add the first user from your home network."
+# (Said to whoever reaches tapiOca from outside its home before signing in
+# is on, in its apps and on its page: someone watching, not an Admin, in the
+# owner's words, October 13.)
+NOT_SET_UP = "This tapiOca client can't reach the server. Please check back later."
 
 # API tokens (see the module's notes, and api.py): "spk_" and 43 random
 # characters; what each may do (its scope).
@@ -210,7 +213,7 @@ PAGE_FILES = (
     "page.css", "js/core.js", "js/status.js", "js/setup.js", "js/addtoplex.js", "js/logs.js",
     "js/stations.js", "js/editor.js", "js/logos.js", "js/smart.js", "js/backups.js",
     "js/filter.js", "js/broken.js", "js/apps.js", "js/checking.js", "js/access.js",
-    "js/viewing.js", "js/stats.js", "js/updates.js", "js/boot.js",
+    "js/viewing.js", "js/stats.js", "js/updates.js", "js/folders.js", "js/boot.js",
 )  # fmt: skip
 # The page's fonts (in app/web/fonts, see page.css), each at /fonts/<file>.
 FONT_FILES = (

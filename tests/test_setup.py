@@ -133,9 +133,40 @@ def test_the_checks_when_plex_isnt_set_up(tmp_path):
     assert list(checks) == ["media", "encoding", "clock", "backups"]
     assert checks["backups"]["state"] == "wait"  # (just started)
     assert list(plex) == ["plex", "plexFiles", "dvr"]
+    # (1.35.0: Plex is optional; with no Plex and no folder library,
+    # there's nothing to play, and the step says both ways.)
     assert plex["plex"]["state"] == "bad"
-    assert "PLEX_URL and PLEX_TOKEN aren’t set" in plex["plex"]["lines"][0]
+    assert plex["plex"]["lines"][0] == (
+        "tapiOca has nothing to play yet: it isn’t connected to Plex, and you haven’t "
+        "added a Media folder of your own."
+    )
+    assert any("PLEX_URL and PLEX_TOKEN" in line for line in plex["plex"]["lines"])
+    assert any("Your own folders" in line for line in plex["plex"]["lines"])
     assert plex["plexFiles"]["state"] == plex["dvr"]["state"] == "wait"
+
+
+def test_without_plex_a_folder_library_is_enough(tmp_path):
+    """(1.35.0) tapiOca with or without Plex: with a Media folder of its
+    own, the Plex step says tapiOca isn't using Plex, and that's fine."""
+    media = tmp_path / "media"
+    (media / "TV").mkdir(parents=True)
+    app = create_app(Settings(data_dir=tmp_path / "data", media_dir=str(media)), PlexClient("", ""))
+    with TestClient(app) as c:
+        made = c.post(
+            "/api/folder-libraries", json={"name": "TV", "kind": "show", "folders": ["TV"]}
+        )
+        assert made.status_code == 201, made.text
+        plex = {x["id"]: x for x in c.get("/api/setup/plex").json()["checks"]}
+        libs = c.get("/api/app-libraries").json()
+        status = c.get("/api/status").json()
+    assert plex["plex"]["state"] == "good"
+    assert plex["plex"]["lines"][0].startswith("tapiOca isn’t using Plex")
+    assert [x["key"] for x in libs["libraries"]] == ["f1"] and libs["problem"] is None
+    assert status["plexUsed"] is False  # (the page says nothing about Plex)
+    # (Plex's other checks aren't waiting for Plex: there's none to wait for.)
+    for check in ("plexFiles", "dvr"):
+        assert plex[check]["state"] == "info"
+        assert plex[check]["lines"] == ["Not used: tapiOca isn’t using Plex."]
 
 
 def hang_plex(ctx, monkeypatch) -> list[str]:
@@ -195,11 +226,39 @@ def test_the_media_folder_check_reads_the_folder_itself(tmp_path):
         f"tapiOca can read {media}, which holds Concerts, Kids, Movies and 2 other folders."
     )
     assert got.lines[1] == "The Plex step checks that tapiOca finds the files Plex lists."
-    # Nothing mounted: streamed from Plex, and how to fix it.
+    # Nothing mounted: how to fix it, and streamed from Plex meanwhile. (Until
+    # 1.35.0 it said "Mount your media folder at <MEDIA_DIR>", which sent the
+    # owner, October 13, to his server's own path: MEDIA_DIR is where tapiOca
+    # sees it, inside its container.)
     nowhere = str(tmp_path / "nowhere")
     got = setup.folders_check([(nowhere, setup.look_at_folder(nowhere))], nowhere)
-    assert got.state == "warn" and got.lines[0] == f"Nothing is mounted at {nowhere}."
-    assert f"Mount your media folder at {nowhere}" in got.lines[1]
+    assert got.state == "warn" and got.lines[0] == f"Nothing is at {nowhere} inside tapiOca."
+    # ("The part after the colon" until the third audit of 1.35.0: the
+    # example has two colons, so it could be read as /media:ro.)
+    assert got.lines[1] == (
+        "In tapiOca’s app settings (its YAML or Compose file), a line under volumes, such as "
+        "/mnt/tank/media:/media:ro, mounts a folder on your server for tapiOca to see."
+    )
+    assert got.lines[2] == (
+        "The middle part (/media here) is where tapiOca sees that folder. Set MEDIA_DIR to it, "
+        "then restart tapiOca."
+    )
+    assert got.lines[3].startswith("Until then, tapiOca streams your files from Plex")
+    # Without Plex, nothing streams from Plex meanwhile: what can't be read
+    # is said instead (1.35.0's Media folders of your own).
+    own = setup.folders_check(
+        [(nowhere, setup.look_at_folder(nowhere))], nowhere, plex=False, own=True
+    )
+    assert own.lines[-1] == "Until then, tapiOca can’t read your own Media folders."
+    both = setup.folders_check(
+        [(nowhere, setup.look_at_folder(nowhere))], nowhere, plex=True, own=True
+    )
+    assert both.lines[-1].startswith("Until then, tapiOca can’t read your own Media folders, and ")
+    neither = setup.folders_check(
+        [(nowhere, setup.look_at_folder(nowhere))], nowhere, plex=False, own=False
+    )
+    assert neither.lines[-1].startswith("Until then, tapiOca can’t read your files itself.")
+    assert not any("Plex where it can" in line for line in own.lines + neither.lines)
     # An empty folder: a share or disk that isn't mounted, most often.
     empty = tmp_path / "empty"
     (empty / "lost+found").mkdir(parents=True)
@@ -210,6 +269,15 @@ def test_the_media_folder_check_reads_the_folder_itself(tmp_path):
     assert got.state == "warn" and got.lines[0] == (
         f"Reading {media} took too long. A network share may be slow or out of reach."
     )
+    assert got.lines[-1].startswith("Until then, tapiOca streams your files from Plex")
+    # (Without Plex, nothing streams from it then either: the third audit.)
+    for problem in (None, setup.Folder("error", [], 0, error="Stale file handle")):
+        slow = setup.folders_check([(str(media), problem)], str(media), plex=False, own=True)
+        assert slow.lines[-1] == "Until then, tapiOca can’t read your own Media folders."
+        assert not any("Plex" in line for line in slow.lines), slow.lines
+    # All's well: the Plex step's check is mentioned only where Plex is used.
+    fine = setup.folders_check([(str(media), looked)], str(media), plex=False, own=True)
+    assert fine.state == "good" and not any("Plex" in line for line in fine.lines)
     # Files only.
     flat = tmp_path / "flat"
     flat.mkdir()
@@ -304,8 +372,9 @@ def test_media_in_the_apps_without_plex(tmp_path):
     with TestClient(app) as c:
         got = c.get("/api/app-libraries").json()
     assert got["problem"] == (
-        "tapiOca isn’t connected to Plex yet, so there are no Media folders to share. "
-        "The Plex step of the setup says how to connect it."
+        "There are no Media folders to share yet. Add one of your own on the Add to "
+        "Plex tab, under Your own folders, or connect Plex (the Plex step of the setup "
+        "says how)."
     )
 
 
@@ -332,6 +401,38 @@ def test_the_media_check_finds_plexs_newest_file_where_stationplay_looks(tmp_pat
         assert check["lines"][0].startswith("tapiOca couldn’t find S01E02.mkv")
 
 
+def test_the_plex_step_with_path_mappings_and_nothing_at_media_dir(tmp_path):
+    """(The third audit of 1.35.0) PATH_MAPPINGS names a folder that's
+    there, MEDIA_DIR isn't, and Plex's file is in neither: the media folder
+    check is good (it reads the mapped folder), so the Plex step says what
+    to do itself, never "“Your media folder” says what to change"."""
+    fp = FakePlex()
+    fp.add_show("100", "Show")
+    fp.add_episode("201", "100", 1, 1, "Ep 1", "/data/media/TV/Show/S01E01.mkv", 60_000)
+    mapped = tmp_path / "mapped"
+    (mapped / "Movies").mkdir(parents=True)
+    with make(
+        tmp_path, fp, media_dir=str(tmp_path / "nowhere"),
+        path_mappings=[("/data/media", str(mapped))],
+    ) as c:  # fmt: skip
+        checks = {x["id"]: x for x in c.get("/api/setup/plex").json()["checks"]}
+        server = {x["id"]: x for x in c.get("/api/setup/checks").json()["checks"]}
+    assert server["media"]["state"] == "good"
+    said = checks["plexFiles"]["lines"]
+    assert checks["plexFiles"]["state"] == "warn"
+    # (Exactly: what it tried, and that Plex's file isn't there. Never
+    # "mount it at MEDIA_DIR", which can be the server's own path, nor "set
+    # PATH_MAPPINGS", which is set: the fourth audit of 1.35.0.)
+    assert said == [
+        f"tapiOca couldn’t find S01E01.mkv in the folders PATH_MAPPINGS names (Plex has it at "
+        f"/data/media/TV/Show/S01E01.mkv, which PATH_MAPPINGS reads as {mapped}/TV/Show/"
+        "S01E01.mkv), so it streams files from Plex.",
+        "That works, but reading files from disk is faster and puts less load on Plex. Check "
+        "that each pair in PATH_MAPPINGS ends with where tapiOca sees that folder, inside its "
+        "container (see “How tapiOca reads your files” in the README).",
+    ]
+
+
 def test_the_media_check_when_nothing_is_mounted(tmp_path):
     fp = FakePlex()
     fp.add_show("100", "Show")
@@ -342,12 +443,18 @@ def test_the_media_check_when_nothing_is_mounted(tmp_path):
     assert checks["plexFiles"]["state"] == "warn"
     assert (
         checks["plexFiles"]["lines"][0]
-        == f"Nothing is mounted at {tmp_path / 'nowhere'}, so tapiOca streams files from Plex."
+        == f"Nothing is at {tmp_path / 'nowhere'} inside tapiOca, so tapiOca streams files "
+        "from Plex."
     )
+    # (Not "Mount your media folder at <MEDIA_DIR>", which sent the owner,
+    # October 13, to his server's own path: the media folder check says
+    # what to change.)
+    assert "Mount your media folder" not in checks["plexFiles"]["lines"][1]
+    assert checks["plexFiles"]["lines"][1].endswith("“Your media folder” says what to change.")
     assert checks["plex"]["state"] == "good"
     assert checks["dvr"]["state"] == "info"
     # (And the first step says so too, on its own.)
-    assert server["media"]["lines"][0] == f"Nothing is mounted at {tmp_path / 'nowhere'}."
+    assert server["media"]["lines"][0] == f"Nothing is at {tmp_path / 'nowhere'} inside tapiOca."
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root can read any file")
@@ -450,3 +557,143 @@ def test_the_setup_is_for_admins(tmp_path):
         assert c.get("/api/setup/checks").status_code == 403
         assert c.get("/api/setup/plex").status_code == 403
         assert json.loads(c.app.state.ctx.db.get_meta(setup.META_ANSWERED) or "{}") == {}
+
+
+def test_your_own_folders_dont_wait_long_for_plex(tmp_path, monkeypatch):
+    """(1.35.0) Your own folders, on the Setup tab, asks Plex which of
+    its Media folders hold the same folders: with Plex not answering, it
+    says so within a few seconds, as the setup does."""
+    (tmp_path / "media" / "TV").mkdir(parents=True)
+    with make(tmp_path, media_dir=str(tmp_path / "media")) as c:
+        hang_plex(c.app.state.ctx, monkeypatch)
+
+        async def never(*_args, **_kwargs):
+            await asyncio.sleep(60)
+
+        monkeypatch.setattr(c.app.state.ctx.plex, "sections", never)
+        monkeypatch.setattr(setup, "PLEX_ASK_S", 0.5)
+        began = time.monotonic()
+        listed = c.get("/api/folder-libraries")
+        browsed = c.get("/api/folder-libraries/browse?path=")
+        took = time.monotonic() - began
+    assert listed.status_code == 200 and listed.json()["plexProblem"]
+    assert browsed.status_code == 200 and browsed.json()["folders"] == ["TV"]
+    assert took < 4, took
+
+
+def test_media_dir_set_to_the_servers_own_path(tmp_path, monkeypatch):
+    """(The owner, October 13) MEDIA_DIR set to where the media is on the
+    server, while the YAML mounts it elsewhere inside tapiOca (/media): the
+    check finds it where it's mounted, and says to set MEDIA_DIR to that."""
+    media = tmp_path / "mounted"
+    (media / "movies").mkdir(parents=True)
+    (media / "tv").mkdir()
+    (media / "tv" / "Show - S01E01.mkv").write_bytes(b"x")
+    on_server = "/mnt/hddpool/mediashare/media"
+    monkeypatch.setattr(setup, "mounts", lambda skip, mountinfo=None: [str(media)])
+    with make(tmp_path, media_dir=on_server) as c:
+        lines = next(x for x in c.get("/api/setup/checks").json()["checks"] if x["id"] == "media")[
+            "lines"
+        ]
+    assert lines[0] == f"Nothing is at {on_server} inside tapiOca."
+    assert lines[1] == f"Your media looks to be at {media} inside tapiOca: it holds movies and tv."
+    assert f"Set MEDIA_DIR to {media} in tapiOca’s app settings" in lines[2]
+    assert "not where it is on your server" in lines[2]
+
+
+def test_where_the_media_looks_to_be():
+    """(The third audit of 1.35.0) Nothing at MEDIA_DIR: the folder mounted
+    into tapiOca that most likely holds the media, said plainly."""
+    ok = setup.Folder("ok", ["movies", "tv"], 0, "/x/a.mkv")
+    no_video = setup.Folder("ok", ["db"], 0)
+    on_server = "/mnt/hddpool/mediashare/media"
+    missing = [(on_server, setup.Folder("missing", [], 0))]
+    # The owner's own case: /media, from the YAML.
+    got = setup.folders_check(missing, on_server, [("/media", ok)])
+    assert got.lines[1:3] == [
+        "Your media looks to be at /media inside tapiOca: it holds movies and tv.",
+        "MEDIA_DIR names your media folder as tapiOca sees it, inside its container, not where "
+        "it is on your server. Set MEDIA_DIR to /media in tapiOca’s app settings (its YAML or "
+        "Compose file). Then restart tapiOca.",
+    ]
+    # A folder with videos before one without (whatever their names).
+    got = setup.folders_check(missing, on_server, [("/backups", no_video), ("/media", ok)])
+    assert got.lines[1].startswith("Your media looks to be at /media inside tapiOca")
+    # Several with videos: one media folder holds them all.
+    got = setup.folders_check(missing, on_server, [("/movies", ok), ("/tv", ok)])
+    assert got.lines[1] == "Your media looks to be at /movies and /tv inside tapiOca."
+    assert got.lines[2] == (
+        "tapiOca’s media folder must hold them all. In tapiOca’s app settings (its YAML or "
+        "Compose file), mount them inside one, such as /media/movies and /media/tv, and set "
+        "MEDIA_DIR to /media. Then restart tapiOca."
+    )
+    # (/media among them: the others go inside it. Names that are alike get
+    # names of their own. The fourth audit of 1.35.0.)
+    got = setup.folders_check(missing, on_server, [("/media", ok), ("/tv", ok)])
+    assert got.lines[2] == (
+        "tapiOca’s media folder must hold them all. In tapiOca’s app settings (its YAML or "
+        "Compose file), mount the others inside /media, such as /media/tv, and set MEDIA_DIR "
+        "to /media. Then restart tapiOca."
+    )
+    got = setup.folders_check(missing, on_server, [("/mnt/a/media", ok), ("/mnt/b/media", ok)])
+    assert "such as /media/media and /media/media-2," in got.lines[2]
+    # Your own Media folders, read from MEDIA_DIR: put the media back there,
+    # never MEDIA_DIR elsewhere (they'd stay out of reach).
+    got = setup.folders_check(
+        [("/media", setup.Folder("missing", [], 0))], "/media", [("/mnt/media", ok)],
+        plex=False, own=True, own_roots=["/media/TV"],
+    )  # fmt: skip
+    assert got.lines[1:3] == [
+        "Your media looks to be at /mnt/media inside tapiOca now.",
+        "Your own Media folders are read from /media, so mount your media there again: in "
+        "tapiOca’s app settings (its YAML or Compose file), its line under volumes must end in "
+        ":/media or :/media:ro. Then restart tapiOca.",
+    ]
+    assert not any("Set MEDIA_DIR" in line for line in got.lines)
+    # (Ranked first there too: one with videos, whatever the names. The
+    # fourth audit of 1.35.0.)
+    got = setup.folders_check(
+        [("/media", setup.Folder("missing", [], 0))], "/media",
+        [("/backups", no_video), ("/mnt/media", ok)], plex=False, own=True,
+        own_roots=["/media/TV"],
+    )  # fmt: skip
+    assert got.lines[1] == "Your media looks to be at /mnt/media inside tapiOca now."
+    # They're where it's mounted now: MEDIA_DIR is what changed.
+    got = setup.folders_check(
+        missing, on_server, [("/backups", ok), ("/media", ok)], own=True, own_roots=["/media/TV"]
+    )
+    assert got.lines[1].startswith("Your media looks to be at /media inside tapiOca")
+
+
+def test_what_is_mounted_into_tapioca():
+    """The folders mounted into tapiOca's container, from its mountinfo: not
+    the system's own, nor its data folder."""
+    mountinfo = "\n".join([
+        "22 1 0:21 / / rw - overlay overlay rw",
+        "23 22 0:22 / /proc rw - proc proc rw",
+        "24 22 0:23 / /dev rw - tmpfs tmpfs rw",
+        "25 22 0:24 / /sys ro - sysfs sysfs ro",
+        "26 22 0:25 /apps/data /data rw - zfs hddpool/apps rw",
+        "27 22 0:26 /mediashare/media /media ro - zfs hddpool/mediashare ro",
+        "28 22 0:27 /a /mnt/two\\040words ro - zfs hddpool/x ro",
+        "29 22 0:28 / /etc/hosts rw - ext4 /dev/sda1 rw",
+    ])  # fmt: skip
+    assert setup.mounts(["/data"], mountinfo) == ["/media", "/mnt/two words"]
+    # (The third audit of 1.35.0) Whole names, not the start of one; every
+    # escape mountinfo writes; files the system mounts (NVIDIA's firmware,
+    # Docker's init); and a folder that holds the data folder.
+    more = "\n".join([
+        "30 22 0:29 / /devices ro - zfs a ro",
+        "31 22 0:30 / /tmpmedia ro - zfs a ro",
+        "32 22 0:31 / /processed ro - zfs a ro",
+        "33 22 0:32 / /my\\134share ro - zfs a ro",
+        "34 22 0:33 / /tab\\011name ro - zfs a ro",
+        "35 22 0:34 /f /lib/firmware/nvidia/gsp.bin ro - ext4 a ro",
+        "36 22 0:35 /i /sbin/docker-init ro - ext4 a ro",
+        "37 22 0:36 / /config rw - zfs a rw",
+        "38 22 0:37 / /opt/stationplay/x ro - zfs a ro",
+    ])  # fmt: skip
+    assert setup.mounts(["/config/data"], mountinfo + "\n" + more) == [
+        "/media", "/data", "/devices", "/mnt/two words", "/my\\share", "/processed",
+        "/tab\tname", "/tmpmedia",
+    ]  # fmt: skip

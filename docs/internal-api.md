@@ -308,6 +308,20 @@ A server before 1.34.0 doesn't send `languages.subtitles` and ignores
 `language`. Without `subtitles`, offer Subtitles On or Off from
 `languages.captions`, as before.
 
+## What 1.35.0 asks of the apps
+
+Nothing new is required.
+
+1. **Media folders of tapiOca's own.** A Media folder, show, movie or
+   episode may come from folders tapiOca reads itself, with or without
+   Plex. Its key is `f` and digits (`f2`, `f812`). Treat every key as an
+   opaque string, as before: they come, list and play exactly as Plex's
+   do. A server may have no Plex at all.
+2. **What they don't have yet.** No Skip intro or Skip credits (an
+   episode's `markers.intro` and `markers.credits` are null), and a title
+   may have no picture (`/api/internal/art` answers 404): show what the
+   app shows for any title without one.
+
 ## POST /api/internal/link
 
 Open to anyone. Starts signing in with a code. Send which app this is, and
@@ -944,7 +958,9 @@ without it. A program's own address ends in a plain name (`file.mkv`,
 `index.m3u8`).
 
 Keys are strings, and the same key always means the same show, movie or
-episode. Pictures (`poster`, `backdrop`, `thumb`) are addresses under
+episode. A Media folder may be Plex's (its keys are digits) or one of
+tapiOca's own (its keys, and its shows', movies' and episodes', are `f`
+and digits, from 1.35.0); the apps never need to tell them apart. Pictures (`poster`, `backdrop`, `thumb`) are addresses under
 `/api/internal/art`. Add `&w=` with the width it will be shown at, in
 pixels, and send the app's token with them.
 
@@ -1316,7 +1332,8 @@ again. Answers as `PUT` does, with `item` null.
 
 ## GET /api/internal/art/{key}
 
-A picture, as JPEG or PNG (or WebP or GIF, as Plex has it):
+A picture, as JPEG or PNG (or WebP or GIF, as Plex has it, or as it's
+kept beside a file in a Media folder of tapiOca's own):
 
 - **Kind.** `?kind=poster` (the default; 2:3, and an episode's is its
   show's), `backdrop` (16:9) or `thumb` (an episode's still, 16:9).

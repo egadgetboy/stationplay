@@ -214,7 +214,7 @@ class Blocks:
             key = t.get("key") if isinstance(t, dict) else None
             name = t.get("title") if isinstance(t, dict) else None
             if not isinstance(key, str) or not _KEY.fullmatch(key):
-                raise ValueError("Give each show or movie with its key, as Plex has it")
+                raise ValueError("Give each show or movie with its key, as tapiOca lists it")
             if name is not None and not isinstance(name, str):
                 raise ValueError("Give each show or movie's title as text")
             keyed[key] = plain(name or "").strip()[:200]
@@ -231,7 +231,7 @@ class Blocks:
         return Blocks.from_json(json.loads(text))
 
 
-# A title's key, as Plex has it (digits) or a folder library will.
+# A title's key, as Plex has it (digits) or a Media folder of tapiOca's own ("f" and digits).
 _KEY = re.compile(r"[A-Za-z0-9:._-]{1,64}")
 
 
@@ -1044,9 +1044,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         fields = {"genres": "genre", "labels": "label", "collections": "collection",
                   "studios": "studio"}  # fmt: skip
         try:
-            libraries = [
-                s for s in await ctx.library.libraries() if s.get("type") in ("show", "movie")
-            ]
+            listed, away = await ctx.library.listed()
+            if away is not None and not listed:
+                raise away
+            libraries = [s for s in listed if s.get("type") in ("show", "movie")]
         except Exception as e:
             raise HTTPException(
                 503, "Plex can’t be reached right now. Try again in a moment."

@@ -1,4 +1,4 @@
-"""The install files (the audit of 1.34.0): stationplay.yaml and
+"""The install files (the audit of 1.34.0): tapioca-server.yaml and
 docker-compose.yml start tapiOca without the internet (the image is
 fetched only when it isn't there; each install's update steps fetch it);
 the Unraid template runs tapiOca as docker-compose.yml does; and the
@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = ROOT / "docker-compose.yml"
-YAML = ROOT / "stationplay.yaml"
+YAML = ROOT / "tapioca-server.yaml"
 TEMPLATE = ROOT / "unraid" / "stationplay.xml"
 README = ROOT / "README.md"
 

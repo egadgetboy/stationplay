@@ -57,10 +57,10 @@ from .broadcaster import now_ms
 from .broken import version_key
 from .catalog import Entry, Media, Track
 from .ffmpeg import Encoder, ProbeResult, Subtitles, to_sdr
-from .library import LibraryError
+from .library import LibraryError, NoPicture
 from .ondemand import NotShared
 from .plex import NOT_ANSWERING
-from .sources import find_first, learn_mapping, local_candidates, part_starts
+from .sources import find_file, learn_mapping, part_starts
 from .text import plain
 
 if TYPE_CHECKING:
@@ -553,12 +553,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             if not waiting.expired():
                 raise
             raise unreachable(
-                f"Plex didn't answer within {ondemand.LIBRARY_WAIT_S:g} seconds"
+                f"Plex or a Media folder didn't answer within {ondemand.LIBRARY_WAIT_S:g} seconds"
             ) from None
         except (KeyError, TypeError, AttributeError, ValueError):
             # (What the library said couldn't be read: as though it were
             # away, rather than a stack trace for the app.)
-            log.exception("What Plex said for a tapiOca app couldn't be read")
+            log.exception("What Media said for a tapiOca app couldn't be read")
             raise HTTPException(503, ondemand.UNREACHABLE) from None
         finally:
             titles_module.ensure_until.reset(until)
@@ -880,7 +880,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             try:
                 async with asking(request), picture_turns:
                     got = await ctx.library.picture(shown.key, which, width, height)
-            except httpx.HTTPStatusError:
+            except (httpx.HTTPStatusError, NoPicture):
                 raise HTTPException(404, NO_PICTURE) from None
             except httpx.HTTPError as ex:
                 raise unreachable(f"a picture didn't come: {type(ex).__name__}") from None
@@ -926,9 +926,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         can read it itself; otherwise Plex's address for it)."""
         path = None
         if media.file:
-            found, _timed_out = await find_first(
-                local_candidates(settings, ctx.media_access, media.file)
-            )
+            found, _timed_out = await find_file(settings, ctx.media_access, e.key, media.file)
             if found is not None:
                 learn_mapping(ctx.media_access, found)
                 path = found.path
@@ -1623,9 +1621,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             return over_the_limit(over, body, request, e, tag)
         path = None
         if media.file:
-            found, _timed_out = await find_first(
-                local_candidates(settings, ctx.media_access, media.file)
-            )
+            found, _timed_out = await find_file(settings, ctx.media_access, e.key, media.file)
             if found is not None:
                 learn_mapping(ctx.media_access, found)
                 path = found.path
@@ -1875,13 +1871,25 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         problem = None
         if not ctx.library.configured:
             problem = (
-                "tapiOca isn’t connected to Plex yet, so there are no Media folders to share. "
-                "The Plex step of the setup says how to connect it."
+                "There are no Media folders to share yet. Add one of your own on the Add to "
+                "Plex tab, under Your own folders, or connect Plex (the Plex step of the setup "
+                "says how)."
             )
         else:
             try:
-                found = await asyncio.wait_for(ctx.library.libraries(), setup.PLEX_ASK_S)
-                ctx.shared.note(found)
+                found, away = await ctx.library.listed(setup.PLEX_ASK_S)
+                if away is not None and not found:
+                    raise away
+                if away is None:
+                    ctx.shared.note(found)
+                else:
+                    # (Media folders of tapiOca's own are listed; Plex's
+                    # aren't, so nothing here changes until they are.)
+                    why = str(away) or NOT_ANSWERING
+                    problem = (
+                        f"{why.rstrip('.')}, so tapiOca can’t list Plex’s Media folders right "
+                        "now. What’s shared stays as it is until it can."
+                    ).replace("'", "’")
             except (LibraryError, TimeoutError) as e:
                 why = str(e) if isinstance(e, LibraryError) and str(e) else NOT_ANSWERING
                 problem = (
@@ -1933,11 +1941,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if keys is not None:
             ctx.app_pictures.clear()  # (programs playing from one unshared stop at their next ask)
             ctx.info_panels.wake.set()  # (INFO counts what's shared)
-            try:
-                listed = await asyncio.wait_for(ctx.library.libraries(), setup.PLEX_ASK_S)
-                names = {str(s["key"]): s.get("title") or "" for s in listed}
-            except (LibraryError, TimeoutError):
-                names = {}
+            listed, _ = await ctx.library.listed(setup.PLEX_ASK_S)
+            names = {str(s["key"]): s.get("title") or "" for s in listed}
             chosen = ", ".join(names.get(k, f"Media folder {k}") for k in keys) or "none"
             log.info(
                 "Media folders in tapiOca's apps: %s%s",

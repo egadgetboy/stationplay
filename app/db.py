@@ -14,6 +14,8 @@ import sqlite3
 import threading
 import time
 from collections import Counter
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, fields
 from functools import cached_property
 from operator import attrgetter
@@ -384,6 +386,50 @@ CREATE TABLE IF NOT EXISTS alerts (
     untold       TEXT    NOT NULL DEFAULT '',  -- what the web address didn't take: started, fixed
     state        TEXT    NOT NULL DEFAULT '',  -- the Broken files alert's: what it covers (JSON)
     PRIMARY KEY (kind, about, since_ms)
+);
+-- Folder libraries (see folders.py, from 1.35.0): each library an Admin
+-- added, and each show, episode, movie and collection in them, by key ("f"
+-- and its id, never used twice: AUTOINCREMENT); what each video holds, as
+-- last read (read again only when its size or time changes); and each NFO
+-- file's details, as last read.
+CREATE TABLE IF NOT EXISTS folder_libraries (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    NOT NULL,
+    kind       TEXT    NOT NULL,             -- show or movie
+    folders    TEXT    NOT NULL,             -- JSON: its folders' real paths
+    created_ms INTEGER NOT NULL,
+    scanned_ms INTEGER NOT NULL DEFAULT 0,
+    changed_ms INTEGER NOT NULL DEFAULT 0,
+    missing    TEXT    NOT NULL DEFAULT '[]' -- JSON: its folders that can't be reached now
+);
+CREATE TABLE IF NOT EXISTS folder_items (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    library  INTEGER NOT NULL,
+    kind     TEXT    NOT NULL,
+    show_id  INTEGER,
+    path     TEXT    NOT NULL,
+    root     TEXT    NOT NULL DEFAULT '',
+    files    TEXT    NOT NULL DEFAULT '[]',
+    slot     TEXT    NOT NULL DEFAULT '[]',
+    local    TEXT    NOT NULL DEFAULT '{}',
+    art      TEXT    NOT NULL DEFAULT '{}',
+    needs    TEXT    NOT NULL DEFAULT '[]',
+    added_ms INTEGER NOT NULL,
+    missing  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS folder_items_by_library ON folder_items (library);
+CREATE TABLE IF NOT EXISTS folder_files (
+    path     TEXT    PRIMARY KEY,
+    size     INTEGER NOT NULL,
+    mtime_ns INTEGER NOT NULL,
+    probe    TEXT    NOT NULL,
+    seen_ms  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS folder_nfos (
+    path    TEXT    PRIMARY KEY,
+    sig     TEXT    NOT NULL,
+    parsed  TEXT,
+    seen_ms INTEGER NOT NULL
 );
 """
 
@@ -1651,6 +1697,13 @@ class Database:
         """Every station's picture is `picture` (see playback.start)."""
         with self._lock, self._conn:
             self._conn.execute("UPDATE channels SET picture = ?", (picture,))
+
+    @contextmanager
+    def using(self) -> Iterator[sqlite3.Connection]:
+        """The connection, for a module that keeps tables of its own here
+        (folders.py), under the lock everything else uses."""
+        with self._lock:
+            yield self._conn
 
     def get_meta(self, key: str, default: str = "") -> str:
         with self._lock:

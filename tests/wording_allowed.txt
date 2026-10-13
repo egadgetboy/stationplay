@@ -3,7 +3,7 @@
 Channels DVR  # a product's name: an app that plays the playlist (README, the page)
 Scan for channels  # Plex's own button, in its Live TV & DVR settings
 calls them channels  # says what Plex calls stations, so people find Plex's own words
-calls stations “channels”  # the same, in Add to Plex's steps (core.js)
+calls stations “channels”  # the same, in the Setup tab's steps for Plex (core.js)
 Settings → Library  # Plex's own settings page, where its markers are turned on
 audio channels  # sound (5.1 and stereo), not stations
 tapiOca was called StationPlay until version 1.34.0  # the one line that gives the old name (README, PRIVACY.md)

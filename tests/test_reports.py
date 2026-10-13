@@ -402,3 +402,28 @@ def test_an_admin_is_told_what_needs_them(app):
         ctx.alerts.files(ctx.reports.needing())
         [fixed] = admin.get("/api/internal/alerts").json()["alerts"]
         assert fixed["fixed"] and fixed["kind"] == "files"
+
+
+def test_a_report_on_your_own_folders_title_never_says_plex(app):
+    """(The fourth audit of 1.35.0) A title of tapiOca's own Media folders
+    that's gone, or has no file to check, is said to be gone from its Media
+    folder, never from Plex."""
+    with TestClient(app):
+        ctx = app.state.ctx
+        made = [
+            ctx.reports.add(reports.Report(
+                id=0, at_ms=0, user_id=None, who="", device="Phone", choice="wont-play",
+                key=key, version="", station=None, position_ms=None, how={}, program={},
+                facts=[], state=reports.CHECKING, note="",
+            ), "192.168.1.5")
+            for key in ("f12", "203")
+        ]  # fmt: skip
+        for r in made:
+            ctx.reports.checked([r.id], sc.GONE, "")
+        notes = {row["rating_key"]: row["note"] for row in ctx.db.reports_in((reports.GONE,))}
+        assert notes == {
+            "f12": "It's no longer in its Media folder.",
+            "203": "It's no longer in Plex.",
+        }
+    assert reports.no_file_to_check("f12") == "Its Media folder has no file for it to check."
+    assert reports.no_file_to_check("203") == "Plex has no file for it to check."

@@ -17,7 +17,7 @@ from .broken import CHECK, STAYS, entry_part, file_key, found_by, of_part
 from .catalog import Media
 from .db import Item
 from .ffmpeg import redact
-from .library import LibraryError
+from .library import LibraryError, source_name
 from .playing import cap
 from .playing import station as station_named
 from .plex import Lookups, telling_title
@@ -504,24 +504,27 @@ async def _gone(
     key, it isn't broken; removed, it is while a station still has it."""
     key = str(entry["ratingKey"])
     if entry.get("version"):
-        log.info("Removed %s from the Broken files list: it's no longer in Plex", _label(entry))
+        log.info(
+            "Removed %s from the Broken files list: it's no longer in %s",
+            _label(entry), source_name(key),
+        )  # fmt: skip
         return CLEARED, {}
     if on.again(entry) is not None:
         log.info(
-            "Removed %s from the Broken files list: Plex has it again under a new key, and a "
+            "Removed %s from the Broken files list: %s has it again under a new key, and a "
             "station has it",
-            _label(entry),
-        )
+            _label(entry), source_name(key).replace("its", "Its", 1),
+        )  # fmt: skip
         return CLEARED, {}
     expected = on.by_key.get(key)
     # (One Sonarr or Radarr is replacing, or tried to, stays till it's back.)
     being_replaced = replacing.held(ctx.db, entry)
     if expected is None and not being_replaced:
         log.info(
-            "Removed %s from the Broken files list: it's no longer in Plex, and no station has it "
+            "Removed %s from the Broken files list: it's no longer in %s, and no station has it "
             "now",
-            _label(entry),
-        )
+            _label(entry), source_name(key),
+        )  # fmt: skip
         return CLEARED, {}
     asked = expected or replacing.entry_item(entry)
     if asked is None:

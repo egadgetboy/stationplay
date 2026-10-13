@@ -21,7 +21,9 @@ one on its data folder, then back again, and a fresh install.
    1.30.0) a person's report on the Broken files tab, with everyone able to
    report to start with, and (from 1.31.0) new people showing only on
    devices they sign in on, as the Admin never chose otherwise, and Use for
-   everyone, which keeps Kids as they were.
+   everyone, which keeps Kids as they were; and (from 1.35.0) a Media
+   folder of tapiOca's own, shared with the apps, and a station of it,
+   which the release before, started on this database as it is, keeps.
 4. Live alerts, kept across a restart (from 1.31.0): with Notify a web
    address on (to a stand-in here), the report becomes an alert, and
    backups failing another. The report is dismissed and tapiOca
@@ -105,6 +107,9 @@ NEW = {"name": "Bo", "password": "horse staple battery", "role": "user"}
 PASSCODE = "4321"
 APP = {"app": "tapiOca for Android", "deviceName": "Den"}
 STATION = {"number": 5, "name": "Upgrade TV", "sources": [{"type": "show", "ratingKey": "100"}]}
+# (From 1.35.0: a station from a Media folder of tapiOca's own.)
+OWN_STATION = (42, "Own Folders TV")
+INFO = (99, "INFO")
 SETTINGS = {"tuners": 3, "picture": "1080p"}
 START_S = 90.0  # how long a tapiOca may take to start (it tests ffmpeg first)
 # This checkout's tapiOca, run with a stand-in for GitHub (from 1.34.0:
@@ -264,6 +269,7 @@ class tapiOca:
 
     def __init__(self, code: Path, data: Path, plex: str, output: Path) -> None:
         self.data = data
+        media = data.parent / "media"  # (Media folders of tapiOca's own: see own_folders)
         # (This checkout's update check asks the stand-in, never GitHub.)
         self.github = output.with_suffix(".github")
         self.port = free_port()
@@ -271,6 +277,7 @@ class tapiOca:
         env = {
             **os.environ, "PLEX_URL": plex, "PLEX_TOKEN": "token", "DATA_DIR": str(data),
             "PORT": str(self.port), "HW_ACCEL": "cpu", "PYTHONDONTWRITEBYTECODE": "1",
+            "MEDIA_DIR": str(media),
         }  # fmt: skip
         for name in ("PUBLIC_PORT", "PYTHONPATH", "BASE_URL"):  # (this one's own, only)
             env.pop(name, None)
@@ -385,9 +392,9 @@ def has_data(checks: Checks, url: str, made: dict, version: str, where: str) -> 
     playback = page.get("/api/playback").json()
     checks.ok((playback.get("tuners"), playback.get("picture")) == (3, "1080p"),
               f"{where}: the settings are kept", playback)  # fmt: skip
-    stations = [(c["number"], c["name"]) for c in page.get("/api/channels").json()]
+    stations = sorted((c["number"], c["name"]) for c in page.get("/api/channels").json())
     checks.ok(
-        stations == [(STATION["number"], STATION["name"])],
+        stations == [(STATION["number"], STATION["name"]), *([INFO] if made.get("info") else [])],
         f"{where}: the station is kept",
         stations,
     )
@@ -490,6 +497,50 @@ def new_people(checks: Checks, url: str, made: dict) -> dict:
     }
 
 
+def own_media(media: Path) -> None:
+    """A show of two short episodes, laid out as Sonarr does (real video,
+    so a station can be made of it)."""
+    season = media / "TV" / "Upgrade Folders (2020)" / "Season 01"
+    season.mkdir(parents=True, exist_ok=True)
+    for n in (1, 2):
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=d=3:s=320x240:r=25",
+             "-f", "lavfi", "-i", "sine=d=3", "-c:v", "libx264", "-c:a", "aac", "-shortest",
+             str(season / f"Upgrade Folders (2020) - S01E0{n}.mkv")],
+            check=True, timeout=60,
+        )  # fmt: skip
+
+
+def own_folders(checks: Checks, page: httpx.Client) -> None:
+    """(From 1.35.0) A Media folder of tapiOca's own, read, shared with the
+    apps beside Plex's, and a station of its show: so the release before is
+    started below on a database that has them."""
+    made = page.post(
+        "/api/folder-libraries", json={"name": "Own", "kind": "show", "folders": ["TV"]}
+    )
+    checks.ok(made.status_code == 201, "what's new works (a Media folder of your own)",
+              made.text[:200])  # fmt: skip
+    key = made.json().get("key", "") if made.status_code == 201 else ""
+    for _ in range(120):
+        listed = {x["key"]: x for x in page.get("/api/folder-libraries").json()["libraries"]}
+        if listed.get(key, {}).get("scannedMs"):
+            break
+        time.sleep(0.5)
+    shared = page.get("/api/app-libraries").json()
+    keys = [x["key"] for x in shared["libraries"]]
+    page.put("/api/app-libraries", json={"libraries": keys})
+    shows = page.get(f"/api/libraries/{key}/items").json() if key else []
+    number, name = OWN_STATION
+    station = page.post("/api/channels", json={
+        "number": number, "name": name,
+        "sources": [{"type": "show", "ratingKey": shows[0]["ratingKey"], "title": shows[0]["title"]}]
+        if shows else [],
+    })  # fmt: skip
+    checks.ok(key in keys and station.status_code == 201,
+              "shared with the apps, and a station made of its show",
+              (keys, station.text[:200]))  # fmt: skip
+
+
 def stopped(checks: Checks, sp: tapiOca, version: str) -> None:
     """It stops when asked, its database closed (nothing left in its -wal).
     (Uvicorn raises SIGTERM again once it has shut down, as Docker expects.)"""
@@ -514,6 +565,8 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         return sp
 
     try:
+        if version_of(__version__) >= (1, 35, 0):
+            own_media(work / "media")
         old_code = work / "release"
         unpack(before_tag, old_code)
         data = work / "data"
@@ -525,6 +578,8 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         if sp is None:
             return
         made = give_data(checks, sp.url)
+        # (From 1.34.1, a new install has INFO, station 99.)
+        made["info"] = version_of(before) >= (1, 34, 1)
         stopped(checks, sp, before)
         # (What this version changes in that database, if anything: a release
         # that changes nothing in it makes no copy, as the README says.)
@@ -579,6 +634,8 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
             checks.ok((teen.status_code, own.status_code, rated.status_code) == (200, 200, 200),
                       "what's new works (a level hiding a genre, a person's own limits, clip "
                       "ratings)", (teen.text[:200], own.text[:200], rated.text[:200]))  # fmt: skip
+        if version_of(__version__) >= (1, 35, 0):
+            own_folders(checks, page)
         sent = page.post("/api/internal/problem", json={
             "kind": "crashed", "detail": "after the update", "journal": "a\nb", **APP})  # fmt: skip
         checks.ok(sent.status_code == 200, "what's new works (a problem with its journal)",
@@ -635,7 +692,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                   "neither was sent again, and the fix was sent once", said)  # fmt: skip
         # (With no copy to put back, the release before finds what's changed
         # since, and the app's sign-in from just now.)
-        since = {**new_people(checks, sp.url, made), "bearer": bearer}
+        since = {**new_people(checks, sp.url, made), "bearer": bearer, "info": made["info"]}
         if version_of(__version__) >= (1, 34, 0):
             # Alerts to a first address in Slack's format (from 1.34.0), and another.
             slack = {"on": True, "url": f"{plex.url}/slack", "format": "slack",
@@ -672,11 +729,21 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         page = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
         server = page.get("/api/v1/server").json()
         me = page.get("/api/access/me").json().get("user") or {}
-        stations = [(c["number"], c["name"]) for c in page.get("/api/channels").json()]
-        checks.ok((server["version"], me.get("name"), stations)
-                  == (before, ADMIN["name"], [(STATION["number"], STATION["name"])]),
-                  "it starts, the Admin still signed in, the station there",
+        stations = sorted((c["number"], c["name"]) for c in page.get("/api/channels").json())
+        wanted = [(STATION["number"], STATION["name"])]
+        if version_of(__version__) >= (1, 35, 0):
+            wanted.append(OWN_STATION)  # (kept, though it can't play there)
+        if made["info"]:
+            wanted.append(INFO)
+        checks.ok((server["version"], me.get("name"), stations) == (before, ADMIN["name"], wanted),
+                  "it starts, the Admin still signed in, the stations there",
                   (server["version"], me, stations))  # fmt: skip
+        if version_of(__version__) >= (1, 35, 0):
+            shared = page.get("/api/app-libraries")
+            apps = page.get("/api/internal/libraries")
+            checks.ok((shared.status_code, apps.status_code) == (200, 200),
+                      "Media still answers, with a Media folder of tapiOca's own shared",
+                      (shared.text[:200], apps.text[:200]))  # fmt: skip
         if version_of(__version__) >= (1, 34, 0) and version_of(before) < (1, 34, 0):
             got = page.get("/api/notify").json()
             checks.ok((got.get("on"), got.get("url"), got.get("format"))

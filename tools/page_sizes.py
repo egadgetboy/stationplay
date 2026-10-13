@@ -220,6 +220,24 @@ NEWER = "9.0.0"
 NOT_NOW = "tapioca.updateNotNow"
 
 
+def media_folder(data: Path) -> Path:
+    """A media folder beside the data folder, with shows and movies laid
+    out as Sonarr and Radarr lay them out (empty files: the page only
+    lists them), for Media folders of tapiOca's own (1.35.0)."""
+    media = data.parent / "media"
+    for show, year in (("Harbor Lights", 2019), ("Saturday Toons", 1994)):
+        season = media / "TV" / f"{show} ({year})" / "Season 01"
+        season.mkdir(parents=True, exist_ok=True)
+        for n in range(1, 4):
+            (season / f"{show} ({year}) - S01E{n:02d} - Part {n}.mkv").touch()
+    for movie, year in (("The Long Field", 1987), ("Paper Moons", 2004)):
+        folder = media / "Movies" / f"{movie} ({year})"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"{movie} ({year}).mkv").touch()
+    (media / "Home Videos").mkdir(exist_ok=True)
+    return media
+
+
 class Running:
     """tapiOca on its home-network port and its public one, in a thread
     of its own; `call` runs something on its event loop."""
@@ -230,7 +248,7 @@ class Running:
         self.home, self.internet = (f"http://127.0.0.1:{port}" for port in self.ports)
         settings = Settings(
             plex_url="http://plex.test", plex_token="token", data_dir=data, hw_accel="cpu",
-            port=self.ports[0], public_port=self.ports[1],
+            port=self.ports[0], public_port=self.ports[1], media_dir=str(media_folder(data)),
         )  # fmt: skip
         self.app = server.create_app(
             settings, PlexClient("http://plex.test", "token", transport=plex.transport())
@@ -328,6 +346,16 @@ def fill(sp: Running, data: Path) -> None:
         robin = ok(home.post("/api/access/users", json=KID))
         levels = {lv["name"]: lv["id"] for lv in ok(home.get("/api/access/viewing"))["levels"]}
         ok(home.put(f"/api/access/users/{robin['id']}/viewing", json={"level": levels["Kid"]}))
+        # (1.35.0) Media folders of tapiOca's own, one of shows and one of
+        # movies, read.
+        for name, kind, folder in (("Our shows", "show", "TV"), ("Our movies", "movie", "Movies")):
+            ok(home.post("/api/folder-libraries",
+                         json={"name": name, "kind": kind, "folders": [folder]}))  # fmt: skip
+        for _ in range(300):
+            listed = ok(home.get("/api/folder-libraries"))["libraries"]
+            if all(x["scannedMs"] for x in listed):
+                break
+            time.sleep(0.1)
         # What Kid hides by what a title is, and what's hidden or allowed for
         # Robin (1.33.0).
         kid = next(
@@ -1433,6 +1461,32 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
         look.expect(
             "the INFO station's panel", "INFO is station 99" in page.inner_text("#infoPanel"), True
         )
+        # (1.35.0) Your own folders: the two Media folders of tapiOca's own,
+        # and adding one, its folders chosen from inside the media folder.
+        page.wait_for_selector("#foldersPanel table.folder-libs")
+        page.evaluate(
+            "() => document.querySelector('#foldersPanel').scrollIntoView({block: 'center'})"
+        )
+        look.expect("Your own folders lists both",
+                    page.locator("#foldersPanel tbody strong").all_inner_texts(),
+                    ["Our shows", "Our movies"])  # fmt: skip
+        look.expect("Your own folders counts what's in them",
+                    page.locator("#foldersPanel tbody td:first-child .small").all_inner_texts(),
+                    ["Shows · 2 shows, 6 episodes", "Movies · 2 movies"])  # fmt: skip
+        look("addtoplex-folders")
+        page.click("#addFolderLibrary")
+        page.wait_for_selector("#flFolders .pick")
+        look.expect("Add a Media folder lists the media folder's folders",
+                    page.locator("#flFolders .pick span:first-child").all_inner_texts(),
+                    ["Home Videos", "Movies", "TV"])  # fmt: skip
+        look("folder-dialog")
+        page.click("#flFolders .pick:has-text('TV')")
+        page.wait_for_selector("#flPath .here")
+        page.click("#flPath button:has-text('Add this folder')")
+        page.wait_for_selector("#flChosen .sel")
+        look.expect("Add this folder chooses it", page.inner_text("#flChosen .sel"), "TV\n×")
+        look("folder-dialog-chosen")
+        page.click("#closeFolderLib")
         # The question a tapiOca updated from before 1.34.0 asks once,
         # then Yes: the New versions panel shows the answer, and the banner a
         # newer tapiOca brings (hidden, as Not now, in the other views)

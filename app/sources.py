@@ -11,16 +11,18 @@ it remembers the mapping and uses it for everything else.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 from . import ffmpeg as ff
 from .catalog import Media
 from .config import Settings
 from .db import Item
-from .library import Library, LibraryError
+from .library import Library, LibraryError, is_folder_key, source_name
 
 log = logging.getLogger(__name__)
 
@@ -93,6 +95,32 @@ class ShareCheck:
 
     def stuck(self) -> bool:
         return self.running is not None and not self.running.done()
+
+
+async def find_file(
+    settings: Settings, access: MediaAccess, key: str, file: str, timeout: float = 8.0
+) -> tuple[Candidate | None, bool]:
+    """Where to read program `key`'s file from, as find_first: for one in a
+    Media folder of tapiOca's own (a folder key), the file itself, only
+    while it's really in the media folder (one swapped since for a link to
+    a file outside it is never read); for Plex's, the first of
+    local_candidates that exists."""
+    if not is_folder_key(key):
+        return await find_first(local_candidates(settings, access, file), timeout)
+    try:
+        found = await asyncio.wait_for(
+            asyncio.to_thread(_own_file, settings.media_dir, file), timeout
+        )
+        return found, False
+    except TimeoutError:
+        return None, True
+
+
+def _own_file(media_dir: str, path: str) -> Candidate | None:
+    real, root = os.path.realpath(path), os.path.realpath(media_dir)
+    if os.path.commonpath([real, root]) != root or not os.path.isfile(real):
+        return None
+    return Candidate(real, "", "")
 
 
 def _first_existing(candidates: list[Candidate]) -> Candidate | None:
@@ -197,6 +225,13 @@ def _say_once_its_gone(item: Item) -> None:
     if len(_said_gone) > 10_000:
         _said_gone.clear()
     _said_gone.add(item.rating_key)
+    if is_folder_key(item.rating_key):
+        log.info(
+            "%s is no longer in your own Media folders under its key (it was removed, or "
+            "found again under a new key); playing its old file until the station's next update",
+            item.label,
+        )
+        return
     log.info(
         "%s is no longer in Plex under its key (it was removed, or re-added under a new key); "
         "playing its old file until the station's next update from Plex",
@@ -233,9 +268,11 @@ async def resolve_source(
             gone = True
         else:
             plex_reachable = False
-            why = str(e) or f"Plex didn't answer within {PLEX_LOOKUP_S}s"
+            own = is_folder_key(item.rating_key)
+            why = str(e) or f"{'it' if own else 'Plex'} didn't answer within {PLEX_LOOKUP_S}s"
             log.warning(
-                "Plex lookup for %s (%s) failed (%s); using the saved path",
+                "%s for %s (%s) failed (%s); using the saved path",
+                "Looking in your own Media folders" if own else "Plex lookup",
                 item.rating_key,
                 item.label,
                 why,
@@ -248,11 +285,16 @@ async def resolve_source(
 
     if plex_reachable and part is None and not gone:
         return ResolvedSource(
-            None, plex_file, size, error="no longer in Plex (deleted or unmatched)"
+            None,
+            plex_file,
+            size,
+            error="no longer in its Media folder (deleted or moved)"
+            if is_folder_key(item.rating_key)
+            else "no longer in Plex (deleted or unmatched)",
         )
 
     if plex_file:
-        found, timed_out = await find_first(local_candidates(settings, access, plex_file))
+        found, timed_out = await find_file(settings, access, item.rating_key, plex_file)
         if found:
             learn_mapping(access, found)
             access.direct += 1
@@ -314,7 +356,9 @@ async def resolve_source(
             None,
             plex_file,
             size,
-            error="Plex can't be reached, and tapiOca can't see the file directly",
+            error="its folder can't be reached right now"
+            if is_folder_key(item.rating_key)
+            else "Plex can't be reached, and tapiOca can't see the file directly",
             transient=True,
         )
     return ResolvedSource(None, plex_file, size, error=f"file not found: {plex_file}", parts=parts)
@@ -334,11 +378,17 @@ async def readable(
     played on the status page. With `check`, a check of the share still
     stuck from before isn't joined by another (see ShareCheck)."""
     if item.file_path:
-        candidates = local_candidates(settings, access, item.file_path)
-        if check is None:
-            found, timed_out = await find_first(candidates)
+        if check is not None:
+            # (One check of the share at a time: see ShareCheck.)
+            if is_folder_key(item.rating_key):
+                look = functools.partial(_own_file, settings.media_dir, item.file_path)
+            else:
+                look = functools.partial(
+                    _first_existing, local_candidates(settings, access, item.file_path)
+                )
+            found, timed_out = await _checked(look, check)
         else:
-            found, timed_out = await _checked(candidates, check)
+            found, timed_out = await find_file(settings, access, item.rating_key, item.file_path)
         if found:
             return ResolvedSource(found.path, item.file_path)
         if timed_out:
@@ -350,10 +400,11 @@ async def readable(
     return ResolvedSource(None, item.file_path, error="file not found")
 
 
-async def _checked(candidates: list[Candidate], check: ShareCheck) -> tuple[Candidate | None, bool]:
-    """find_first, one check at a time (see ShareCheck)."""
-    if not candidates:
-        return None, False
+async def _checked(
+    look: Callable[[], Candidate | None], check: ShareCheck
+) -> tuple[Candidate | None, bool]:
+    """`look` (where a file is: _first_existing or _own_file), one check at a
+    time (see ShareCheck)."""
     if check.stuck():
         if not check.said and time.monotonic() - check.since >= STUCK_SAID_AFTER_S:
             check.said = True
@@ -363,7 +414,7 @@ async def _checked(candidates: list[Candidate], check: ShareCheck) -> tuple[Cand
             )
         return None, True
     check.since, check.said = time.monotonic(), False
-    running = check.running = asyncio.ensure_future(asyncio.to_thread(_first_existing, candidates))
+    running = check.running = asyncio.ensure_future(asyncio.to_thread(look))
     try:
         # (Shielded: a check given up on goes on in its thread, and is seen to.)
         return await asyncio.wait_for(asyncio.shield(running), SHARE_WAIT_S), False
@@ -378,7 +429,7 @@ async def locate(
     of program `key`'s file, or one of its files): straight from disk when
     tapiOca can see it, otherwise streamed from the library."""
     if media.file:
-        found, timed_out = await find_first(local_candidates(settings, access, media.file))
+        found, timed_out = await find_file(settings, access, key, media.file)
         if found:
             learn_mapping(access, found)
             access.direct += 1
@@ -444,7 +495,8 @@ async def resolve_version(
     try:
         entry = await asyncio.wait_for(library.entry(item.rating_key, details=True), PLEX_LOOKUP_S)
     except (TimeoutError, LibraryError) as e:
-        why = str(e) or f"Plex didn't answer within {PLEX_LOOKUP_S}s"
+        where = source_name(item.rating_key)
+        why = str(e) or f"{where[0].upper()}{where[1:]} didn't answer within {PLEX_LOOKUP_S}s"
         return ResolvedSource(None, item.file_path, None, error=why, transient=True)
     media = entry.version(version) if entry is not None else None
     if media is None:  # (gone; or it's the first now, and known by the program's key)

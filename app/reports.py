@@ -54,7 +54,7 @@ from .arr import NAMES as ARR_NAMES
 from .arr import ArrError
 from .broken import REPORTED, file_key, version_key
 from .catalog import Entry, Media
-from .library import LibraryError, is_folder_key
+from .library import LibraryError, is_folder_key, source_name
 from .markers import pieces
 from .scanner import COULDNT, FOUND, GONE, KEPT, NOTHING, item_of, version_of
 from .text import plain
@@ -99,8 +99,29 @@ EPISODE_OR_MOVIE = "Report a problem with an episode or a movie"
 ONE_OF_THEM = "Send the key of what you're watching, or its station, not both"
 NO_STATION = "There's no such station"
 NOTHING_ON = "Nothing's on that station right now"
-# (For an Admin, on the Broken files tab.)
-UNREACHABLE_PLEX = "tapiOca can't reach Plex right now"
+
+
+def where_it_is(key: str) -> str:
+    """Where a title is, for an Admin (the Broken files tab): Plex, or a
+    Media folder of tapiOca's own (1.35.0)."""
+    return source_name(key)
+
+
+def no_file_to_check(key: str) -> str:
+    return f"{'Its Media folder' if is_folder_key(key) else 'Plex'} has no file for it to check."
+
+
+def cant_reach(key: str, why: str) -> str:
+    """(For an Admin, on the Broken files tab.)"""
+    if is_folder_key(key):
+        return f"tapiOca can't read its Media folder right now ({why})"
+    return f"tapiOca can't reach Plex right now ({why})"
+
+
+def gone(key: str) -> str:
+    return f"That file is no longer in {where_it_is(key)}"
+
+
 # The limits: one a day per person per program; this many a day per person.
 A_DAY = 10
 KEEP_DAYS = 90
@@ -320,7 +341,8 @@ class Reports:
         notes = list(dict.fromkeys(r.note for r in reports if r.note and r.state != WAITING))
         if any(r.choice in DETAILS for r in waiting):
             notes.append(
-                "Fix its title, details or artwork under Needs a match, then choose Dismiss."
+                "Fix its title or details in its NFO file, or its file's name, or put its "
+                "picture beside it, then choose Dismiss."
                 if is_folder_key(key)
                 else "Fix its title, details or artwork in Plex (Fix Match, or Edit, on its "
                 "page there), then choose Dismiss."
@@ -437,7 +459,8 @@ class Reports:
         if outcome == KEPT:
             note = f"tapiOca found what's wrong ({note}), but you put it back on the air."
         elif outcome == GONE:
-            note = "It's no longer in Plex."
+            keys = {r.key for r in map(_report, self.ctx.db.reports_in((CHECKING,))) if r.id in ids}
+            note = f"It's no longer in {where_it_is(next(iter(keys), ''))}."
         now = int(time.time() * 1000)
         self.ctx.db.set_reports(ids, outcome, note, now if done else None, only=(CHECKING,))
         self.changed()
@@ -527,7 +550,7 @@ class Reports:
         except ArrError as e:
             raise HTTPException(503, str(e)) from None
         except LibraryError as e:
-            raise HTTPException(503, f"{UNREACHABLE_PLEX} ({e})") from None
+            raise HTTPException(503, cant_reach(key, str(e))) from None
         note = f"{by} chose Find a better copy: {said}"
         self.ctx.db.set_reports(
             [r.id for r in reports], BETTER, note, int(time.time() * 1000), only=(WAITING,)
@@ -540,12 +563,12 @@ class Reports:
             entry = await asyncio.wait_for(self.ctx.library.entry(report.key, details=True), 10)
         except (LibraryError, TimeoutError) as e:
             why = str(e) or "it didn't answer"
-            raise HTTPException(503, f"{UNREACHABLE_PLEX} ({why})") from None
+            raise HTTPException(503, cant_reach(report.key, why)) from None
         if entry is None:
-            raise HTTPException(404, "That file is no longer in Plex")
+            raise HTTPException(404, gone(report.key))
         media = entry.version(report.version)
         if media is None:
-            raise HTTPException(404, "That file is no longer in Plex")
+            raise HTTPException(404, gone(report.key))
         return entry, media
 
 
@@ -659,7 +682,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if body.choice not in CHECKED:
             state, note = WAITING, ""
         elif media is None:
-            state, note = COULDNT, "Plex has no file for it to check."
+            state, note = COULDNT, no_file_to_check(body.key or "")
         else:
             state, note = CHECKING, ""
         report = reports.add(

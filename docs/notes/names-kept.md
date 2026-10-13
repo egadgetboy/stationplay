@@ -24,7 +24,7 @@ Don't rename them.
 - The Unraid template's data folder, `/mnt/user/appdata/stationplay/data`: an Unraid Compose install from before 1.34.0 already uses it, so switching to the template keeps the same stations and the same tuner.
 - The TrueNAS app's name and the Synology project's name the README gives, `stationplay`: TrueNAS app names are lowercase only, and the update steps say "open **Apps**, then **stationplay**" and "choose the stationplay project".
 - The volume paths (`/data`, `/media`) and the image's folder `/opt/stationplay`: existing installs mount and use them.
-- The file names `stationplay.yaml` and `unraid/stationplay.xml`: existing TrueNAS installs and Unraid templates point to them (an Unraid template's TemplateURL fetches the XML by its name).
+- The file name `unraid/stationplay.xml`: Unraid templates point to it (a template's TemplateURL fetches the XML by its name). The TrueNAS file is `tapioca-server.yaml` from 1.35.0 (the owner, October 13): TrueNAS keeps what was pasted from it, never its name, so nothing points to the old name `stationplay.yaml`, which older releases keep.
 - The Dockerfile's stage name and the local build tag `stationplay:latest` in image.yml: CI's own names, never published (the published image is `ghcr.io/egadgetboy/tapioca-server`).
 
 ## What Plex and the apps match

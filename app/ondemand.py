@@ -24,8 +24,9 @@ from collections.abc import Awaitable, Callable, Collection, Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
-from . import catalog
+from . import catalog, infostation
 from .catalog import Entry, Media, Track
+from .library import LibraryError, is_key
 from .text import and_list, plain
 
 if TYPE_CHECKING:
@@ -54,7 +55,9 @@ SLOW_DEFAULTS = {"home": "offer", "away": "switch"}
 EVEN_META = "app_even_sound"
 LIBRARIES_MOST = 100
 NOT_SHARED = "That isn't in a Media folder shared with tapiOca's apps"
-UNREACHABLE = "tapiOca can't reach Plex right now. Try again in a moment."
+# (Said to viewers, whatever the source: Plex or a Media folder of tapiOca's
+# own. The log says which, and why: see applibrary.unreachable.)
+UNREACHABLE = "tapiOca can't show your Media right now. Try again in a moment."
 
 # Requests to the library for the apps at once, at most (the rest wait).
 LIBRARY_AT_ONCE = 6
@@ -252,8 +255,9 @@ class Shared:
 
 
 def _a_key(value: Any) -> bool:
-    text = str(value)
-    return isinstance(value, (str, int)) and text.isascii() and text.isdigit() and len(text) < 20
+    """Whether `value` is a Media folder's key: Plex's, or a folder
+    library's (from 1.35.0)."""
+    return is_key(value) and str(value) != infostation.KEY
 
 
 # What the apps are shown ---------------------------------------------------------
@@ -323,6 +327,14 @@ class Catalog:
         # The titles' tags, for limits by them (titles.Titles; set by main).
         self.titles: Titles | None = None
 
+    def forget(self) -> None:
+        """Everything kept, forgotten (a folder library changed: see
+        folders.py), so what's asked next is asked afresh."""
+        for kept in (self._where, self._entries, self._cards, self._episodes, self._wholes,
+                     self._genres, self._added):  # fmt: skip
+            kept.clear()
+        self._libraries = self._fingerprint = None
+
     async def _once(self, key: tuple[str, ...], fetch: Callable[[], Awaitable[Any]]) -> Any:
         """What `fetch` fetches, fetched once however many ask for it at
         once, and carried on to the end even when they stop waiting (an app
@@ -365,13 +377,18 @@ class Catalog:
             found = self._libraries[1]
         else:
 
-            async def fetch() -> list[dict[str, Any]]:
+            async def fetch() -> tuple[list[dict[str, Any]], LibraryError | None]:
                 async with self._turns:
-                    return await self.library.libraries()
+                    return await self.library.listed()
 
-            found = await self._once(("libraries",), fetch)
-            self._libraries = (now, found)
-            self.shared.note(found)
+            found, away = await self._once(("libraries",), fetch)
+            if away is not None and not found:
+                raise away
+            # (With Plex away, Media folders of tapiOca's own are still
+            # listed: only until Plex answers, so not kept.)
+            if away is None:
+                self._libraries = (now, found)
+                self.shared.note(found)
         return [
             {"key": str(s["key"]), "title": plain(str(s.get("title") or "")), "kind": s["type"]}
             for s in found
@@ -388,7 +405,7 @@ class Catalog:
     async def entry(self, key: str) -> Entry:
         """A show, movie or episode in a shared library, in detail. NotShared
         if it isn't in one (LibraryError if the library can't be reached)."""
-        if not (key.isascii() and key.isdigit() and len(key) < 20) or not self.shared.on:
+        if not _a_key(key) or not self.shared.on:
             raise NotShared(key)
         if self.shared.unlisted:
             await self.libraries()  # (which they are, before anything in one is shown)
@@ -487,7 +504,7 @@ class Catalog:
 
         async def fetch() -> str:
             async with self._turns:
-                return await self.library.fingerprint()
+                return await self.library.fingerprint_here()
 
         found: str = await self._once(("fingerprint",), fetch)
         self._fingerprint = (now, found)

@@ -375,3 +375,23 @@ def test_what_an_admin_put_back_on_the_air_stays_on(tmp_path, monkeypatch):
         client.portal.call(ctx.scanner.round)
         assert told == [([4], sc.KEPT, "Deep scan: the sound drops out around 12:00")]
         assert ctx.broken.keys() == set()
+
+
+def test_without_plex_nothing_says_plex_failed():
+    """(The audit of October 13: tapiOca with or without Plex.) What can't
+    be reached, or is gone, is named by where the title is: Plex's, or a
+    Media folder of tapiOca's own. The apps' sentence names neither: the
+    log says which (the owner's rule for what viewers read)."""
+    from app import ondemand, reports
+
+    assert ondemand.UNREACHABLE == "tapiOca can't show your Media right now. Try again in a moment."
+    assert reports.where_it_is("f12") == "its Media folder"
+    assert reports.where_it_is("12345") == "Plex"
+    assert reports.cant_reach("f12", "Stale file handle") == (
+        "tapiOca can't read its Media folder right now (Stale file handle)"
+    )
+    assert reports.cant_reach("12345", "it didn't answer") == (
+        "tapiOca can't reach Plex right now (it didn't answer)"
+    )
+    assert reports.gone("f12") == "That file is no longer in its Media folder"
+    assert reports.gone("12345") == "That file is no longer in Plex"

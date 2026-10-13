@@ -44,7 +44,7 @@
   <div class="tabrow">
   <nav class="tabs" role="tablist">
     <button class="tab" role="tab" data-tab="stations" aria-selected="true">Stations</button>
-    <button class="tab admin" role="tab" data-tab="setup">Add to Plex</button>
+    <button class="tab admin" role="tab" data-tab="setup">Setup</button>
     <button class="tab admin" role="tab" data-tab="access">Access</button>
     <button class="tab" role="tab" data-tab="stats">Stats</button>
     <button class="tab admin" role="tab" data-tab="logs">Logs</button>
@@ -204,9 +204,9 @@
       <p id="accessState" style="margin:0"></p>
       <dl class="roles">
         <dt>Admin</dt>
-        <dd>Can do everything: manage every station and use Stats, Add to Plex (including backups), Broken files, Logs, and Access (who can sign in).</dd>
+        <dd>Can do everything: manage every station and use Stats, Setup (including backups), Broken files, Logs, and Access (who can sign in).</dd>
         <dt>User</dt>
-        <dd>Can watch the stations and Media their Viewing Level allows (Unrestricted, with no limits, to start), and see Stats. Can make new stations (as many as you allow below, 3 to start) and change or delete only the stations they made. Can add logos (uploaded, or a show’s logo from Plex) and Intro Bumper videos, but only Admins can delete them. On a Viewing Level with limits, they only watch. Can’t open Add to Plex, Broken files, Logs, or Access.</dd>
+        <dd>Can watch the stations and Media their Viewing Level allows (Unrestricted, with no limits, to start), and see Stats. Can make new stations (as many as you allow below, 3 to start) and change or delete only the stations they made. Can add logos (uploaded, or a show’s logo from Plex) and Intro Bumper videos, but only Admins can delete them. On a Viewing Level with limits, they only watch. Can’t open Setup, Broken files, Logs, or Access.</dd>
       </dl>
     </div>
     <div class="panel" style="margin-top:16px" id="userPanel" hidden><table class="users" id="userTable"></table></div>
@@ -262,10 +262,14 @@
       <summary><strong>API tokens</strong><span class="muted" id="apiTokensSum"></span></summary>
       <div class="arr-body" id="apiTokensBody"></div>
     </details>
-    <p class="muted small">Plex, Jellyfin and other apps never sign in, so the tuner, guide, and stream addresses on the Add to Plex tab are open to every device on your network, unless you choose Only these devices under Tuner access. Locked out? Create an empty file named <code>reset-access</code> in tapiOca’s data folder, then restart tapiOca. This removes every user and turns off sign-in, so anyone on your network can use tapiOca again.</p>
+    <p class="muted small">Plex, Jellyfin and other apps never sign in, so the tuner, guide, and stream addresses on the Setup tab are open to every device on your network, unless you choose Only these devices under Tuner access. Locked out? Create an empty file named <code>reset-access</code> in tapiOca’s data folder, then restart tapiOca. This removes every user and turns off sign-in, so anyone on your network can use tapiOca again.</p>
   </section>
 
   <section id="tab-setup" hidden>
+    <!-- (Named for what it does, for every app: once Add to Plex, the
+         owner's choice, October 13.) -->
+    <div class="section-head"><h2>Tuner integration</h2></div>
+    <p class="muted small">The addresses Plex, Jellyfin, Emby, Kodi and other apps use to watch your stations, and how to add them.</p>
     <div class="panel setup">
       <div class="copyrow"><span class="what">Tuner address</span><code id="tunerUrl">…</code><button class="btn" data-copy="tunerUrl">Copy</button></div>
       <div class="copyrow"><span class="what">Guide (XMLTV) for Plex</span><code id="xmltvUrl">…</code><button class="btn" data-copy="xmltvUrl">Copy</button></div>
@@ -295,6 +299,9 @@
         <p class="hint">These apps refresh their guide on their own schedule (about once a day). After you change a station, refresh the guide in the app to see the change right away.</p>
       </div>
     </div>
+    <div class="section-head" style="margin-top:22px"><h2>Your own folders</h2><div class="spacer"></div><button type="button" class="btn primary" id="addFolderLibrary">Add a Media folder</button></div>
+    <p class="muted small">A Media folder of your own is one tapiOca reads itself: shows or movies from folders in its media folder, with or without Plex. It works as one of Plex’s Media folders does, for stations and for Media in tapiOca’s apps. tapiOca takes each title’s details from the NFO files beside it, the file itself and its name, and its pictures from beside it. It reads them again every 6 hours, when you choose Read again, and when Sonarr or Radarr brings a replacement tapiOca asked for.</p>
+    <div class="panel" id="foldersPanel"></div>
     <div class="section-head" style="margin-top:22px"><h2>Picture and tuners</h2><div class="spacer"></div><button type="button" class="btn" id="runSetup">Run setup again</button></div>
     <div class="panel setup" id="playbackPanel"></div>
     <div class="section-head" style="margin-top:22px">
@@ -327,7 +334,7 @@
     <div id="signinByPin" hidden>
       <div class="field"><label for="signinPin" id="signinPinLabel">PIN</label><input type="password" id="signinPin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off"></div>
     </div>
-    <button class="btn primary" type="submit" style="justify-content:center">Sign in</button>
+    <button class="btn primary" type="submit" id="signinGo" style="justify-content:center">Sign in</button>
     <button class="linkish" type="button" id="signinOther" hidden>Use your password instead</button>
     <button class="linkish" type="button" id="signinSwitch" hidden>Switch user</button>
     <span class="hint" id="signinStatus" role="alert"></span>
@@ -849,6 +856,27 @@
   </div>
 </dialog>
 
+<dialog id="folderLib" aria-labelledby="folderLibTitle">
+  <div class="dlg-head"><h3 id="folderLibTitle">Add a Media folder</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeFolderLib" aria-label="Close">✕</button></div>
+  <div class="dlg-body">
+    <div class="field"><label for="flName">Name</label><input type="text" id="flName" maxlength="60" placeholder="Such as Home Movies" autocomplete="off"></div>
+    <div class="field" id="flKindField"><span class="field-label">It holds</span>
+      <div class="seg" role="group" aria-label="It holds"><button type="button" data-flkind="show" aria-pressed="true">Shows</button><button type="button" data-flkind="movie" aria-pressed="false">Movies</button></div></div>
+    <div class="field"><span class="field-label">Its folders</span><div class="fl-chosen" id="flChosen"></div></div>
+    <div class="fl-browse">
+      <div class="folder-path" id="flPath"></div>
+      <div class="picker-list" id="flFolders"></div>
+    </div>
+    <p class="hint" id="flNote" hidden></p>
+  </div>
+  <div class="dlg-foot">
+    <span class="hint" id="flResult" role="alert"></span>
+    <div class="spacer"></div>
+    <button class="btn" type="button" id="flCancel">Cancel</button>
+    <button class="btn primary" type="button" id="flSave">Add</button>
+  </div>
+</dialog>
+
 <dialog id="smart" aria-labelledby="smartTitle">
   <div class="dlg-head"><h3 id="smartTitle">Smart stations</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeSmart" aria-label="Close">✕</button></div>
   <div class="dlg-body">
@@ -958,6 +986,7 @@ const ACCESS = __ACCESS__;
 <script src="/web/js/viewing.js?v=__VERSION__"></script>
 <script src="/web/js/stats.js?v=__VERSION__"></script>
 <script src="/web/js/updates.js?v=__VERSION__"></script>
+<script src="/web/js/folders.js?v=__VERSION__"></script>
 <script src="/web/js/boot.js?v=__VERSION__"></script>
 </body>
 </html>

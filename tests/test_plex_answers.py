@@ -119,7 +119,7 @@ def test_the_example_plex_address_is_the_one_in_the_yaml_and_compose_file():
     from pathlib import Path
 
     root = Path(__file__).resolve().parent.parent
-    for name in ("stationplay.yaml", "docker-compose.yml"):
+    for name in ("tapioca-server.yaml", "docker-compose.yml"):
         text = (root / name).read_text(encoding="utf-8")
         assert f'PLEX_URL: "{plex_module.EXAMPLE_URL}"' in text, name
     said = plex_module.trouble(plex_module.EXAMPLE_URL, None)
@@ -128,3 +128,47 @@ def test_the_example_plex_address_is_the_one_in_the_yaml_and_compose_file():
         "server's address, then restart tapiOca."
     )
     assert "example" not in plex_module.trouble("http://192.168.50.2:32400", None)
+
+
+def test_the_sample_token_left_in_place_isnt_plex_set_up(tmp_path):
+    """(The audit of October 13: tapiOca with or without Plex.) Someone
+    without Plex who leaves the YAML's sample PLEX_URL and PLEX_TOKEN in
+    place hasn't set Plex up: tapiOca doesn't count on Plex (whose absence
+    would hold up checking their own folders' files), and setup says what
+    to do about the two lines."""
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+
+    from app import setup
+    from app.config import Settings
+    from app.main import create_app
+
+    root = Path(__file__).resolve().parent.parent
+    for name in ("tapioca-server.yaml", "docker-compose.yml"):
+        text = (root / name).read_text(encoding="utf-8")
+        assert f'PLEX_TOKEN: "{plex_module.EXAMPLE_TOKEN}"' in text, name
+    left = PlexClient(plex_module.EXAMPLE_URL, plex_module.EXAMPLE_TOKEN)
+    assert not left.configured and left.sample_token
+    assert PlexClient(plex_module.EXAMPLE_URL, "a-real-token").configured
+    # (Only both lines, as the YAML has them: a real address with the sample
+    # token is Plex set up, and Plex says whether it takes it. Some Plex
+    # servers let their own network in without a token, and an update
+    # mustn't take Plex away from them: the fourth audit of 1.35.0.)
+    real = PlexClient("http://192.168.50.2:32400", plex_module.EXAMPLE_TOKEN)
+    assert real.configured and not real.sample_token
+    app = create_app(Settings(data_dir=tmp_path / "data", media_dir=str(tmp_path)), left)
+    with TestClient(app) as c:
+        state = c.get("/api/status").json()["plex"]
+        assert state["configured"] is False and state["sample"] is True
+        assert not app.state.ctx.library.plex_on
+        # (Nor is the example address taken as Plex's, for Tuner access.)
+        assert app.state.ctx.tuner.plex_url == ""
+    check = setup.plex_check({"configured": False, "sample": True}, None, folders=1)
+    assert check.state == "good"
+    assert check.lines[1:] == [
+        "PLEX_URL and PLEX_TOKEN still have the sample values from tapiOca’s YAML or Compose file.",
+        "To use Plex, put your Plex server’s address and token there instead (the README’s "
+        "“Finding your Plex token” shows where it is), then restart tapiOca. Without Plex, "
+        "delete the two lines.",
+    ]

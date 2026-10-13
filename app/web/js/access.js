@@ -34,7 +34,10 @@ function showSignIn(idle = false) {
   $('#signinWhere').hidden = !me.outside || !!me.notSetUp;
   $('#signinHome').hidden = !!me.outside || !me.required;
   signInBy('');
-  $('#signinName').focus();
+  // (From the internet before signing in is on, there's nothing to sign in
+  // to: the owner's sentence alone. The fourth audit of 1.35.0.)
+  if (me.notSetUp) for (const id of ['#signinByPassword', '#signinByPin', '#signinGo']) $(id).hidden = true;
+  else { $('#signinGo').hidden = false; $('#signinName').focus(); }
   // At home, on a browser someone signed in on with their password: their PIN
   // will do (see pin_sign_in in access.py). And the notes again, from this
   // answer, in case the page's first one never came.
@@ -270,7 +273,7 @@ async function loadAccess() {
   renderDevices();
   $('#accessState').textContent = me.required
     ? `Sign-in is on: ${plural(users.length, 'user')} can sign in, and everyone else sees only the sign-in page.`
-    : 'tapiOca is open: anyone on your network who can reach this page can use it. (From the internet, it always asks people to sign in.) Add a user to require sign-in. The first user is always an Admin, and you’re signed in as that user right away.';
+    : 'tapiOca is open: anyone at home, on your network or through a VPN into it (port 3310), can use it, and nobody can from the internet (port 3311). Add a user to require sign-in. The first user is always an Admin, and you’re signed in as that user right away.';
   $('#addUserTitle').textContent = me.required ? 'Add a user' : 'Add the first user (an Admin)';
   if (!me.required) $('#newUserRole').value = 'admin';
   $('#newUserRole').disabled = !me.required;

@@ -2,7 +2,8 @@
 # v<version>.md there names the commit of that version (on main) and holds
 # its notes. For each one not yet published, this makes the tag at that
 # commit and the release, with the release's files built from that commit:
-# tapioca-<version>.zip (unzipping to src), stationplay.yaml and
+# tapioca-<version>.zip (unzipping to src), tapioca-server.yaml (named
+# stationplay.yaml before 1.35.0: the commit's own name) and
 # docker-compose.yml, and tapioca-<version>-packages.txt, the list of
 # every package in the image that was tested (tools/sbom.py, made by an
 # image workflow run that tested it; the tests' own additions aside), with
@@ -193,7 +194,11 @@ jobs:
             out="$RUNNER_TEMP/$tag"
             mkdir -p "$out"
             git archive --format=zip --prefix=src/ -o "$out/tapioca-$version.zip" "$commit"
-            git show "$commit:stationplay.yaml" > "$out/stationplay.yaml"
+            # (The TrueNAS app file, by the name its commit gives it:
+            # tapioca-server.yaml from 1.35.0, stationplay.yaml before.)
+            yaml=tapioca-server.yaml
+            git cat-file -e "$commit:$yaml" 2>/dev/null || yaml=stationplay.yaml
+            git show "$commit:$yaml" > "$out/$yaml"
             git show "$commit:docker-compose.yml" > "$out/docker-compose.yml"
             # The notes: everything after the commit's lines.
             tail -n +4 "$file" | sed '/./,$!d' > "$out/notes.md"
@@ -218,7 +223,7 @@ jobs:
             fi
             made=$(dirname "$listed")
             mv "$listed" "$out/"
-            files=("$out/tapioca-$version.zip" "$out/stationplay.yaml" "$out/docker-compose.yml"
+            files=("$out/tapioca-$version.zip" "$out/$yaml" "$out/docker-compose.yml"
               "$out/tapioca-$version-packages.txt")
             if from "$version" "$FIRST_IMAGE"; then
               # The image that run tested (both machines' images, joined),

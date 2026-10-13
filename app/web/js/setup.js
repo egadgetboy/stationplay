@@ -4,7 +4,7 @@
 // new: every question, with checks that what's set up is working. After an
 // update that brings new or changed questions: just those, once (and the
 // checks, if something needs a look). And everything, whenever it's run
-// again (Run setup again on the Add to Plex tab, or Setup at the foot of the
+// again (Run setup again on the Setup tab, or Setup at the foot of the
 // page), with the current answers filled in. Each answer is saved as you go
 // on from it; Skip setup (or Close) keeps everything else as it is.
 const SETUP_TITLES = {
@@ -70,7 +70,7 @@ const PERSONAL_USE = () => h('div', { class: 'limit-note' }, h('strong', {}, 'Pl
   'Plex’s terms license Plex Media Server for personal use, on hardware and storage you own. Use tapiOca with your Plex server as those terms allow. ',
   h('a', { href: 'https://www.plex.tv/about/privacy-legal/plex-terms-of-service/', target: '_blank', rel: 'noopener noreferrer' }, 'Plex’s terms'), ' · ',
   h('a', { href: '/privacy', target: '_blank', rel: 'noopener noreferrer' }, 'tapiOca’s privacy notice'));
-const SETUP_AGAIN = 'You can run setup again any time from the Add to Plex tab, or Setup at the foot of the page.';
+const SETUP_AGAIN = 'You can run setup again any time from the Setup tab, or the Setup link at the foot of the page.';
 // `why`: "new" (a new tapiOca), "updated" (an update has new questions),
 // or "again" (run again).
 async function showSetup(st, why) {
@@ -315,9 +315,12 @@ const SETUP_PAGES = {
         h('button', { type: 'button', 'aria-pressed': String(signIn === 'on'), onclick: () => { signIn = 'on'; paint(); } }, 'Only people who sign in'));
       who.replaceChildren(...[
         h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'Who'), h('div', { class: 'opt-ctl' }, seg,
+          // (Said plainly, the owner, October 13: "Does the first one allow
+          // remote users too?" No: nobody, from the internet.)
           h('span', { class: 'hint' }, signIn === 'off'
-            ? 'Anyone on your network who can open this page can use tapiOca. From the internet, tapiOca always asks people to sign in. Either way, Plex decides who can watch in Plex.'
-            : 'Make yourself the first Admin now, and you’ll be signed in right away. On the Access tab, you can add other people as Admins, or as Users who can make and change only their own stations.'))),
+            ? 'No signing in. Anyone at home, on your network or through a VPN into it (port 3310), can use tapiOca’s page and apps and change anything, as an Admin can. Nobody can from the internet (port 3311), even with Away from home on.'
+            : 'Everyone signs in, at home and away, as an Admin or a User. Make yourself the first Admin now, and you’ll be signed in right away. On the Access tab, you can add other people as Admins, or as Users who can make and change only their own stations. To use tapiOca’s apps from the internet (port 3311), also turn on Away from home on the Access tab.'),
+          h('span', { class: 'hint' }, 'Neither changes who can watch in Plex, Jellyfin, Emby or Kodi: each app decides that itself.'))),
         signIn === 'on' ? h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'Your name'), h('div', { class: 'opt-ctl' }, adminName)) : null,
         signIn === 'on' ? h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'Password'), h('div', { class: 'opt-ctl' }, adminPassword,
           h('span', { class: 'hint' }, `At least ${ACCESS.passwordMin} characters.`))) : null,
@@ -465,7 +468,7 @@ const SETUP_PAGES = {
         h('li', {}, 'Then choose Check again here.')),
       h('p', { class: 'hint', style: 'margin:0' }, 'Plex needs at least one station to add tapiOca, so a new tapiOca starts with INFO on station 99: the date and time, what’s new in tapiOca and tips for watching. It plays even before Plex is connected.'),
       addresses,
-      h('p', { class: 'hint', style: 'margin:0' }, 'Watching in Plex needs Plex Pass on the account that owns your Plex server. Jellyfin, Emby, Kodi and tapiOca’s own apps don’t need it. You’ll find these addresses, plus the ones for Jellyfin, Emby, Kodi and other apps, on the Add to Plex tab.'),
+      h('p', { class: 'hint', style: 'margin:0' }, 'Watching in Plex needs Plex Pass on the account that owns your Plex server. Jellyfin, Emby, Kodi and tapiOca’s own apps don’t need it. You’ll find these addresses, plus the ones for Jellyfin, Emby, Kodi and other apps, on the Setup tab.'),
       PERSONAL_USE()) };
   },
 
@@ -510,7 +513,7 @@ const SETUP_PAGES = {
         : h('p', { style: 'margin:0' }, !all.length ? 'That’s everything.'
           : all.some(c => c.state === 'wait') ? 'Everything tapiOca could check is working.' : 'Everything tapiOca checks is working.'),
       h('label', {}, lookOut, ' Tell me when a new tapiOca is out'),
-      h('p', { class: 'hint', style: 'margin:0' }, `${UPDATE_PRIVACY} You can change this under New versions on the Add to Plex tab.`),
+      h('p', { class: 'hint', style: 'margin:0' }, `${UPDATE_PRIVACY} You can change this under New versions on the Setup tab.`),
       h('p', { class: 'hint', style: 'margin:0' }, why === 'new' ? `Choose Finish, then New station to make your first one. ${SETUP_AGAIN}` : SETUP_AGAIN)) };
   },
 };

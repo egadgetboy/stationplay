@@ -241,7 +241,7 @@ on its own after a change.
 
 Admin. Backs up tapiOca now, as it does every night, into the `backups`
 folder inside its data folder, which keeps the last 7. Answers 201. The
-Backups section of the **Add to Plex** tab lists the backup, to download or
+Backups section of the **Setup** tab lists the backup, to download or
 restore.
 
 | Field | Type | What it is |

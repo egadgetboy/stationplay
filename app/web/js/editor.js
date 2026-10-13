@@ -57,7 +57,7 @@ document.querySelectorAll('[data-aspect]').forEach(b => b.addEventListener('clic
 
 const skipHints = {
   off: 'Programs play in full.',
-  on: 'Skips intros and end credits wherever Plex has found them, like Skip Intro and Skip Credits in Plex, so the next program starts right away. Anything before the intro still plays, and so does a scene after the credits. Programs Plex hasn’t marked play in full.',
+  on: 'Skips intros and end credits wherever Plex has found them, like Skip Intro and Skip Credits in Plex, so the next program starts right away. Anything before the intro still plays, and so does a scene after the credits. Programs Plex hasn’t marked, and those in your own Media folders, play in full.',
 };
 let skipIntros = false;
 function setSkip(on) {

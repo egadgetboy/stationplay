@@ -3,7 +3,8 @@ with stand-ins for gh, docker, skopeo and ssh-keygen, in a git repository
 of its own.
 
 Releases are source only (the owner, October 12): a version whose tests
-passed is published with its zip, stationplay.yaml, docker-compose.yml and
+passed is published with its zip, tapioca-server.yaml (stationplay.yaml
+before 1.35.0), docker-compose.yml and
 the list of packages in the image that was tested, made by a run that
 passed (the image workflow's "Made of" step, read here for the artifact's
 name and file). No image is built, pushed or pulled, and nothing is
@@ -230,6 +231,7 @@ def run(tmp_path):
     go.version = version  # type: ignore[attr-defined]
     go.listed = listed  # type: ignore[attr-defined]
     go.temp = tmp_path / "temp"  # type: ignore[attr-defined]
+    go.work = work  # type: ignore[attr-defined]
     return go
 
 
@@ -565,6 +567,23 @@ def test_sha256sums_lists_the_image_for_each_tag_and_every_file_signed(run):
     [draft] = creates(said)
     for name in ("SHA256SUMS", "SHA256SUMS.sig", "tapioca-1.35.0.zip.sig"):
         assert f"/{name}" in draft, draft
+
+
+def test_the_truenas_file_is_published_by_the_name_its_commit_gives_it(run):
+    """(The owner, October 13) From 1.35.0 the TrueNAS app file is
+    tapioca-server.yaml: a version whose commit has it is published with it,
+    and one before that keeps stationplay.yaml, its own commit's name."""
+    git(run.work, "mv", "stationplay.yaml", "tapioca-server.yaml")
+    run.version("1.35.0")
+    image_run(run, 8, version="1.35.0")
+    image_run(run, 7)
+    said, status, out = run(SIGNING_KEY="-----BEGIN OPENSSH PRIVATE KEY-----\nx\n")
+    assert status == 0, said + out
+    made = {line.split()[3]: line for line in creates(said)}
+    assert "/tapioca-server.yaml" in made["v1.35.0"] and "stationplay.yaml" not in made["v1.35.0"]
+    assert "/stationplay.yaml" in made["v1.32.1"] and "tapioca-server" not in made["v1.32.1"]
+    sums = (run.temp / "v1.35.0" / "SHA256SUMS").read_text()
+    assert "  tapioca-server.yaml\n" in sums and "stationplay.yaml" not in sums
 
 
 def test_sha256sums_comes_with_every_release(run):

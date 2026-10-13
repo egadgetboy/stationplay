@@ -87,6 +87,9 @@ class PlexError(LibraryError):
 # What tapiOca's YAML and compose file have for PLEX_URL, as an example to
 # change (a test keeps them the same).
 EXAMPLE_URL = "http://192.168.1.10:32400"
+# (And its PLEX_TOKEN to replace. Both left in place: Plex isn't set up, as
+# when someone without Plex keeps the two lines. A test keeps it the same.)
+EXAMPLE_TOKEN = "paste-your-plex-token-here"
 # What a connection that didn't open says, by what it means.
 _REFUSED = ("refused",)
 _UNKNOWN_HOST = (
@@ -194,12 +197,12 @@ MAX_LOGO_BYTES = 10 * 1024 * 1024
 
 async def gather_all(aws) -> list:
     """Runs requests together; if one fails, the rest are cancelled and the
-    first PlexError is raised."""
+    first LibraryError (a PlexError, or a folder library's) is raised."""
     tasks: list[asyncio.Task] = []
     try:
         async with asyncio.TaskGroup() as group:
             tasks = [group.create_task(a) for a in aws]
-    except* PlexError as errors:
+    except* LibraryError as errors:
         raise errors.exceptions[0] from None
     return [t.result() for t in tasks]
 
@@ -263,7 +266,14 @@ class PlexClient:
 
     @property
     def configured(self) -> bool:
-        return bool(self.base_url and self.token)
+        return bool(self.base_url and self.token) and not self.sample_token
+
+    @property
+    def sample_token(self) -> bool:
+        """PLEX_URL and PLEX_TOKEN are both still the YAML's samples (see
+        EXAMPLE_TOKEN). A real address with the sample token is Plex set up:
+        some Plex servers let their own network in without one."""
+        return self.token == EXAMPLE_TOKEN and self.base_url.rstrip("/") == EXAMPLE_URL
 
     async def _note_clock(self, response: httpx.Response) -> None:
         said = response.headers.get("date")
@@ -1682,8 +1692,8 @@ def _track(s: dict[str, Any], codec: Callable[[str | None], str]) -> Track:
 
 
 # Plex's names for what a show or movie was matched to: its own ("tvdb://"),
-# and older agents' ("com.plexapp.agents.thetvdb://81189?lang=en", and
-# HAMA's "com.plexapp.agents.hama://tvdb-81189").
+# and older agents' ("com.plexapp.agents.thetvdb://67890?lang=en", and
+# HAMA's "com.plexapp.agents.hama://tvdb-67890").
 _GUID = re.compile(r"(tvdb|tmdb|imdb)://([A-Za-z0-9]+)")
 _OLD_GUID = re.compile(
     r"com\.plexapp\.agents\.(thetvdb|themoviedb|imdb|hama)://(?:(tvdb|tmdb)-)?([A-Za-z0-9]+)"

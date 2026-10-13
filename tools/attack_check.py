@@ -39,8 +39,11 @@ restarts (whatever a sentence holds, kept and given back as it was; never
 brought back by a backup, a forged one included; never stopped by a
 database that can't be written; only so many fixed ones kept however many
 come) and the corner mark's drift (only numbers, drawing whatever the
-clock says); and a file whose name and tags read like ffmpeg's own words
-(where the deep scan finds damage stays where it is).
+clock says); a file whose name and tags read like ffmpeg's own words
+(where the deep scan finds damage stays where it is); and Media folders of
+tapiOca's own (only an Admin adds one, only from inside the media folder;
+browsing never leaves it; a video, poster or folder linked from outside it
+is never read or served; the apps never get a file's name or a path).
 
 It's a tool, not part of CI (the test suite covers these as unit tests). Run
 it from the repo root:  python -m tools.attack_check   (add -v to see every
@@ -56,6 +59,7 @@ import argparse
 import asyncio
 import io
 import json
+import os
 import random
 import secrets
 import shutil
@@ -168,6 +172,7 @@ async def run(checks: Checks) -> None:
         data_dir=tmp / "data",
         port=lan_port,
         public_port=public_port,
+        media_dir=str(build_folders(tmp)),
     )
     app = create_app(settings, PlexClient("http://plex.test", "token", transport=fp.transport()))
     app.state.ctx.play_transport = fp.transport()
@@ -608,6 +613,11 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
     # address is written; a User can't change it; a signed-in app plays at
     # its own address instead, which is no good from the internet.
     await _tuner_access(checks, home, net, admin_h, sam_h)
+
+    # 24) From 1.35.0: Media folders of tapiOca's own. Only an Admin adds
+    # one, only from inside the media folder; nothing linked from outside it
+    # is read or served; the apps never get a file's name or a path.
+    await _folders(checks, app, home, net, admin_h, sam_h, kit_h)
 
 
 async def _media_away(
@@ -2008,6 +2018,144 @@ async def _tuner_access(checks: Checks, home: str, net: str, admin_h: dict, sam_
         r = await c.get("/discover.json")
         checks.ok(r.status_code == 200, "Allowed, it uses the tuner", f"got {r.status_code}")
         await c.put("/api/tuner", json={"only": False, "devices": []}, headers=admin_h)
+
+
+SECRET = b"root:x:0:0:the secret outside the media folder"
+
+
+def build_folders(tmp: Path) -> Path:
+    """A media folder with a show in it, and things linked from outside it:
+    a poster, a video, and a whole folder."""
+    media, outside = tmp / "media", tmp / "outside"
+    show = media / "TV" / "Night Owls (2020)" / "Season 01"
+    show.mkdir(parents=True)
+    outside.mkdir()
+    (show / "Night Owls (2020) - S01E01 - Dusk.mkv").write_bytes(b"")
+    (outside / "secret.jpg").write_bytes(SECRET)
+    (outside / "Stolen (2001) - S01E01.mkv").write_bytes(b"")
+    (show.parent / "poster.jpg").symlink_to(outside / "secret.jpg")
+    (show / "Night Owls (2020) - S01E02.mkv").symlink_to(outside / "Stolen (2001) - S01E01.mkv")
+    (media / "TV" / "Linked").symlink_to(outside)
+    # (A real one, named as a release is, its sound track titled with its
+    # file's name: what the apps get of it never names the file.)
+    if shutil.which("ffmpeg"):
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=d=2:s=320x240:r=25",
+             "-f", "lavfi", "-i", "sine=d=2", "-c:v", "libx264", "-c:a", "aac",
+             "-metadata:s:a:0", f"title={RELEASE}", "-shortest", str(show / RELEASE)],
+            check=True, timeout=60,
+        )  # fmt: skip
+    return media
+
+
+RELEASE = "Night.Owls.2020.S01E03.1080p.WEB-DL.x264-GRP.mkv"
+
+
+async def _folders(
+    checks: Checks, app, home: str, net: str, admin_h: dict, sam_h: dict, kit_h: dict
+) -> None:
+    checks.section("Media folders of tapiOca's own")
+    addresses = [
+        ("GET", "/api/folder-libraries", None),
+        ("GET", "/api/folder-libraries/browse", None),
+        ("POST", "/api/folder-libraries", {"name": "Mine", "kind": "show", "folders": ["TV"]}),
+        ("PUT", "/api/folder-libraries/f1", {"name": "Mine"}),
+        ("DELETE", "/api/folder-libraries/f1", None),
+        ("POST", "/api/folder-libraries/f1/scan", None),
+    ]
+    ctx = app.state.ctx
+    real_media = await asyncio.to_thread(os.path.realpath, ctx.settings.media_dir)
+    # (Folders are read only while no one's watching: what the sections
+    # above played is ended first.)
+    ctx.plays.end_all()
+    async with httpx.AsyncClient(base_url=home, timeout=30) as c:
+        # Only from the media folder.
+        for folder in ("/etc", "../outside", "TV/Linked", "TV/../../outside", "TV/\x00"):
+            bad = await c.post("/api/folder-libraries", headers=admin_h,
+                               json={"name": "Out", "kind": "show", "folders": [folder]})  # fmt: skip
+            checks.ok(bad.status_code in (400, 422), f"a Media folder can't be made of {folder!r}",
+                      f"got {bad.status_code}")  # fmt: skip
+        for path in ("..", "../..", "%2e%2e", "TV/../..", "/etc", "TV/Linked", "TV/Linked/.."):
+            r = await c.get(f"/api/folder-libraries/browse?path={path}", headers=admin_h)
+            checks.ok(r.status_code == 404 and b"secret" not in r.content
+                      and b"Stolen" not in r.content,
+                      f"browsing {path} shows nothing outside the media folder",
+                      f"got {r.status_code}")  # fmt: skip
+        made = await c.post("/api/folder-libraries", headers=admin_h,
+                            json={"name": "TV", "kind": "show", "folders": ["TV"]})  # fmt: skip
+        checks.ok(made.status_code == 201, "an Admin adds a Media folder", made.text[:120])
+        key = made.json().get("key", "f1") if made.status_code == 201 else "f1"
+        for _ in range(300):
+            listed = (await c.get("/api/folder-libraries", headers=admin_h)).json()["libraries"]
+            if any(x["key"] == key and x["scannedMs"] for x in listed):
+                break
+            await asyncio.sleep(0.1)
+        else:
+            checks.ok(False, "the Media folder is read", "never read")
+        things = ctx.folders.things.values()
+        files = [p for t in things for v in t.files for p in v]
+        checks.ok(any("Dusk" in p for p in files) and not any("Stolen" in p for p in files)
+                  and all(p.startswith(real_media) for p in files),
+                  "a video linked from outside the media folder isn't read", str(files))  # fmt: skip
+        show = next((t.key for t in things if t.kind == "show"), "f2")
+        for path in (f"/poster/{show}", f"/poster/{show}?big=true", f"/art/{show}",
+                     f"/api/internal/art/{show}?kind=poster"):  # fmt: skip
+            r = await c.get(path, headers=admin_h)
+            checks.ok(SECRET not in r.content,
+                      f"{path}: a poster linked from outside the media folder is never served",
+                      f"got {r.status_code}")  # fmt: skip
+        for path in (f"/poster/{show}%2f..%2f..", "/poster/f..", "/api/internal/art/f..%2fetc",
+                     "/poster/f0", "/poster/f99999999999999999999"):  # fmt: skip
+            r = await c.get(path, headers=admin_h)
+            checks.ok(r.status_code in (400, 403, 404, 422) and SECRET not in r.content,
+                      f"{path} gets nothing", f"got {r.status_code}")  # fmt: skip
+        # Shared with the apps, a folder's show never gives a file's name or
+        # a path, to anyone.
+        await c.put("/api/app-libraries", json={"libraries": ["1", "2", key]}, headers=admin_h)
+        listed = await c.get(f"/api/internal/libraries/{key}", headers=admin_h)
+        checks.ok(show in listed.text, "the shared Media folder is listed for the apps",
+                  listed.text[:200])  # fmt: skip
+        for path in ("/api/internal/libraries", f"/api/internal/libraries/{key}",
+                     f"/api/internal/items/{show}", f"/api/internal/items/{show}/episodes",
+                     "/api/internal/home", "/api/internal/search?q=Night"):  # fmt: skip
+            r = await c.get(path, headers=admin_h)
+            text = r.text
+            checks.ok(r.status_code == 200 and real_media not in text
+                      and ".mkv" not in text and "Season 01" not in text,
+                      f"{path} names no file or path", f"got {r.status_code}: {text[:160]}")  # fmt: skip
+        # Each episode's details (its versions and their tracks) and playing
+        # it, for the one named as a release: never the file's name.
+        episodes = (await c.get(f"/api/internal/items/{show}/episodes?season=1",
+                                headers=admin_h)).json().get("episodes") or []  # fmt: skip
+        checks.ok(len(episodes) >= 1, "the show's episodes are listed", str(episodes)[:160])
+        named = ("Night.Owls", "WEB-DL", "x264", "GRP", real_media, "Season 01")
+        for ep in episodes:
+            r = await c.get(f"/api/internal/items/{ep['key']}", headers=admin_h)
+            checks.ok(r.status_code == 200 and not any(n in r.text for n in named)
+                      and ".mkv" not in r.text,
+                      f"episode {ep['key']}'s details name no file or path",
+                      f"got {r.status_code}: {r.text[:200]}")  # fmt: skip
+            played = await c.post("/api/internal/play", headers=admin_h,
+                                  json={"key": ep["key"], "device": TV})  # fmt: skip
+            checks.ok(not any(n in played.text for n in named),
+                      f"playing episode {ep['key']} names no file or path",
+                      f"got {played.status_code}: {played.text[:200]}")  # fmt: skip
+            if played.status_code == 200 and played.json().get("leave"):
+                await c.post(played.json()["leave"], headers=admin_h, json={})
+        # Only Admins.
+        for who, headers in (("a User", sam_h), ("a Kid", kit_h)):
+            for method, path, body in addresses:
+                r = await c.request(method, path, json=body, headers=headers)
+                checks.ok(r.status_code == 403, f"{who} can't {method} {path}",
+                          f"got {r.status_code}")  # fmt: skip
+        checks.ok(any(x["key"] == key for x in ctx.folders.status()),
+                  "no one but an Admin removed the Media folder")  # fmt: skip
+        await c.put("/api/app-libraries", json={"libraries": ["1", "2"]}, headers=admin_h)
+    async with httpx.AsyncClient(base_url=net, timeout=30, headers=_cf("203.0.113.9")) as out:
+        for method, path, body in addresses:
+            r = await out.request(method, path, json=body)
+            checks.ok(r.status_code == 401, f"from the internet, {method} {path} needs a sign-in",
+                      f"got {r.status_code}")  # fmt: skip
 
 
 async def _kept_alerts(checks: Checks, app, home: str, admin_h: dict) -> None:

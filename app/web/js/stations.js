@@ -42,7 +42,7 @@ function renderChannels() {
   if (!shown.length) {
     box.replaceChildren(h('div', { class: 'panel empty' },
       h('h3', {}, 'No stations yet'),
-      h('p', { class: 'muted' }, 'Pick some shows or movies from Plex, and tapiOca turns them into a station that plays around the clock.'),
+      h('p', { class: 'muted' }, 'Pick some of your shows or movies, and tapiOca turns them into a station that plays around the clock.'),
       h('button', { class: 'btn primary', onclick: () => openEditor() }, 'Create your first station')));
     return;
   }
@@ -67,12 +67,12 @@ function renderChannels() {
             : 'Nothing on this station could play just now, so viewers see the off-air card. An Admin can see why on the Logs tab.' }, ch.offAirWhy === 'failing' ? 'Can’t start' : 'Off the air') : null,
           ch.brokenCount ? h('span', { class: 'chip bad', title: 'Programs on this station that are skipped because their files have problems' }, `${ch.brokenCount} broken`) : null,
           check?.running ? h('span', { class: 'chip accent' }, `Checking ${check.done} of ${check.total}`) : null,
-          p && !p.held ? h('span', { class: 'chip accent', title: 'Changes from Plex are ready. They start at the next program break after Plex downloads the guide, so the Plex guide always matches.' }, `Update ready: ${changeText(p)}`) : null,
+          p && !p.held ? h('span', { class: 'chip accent', title: plexUsed() ? 'Changes are ready. They start at the next program break after Plex downloads the guide, so the Plex guide always matches.' : 'Changes are ready. They start at a program break once any guide other apps downloaded has run out, so their guides stay right.' }, `Update ready: ${changeText(p)}`) : null,
           p && p.held ? h('span', { class: 'chip bad', title: p.removed
-              ? 'Plex no longer lists many of this station’s programs. This usually means a Media folder is being rescanned or a drive is offline, so nothing changes until you choose Update now.'
+              ? 'Many of this station’s programs are gone. This usually means a Media folder is being rescanned or a drive is offline, so nothing changes until you choose Update now.'
               : p.lostSkips ? 'Plex no longer reports intros and credits for many of this station’s programs. This usually means Plex is detecting them again, so nothing changes until you choose Update now.'
-              : 'Plex no longer lists the programs for one of this station’s blocks, or the movies for its Feature Presentation. This usually means a Media folder is being rescanned or a drive is offline, so nothing changes until you choose Update now.' },
-            p.removed ? `Plex lost ${plural(p.removed, 'program')} — needs your review` : p.lostSkips ? `Plex lost intros & credits for ${plural(p.lostSkips, 'program')} — needs your review` : 'Plex lost a special’s programs — needs your review') : null,
+              : 'The programs for one of this station’s blocks, or the movies for its Feature Presentation, are gone. This usually means a Media folder is being rescanned or a drive is offline, so nothing changes until you choose Update now.' },
+            p.removed ? `${plural(p.removed, 'program')} gone — needs your review` : p.lostSkips ? `Plex lost intros & credits for ${plural(p.lostSkips, 'program')} — needs your review` : 'A special’s programs are gone — needs your review') : null,
           madeText(ch)),
         ch.description ? h('div', { class: 'desc' }, ch.description) : null,
         n ? h('div', { class: 'now' },
@@ -176,7 +176,10 @@ function stationDetails(ch, check, now) {
       ch.skipIntros ? text(ch.trimmedCount ? `skips intros & credits (${ch.trimmedCount.toLocaleString()} of ${ch.itemCount.toLocaleString()})` : 'no intros or credits found yet',
         ch.trimmedCount
           ? `Plex has found intros or credits in ${ch.trimmedCount} of this station’s ${ch.itemCount} programs, and tapiOca skips them. The rest play in full.`
-          : 'Plex hasn’t found intros or credits in any of this station’s programs yet. Turn on intro and credits detection in Plex, under Settings → Library. tapiOca picks them up within a few hours.')
+          // (Without Plex, there's nothing to turn on: 1.35.0.)
+          : !plexUsed()
+            ? 'tapiOca skips intros and credits where Plex has found them. Programs from your own Media folders play in full.'
+            : 'Plex hasn’t found intros or credits in any of this station’s programs yet. Turn on intro and credits detection in Plex, under Settings → Library. tapiOca picks them up within a few hours. Programs from your own Media folders play in full.')
         : text('plays intros & credits'),
       ch.mostlyOneShow ? text('mostly one show', 'One show makes up most of this station, so shuffle will sometimes play it three or more times in a row. Add more shows to avoid that.') : null),
     ...row('Specials',
@@ -239,7 +242,7 @@ function stationActions(ch, check) {
           h('button', { class: 'btn', onclick: () => openEditor(ch) }, icon('<path d="M11 2.5l2.5 2.5L6 12.5H3.5V10z"/>'), h('span', {}, 'Edit')),
           duplicate,
           h('button', { class: 'btn', disabled: check?.running, title: 'Check every file on this station now, so problems are found before anyone tunes in', onclick: () => checkChannel(ch) }, icon('<path d="M3 8.5l3 3 7-7"/>'), h('span', {}, 'Check files')),
-          h('button', { class: 'btn', title: 'Check Plex for new and removed programs now. Changes start at the next program break.', onclick: () => updateNow(ch) }, icon('<path d="M13 3v4H9"/><path d="M13 7A5 5 0 1 0 12 12"/>'), h('span', {}, 'Update now')),
+          h('button', { class: 'btn', title: 'Check for new and removed programs now. Changes start at the next program break.', onclick: () => updateNow(ch) }, icon('<path d="M13 3v4H9"/><path d="M13 7A5 5 0 1 0 12 12"/>'), h('span', {}, 'Update now')),
           ch.orderMode === 'shuffle' ? h('button', { class: 'btn', title: 'Start a new random order at the next program break', onclick: () => reshuffle(ch) }, icon('<path d="M2 4h3l6 8h3M2 12h3l6-8h3"/>'), h('span', {}, 'Reshuffle')) : null,
           h('button', { class: 'btn danger', onclick: () => removeChannel(ch) }, icon('<path d="M3 4h10M6 4V2.5h4V4M5 4l.5 9h5L11 4"/>'), h('span', {}, 'Delete')),
   ];
@@ -268,7 +271,7 @@ function ago(ms) {
 }
 function changedMessage(res) {
   const when = res.lastChange?.startsAt ? `at ${fmtClock(res.lastChange.startsAt)}` : 'shortly';
-  const guide = res.plexGuideRefreshed ? 'The Plex guide is being refreshed.' : 'Refresh the guide in Plex so it matches.';
+  const guide = res.plexGuideRefreshed ? 'The Plex guide is being refreshed.' : plexUsed() ? 'Refresh the guide in Plex so it matches.' : 'Apps that downloaded the guide show the change once they refresh it.';
   return `${res.name} changes ${when}. ${guide}`;
 }
 async function updateNow(ch) {
@@ -327,7 +330,7 @@ async function openGuide(ch) {
         s.special ? h('div', { class: 'label' }, s.special) : null,
         h('div', { class: 'what' }, guideLabel(s))),
       s.broken ? h('span', { class: 'chip bad', title: 'This file is broken, so another program will play instead' }, 'replaced') : h('span'))),
-      h('p', { class: 'hint', style: 'margin-top:10px' }, 'The next 2 days, the same period the Plex guide covers.'));
+      h('p', { class: 'hint', style: 'margin-top:10px' }, 'The next 2 days, the same period the guide covers.'));
   } catch (e) { $('#guideList').replaceChildren(h('p', { class: 'muted' }, e.message)); }
 }
 $('#closeGuide').addEventListener('click', () => $('#guide').close());

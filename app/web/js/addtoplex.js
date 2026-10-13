@@ -1,4 +1,4 @@
-// The tab row's fit, Appearance, and the Add to Plex tab's panels.
+// The tab row's fit, Appearance, and the Setup tab's panels.
 // The Buy Me a Coffee link is never why a tab is out of sight: it's its cup
 // and words if the tabs all fit beside them, else just its cup if they fit
 // beside that, else left out if that makes them fit; when they don't fit
@@ -55,19 +55,30 @@ function fitThemeColor() {
 }
 fitThemeColor();
 
-function renderMediaAccess(m) {
+// (`plex`: whether tapiOca uses Plex; without it, nothing's said about
+// Plex: 1.35.0.)
+function renderMediaAccess(m, plex = true) {
   const el = $('#mediaAccess');
   if (!m) return;
   const maps = m.mappings.map(x => `Plex’s ${x.plex} → ${x.local}`).join(', ');
   let text, cls;
-  if (m.direct && !m.viaPlex) {
+  // (Nothing at MEDIA_DIR first: once a station has played, files have
+  // streamed from Plex too, and the advice is the same. The fourth audit.)
+  if (!m.mediaDirPresent && !m.mappings.length) {
+    // (Not "Mount your media folder there": MEDIA_DIR is where tapiOca sees
+    // the folder, inside its container, and that advice sent the owner to
+    // his server's own path, October 13. Setup's first step finds where it
+    // is instead.)
+    text = `Nothing is at ${m.mediaDir} inside tapiOca. Run setup again: its first step says what to change.${plex ? ' Until then, Plex’s files are streamed from Plex.' : ''}`;
+    cls = 'chip accent';
+  } else if (m.direct && !m.viaPlex) {
     text = `Read directly from disk${maps ? ` (${maps})` : ''}.`; cls = 'chip good';
   } else if (m.viaPlex) {
-    text = `${m.viaPlex} of ${m.direct + m.viaPlex} files were streamed from Plex because tapiOca couldn’t find them in ${m.mediaDir}. That works, but mounting your media folder there is faster and puts less load on Plex.`;
+    text = `${m.viaPlex} of ${m.direct + m.viaPlex} files were streamed from Plex because tapiOca couldn’t find them. That works, but reading them from disk is faster and puts less load on Plex. Run setup again: its Plex step says what to change.`;
     cls = 'chip bad';
   } else if (!m.mediaDirPresent) {
-    text = `Nothing is mounted at ${m.mediaDir}, so files will be streamed from Plex. Mount your media folder there to read files directly.`;
-    cls = 'chip accent';
+    text = `Nothing is at ${m.mediaDir} inside tapiOca, so files are read from the folders PATH_MAPPINGS names.`;
+    cls = '';
   } else {
     text = `Media folder found at ${m.mediaDir}. Once a station plays, this shows whether tapiOca can read your files there.`;
     cls = '';
@@ -97,7 +108,9 @@ function renderEncoding(e) {
   el.replaceChildren(content);
 }
 
-function renderGuideState(g) {
+// (Plex's alone: hidden where tapiOca doesn't use Plex.)
+function renderGuideState(g, plex = true) {
+  $('#guideState').parentElement.hidden = !plex;
   if (!g) return;
   const when = g.plexDownloadedGuide ? new Date(g.plexDownloadedGuide).toLocaleString() : null;
   const text = [

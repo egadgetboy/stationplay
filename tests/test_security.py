@@ -299,7 +299,12 @@ async def test_from_the_internet_theres_nothing_until_signing_in_is_set_up(tmp_p
         async with httpx.AsyncClient(base_url=internet) as outside:
             assert (await outside.get("/")).status_code == 200
             me = (await outside.get("/api/access/me")).json()
-            assert me["required"] and me["user"] is None and "home network" in me["notSetUp"]
+            assert me["required"] and me["user"] is None
+            # (Said to whoever's watching, in the owner's words, October 13:
+            # never an Admin's instructions, such as "Add the first user".)
+            assert me["notSetUp"] == (
+                "This tapiOca client can't reach the server. Please check back later."
+            )
             for path in ("/api/channels", "/api/status", "/logos/anything.png", "/api/logs"):
                 assert (await outside.get(path)).status_code == 403, path
             # Nobody from the internet makes themselves the first Admin.
@@ -334,7 +339,7 @@ async def test_signing_in_from_the_internet(tmp_path, monkeypatch):
             assert signed.status_code == 200
             assert (await pats.get("/api/channels")).status_code == 200
             assert (await pats.get("/xmltv.xml")).status_code == 404  # signed in or not
-            # Plex's address can't be told from here: Add to Plex says where yours goes.
+            # Plex's address can't be told from here: the Setup tab says where yours goes.
             lan_port = home.rsplit(":", 1)[1]
             tuner = (await pats.get("/api/status")).json()["tunerUrl"]
             assert tuner == f"http://<your NAS>:{lan_port}"

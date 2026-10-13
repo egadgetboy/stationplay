@@ -183,7 +183,9 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         ]  # fmt: skip
         # From the internet, until signing in is on, there's nothing to do.
         outside = check.answer(internet.get("/api/v1/server"), "GET /api/v1/server")
-        assert outside["signIn"] and "home network" in outside["notSetUp"]
+        assert outside["signIn"] and outside["notSetUp"] == (
+            "This tapiOca client can't reach the server. Please check back later."
+        )
         check.answer(internet.get("/api/v1/stations"), "GET /api/v1/stations", 403)
 
         made = home.post("/api/channels", json={"number": 5, "name": "Hometown 5", "sources": [

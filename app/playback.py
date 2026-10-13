@@ -170,7 +170,7 @@ def start(db: Database, settings: Settings) -> None:
     elif settings.tuner_count and str(settings.tuner_count) != db.get_meta(META_TUNERS):
         log.warning(
             "TUNER_COUNT (%d) is no longer used. Set the number of tuners on tapiOca's "
-            "Add to Plex tab (currently %s).",
+            "Setup tab (currently %s).",
             settings.tuner_count,
             db.get_meta(META_TUNERS),
         )

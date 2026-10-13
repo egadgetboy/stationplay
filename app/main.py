@@ -48,6 +48,7 @@ from . import (
     capacity,
     cliprules,
     devices,
+    folders,
     hdhr,
     health,
     hls,
@@ -109,7 +110,7 @@ from .ffmpeg import (
 from .gpu import GpuManager
 from .intro import DESCRIPTION_MAX, ID_LENGTHS
 from .intro import LENGTHS as INTRO_LENGTHS
-from .library import Library, LibraryError
+from .library import Library, LibraryError, is_folder_key, is_key
 from .logos import (
     COLLECTION_LOGO,
     MAX_UPLOAD_BYTES,
@@ -541,6 +542,8 @@ class AppContext:
     alerts: alerts.Alerts = field(init=False)
     # Your shows and movies, wherever they come from (see library.py).
     library: Library = field(init=False)
+    # Folders of your own, beside Plex or without it (see folders.py).
+    folders: folders.FolderSource = field(init=False)
     updater: Updater = field(init=False)
     markers: MarkerFinder = field(init=False)
     fillers: FillerLibrary = field(init=False)
@@ -556,13 +559,15 @@ class AppContext:
         os.kill(os.getpid(), signal.SIGTERM)
 
     def __post_init__(self) -> None:
-        self.library = Library(lambda: self.plex)
+        self.folders = folders.FolderSource(self.db, self.settings)
+        self.library = Library(lambda: self.plex, lambda: self.folders)
         self.bumpers = BumperLibrary(self.settings.data_dir / "bumpers")
         self.access = access.Access(self.db)
         self.devices = devices.Devices(self.db, self.access)
         self.access.picker = self.devices
         self.away = away.Away(self.db, self.access)
-        self.tuner = TunerAccess(self.db, self.settings.plex_url)
+        # (Plex's address, for Plex server only: never the YAML's example.)
+        self.tuner = TunerAccess(self.db, self.settings.plex_url if self.plex.configured else "")
         self.reach = reach.Reach(self.away, self.access, self.settings)
         self.capacity = capacity.Capacity(self.db)
         self.shared = ondemand.Shared(self.db)
@@ -594,11 +599,22 @@ class AppContext:
         )
         self.fillers = FillerLibrary(self)
         self.scanner = Scanner(self)
+        # (Folder libraries are read only while no one's watching.)
+        self.folders.watching = lambda: self.scanner.watching() or bool(self.plays.watching())
+        self.folders.changed = lambda libraries: self.folders_changed()
         self.reports = reports.Reports(self)
         self.scanner.on_checked = self.reports.checked
         self.who_watches = stats.WhoWatches(self)
         self.limits = limits.Limits(self.db)
         self.info_panels = infostation.Panels(self)
+
+    def folders_changed(self) -> None:
+        """A folder library's programs changed (a scan, or an Admin's
+        change): Media asks afresh, and INFO counts again. (Stations follow
+        at the updater's next check: the library's fingerprint changed.)"""
+        self.catalog.forget()
+        self.app_pictures.clear()
+        self.info_panels.wake.set()
 
     def media_here(self, outside: bool) -> bool:
         """Whether Media is offered to the apps where a request came from
@@ -810,6 +826,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             asyncio.create_task(ctx.who_watches.run_forever()),
             asyncio.create_task(ctx.updater.run_forever()),
             asyncio.create_task(ctx.info_panels.run_forever()),
+            asyncio.create_task(ctx.folders.run_forever()),
             asyncio.create_task(ctx.fillers.refresh()),
             asyncio.create_task(backups.nightly_forever(ctx)),
             asyncio.create_task(ctx.scanner.run_forever()),
@@ -823,6 +840,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         yield
         for task in background:
             task.cancel()
+        ctx.folders.stop()  # (reading a Media folder of your own stops at once)
         ctx.markers.cuts.cancel()  # (looking for cuts stops at once; saved below)
 
         stopped: list[BaseException] = []  # (the first that stops a step, raised at the end)
@@ -905,6 +923,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     devices.routes(app, ctx)  # (linked devices, and their pickers)
     appapi.routes(app, ctx)  # (for tapiOca's apps)
     applibrary.routes(app, ctx)  # (your library in them)
+    folders.routes(app, ctx)  # (folder libraries: on the Setup tab)
     reports.routes(app, ctx)  # (people's reports, from them)
     stats.routes(app, ctx)
 
@@ -933,7 +952,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     def base_url(request: Request) -> str:
         """The address Plex reaches tapiOca at: as the request was made,
         unless BASE_URL says. (From the internet, where it can't be told, the
-        Add to Plex tab shows where to put your NAS's address in.)"""
+        Setup tab shows where to put your NAS's address in.)"""
         if settings.base_url:
             return settings.base_url
         if access.outside(request.scope):
@@ -1323,7 +1342,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         )
 
     # Asking Plex on someone's behalf: a few requests at once from each person.
-    asking_plex = Depends(AtOnce(4, "Too many requests to Plex at once. Try again in a moment."))
+    asking_plex = Depends(AtOnce(4, "Too many requests at once. Try again in a moment."))
     # Pictures from Plex: a few fetched at a time (the rest wait their turn).
     plex_pictures = Turns(
         "Too many pictures are loading. Try again in a moment.", at_once=4, most_waiting=1000
@@ -1337,7 +1356,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     ) -> Response:
         """A picture of a show or movie from Plex, kept in `cache` (the `kept`
         most recently used)."""
-        if not rating_key.isdigit():
+        if not library_key(rating_key):
             raise HTTPException(404)
         cached = cache.get(rating_key)
         if cached is None:
@@ -1425,7 +1444,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     async def plex_logo(rating_key: str) -> tuple[str, str, bytes] | None:
         """(title, Plex's address, the logo as tapiOca keeps it) for a
         show or movie with a logo in Plex; None if it has none."""
-        if not rating_key.isdigit():
+        if not library_key(rating_key):
             return None
         try:
             found = await ctx.library.clear_logo(rating_key)
@@ -1444,7 +1463,8 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             ctx.plex_logos.move_to_end(url)
         except (LibraryError, LogoError, TimeoutError) as e:
             log.info(
-                "Couldn't use the logo from Plex for rating key %s: %s",
+                "Couldn't use the logo from %s for %s: %s",
+                "your own Media folders" if is_folder_key(rating_key) else "Plex",
                 rating_key,
                 str(e) or "it took too long",
             )
@@ -1714,11 +1734,12 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     async def plex_status(find_dvr: bool = True) -> dict:
         """Whether Plex answers; and (find_dvr) looks for tapiOca's tuner
-        in Plex, for the Add to Plex tab. Whether it answers is asked first:
+        in Plex, for the Setup tab. Whether it answers is asked first:
         with Plex down, nothing more is asked of it, so the page hears at
         once (1.34.1)."""
         if not ctx.plex.configured:
-            return {"configured": False, "ok": False, "error": "PLEX_URL and PLEX_TOKEN aren't set"}
+            said = {"configured": False, "ok": False, "error": "PLEX_URL and PLEX_TOKEN aren't set"}
+            return {**said, "sample": True} if ctx.plex.sample_token else said
         try:
             ident = await asyncio.wait_for(ctx.plex.identity(), setup.PLEX_ASK_S)
         except PlexError as e:
@@ -1735,6 +1756,12 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         return {"configured": True, "ok": True, "version": ident.get("version")}
 
     media_check: dict[str, asyncio.Future] = {}
+
+    def plex_used() -> bool:
+        """Whether tapiOca uses Plex: it's set up, or there's nothing else
+        (without Plex, with a Media folder of its own, the page says nothing
+        about Plex: 1.35.0)."""
+        return ctx.plex.configured or not ctx.folders.libraries
 
     async def media_dir_present() -> bool:
         """Checked off the event loop, so a hung share can't hold up streams,
@@ -1757,7 +1784,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             fillers = ctx.fillers.as_dict()
             return {
                 "version": __version__,
-                "plex": {"ok": (await plex_status(find_dvr=False))["ok"]},
+                "plex": {
+                    "ok": (await plex_status(find_dvr=False))["ok"],
+                    "configured": ctx.plex.configured,
+                    "used": plex_used(),
+                },
                 "streams": streams_now(access.signed_in(request)),
                 "tuners": playback.load(ctx.db).tuners,
                 "fillers": {k: fillers[k] for k in ("commercials", "trailers")},
@@ -1769,6 +1800,9 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         return {
             "version": __version__,
             "plex": plex_state,
+            # (Whether tapiOca uses Plex: see plex_used. A User's status has
+            # it as plex.used: its own keys are only what the page needs.)
+            "plexUsed": plex_used(),
             "tunerUrl": url,
             "xmltvUrl": f"{url}/xmltv.xml",
             "m3uUrl": f"{url}/stations.m3u",
@@ -1840,15 +1874,16 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.get("/api/libraries", dependencies=[asking_plex])
     async def libraries():
-        # (Not the folders Plex keeps them in: the page doesn't need to know.)
-        return [
-            {"key": s["key"], "title": s["title"], "type": s["type"]}
-            for s in await ctx.library.libraries()
-        ]
+        # (Not the folders Plex keeps them in: the page doesn't need to know.
+        # With Plex away, Media folders of tapiOca's own are still listed.)
+        found, away = await ctx.library.listed()
+        if away is not None and not found:
+            raise away
+        return [{"key": s["key"], "title": s["title"], "type": s["type"]} for s in found]
 
     @app.get("/api/libraries/{key}/items", dependencies=[asking_plex])
     async def library_items(key: str):
-        if not key.isdigit():
+        if not library_key(key):
             raise HTTPException(404)
         return await ctx.library.library_items(key)
 
@@ -1857,7 +1892,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         {"size": "4K", "1080p", "720p", "SD" or "Mixed", "counts": {size: n}};
         None until Plex has said for any of them."""
         counts = Counter(
-            found for i in items if (found := ctx.plex.resolutions.get(i.rating_key)) is not None
+            found for i in items if (found := ctx.library.resolution(i.rating_key)) is not None
         )
         if not counts:
             return None
@@ -2636,7 +2671,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     # Filters ----------------------------------------------------------------
 
     def library_keys(libraries: str) -> list[str]:
-        keys = dict.fromkeys(k for k in libraries.split(",") if k.isdigit())
+        keys = dict.fromkeys(k for k in libraries.split(",") if library_key(k))
         return list(keys)[:LIBRARIES_MAX]
 
     @app.get("/api/filter/fields", dependencies=[asking_plex])
@@ -3025,10 +3060,25 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             offset = None
         folders = list(dict.fromkeys([settings.media_dir, *(d for _, d in settings.path_mappings)]))
         looked = await asyncio.gather(*(look_at_folder(f) for f in folders[:5]))
+        elsewhere: list[tuple[str, setup.Folder]] = []
+        if looked and looked[0] is not None and looked[0].state == "missing":
+            # (Nothing at MEDIA_DIR: where the media's mounted instead, if
+            # it's anywhere, to say so.)
+            mounted = await asyncio.to_thread(setup.mounts, [str(settings.data_dir)])
+            found = await asyncio.gather(*(look_at_folder(m) for m in mounted[:8]))
+            elsewhere = [(m, f) for m, f in zip(mounted, found, strict=False)
+                         if f is not None and f.state == "ok"]  # fmt: skip
         made = await asyncio.to_thread(backups.list_backups, settings.data_dir)
         now = now_ms()
         checks = [
-            setup.folders_check(list(zip(folders, looked, strict=False)), settings.media_dir),
+            setup.folders_check(
+                list(zip(folders, looked, strict=False)),
+                settings.media_dir,
+                elsewhere,
+                plex=ctx.plex.configured,
+                own=bool(ctx.folders.libraries),
+                own_roots=[r for lib in ctx.folders.libraries.values() for r in lib.folders],
+            ),
             setup.encoding_check(ctx.gpu.as_dict(), ctx.tone_mapping, ctx.subtitling),
             setup.clock_check(offset, zone[:80]),
             setup.backups_check(made, time.monotonic() - up_since, now),
@@ -3055,10 +3105,13 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             plex_pass(), setup.media_check(ctx, plex_ok, present)
         )
         checks = [
-            setup.plex_check(plex_state, has_pass),
+            setup.plex_check(plex_state, has_pass, len(ctx.folders.libraries)),
             files,
             setup.dvr_check(plex_ok, ctx.updater.as_dict(), now_ms()),
         ]
+        if not plex_state.get("configured") and ctx.folders.libraries:
+            # (Without Plex, by choice: its other checks have nothing to wait for.)
+            checks[1:] = [setup.not_used(c) for c in checks[1:]]
         url = base_url(request)
         return {
             "checks": [c.as_dict() for c in checks],
@@ -3415,7 +3468,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 400,
                 "Turn on the update check first"
                 if ctx.releases.on is not True
-                else "Finish setup first: choose Run setup again on the Add to Plex tab",
+                else "Finish setup first: choose Run setup again on the Setup tab",
             ) from None
         return ctx.releases.as_json()
 
@@ -3690,9 +3743,10 @@ def move_to_new_logos(ctx: AppContext) -> None:
         )
 
 
-def _plex_key(value: object) -> bool:
-    """Whether `value` is one of Plex's keys (a number, as text or not)."""
-    return isinstance(value, int | str) and not isinstance(value, bool) and str(value).isdigit()
+def library_key(value: object) -> bool:
+    """Whether `value` is a library's key: Plex's (a number, as text or not)
+    or a folder library's ("f" and a number), never INFO's own ("f0")."""
+    return is_key(value) and str(value) != infostation.KEY
 
 
 def _feature_source_problem(source: dict) -> str | None:
@@ -3713,16 +3767,16 @@ def _source_problem(source: dict) -> str | None:
     if kind == "info":
         # (INFO's own, as it is: see infostation.py.)
         return None if source == infostation.SOURCE else infostation.NOT_ITS_SOURCE
-    # Plex's keys are numbers: anything else isn't from Plex.
+    # A library's keys: Plex's are numbers, a folder library's "f" and a number.
     key = {"show": "ratingKey", "movie": "ratingKey", "section": "key"}.get(kind)
-    if key and not _plex_key(source.get(key)):
-        return f"A {kind} needs its Plex {key}"
+    if key and not library_key(source.get(key)):
+        return f"A {kind} needs its {key}"
     if kind == "collection":
         for field in ("ratingKey", "title", "library"):
             if not isinstance(source.get(field), str) or not source[field].strip():
                 return f"A collection needs its {field}"
-        if not (_plex_key(source["ratingKey"]) and _plex_key(source["library"])):
-            return "A collection needs its Plex ratingKey and Media folder"
+        if not (library_key(source["ratingKey"]) and library_key(source["library"])):
+            return "A collection needs its ratingKey and Media folder"
         if source.get("kind") not in COLLECTION_KINDS:
             return "A collection must hold movies, shows, seasons, or episodes"
         return None
@@ -3731,7 +3785,7 @@ def _source_problem(source: dict) -> str | None:
     if source.get("kind") not in ("movie", "show"):
         return "A filter must be for movies or TV shows"
     libraries = source.get("libraries")
-    if not isinstance(libraries, list) or not libraries or not all(map(_plex_key, libraries)):
+    if not isinstance(libraries, list) or not libraries or not all(map(library_key, libraries)):
         return "A filter needs at least one Media folder"
     if len(set(map(str, libraries))) != len(libraries) or len(libraries) > LIBRARIES_MAX:
         return f"A filter can use up to {LIBRARIES_MAX} Media folders, each only once"
@@ -3758,9 +3812,9 @@ def _source_problem(source: dict) -> str | None:
     if (
         not isinstance(left_out, list)
         or len(left_out) > FILTER_EXCLUDE_MAX
-        or not all(isinstance(k, str) and k.isdigit() for k in left_out)
+        or not all(isinstance(k, str) and library_key(k) for k in left_out)
     ):
-        return "A filter's left-out programs must be a list of Plex rating keys"
+        return "A filter's left-out programs must be a list of their keys"
     return None
 
 

@@ -6,7 +6,7 @@ Each question has a version. When a question changes (it gains a choice,
 say), its version goes up, and after the update the setup opens by itself,
 once, with just the questions that are new or changed. What's been
 answered is kept in `meta` (META_ANSWERED: each question's version when it
-was answered). Run again from the Add to Plex tab, the setup asks
+was answered). Run again from the Setup tab, the setup asks
 everything, with the current answers filled in. The page asks the
 questions (web/js/setup.js); this says which, and runs the
 checks.
@@ -29,8 +29,10 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import backups, playback
@@ -167,14 +169,37 @@ def _sentence(text: str) -> str:
     return text if text.endswith((".", "!", "?")) else text + "."
 
 
-def plex_check(plex_state: dict[str, Any], plex_pass: bool | None) -> Check:
+def plex_check(plex_state: dict[str, Any], plex_pass: bool | None, folders: int = 0) -> Check:
+    """Whether Plex answers. Plex is optional (1.35.0): with Media folders
+    of your own (`folders`: how many), tapiOca without Plex is fine."""
     title = "Plex"
     if not plex_state.get("configured"):
+        to_connect: tuple[str, ...] = (
+            "To use Plex, set PLEX_URL and PLEX_TOKEN in tapiOca’s app settings (its YAML, "
+            "or its Compose file), then restart tapiOca. The README’s “Finding your Plex "
+            "token” shows where to find the token.",
+        )
+        if plex_state.get("sample"):
+            # (The YAML's two sample lines, left in place: see plex.EXAMPLE_TOKEN.)
+            to_connect = (
+                "PLEX_URL and PLEX_TOKEN still have the sample values from tapiOca’s YAML or "
+                "Compose file.",
+                "To use Plex, put your Plex server’s address and token there instead (the "
+                "README’s “Finding your Plex token” shows where it is), then restart tapiOca. "
+                "Without Plex, delete the two lines.",
+            )
+        if folders:
+            return Check("plex", title, GOOD, [
+                "tapiOca isn’t using Plex: your own Media folders are where its stations "
+                "and Media come from.",
+                *to_connect,
+            ])  # fmt: skip
         return Check("plex", title, BAD, [
-            "tapiOca isn’t connected to Plex: PLEX_URL and PLEX_TOKEN aren’t set.",
-            "Set both in tapiOca’s app settings (its YAML, or its Compose file), then "
-            "restart tapiOca. The README’s “Finding your Plex token” shows where to find "
-            "the token.",
+            "tapiOca has nothing to play yet: it isn’t connected to Plex, and you haven’t "
+            "added a Media folder of your own.",
+            "Add one on the Setup tab, under Your own folders, to use your folders "
+            "without Plex.",
+            *to_connect,
         ])  # fmt: skip
     if not plex_state.get("ok"):
         if plex_state.get("trouble"):
@@ -300,9 +325,62 @@ def _holds(folder: Folder) -> str:
     return f"{folder.files} file{'s' if folder.files != 1 else ''}"
 
 
-def folders_check(looked: list[tuple[str, Folder | None]], media_dir: str) -> Check:
+def mounts(skip: list[str], mountinfo: str | None = None) -> list[str]:
+    """The folders mounted into tapiOca's container (from its mountinfo),
+    other than the system's own and `skip` (its data folder: mounts inside
+    it or holding it): where an Admin's media is, when MEDIA_DIR names
+    somewhere else. /media first (the YAML's and Compose file's), then by
+    name. Run off the event loop."""
+    if mountinfo is None:
+        try:
+            mountinfo = Path("/proc/self/mountinfo").read_text(errors="replace")
+        except OSError:
+            return []
+    skip = [os.path.realpath(s) for s in skip]  # (as mountinfo has them: links followed)
+    found: set[str] = set()
+    for line in mountinfo.splitlines():
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        # (mountinfo writes a space, tab, newline or backslash as \ and
+        # three octal digits.)
+        point = _ESCAPED.sub(lambda m: chr(int(m.group(1), 8)), parts[4])
+        if point == "/" or any(_within(point, s) for s in _SYSTEM_MOUNTS):
+            continue
+        if any(_within(point, s) or _within(s, point) for s in skip):
+            continue
+        found.add(point)
+    return sorted(found, key=lambda p: (p != "/media", p))
+
+
+def _within(path: str, folder: str) -> bool:
+    """Whether `path` is `folder` or inside it (by whole names)."""
+    folder = folder.rstrip("/") or "/"
+    return path == folder or path.startswith(folder + "/")
+
+
+_ESCAPED = re.compile(r"\\([0-7]{3})")
+_SYSTEM_MOUNTS = (
+    "/proc", "/sys", "/dev", "/run", "/etc", "/tmp", "/usr", "/var", "/lib", "/lib64", "/bin",
+    "/sbin", "/boot", "/opt/stationplay",
+)  # fmt: skip
+
+
+def folders_check(
+    looked: list[tuple[str, Folder | None]],
+    media_dir: str,
+    elsewhere: list[tuple[str, Folder]] | None = None,
+    *,
+    plex: bool = True,
+    own: bool = False,
+    own_roots: list[str] | None = None,
+) -> Check:
     """The media folder check: what looking at MEDIA_DIR and the folders
-    PATH_MAPPINGS names found (None: it took too long)."""
+    PATH_MAPPINGS names found (None: it took too long); and, when there's
+    nothing at MEDIA_DIR, the folders mounted elsewhere that hold something
+    (`elsewhere`), where the media most likely is. `plex`: Plex is set up;
+    `own`: there's a Media folder of tapiOca's own (what can't be read
+    meanwhile), and `own_roots` their folders."""
     shown = [
         (path, f)
         for path, f in looked
@@ -324,7 +402,7 @@ def folders_check(looked: list[tuple[str, Folder | None]], media_dir: str) -> Ch
             )
             fixes.append("slow")
         elif f.state == "missing":
-            lines.append(f"Nothing is mounted at {path}.")
+            lines.append(f"Nothing is at {path} inside tapiOca.")
             fixes.append("missing")
         elif f.state == "denied":
             lines.append(f"tapiOca isn’t allowed to read {path}.")
@@ -346,7 +424,8 @@ def folders_check(looked: list[tuple[str, Folder | None]], media_dir: str) -> Ch
         else:
             lines.append(f"tapiOca can read {path}, which holds {_holds(f)}.")
     if not fixes:
-        lines.append("The Plex step checks that tapiOca finds the files Plex lists.")
+        if plex:
+            lines.append("The Plex step checks that tapiOca finds the files Plex lists.")
         return Check("media", title, GOOD, lines)
     if "denied" in fixes:
         lines.append(
@@ -354,19 +433,107 @@ def folders_check(looked: list[tuple[str, Folder | None]], media_dir: str) -> Ch
             "your media, then choose Check again."
         )
     if "missing" in fixes:
-        lines.append(
-            "tapiOca can still stream your files from Plex, but reading them from disk is faster "
-            f"and puts less load on Plex. Mount your media folder at {media_dir} in tapiOca’s app "
-            "settings (its YAML or Compose file), then restart tapiOca."
-        )
+        lines += _where_it_is(media_dir, elsewhere or [], own_roots or [])
+        lines.append(_meanwhile(plex, own))
     if "empty" in fixes:
         lines.append(
             "If your media is on a share or another disk, check that it’s mounted on the server, "
             "then restart tapiOca."
         )
     if "slow" in fixes and not {"missing", "empty"} & set(fixes):
-        lines.append("Until tapiOca can read it, it streams your files from Plex.")
+        lines.append(_meanwhile(plex, own))
     return Check("media", title, WARN, lines)
+
+
+def _where_it_is(
+    media_dir: str, elsewhere: list[tuple[str, Folder]], own_roots: list[str]
+) -> list[str]:
+    """(Nothing at MEDIA_DIR) Where the media looks to be, and what to
+    change. MEDIA_DIR is where tapiOca sees the media, inside its container,
+    not where it is on the server: the usual mix-up, the owner's, October
+    13."""
+    there = [(p, g) for p, g in elsewhere if p != media_dir and g.state == "ok"]
+    # (Most likely first, before anything's named: a folder holding your own
+    # Media folders, then one with videos in it.)
+    there.sort(key=lambda pg: (
+        not any(_within(r, pg[0]) for r in own_roots), pg[1].video is None,
+    ))  # fmt: skip
+    settings = "tapiOca’s app settings (its YAML or Compose file)"
+    restart = "Then restart tapiOca."
+    if own_roots and all(_within(r, media_dir) for r in own_roots):
+        # (Your own Media folders were read from MEDIA_DIR: the media goes
+        # back there, or they'd stay out of reach.)
+        lines = [f"Your media looks to be at {there[0][0]} inside tapiOca now."] if there else []
+        return [*lines, (
+            f"Your own Media folders are read from {media_dir}, so mount your media there again: "
+            f"in {settings}, its line under volumes must end in :{media_dir} or :{media_dir}:ro. "
+            f"{restart}"
+        )]  # fmt: skip
+    videos = [p for p, g in there if g.video is not None]
+    if len(videos) > 1 and not any(_within(r, videos[0]) for r in own_roots):
+        named = videos[:3]
+        must = "tapiOca’s media folder must hold them all."
+        if "/media" in named:
+            # (The YAML's /media among them: the others go inside it.)
+            others = _inside_media([v for v in named if v != "/media"])
+            return [
+                f"Your media looks to be at {_and(named)} inside tapiOca.",
+                f"{must} In {settings}, mount the others inside /media, such as "
+                f"{_and(others)}, and set MEDIA_DIR to /media. {restart}",
+            ]
+        return [
+            f"Your media looks to be at {_and(named)} inside tapiOca.",
+            f"{must} In {settings}, mount them inside one, such as {_and(_inside_media(named))}, "
+            f"and set MEDIA_DIR to /media. {restart}",
+        ]
+    if there:
+        path, g = there[0]
+        return [
+            f"Your media looks to be at {path} inside tapiOca: it holds {_holds(g)}.",
+            "MEDIA_DIR names your media folder as tapiOca sees it, inside its container, not "
+            f"where it is on your server. Set MEDIA_DIR to {path} in {settings}. {restart}",
+        ]
+    return [
+        f"In {settings}, a line under volumes, such as /mnt/tank/media:/media:ro, mounts a "
+        "folder on your server for tapiOca to see.",
+        "The middle part (/media here) is where tapiOca sees that folder. Set MEDIA_DIR to it, "
+        "then restart tapiOca.",
+    ]
+
+
+def _inside_media(paths: list[str]) -> list[str]:
+    """Where each folder could go inside /media, each a name of its own."""
+    out: list[str] = []
+    for path in paths:
+        base = os.path.basename(path.rstrip("/")) or "media"
+        name, n = base, 2
+        while f"/media/{name}" in out:
+            name, n = f"{base}-{n}", n + 1
+        out.append(f"/media/{name}")
+    return out
+
+
+def _and(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def _meanwhile(plex: bool, own: bool) -> str:
+    """What happens until tapiOca can read its media folder: `plex`, Plex
+    is set up; `own`, there's a Media folder of tapiOca's own."""
+    from_plex = "which is slower and puts more load on Plex."
+    if own and plex:
+        return (
+            "Until then, tapiOca can’t read your own Media folders, and streams Plex’s files "
+            f"from Plex where it can, {from_plex}"
+        )
+    if own:
+        return "Until then, tapiOca can’t read your own Media folders."
+    if plex:
+        return f"Until then, tapiOca streams your files from Plex where it can, {from_plex}"
+    return (
+        "Until then, tapiOca can’t read your files itself. With Plex, it streams them from Plex "
+        f"instead, {from_plex}"
+    )
 
 
 async def media_check(ctx: AppContext, plex_ok: bool, present: bool) -> Check:
@@ -421,10 +588,27 @@ async def media_check(ctx: AppContext, plex_ok: bool, present: bool) -> Check:
             "files from Plex. The disk or share it’s on may have a problem.",
             slower,
         ])  # fmt: skip
-    if not present:
+    # (With PATH_MAPPINGS, the media folder check reads the folders it names
+    # and may be fine: the advice below, for both, is said here instead.)
+    if not present and not ctx.settings.path_mappings:
         return Check("plexFiles", title, WARN, [
-            f"Nothing is mounted at {media_dir}, so tapiOca streams files from Plex.",
-            slower + f" Mount your media folder at {media_dir} in tapiOca’s app settings.",
+            f"Nothing is at {media_dir} inside tapiOca, so tapiOca streams files from Plex.",
+            # (Not "Mount your media folder at <MEDIA_DIR>": MEDIA_DIR is
+            # where tapiOca sees it, which the media folder check explains.)
+            slower + " “Your media folder” says what to change.",
+        ])  # fmt: skip
+    if not present:
+        # (Nothing at MEDIA_DIR, and PATH_MAPPINGS set: what it tried there.)
+        mapped = next(
+            (dst + plex_file[len(src):] for src, dst in ctx.settings.path_mappings
+             if plex_file.startswith(src + "/")), None,
+        )  # fmt: skip
+        tried = f", which PATH_MAPPINGS reads as {mapped}" if mapped else ""
+        return Check("plexFiles", title, WARN, [
+            f"tapiOca couldn’t find {name} in the folders PATH_MAPPINGS names (Plex has it at "
+            f"{plex_file}{tried}), so it streams files from Plex.",
+            slower + " Check that each pair in PATH_MAPPINGS ends with where tapiOca sees that "
+            "folder, inside its container (see “How tapiOca reads your files” in the README).",
         ])  # fmt: skip
     return Check("plexFiles", title, WARN, [
         f"tapiOca couldn’t find {name} in {media_dir} (Plex has it at {plex_file}), so it "
@@ -554,9 +738,14 @@ def backups_check(made: list[dict[str, Any]], up_s: float, now_ms: int) -> Check
     ])  # fmt: skip
 
 
+def not_used(check: Check) -> Check:
+    """A check of Plex's, when tapiOca isn't using Plex (1.35.0)."""
+    return Check(check.id, check.title, INFO, ["Not used: tapiOca isn’t using Plex."])
+
+
 def dvr_check(plex_ok: bool, guide: dict[str, Any], now_ms: int) -> Check:
     """Whether Plex has tapiOca as a DVR (it's found when tapiOca
-    looks, as the Add to Plex tab does), and when Plex last downloaded its guide."""
+    looks, as the Setup tab does), and when Plex last downloaded its guide."""
     title = "tapiOca in Plex"
     if not plex_ok:
         return Check("dvr", title, WAIT, ["This is checked once tapiOca is connected to Plex."])
@@ -570,6 +759,6 @@ def dvr_check(plex_ok: bool, guide: dict[str, Any], now_ms: int) -> Check:
         return Check("dvr", title, GOOD, lines)
     return Check("dvr", title, INFO, [
         "Plex doesn’t have tapiOca as a DVR yet. Adding it takes a few steps in Plex, shown "
-        "in this setup and on the Add to Plex tab. (To watch only in Jellyfin, Emby, Kodi or "
+        "in this setup and on the Setup tab. (To watch only in Jellyfin, Emby, Kodi or "
         "tapiOca’s own apps, you can skip them.)",
     ])  # fmt: skip

@@ -17,6 +17,9 @@ const h = (tag, attrs = {}, ...kids) => {
 // "station" or "stations"; "1 station" or "3 stations".
 const noun = (n, word) => `${word}${n === 1 ? '' : 's'}`;
 const plural = (n, word) => `${Number.isFinite(n) ? n.toLocaleString() : n} ${noun(n, word)}`;
+// Whether tapiOca uses Plex (status.js's status: an Admin's plexUsed, a
+// User's plex.used). Without it, nothing's said about Plex (1.35.0).
+const plexUsed = () => (status?.plexUsed ?? status?.plex?.used) !== false;
 
 // opts.body is sent as JSON; opts.raw (a file) as it is. opts.blob: the answer is a file.
 async function api(path, opts = {}) {
@@ -76,8 +79,8 @@ function madeNotice(made, problems = []) {
   const one = made.length === 1;
   notice(one ? `Station ${made[0].number} is on the air` : `${made.length} new stations are on the air`,
     h('ul', { class: 'steps' }, ...made.map(s => h('li', {}, h('strong', {}, String(s.number)), ` ${s.name}`))),
-    h('p', { style: 'margin:0' }, `To add ${one ? 'it' : 'them'} to Plex, go to `, h('em', {}, 'Settings → Live TV & DVR → your tuner → Scan for channels'),
-      ' in Plex (Plex calls stations “channels”). If you haven’t added tapiOca to Plex yet, the Add to Plex tab shows how.'),
+    h('p', { style: 'margin:0' }, `Watching in Plex? To add ${one ? 'it' : 'them'}, go to `, h('em', {}, 'Settings → Live TV & DVR → your tuner → Scan for channels'),
+      ' in Plex (Plex calls stations “channels”). Other apps show new stations once they refresh their guide. Tuner integration, on the Setup tab, shows how to add tapiOca to each.'),
     problems.length ? h('div', { class: 'notice-bad' }, h('strong', {}, 'Couldn’t make these'),
       h('ul', { class: 'steps' }, ...problems.map(p => h('li', {}, p)))) : null);
 }
@@ -120,7 +123,7 @@ function showTab(name) {
   for (const id of TABS) $('#tab-' + id).hidden = id !== name;
   if (name === 'broken') { loadArr().then(loadBroken); loadScan(); loadReportSettings(); }
   if (name === 'logs') { loadLogs(true); loadProblems(); loadNotify(); }
-  if (name === 'setup') { loadBackups(); renderPlaybackPanel(); loadUpdates(); loadInfoStation(); }
+  if (name === 'setup') { loadBackups(); renderPlaybackPanel(); loadUpdates(); loadInfoStation(); loadFolderLibraries(); }
   if (name === 'stats') { loadStats(); loadNow(); }
   if (name === 'access') { loadAccess(); loadApps(); loadTuner(); loadLimits(); loadAway(); loadAppLimits(); loadAppLibraries(); loadApiTokens(); }
   history.replaceState(null, '', '#' + name);

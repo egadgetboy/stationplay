@@ -278,7 +278,7 @@ class Updater:
     async def gather(
         self, sources: list[dict], skip_intros: bool = False, look_s: float = 0.0
     ) -> list[Item]:
-        """Every program `sources` stand for in Plex right now; with
+        """Every program `sources` stand for in the library right now; with
         `skip_intros`, as they air without their intros and credits (waiting
         up to `look_s` for where their pictures cut: see cuts.py)."""
         batches = await gather_all(self.ctx.library.items_for_source(s) for s in sources)
@@ -660,7 +660,7 @@ class Updater:
         try:
             found = await self.ctx.library.collections()
         except LibraryError as e:
-            log.info("Can't ask Plex about its collections right now (%s)", e)
+            log.info("Can't ask about collections right now (%s)", e)
             return f"|collections unknown at {now_ms()}"
         followed = (self.ctx.library.followed_collection(source, found) for source in sources)
         return "|" + ",".join(
@@ -675,7 +675,7 @@ class Updater:
         try:
             fingerprint = await self.ctx.library.fingerprint()
         except LibraryError as e:
-            log.info("Can't check Plex for new episodes right now (%s)", e)
+            log.info("Can't check for new episodes right now (%s)", e)
             return
         fingerprint += await self._collections_fingerprint()
         # New or removed commercials and trailers count as a change too, as do
@@ -699,7 +699,7 @@ class Updater:
             except LibraryError as e:
                 failed = True
                 log.info(
-                    "Can't check %s against Plex (%s)",
+                    "Can't check %s for changes right now (%s)",
                     station_named(channel.number, channel.name, mid=True),
                     e,
                 )
@@ -707,7 +707,7 @@ class Updater:
             except Exception:
                 failed = True
                 log.exception(
-                    "Checking %s against Plex failed",
+                    "Checking %s for changes failed",
                     station_named(channel.number, channel.name, mid=True),
                 )
                 continue
@@ -720,7 +720,7 @@ class Updater:
             self.pending[channel.id] = update
             if previous is None or previous.summary != update.summary:
                 log.info(
-                    "%s has an update from Plex (%s)",
+                    "%s has an update (%s)",
                     cap(station_named(channel.number, channel.name, mid=True)),
                     update.summary,
                 )
@@ -813,13 +813,16 @@ class Updater:
                 await self.plan_all_specials()
                 self.prune_all()
             except Exception:
-                log.exception("Checking Plex for updates failed")
+                log.exception("Checking for updates failed")
             await asyncio.sleep(CHECK_INTERVAL_S)
 
     # Asking Plex to reload its guide ----------------------------------------
 
     async def find_dvr(self) -> str | None:
-        """Plex's DVR that uses this tapiOca, if there is one."""
+        """Plex's DVR that uses this tapiOca, if there is one (none without
+        Plex: tapiOca with folders alone)."""
+        if not self.ctx.plex.configured:
+            return None
         now = now_ms()
         recheck = DVR_RECHECK_MS if self._dvr_key else DVR_MISSING_RECHECK_MS
         if now - self._dvr_checked_ms < recheck:

@@ -348,7 +348,7 @@ def test_the_page_can_show_the_version(client):
     # updates, never as tapiOca starts, which mustn't need the internet:
     # the audit of 1.34.0 changed U2's pull_policy from always to missing,
     # for the owner to confirm.)
-    for name in ("stationplay.yaml", "docker-compose.yml"):
+    for name in ("tapioca-server.yaml", "docker-compose.yml"):
         text = (root / name).read_text()
         images = re.findall(r"^\s*image: (\S+)", text, re.M)
         assert images == ["ghcr.io/egadgetboy/tapioca-server:latest"], name

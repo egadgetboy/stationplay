@@ -3,7 +3,7 @@
 // updates its image, What's new and Back up now; the one-time question
 // whether to look at all (asked here once setup is done, of a tapiOca
 // updated from before 1.34.0: a new one asks in setup's last step); and the
-// update check's setting, on the Add to Plex tab. "Not now" hides the
+// update check's setting, on the Setup tab. "Not now" hides the
 // banner for that version, in this browser.
 const UPDATE_NOT_NOW = 'tapioca.updateNotNow';
 const UPDATE_PRIVACY = 'Every 4 hours, tapiOca asks GitHub whether a newer version is out. GitHub sees your server’s internet address when it asks, as any website does. tapiOca sends only its version, and never updates by itself.';
@@ -40,7 +40,7 @@ async function loadUpdates() {
     banner.replaceChildren(
       h('p', { class: 'update-title' }, h('strong', {}, 'Should tapiOca tell you when a new version is out?')),
       h('p', { class: 'small' }, UPDATE_PRIVACY),
-      h('p', { class: 'small muted' }, 'You can change this later under New versions on the Add to Plex tab.'),
+      h('p', { class: 'small muted' }, 'You can change this later under New versions on the Setup tab.'),
       h('div', { class: 'row-btns' },
         h('button', { class: 'btn primary', type: 'button', onclick: answer(true) }, 'Yes, tell me'),
         h('button', { class: 'btn', type: 'button', onclick: answer(false) }, 'No')));
@@ -65,7 +65,7 @@ async function loadUpdates() {
       } }, 'Not now')));
   banner.hidden = false;
 }
-// The setting, on the Add to Plex tab (under Backups). Never ticked until
+// The setting, on the Setup tab (under Backups). Never ticked until
 // an Admin says yes.
 function renderUpdatesPanel() {
   const panel = $('#updatesPanel');
@@ -104,7 +104,7 @@ $('#updatePill').addEventListener('click', () => {
   });
 });
 // The INFO station (see infostation.py on the server): station 99, its
-// state, and Add the INFO station to bring it back, on the Add to Plex tab.
+// state, and Add the INFO station to bring it back, on the Setup tab.
 async function loadInfoStation() {
   const panel = $('#infoPanel');
   if (!panel || !isAdmin()) return;

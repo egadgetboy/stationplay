@@ -50,7 +50,7 @@ async def test_plexs_keys_go_to_plex(library):
 
 
 async def test_folder_keys_are_never_sent_to_plex(library):
-    """Until folder libraries arrive, a folder key is simply not found:
+    """Without folder libraries, a folder key is simply not found:
     never asked of Plex, never an error that looks like Plex being away."""
     for ask in (
         library.current_files("f201"),

@@ -140,6 +140,8 @@ function renderTuner(got, said = '') {
       }
       send('/api/tuner/plex-only', { method: 'POST' }, 'Saved. Only Plex can use the tuner.');
     } }, 'Plex server only');
+    // (Where Plex is used, or has been seen using the tuner.)
+    plexOnly.hidden = !got.plex.length && !plexUsed();
     listed.push(
       got.devices.length ? h('table', { class: 'users' },
         h('thead', {}, h('tr', {}, h('th', {}, 'Device'), h('th', {}, 'Address'), h('th', {}, ''))),
@@ -202,7 +204,7 @@ function awayFields(got, onEdit, id) {
         h('ul', {},
           h('li', {}, h('strong', {}, 'A way in from outside. '), 'Either a VPN such as Tailscale or WireGuard on the phone or tablet (then the address below is your server’s VPN address, such as http://nas.your-tailnet.ts.net:3310), or the public port (PUBLIC_PORT) behind a reverse proxy with HTTPS. Not a Cloudflare Tunnel: Cloudflare’s free plan isn’t meant for video. The README’s “Reaching tapiOca from outside your home” explains each.'),
           h('li', {}, h('strong', {}, 'Signing in, through the public port. '), 'Each app that signs in gets a private address for its stations, and one for each title it plays from Media. They stop working as soon as that person signs out or is removed.'),
-          h('li', {}, h('strong', {}, 'Upload speed. '), 'Each station watched away from home is sent over your home internet connection, at the picture size set under Picture and tuners on the Add to Plex tab, and so is Media, at the quality you choose on the Access tab.'))),
+          h('li', {}, h('strong', {}, 'Upload speed. '), 'Each station watched away from home is sent over your home internet connection, at the picture size set under Picture and tuners on the Setup tab, and so is Media, at the quality you choose on the Access tab.'))),
       ...warnings.map(w => h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' ', w)),
       h('label', {}, on, ' Let tapiOca’s apps watch away from home'),
       h('div', { class: 'field' }, h('label', { for: id }, 'The address apps reach tapiOca at from outside'), address,
@@ -613,7 +615,8 @@ function libraryFields(got, onEdit) {
   const boxes = new Map();
   const choices = got.libraries.map(l => {
     // (None shared yet, from before 1.34.1: every one is offered, ticked.)
-    const box = h('input', { type: 'checkbox', checked: got.waiting || got.shared.includes(l.key), oninput: onEdit });
+    // (While Plex's can't be listed, nothing here changes: see values.)
+    const box = h('input', { type: 'checkbox', checked: got.waiting || got.shared.includes(l.key), disabled: !!got.problem, oninput: onEdit });
     boxes.set(l.key, box);
     return h('label', {}, box, ` ${l.title} `, h('span', { class: 'muted small' }, l.kind === 'movie' ? '(movies)' : '(shows)'));
   });
@@ -627,9 +630,9 @@ function libraryFields(got, onEdit) {
   };
   const [slowHome, slowHomeRow] = slow('home', 'At home:', '');
   const [slowAway, slowAwayRow] = slow('away', 'Away from home:', '');
-  // (While the Media folders can't be listed, they're left as they are.)
+  // (While the Media folders can't all be listed, they're left as they are.)
   const values = () => ({
-    ...(got.problem && !got.libraries.length ? {} : { libraries: [...boxes].filter(([, b]) => b.checked).map(([key]) => key) }),
+    ...(got.problem ? {} : { libraries: [...boxes].filter(([, b]) => b.checked).map(([key]) => key) }),
     whenSlow: { home: slowHome.value, away: slowAway.value },
   });
   const first = JSON.stringify(values());

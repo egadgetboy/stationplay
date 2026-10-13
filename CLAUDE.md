@@ -77,8 +77,9 @@ follow them in every change.
 - One release per feature, or per small bundle of fixes; tiny wording or
   style fixes wait for the next feature release. Minor version for
   features, patch for fixes. The version is in `app/__init__.py` and
-  `pyproject.toml`. (From 1.34.0, `stationplay.yaml` and `docker-compose.yml`
-  ask for the published image at `:latest`.)
+  `pyproject.toml`. (From 1.34.0, the TrueNAS file and `docker-compose.yml`
+  ask for the published image at `:latest`. The TrueNAS file is
+  `tapioca-server.yaml` from 1.35.0, `stationplay.yaml` before.)
 - Each release: a hostile audit before building; build; tests (the area's,
   then the full suite once; real FFmpeg streaming for playback; Playwright
   at 390, 768 and 1440 wide, light and dark, for page changes;

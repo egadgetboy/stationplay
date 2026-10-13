@@ -29,7 +29,7 @@ INFO is always station 99 (the owner): it can be renamed, and its settings
 changed, but not renumbered, and no other station can be 99. A tapiOca
 whose station 99 is another one gets INFO only once that one moves. It's made once, on a new
 tapiOca's first start; deleted, it stays deleted until an Admin brings it
-back (Add the INFO station, on the Add to Plex tab). An update never adds
+back (Add the INFO station, on the Setup tab). An update never adds
 it by itself. What it plays comes from no library: its one source is
 {"type": "info"}, and its one program has the key KEY, which the library
 answers for itself (see library.py).

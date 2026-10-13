@@ -12,11 +12,17 @@ async function loadStatus() {
   if (status.version !== pageVersion && !document.querySelector('dialog[open]')) { location.reload(); return; }
   $('#appVersion').textContent = status.version ? `tapiOca: Stations & Media ${status.version} · ` : '';
   const pill = $('#plexPill');
+  // (Without Plex, with Media folders of tapiOca's own, there's nothing to
+  // say about Plex: 1.35.0.)
+  const plexUsed = (status.plexUsed ?? status.plex.used) !== false;
+  pill.hidden = !plexUsed;
+  const noPlex = status.plex.configured === false;
   pill.firstElementChild.className = 'dot ' + (status.plex.ok ? 'ok' : 'bad');
   const plexError = status.plex.error || 'not connected';
   pill.lastElementChild.textContent = status.plex.ok
     ? 'Plex connected'
-    : /^Plex\b/.test(plexError) ? plexError : `Plex: ${plexError}`;
+    : noPlex ? 'Nothing to play yet'
+      : /^Plex\b/.test(plexError) ? plexError : `Plex: ${plexError}`;
   // Stations someone is receiving right now (a station keeps running a few
   // seconds after its last viewer leaves, so flipping back is instant; those
   // don't count). Plex may carry several people on one connection.
@@ -35,9 +41,9 @@ async function loadStatus() {
     $('#xmltvUrl').textContent = status.xmltvUrl;
     $('#m3uUrl').textContent = status.m3uUrl;
     $('#guideUrl').textContent = status.guideUrl;
-    renderMediaAccess(status.mediaAccess);
+    renderMediaAccess(status.mediaAccess, plexUsed);
     renderEncoding(status.encoding);
-    renderGuideState(status.guide);
+    renderGuideState(status.guide, plexUsed);
     // (What needs an Admin on the Broken files tab: see reports.py.)
     const bc = $('#brokenCount');
     bc.hidden = !status.filesCount;
@@ -53,7 +59,7 @@ async function loadStatus() {
 // Picture and tuners -------------------------------------------------------------
 // How stations play (see playback.py): the picture size new stations start
 // with, how many stations play at once, and what this server can manage. On
-// the Add to Plex tab, and in the setup.
+// the Setup tab, and in the setup.
 const SPEED_WAIT = 'Testing… (up to a minute)';
 function playbackForm(pb, { saveLabel, onSaved, extraButtons = [], embedded = false }) {
   let picture = pb.picture, tuners = pb.tuners, tested = pb.speedTest;
