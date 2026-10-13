@@ -5,6 +5,10 @@ Everything that reads the media library goes through `Library`, never
 through a source directly. Today its one source is Plex; folders of your own
 come later, and nothing outside this module needs to change for them.
 
+One program belongs to no source: the INFO station's (see infostation.py),
+whose key, infostation.KEY, the library answers for itself, from the film in
+the image, without asking Plex.
+
 Every program, show, movie, collection and library has a key, a short string
 the rest of tapiOca treats as opaque. Plex's keys are digits (as they
 always were, so nothing stored changes); folder libraries' keys will be "f"
@@ -17,8 +21,11 @@ refresh, who's watching, blocking, Plex accounts) stays on the Plex client.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Collection
 from typing import TYPE_CHECKING, Any
+
+from . import infostation
 
 if TYPE_CHECKING:
     from .catalog import Entry, Media
@@ -102,6 +109,12 @@ class Library:
         """The shows or movies in one library."""
         return await self._plex_for(library).section_items(library)
 
+    async def counts(self, keys: Collection[str] | None = None) -> tuple[int, int, int, int]:
+        """How many movies, shows and episodes there are in these libraries
+        (by key; None: every one), and how many movies and episodes were
+        added in the last week (for INFO: see infostation.py)."""
+        return await self.plex.counts(int(time.time()) - 7 * 86400, keys)
+
     async def fingerprint(self) -> str:
         """Changes whenever anything in any library may have."""
         return await self.plex.library_fingerprint()
@@ -135,6 +148,8 @@ class Library:
 
     async def items_for_source(self, source: dict[str, Any]) -> list[Item]:
         """The programs one of a station's sources stands for."""
+        if infostation.is_info_source(source):
+            return [infostation.program()]
         return await self.plex.items_for_source(source)
 
     async def find_again(self, item: Item, looked: Lookups | None = None) -> str | None:
@@ -150,6 +165,8 @@ class Library:
         """The files a program has now, in order: one, or several for a
         movie on two discs, say, played one after the other as one (see
         catalog.Media); () if the library has it without a file."""
+        if key == infostation.KEY:
+            return (infostation.media(),)
         return await self._plex_for(key).current_files(key)
 
     def stream_url(self, key: str, part_key: str) -> str | None:
@@ -162,18 +179,26 @@ class Library:
     # Markers ---------------------------------------------------------------
 
     async def markers(self, key: str) -> list[dict[str, Any]]:
+        if key == infostation.KEY:
+            return []
         return await self._plex_for(key).markers(key)
 
     async def markers_and_added(self, key: str) -> tuple[list[dict[str, Any]], int | None]:
+        if key == infostation.KEY:
+            return [], None
         return await self._plex_for(key).markers_and_added(key)
 
     # Artwork ---------------------------------------------------------------
 
     async def art(self, key: str) -> tuple[bytes, str]:
         """A program's picture: (bytes, content type)."""
+        if key == infostation.KEY:
+            return infostation.LOGO_FILE.read_bytes(), "image/png"
         return await self._plex_for(key).get_bytes(f"/library/metadata/{key}/thumb")
 
     async def poster(self, key: str, width: int, height: int) -> tuple[bytes, str]:
+        if key == infostation.KEY:
+            return infostation.LOGO_FILE.read_bytes(), "image/png"
         return await self._plex_for(key).poster(key, width, height)
 
     async def clear_logo(self, key: str) -> tuple[str, str] | None:

@@ -177,3 +177,18 @@ def test_the_access_tab_sets_the_limits_and_shows_the_tests(client, caplog):
         87.5,
     )
     assert got["room"]["home"]["devices"] == 15 and got["room"]["away"] is None
+
+
+def test_an_admin_runs_the_apps_connection_test_from_the_page(client):
+    """(1.34.1, the owner) The same connection test the apps run, from the
+    Access tab: timed in the browser, said by the page, kept with the
+    apps' tests, and recommended from."""
+    client.post("/api/access/users", json={"name": "Ada", "password": "correct horse"})
+    data = client.get("/api/internal/speed-test?mb=2")  # (signed in on the page, by its cookie)
+    assert data.status_code == 200 and len(data.content) == 2 << 20
+    found = client.post("/api/internal/speed-test", json={"mbps": 412.0, "app": "tapiOca's page"})
+    assert found.status_code == 200 and found.json()["where"] == "home"
+    got = client.get("/api/app-limits").json()
+    [test] = got["tests"]
+    assert (test["where"], test["device"], test["user"]) == ("home", "tapiOca's page", "Ada")
+    assert got["room"]["home"]["devices"] == 72

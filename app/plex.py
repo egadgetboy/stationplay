@@ -8,10 +8,10 @@ import email.utils
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlsplit
 
 import httpx
 
@@ -32,6 +32,21 @@ PAGE_SIZE = 1000
 # A request Plex didn't answer is asked again after this long (then twice
 # this), up to three times in all.
 RETRY_S = 0.5
+# The longest a connection to Plex may take to open (an answer may then
+# take the client's timeout): a wrong address, or a computer that's off, is
+# given up on in seconds. On a home network it opens at once.
+CONNECT_S = 4.0
+# What Plex's problems are logged as, at most this often each (with what
+# was asked and why): the page shows only a plain sentence.
+SAY_AGAIN_S = 60.0
+# What people read when Plex doesn't answer as it should (the details,
+# the path asked for and the error, go to the log).
+NOT_ANSWERING = "Plex isn't answering"
+TOO_SLOW = "Plex is taking too long to answer"
+HAD_A_PROBLEM = "Plex had a problem and couldn't answer"
+NOT_FOUND = "Plex doesn't have that now. It may have been removed from Plex."
+TURNED_DOWN = "Plex turned down tapiOca's request"
+BAD_TOKEN = "Plex didn't accept the token in PLEX_TOKEN"
 # Background requests (building and checking stations) tapiOca has in
 # flight to Plex at once, at most. Lookups for programs about to play don't
 # wait behind them.
@@ -61,7 +76,98 @@ CHOICES_TTL_S = 600
 
 class PlexError(LibraryError):
     """Plex couldn't answer (`status`: the HTTP status it answered with, if it
-    did). Plex is a library, so this is a LibraryError too."""
+    did; `kind`: what happened, as trouble() words it). Plex is a library, so
+    this is a LibraryError too."""
+
+    def __init__(self, message: str, status: int | None = None, kind: str = "") -> None:
+        super().__init__(message, status)
+        self.kind = kind
+
+
+# What tapiOca's YAML and compose file have for PLEX_URL, as an example to
+# change (a test keeps them the same).
+EXAMPLE_URL = "http://192.168.1.10:32400"
+# What a connection that didn't open says, by what it means.
+_REFUSED = ("refused",)
+_UNKNOWN_HOST = (
+    "name or service not known", "nodename nor servname", "name resolution",
+    "getaddrinfo", "no address associated",
+)  # fmt: skip
+
+
+def _connection_kind(error: Exception | None) -> str:
+    """What a failed request means: "refused" (nothing there takes the
+    connection), "unknown-host", "slow" (it answered too slowly), "unreadable",
+    or "no-answer" (nothing answered at all)."""
+    if isinstance(error, httpx.TimeoutException):
+        return "no-answer" if isinstance(error, httpx.ConnectTimeout) else "slow"
+    if isinstance(error, ValueError):
+        return "unreadable"
+    said = str(error).lower()
+    if isinstance(error, httpx.ConnectError):
+        if any(s in said for s in _REFUSED):
+            return "refused"
+        if any(s in said for s in _UNKNOWN_HOST):
+            return "unknown-host"
+    return "no-answer"
+
+
+def trouble(base_url: str, error: PlexError | None) -> str:
+    """What's wrong with reaching Plex at `base_url`, for an Admin, in a
+    sentence or two: what happened, and what to check (None: it didn't
+    answer in the time it was given). Says so too when PLEX_URL is still
+    the example address from tapiOca's YAML (1.34.1, the owner)."""
+    split = urlsplit(base_url)
+    where = split.netloc.rpartition("@")[2] or base_url
+    host = split.hostname or where
+    kind = "no-answer" if error is None else error.kind
+    status = error.status if error is not None else None
+    if status == 401:
+        said = (
+            f"Plex at {where} doesn't accept tapiOca's token. Check PLEX_TOKEN in "
+            "tapiOca's settings."
+        )
+    elif status is not None and status >= 500:
+        said = f"Plex at {where} answers, but with a problem. Restarting Plex usually fixes it."
+    elif status == 404 or kind == "unreadable":
+        # (Plex always answers what's asked here: a NAS's own page, say, or
+        # an address without Plex's port. 1.34.1's audit.)
+        said = (
+            f"Something answered at {where}, but it isn't Plex. Check that PLEX_URL is your "
+            "Plex server's address, with Plex's port (usually 32400)."
+        )
+    elif status == 429:
+        said = f"Plex at {where} is too busy to answer right now. tapiOca will try again soon."
+    elif status is not None:
+        said = (
+            f"Plex at {where} turns down tapiOca's requests. Check that PLEX_TOKEN is the "
+            "token for this Plex server."
+        )
+    elif kind == "refused":
+        said = (
+            f"tapiOca can't reach Plex at {where}: nothing there accepted the connection. "
+            "Check that Plex is running, and that PLEX_URL is its address."
+        )
+    elif kind == "unknown-host":
+        said = (
+            f"tapiOca can't find {host}, the address in PLEX_URL. Check that it's your Plex "
+            "server's address."
+        )
+    elif kind == "slow":
+        said = f"Plex at {where} is answering too slowly. Restart Plex if it stays that way."
+    elif kind == "no-answer":
+        said = (
+            f"tapiOca can't reach Plex at {where}: nothing answered. Check that PLEX_URL is "
+            "your Plex server's address, and that Plex is running."
+        )
+    else:
+        said = f"tapiOca can't reach Plex at {where}. Check that Plex is running."
+    if base_url.rstrip("/") == EXAMPLE_URL and (status is None or status == 404):
+        said += (
+            " PLEX_URL is still the example address from tapiOca's YAML: change it to your "
+            "Plex server's address, then restart tapiOca."
+        )
+    return said
 
 
 # What every address tapiOca asks Plex for looks like: names and numbers
@@ -119,7 +225,7 @@ class PlexClient:
         self.token = token
         self._client = httpx.AsyncClient(
             base_url=self.base_url or "http://plex.invalid",
-            timeout=timeout,
+            timeout=httpx.Timeout(timeout, connect=min(timeout, CONNECT_S)),
             transport=transport,
             headers={
                 "Accept": "application/json",
@@ -153,6 +259,7 @@ class PlexClient:
         # "720p" or "SD"), by rating key: noted whenever stations' programs
         # are fetched (for the stations' cards; nothing depends on it).
         self.resolutions: dict[str, str] = {}
+        self._said: dict[str, float] = {}  # (each problem logged, and when: see _failed)
 
     @property
     def configured(self) -> bool:
@@ -187,13 +294,9 @@ class PlexClient:
         for attempt in range(3):
             try:
                 resp = await self._client.get(_checked(path), params=params)
-                if resp.status_code == 401:
-                    raise PlexError("Plex didn't accept the token in PLEX_TOKEN", 401)
                 if 400 <= resp.status_code < 500 and resp.status_code != 429:
                     # Asking again won't change the answer.
-                    raise PlexError(
-                        f"Plex returned HTTP {resp.status_code} for {path}", resp.status_code
-                    )
+                    raise self._refused(path, resp.status_code)
                 resp.raise_for_status()
                 said = resp.json()
                 container = said.get("MediaContainer", {}) if isinstance(said, dict) else None
@@ -206,7 +309,7 @@ class PlexClient:
             except (httpx.HTTPError, ValueError) as e:
                 last_error = e
                 await asyncio.sleep(RETRY_S * (attempt + 1))
-        raise PlexError(f"Plex request for {path} failed ({self._quiet(last_error)})")
+        raise self._failed(path, last_error)
 
     async def _get_all(self, path: str, params: dict | None = None) -> list[dict[str, Any]]:
         """Every entry at `path`, fetched a page at a time, so a library of
@@ -241,15 +344,47 @@ class PlexClient:
         try:
             resp = await self._client.post(_checked(path))
         except httpx.HTTPError as e:
-            raise PlexError(f"Plex request for {path} failed ({self._quiet(e)})") from e
-        if resp.status_code == 401:
-            raise PlexError("Plex didn't accept the token in PLEX_TOKEN", 401)
+            raise self._failed(path, e) from e
         if resp.status_code >= 400:
-            raise PlexError(f"Plex returned HTTP {resp.status_code} for {path}", resp.status_code)
+            raise self._refused(path, resp.status_code)
 
     def _quiet(self, error: Exception | None) -> str:
-        """An error, without Plex's address (it's passed on to the page)."""
-        return str(error).replace(self.base_url, "Plex") if self.base_url else str(error)
+        """An error, without Plex's address (Plex's own settings have it)."""
+        said = str(error).replace(self.base_url, "Plex") if self.base_url else str(error)
+        return (
+            f"{type(error).__name__}: {said}"
+            if error is not None and said
+            else (type(error).__name__ if error is not None else "no answer")
+        )
+
+    def _log_once_a_while(self, kind: str, message: str, *args: Any) -> None:
+        """Logs a problem with Plex, each kind at most once in SAY_AGAIN_S."""
+        now = time.monotonic()
+        if now - self._said.get(kind, -SAY_AGAIN_S) >= SAY_AGAIN_S:
+            self._said[kind] = now
+            log.info(message, *args)
+
+    def _failed(self, path: str, error: Exception | None) -> PlexError:
+        """Plex didn't answer (`error`, after asking again): a plain sentence
+        to show, with the details logged."""
+        if isinstance(error, httpx.HTTPStatusError):
+            return self._refused(path, error.response.status_code)
+        kind = _connection_kind(error)
+        said = {"slow": TOO_SLOW, "unreadable": "Plex's answer couldn't be read"}.get(
+            kind, NOT_ANSWERING
+        )
+        self._log_once_a_while(said, "Plex didn't answer %s (%s)", path, self._quiet(error))
+        return PlexError(said, kind=kind)
+
+    def _refused(self, path: str, status: int) -> PlexError:
+        """Plex answered with an error (`status`): a plain sentence to show,
+        with the details logged."""
+        if status == 401:
+            return PlexError(BAD_TOKEN, 401, "status")
+        said = NOT_FOUND if status == 404 else HAD_A_PROBLEM if status >= 500 else TURNED_DOWN
+        # (By what it is, not where: what's kept stays small, 1.34.1's audit.)
+        self._log_once_a_while(f"HTTP {status}", "Plex answered HTTP %d for %s", status, path)
+        return PlexError(said, status, "status")
 
     async def get_bytes(self, path: str, params: dict | None = None) -> tuple[bytes, str]:
         resp = await self._client.get(_checked(path), params=params, headers={"Accept": "image/*"})
@@ -295,15 +430,13 @@ class PlexClient:
                 "GET", _checked(path), headers={"Accept": "image/*"}
             ) as resp:
                 if resp.status_code >= 400:
-                    raise PlexError(
-                        f"Plex returned HTTP {resp.status_code} for {path}", resp.status_code
-                    )
+                    raise self._refused(path, resp.status_code)
                 async for chunk in resp.aiter_bytes():
                     data += chunk
                     if len(data) > MAX_LOGO_BYTES:
                         raise PlexError("That logo is too big to use")
         except httpx.HTTPError as e:
-            raise PlexError(f"Plex request for {path} failed ({self._quiet(e)})") from e
+            raise self._failed(path, e) from e
         return bytes(data)
 
     def stream_url(self, part_key: str) -> str:
@@ -332,6 +465,36 @@ class PlexClient:
             for d in _listed(data, "Directory")
             if d.get("type") in ("show", "movie") and str(d.get("key") or "").isdigit()
         ]
+
+    async def counts(
+        self, since_s: int, keys: Collection[str] | None = None
+    ) -> tuple[int, int, int, int]:
+        """How many movies, shows and episodes Plex has in these libraries of
+        movies and shows (by key; None: every one), and how many movies and
+        episodes it added from `since_s` (seconds since 1970) on: Plex's
+        totals, nothing listed."""
+        movies = shows = episodes = added = 0
+        for section in await self.sections():
+            if keys is not None and str(section["key"]) not in keys:
+                continue
+            kinds = (TYPE_MOVIE,) if section["type"] == "movie" else (TYPE_SHOW, TYPE_EPISODE)
+            for kind in kinds:
+                total = await self._total(section["key"], {"type": kind})
+                if kind == TYPE_MOVIE:
+                    movies += total
+                elif kind == TYPE_SHOW:
+                    shows += total
+                else:
+                    episodes += total
+                if kind != TYPE_SHOW:
+                    added += await self._total(section["key"], {"type": kind, "addedAt>>": since_s})
+        return movies, shows, episodes, added
+
+    async def _total(self, section_key: str, params: dict[str, Any]) -> int:
+        page = {**params, "X-Plex-Container-Start": 0, "X-Plex-Container-Size": 0}
+        data = await self._get(f"/library/sections/{section_key}/all", page, bulk=True)
+        total = data.get("totalSize", data.get("size", 0))
+        return int(total) if isinstance(total, int) or str(total).isdigit() else 0
 
     async def section_items(self, section_key: str) -> list[dict[str, Any]]:
         """Shows or movies in a library, for the station editor."""
@@ -985,11 +1148,9 @@ class PlexClient:
         try:
             resp = await self._client.get(_checked(path), params=params)
         except httpx.HTTPError as e:
-            raise PlexError(f"Plex request for {path} failed ({self._quiet(e)})") from e
-        if resp.status_code == 401:
-            raise PlexError("Plex didn't accept the token in PLEX_TOKEN", 401)
+            raise self._failed(path, e) from e
         if resp.status_code >= 400:
-            raise PlexError(f"Plex returned HTTP {resp.status_code} for {path}", resp.status_code)
+            raise self._refused(path, resp.status_code)
 
     async def newest_files(self, most: int = 3) -> list[str]:
         """The newest file in each library of shows or movies (up to

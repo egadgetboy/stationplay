@@ -75,7 +75,7 @@ from urllib.parse import urlsplit
 
 from . import playing, reach
 from .notify import FIXED, STARTED
-from .plex import PlexError
+from .plex import PlexError, trouble
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -493,14 +493,9 @@ class Alerts:
         try:
             await asyncio.wait_for(plex.identity(), PLEX_WAIT_S)
         except PlexError as e:
-            why = (
-                f"Plex at {where} doesn't accept tapiOca's token. Check PLEX_TOKEN in "
-                "tapiOca's settings."
-                if e.status == 401
-                else f"tapiOca can't reach Plex at {where}. Check that Plex is running."
-            )
+            why = trouble(plex.base_url, e)  # (what happened: 1.34.1, the owner)
         except TimeoutError:
-            why = f"tapiOca can't reach Plex at {where}. Check that Plex is running."
+            why = trouble(plex.base_url, None)
         self.checked(PLEX, bool(why), why, f"tapiOca can reach Plex at {where} again.", 5, 2)
         offset = plex.clock_offset_s
         if why or offset is None:

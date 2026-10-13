@@ -38,7 +38,7 @@ Only what you set up, and the update check:
 - Up to 3 web addresses for alerts, if an Admin sets them (such as Discord, Slack or ntfy). Each one receives every alert's sentence, which can name a person, a title and a station, and give your Plex server's home-network address and your away-from-home address.
 - Sonarr and Radarr, if an Admin connects them, to replace broken files.
 - Your own away-from-home address, which tapiOca checks it can reach, if watching away from home is on. Your reverse proxy or tunnel provider carries what's watched away from home.
-- GitHub, once a day, to see whether a new tapiOca is out, only if an Admin said yes to the update check (tapiOca asks first). It sends only tapiOca's version, and GitHub sees your server's internet address, as any website does.
+- GitHub, every 4 hours, to see whether a new tapiOca is out, only if an Admin said yes to the update check (tapiOca asks first). It sends only tapiOca's version, and GitHub sees your server's internet address, as any website does.
 
 tapiOca sends nothing to its developer.
 

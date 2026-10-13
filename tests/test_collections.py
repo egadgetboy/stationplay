@@ -234,3 +234,14 @@ def test_a_user_makes_stations_from_collections_only_as_far_as_they_may(client):
     assert all(p.split(": ", 1)[1].startswith("Your limit is 1 station, and") for p in problems)
     # And none at all once they've made theirs.
     assert make(browser, "901").status_code == 400
+
+
+def test_collection_stations_skip_99_which_is_kept_for_info(client):
+    """(1.34.1) Station 99 is kept for INFO: the next free number passes
+    over it, even with no INFO station now."""
+    db = client.app.state.ctx.db
+    for number in range(2, 99):
+        db.create_channel(number, f"Station {number}", [{"type": "show", "ratingKey": "101"}])
+    made = make(client, "902")
+    assert made.status_code == 201, made.text
+    assert [s["number"] for s in made.json()["made"]] == [100]

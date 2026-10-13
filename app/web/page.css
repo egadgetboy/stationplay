@@ -147,6 +147,17 @@ header.top {
 .pill.alerts { cursor: pointer; color: var(--bad); font-weight: 600; }
 .pill.alerts:hover { border-color: var(--bad); }
 .pill.alerts:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* A newer tapiOca is out (updates.js): for Admins, for as long as it is,
+   even after Not now; it shows the banner with how to update. On a phone,
+   just "Update". */
+.pill.update { cursor: pointer; color: var(--ink); font-weight: 600; }
+.pill.update:hover { border-color: var(--accent); }
+.pill.update:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pill.update .short { display: none; }
+@media (max-width: 560px) {
+  .pill.update .long { display: none; }
+  .pill.update .short { display: inline; }
+}
 #alertsDlg { width: min(520px, calc(100vw - 24px)); }
 .alert-item { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 10px; align-items: start; }
 .alert-item + .alert-item { border-top: 1px solid var(--line); padding-top: 14px; }
@@ -816,9 +827,10 @@ table.now tr:last-child td { border-bottom: 0; }
   label:has(> input[type=checkbox], > input[type=radio]):not(.pick) { padding-block: 10px; }
   .level-edit label { display: inline-block; }  /* (in a line of words, so it has that room too) */
   .chips { row-gap: 11px; }  /* (so a chip's reach doesn't cover the next row's) */
-  .chipbtn, .pill.away, .pill.alerts, .userpill, .coffee, .sel button, .linkbtn, .linkish,
-  .toast .undo, .more > summary, .arr > summary, .limit-user > summary { position: relative; }
-  .chipbtn::after, .pill.away::after, .pill.alerts::after, .userpill::after, .coffee::after,
+  .chipbtn, .pill.away, .pill.alerts, .pill.update, .userpill, .coffee, .sel button, .linkbtn,
+  .linkish, .toast .undo, .more > summary, .arr > summary, .limit-user > summary { position: relative; }
+  .chipbtn::after, .pill.away::after, .pill.alerts::after, .pill.update::after, .userpill::after,
+  .coffee::after,
   .sel button::after,
   .logo-grid .mine .del::after, .linkbtn::after, .linkish::after, .toast .undo::after,
   .more > summary::after, .arr > summary::after, .limit-user > summary::after {

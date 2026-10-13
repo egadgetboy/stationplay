@@ -93,8 +93,16 @@ show's genres, tags, collections and studio. A title with no genre isn't
 caught by a genre. A level's ratings stay the level's: to give one person
 their own ratings, an Admin gives them a level of their own.
 
-New people start on Unrestricted, so adding someone changes nothing until an
-Admin chooses a level.
+New people start on the level an Admin chose under **New people start on**,
+in the **Viewing Levels** panel on the **Access** tab (from 1.34.1). It's
+Unrestricted until an Admin chooses another, so until then adding someone
+changes nothing. The **Add a user** form has a **Viewing Level** choice,
+set to that level, to choose another for that person. Admins always see
+everything, whatever their level. Removing the level new people start on
+sets it back to Unrestricted, so a level added later never takes its place
+by chance. The setup's **Who sees what** step asks about it too. The
+choice is kept in `meta` as `viewing_new_level` (the level's id; none
+means Unrestricted).
 
 ### Ratings as ages
 
@@ -489,7 +497,8 @@ The apps' own addresses (`docs/internal-api.md`):
 - **Reports.** `POST /api/internal/report-problem` sends a report (1.30.0).
 
 The **Access** tab's addresses are `/api/access/viewing`,
-`/api/access/levels`, `/api/access/users/{id}/viewing` and `/stations`,
+`/api/access/levels`, `/api/access/new-level` (`PUT {"level": <id>}`:
+New people start on, 1.34.1), `/api/access/users/{id}/viewing` and `/stations`,
 `/api/access/clips` (the clip folders' ratings, 1.33.0),
 `/api/access/devices` (with `PUT /api/access/devices/default` for New
 people show on, and `POST /api/access/devices/everyone`),

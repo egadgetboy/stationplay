@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from app import alerts, db, jobs, reach, releases, scanner
+from app import alerts, db, infostation, jobs, reach, releases, scanner
 
 from .test_e2e import media  # noqa: F401  (the test media files the end-to-end tests play)
 
@@ -64,3 +64,12 @@ def plain_new_stations(monkeypatch):
         ("order_mode", "rotate"),
     ):
         monkeypatch.setitem(db.NEW_STATION, setting, value)
+
+
+@pytest.fixture(autouse=True)
+def no_info_station(request, monkeypatch):
+    """A new tapiOca starts with the INFO station (see infostation.py), but
+    the tests' new tapiOcas don't, so each test's stations are its own: the
+    INFO station's own tests (marked info_station) leave it be."""
+    if request.node.get_closest_marker("info_station") is None:
+        monkeypatch.setattr(infostation, "wanted", lambda db, new: False)

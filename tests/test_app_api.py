@@ -176,7 +176,11 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         )
         server = check.answer(home.get("/api/v1/server"), "GET /api/v1/server")
         assert server["api"] == 1 and not server["signIn"] and server["notSetUp"] is None
-        assert server["features"] == ["hls", "speed-test", "reports", "night", "problems"]
+        # (1.34.1, the owner: Media is on to start, so a new server offers it.)
+        assert server["features"] == [
+            "hls", "speed-test", "reports", "night", "problems", "library", "convert",
+            "convert-asked", "even-sound",
+        ]  # fmt: skip
         # From the internet, until signing in is on, there's nothing to do.
         outside = check.answer(internet.get("/api/v1/server"), "GET /api/v1/server")
         assert outside["signIn"] and "home network" in outside["notSetUp"]
@@ -355,7 +359,9 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         assert body[-1] == "(and 102 more lines, left off)" and len(body) == 401
 
         # Your library (see test_ondemand.py): shared by an Admin, then
-        # browsed and played.
+        # browsed and played. (Every Media folder is shared to start, from
+        # 1.34.1: none, as an Admin may choose, first.)
+        assert home.put("/api/app-libraries", json={"libraries": []}).status_code == 200
         check.answer(
             phone.get("/api/internal/libraries", headers=sam), "GET /api/internal/libraries", 404
         )

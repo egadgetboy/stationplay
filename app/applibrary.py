@@ -46,6 +46,7 @@ from . import (
     ondemand,
     playing,
     problems,
+    setup,
     subtitles,
     viewing,
 )
@@ -58,6 +59,7 @@ from .catalog import Entry, Media, Track
 from .ffmpeg import Encoder, ProbeResult, Subtitles, to_sdr
 from .library import LibraryError
 from .ondemand import NotShared
+from .plex import NOT_ANSWERING
 from .sources import find_first, learn_mapping, local_candidates, part_starts
 from .text import plain
 
@@ -179,7 +181,8 @@ class WhenSlow(BaseModel):
 
 
 class SharedLibraries(BaseModel):
-    libraries: list[str] = Field(max_length=ondemand.LIBRARIES_MOST)
+    # (None: as they are. The page leaves them out while Plex can't list them.)
+    libraries: list[str] | None = Field(default=None, max_length=ondemand.LIBRARIES_MOST)
     whenSlow: WhenSlow | None = None
     evenSound: bool | None = None  # (None: as it is)
 
@@ -1866,17 +1869,37 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.get("/api/app-libraries")
     async def shared_libraries():
-        try:
-            found = await ctx.library.libraries() if ctx.library.configured else []
-            problem = None
-        except LibraryError as e:
-            found, problem = [], str(e)
+        # (Plex is waited for a few seconds at most, and what it says when it
+        # can't answer is a plain sentence: 1.34.1, the owner.)
+        found: list[dict] = []
+        problem = None
+        if not ctx.library.configured:
+            problem = (
+                "tapiOca isn’t connected to Plex yet, so there are no Media folders to share. "
+                "The Plex step of the setup says how to connect it."
+            )
+        else:
+            try:
+                found = await asyncio.wait_for(ctx.library.libraries(), setup.PLEX_ASK_S)
+                ctx.shared.note(found)
+            except (LibraryError, TimeoutError) as e:
+                why = str(e) if isinstance(e, LibraryError) and str(e) else NOT_ANSWERING
+                problem = (
+                    f"{why.rstrip('.')}, so tapiOca can’t list your Media folders right now. "
+                    "Those already shared stay shared."
+                ).replace("'", "’")
         return {
             "libraries": [
                 {"key": str(s["key"]), "title": s.get("title") or "", "kind": s.get("type")}
                 for s in found
             ],
             "shared": list(ctx.shared.keys),
+            # (Every Media folder of shows and movies, new ones too: no
+            # Admin has chosen yet.)
+            "everything": ctx.shared.everything,
+            # (None shared yet, from before 1.34.1: every one is offered,
+            # ticked, until an Admin chooses.)
+            "waiting": ctx.shared.waiting,
             "whenSlow": ctx.shared.when_slow,
             "evenSound": ctx.shared.even_sound,
             "problem": problem,
@@ -1886,7 +1909,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     @app.put("/api/app-libraries")
     async def share_libraries(body: SharedLibraries, request: Request):
         try:
-            keys = ctx.shared.save(body.libraries)
+            keys = ctx.shared.save(body.libraries) if body.libraries is not None else None
             if body.whenSlow is not None:
                 before = dict(ctx.shared.when_slow)
                 after = ctx.shared.save_when_slow(body.whenSlow.home, body.whenSlow.away)
@@ -1907,17 +1930,20 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 "on" if body.evenSound else "off (each episode's sound as it is)",
                 f" (set by {who.name})" if who else "",
             )
-        ctx.app_pictures.clear()  # (programs playing from one unshared stop at their next ask)
-        try:
-            names = {str(s["key"]): s.get("title") or "" for s in await ctx.library.libraries()}
-        except LibraryError:
-            names = {}
-        chosen = ", ".join(names.get(k, f"Media folder {k}") for k in keys) or "none"
-        log.info(
-            "Media folders in tapiOca's apps: %s%s",
-            chosen,
-            f" (set by {who.name})" if who else "",
-        )
+        if keys is not None:
+            ctx.app_pictures.clear()  # (programs playing from one unshared stop at their next ask)
+            ctx.info_panels.wake.set()  # (INFO counts what's shared)
+            try:
+                listed = await asyncio.wait_for(ctx.library.libraries(), setup.PLEX_ASK_S)
+                names = {str(s["key"]): s.get("title") or "" for s in listed}
+            except (LibraryError, TimeoutError):
+                names = {}
+            chosen = ", ".join(names.get(k, f"Media folder {k}") for k in keys) or "none"
+            log.info(
+                "Media folders in tapiOca's apps: %s%s",
+                chosen,
+                f" (set by {who.name})" if who else "",
+            )
         return await shared_libraries()
 
 

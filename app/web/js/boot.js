@@ -18,6 +18,9 @@ const refresh = () => {
   if (me.required && !me.user) { showSignIn(me.idle); return; }
   const initial = location.hash.slice(1);
   if (TABS.includes(initial) && initial !== 'stations') showTab(initial);
+  // The setup, for an Admin, at once: never waiting on tapiOca's status,
+  // which asks Plex (1.34.1, the owner: it took 20 seconds with Plex down).
+  if (isAdmin()) { setupChecked = true; maybeSetup(); }
   loadStatus();
   loadChannels();
   linkWanted();

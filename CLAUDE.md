@@ -49,6 +49,12 @@ follow them in every change.
   ask of software that calls Plex.
 - **Parental claims** say "in tapiOca's apps," and the docs say what
   limits don't cover (Plex, Jellyfin and anything else on the tuner).
+- **Together, server and apps** (the owner, October 13: "I'm OK with
+  certain features only working if tapiOca Server and Client are working
+  together. This is a selling point."): a feature may work only between
+  tapiOca's server and its apps, and that's said as a strength. The docs
+  and release notes still say plainly what other apps, Plex's own among
+  them, don't get.
 - **No licensing in the server** (the owner's final plan, October 10): it
   stays fully open source and unlimited and never locks anything. The apps
   are unlocked in their own stores, one purchase per platform, with a free

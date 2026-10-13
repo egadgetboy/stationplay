@@ -500,6 +500,12 @@ class Access:
     # Someone's PIN and where they're shown on the apps' pickers (devices.py,
     # which sets this).
     picker: Any = field(init=False, default=None)
+    # The Viewing Level someone added starts on (viewing.py, which sets
+    # this): the one chosen for them (None: the one new people start on),
+    # as (its id, None for Unrestricted; its name). ValueError if it's gone.
+    level_for_new: Callable[[int | None], tuple[int | None, str]] = field(
+        init=False, default=lambda level: (None, "Unrestricted")
+    )
     # Whether a program played on demand (by its play session's id) may be
     # asked for on the public port: a session that's going, which a
     # signed-in app started there (applibrary.py, which sets this). Until
@@ -574,11 +580,14 @@ class Access:
         max_stations: int | None = NEW_USER_STATIONS,
         pin_hash: str = "",
         show_on: str = "",
+        level_id: int | None = None,
     ) -> User:
         """Adds a user, if `by` may (anyone while signing in is off; then an
         Admin). The first user is always an Admin. A User may have no password
         (""): they use only the apps' pickers (see devices.py), with their
-        PIN (hashed) and where they're shown, set as they're added.
+        PIN (hashed) and where they're shown, set as they're added; and
+        their Viewing Level (`level_id`, None: Unrestricted), so they're on
+        it from the start. (Admins always see everything: they're on none.)
         ValueError if the name, password or station limit won't do;
         NotAllowed."""
         name = plain(name)
@@ -595,8 +604,12 @@ class Access:
             raise NotAllowed
         if not self._users_exist:
             role = ADMIN
+        if role == ADMIN:
+            level_id = None
         try:
-            user = self.db.add_user(name, hashed, role, _now(), max_stations, pin_hash, show_on)
+            user = self.db.add_user(
+                name, hashed, role, _now(), max_stations, pin_hash, show_on, level_id
+            )
         except sqlite3.IntegrityError:
             raise ValueError(f"There's already a user called {name}") from None
         self._users_exist = True
@@ -1362,6 +1375,8 @@ class NewUser(BaseModel):
     pin: str | None = Field(default=None, max_length=10)
     showOn: str = "default"
     devices: list[int] | None = Field(default=None, max_length=1000)
+    # Their Viewing Level (see viewing.py); none: the one new people start on.
+    level: int | None = None
 
 
 class UserChange(BaseModel):
@@ -1610,8 +1625,16 @@ def routes(app: FastAPI, access: Access) -> None:
                 show_on = access.picker.new_show_on(
                     plain(body.name), bool(body.password or body.pin), body.showOn
                 )
+            level_id, level_name = access.level_for_new(body.level)
             user = await access.add_user(
-                body.name, body.password, body.role, by, body.maxStations, pin_hash, show_on
+                body.name,
+                body.password,
+                body.role,
+                by,
+                body.maxStations,
+                pin_hash,
+                show_on,
+                level_id,
             )
             if access.picker is not None and body.devices is not None:
                 access.db.set_chosen_devices(user.id, body.devices)
@@ -1629,7 +1652,12 @@ def routes(app: FastAPI, access: Access) -> None:
             access.record(
                 logging.INFO,
                 f"{by.name} added {user.name} as {a_role(user.role)}"
-                + ("" if user.role == ADMIN else f" ({_stations_text(user.max_stations)})"),
+                + (
+                    ""
+                    if user.role == ADMIN
+                    else f" ({_stations_text(user.max_stations)})"
+                    + (f", on the Viewing Level {level_name}" if level_id is not None else "")
+                ),
             )
         return _user_json(user, access.db.stations_made())
 

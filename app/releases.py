@@ -1,4 +1,4 @@
-"""tapiOca's own new versions: once a day, whether a newer release than
+"""tapiOca's own new versions: every 4 hours, whether a newer release than
 this one is out (the update check, an Admin's choice), and what the page's
 banner says to update, for this kind of install (TAPIOCA_INSTALL, set
 in the YAML or compose file).
@@ -54,7 +54,7 @@ RELEASES = "https://github.com/egadgetboy/tapioca-server/releases"
 README = "https://github.com/egadgetboy/tapioca-server#updating"
 IMAGE = "ghcr.io/egadgetboy/tapioca-server"
 FIRST_S = 120.0  # after starting, before the first look
-EVERY_S = 86_400.0  # then once a day
+EVERY_S = 4 * 3600.0  # then every 4 hours (the owner, October 12: one small request)
 AGAIN_S = 3_600.0  # after a look that failed, before trying again
 WAITING_S = 600.0  # answered yes, setup not done yet: before seeing again
 WAIT_S = 10.0  # the longest an answer is waited for
@@ -281,7 +281,7 @@ class Releases:
         }
 
     async def run_forever(self) -> None:
-        """Looks a little after starting, then once a day, while it may (see
+        """Looks a little after starting, then every 4 hours, while it may (see
         allowed); an Admin's yes wakes it."""
         self._answered = answered = asyncio.Event()
         await asyncio.sleep(FIRST_S)

@@ -273,9 +273,18 @@ def test_pictures_are_made_a_few_sizes_and_kept_up_to_a_limit():
 def test_shared_libraries_are_kept(tmp_path):
     db = Database(tmp_path / "db.sqlite")
     shared = ondemand.Shared(db)
-    assert shared.keys == () and not shared.on
+    # (1.34.1, the owner: Media is on to start.) Every Media folder of shows
+    # and movies, as the library lists them, until an Admin chooses.
+    assert shared.everything and shared.on and "1" in shared.keys
+    shared.note([{"key": "1", "type": "show"}, {"key": "2", "type": "movie"},
+                 {"key": "3", "type": "artist"}])  # fmt: skip
+    assert list(shared.keys) == ["1", "2"] and "3" not in shared.keys
     assert shared.save(["2", "1", "2"]) == ("2", "1")
-    assert ondemand.Shared(db).keys == ("2", "1")
+    assert ondemand.Shared(db).keys == ("2", "1") and not ondemand.Shared(db).everything
+    # None is a choice too, and kept.
+    assert shared.save([]) == ()
+    assert not ondemand.Shared(db).on and not ondemand.Shared(db).everything
+    shared.save(["2", "1"])
     for bad in (["../1"], ["one"], [None]):
         with pytest.raises(ValueError):
             shared.save(bad)
@@ -338,9 +347,138 @@ def play(client: TestClient, key: str, device: dict | None = None, **headers):
     )
 
 
-def test_nothing_is_shown_until_an_admin_shares_a_library(app, caplog):
+def test_an_update_shares_nothing_until_an_admin_goes_on_from_setup(plex, tmp_path, caplog):
+    """(1.34.1, the audit) A tapiOca from before 1.34.1 whose Admin never
+    chose its Media folders shared none: updating never shares them all by
+    itself. Setup asks once, with every one ticked to start, and sharing
+    starts when an Admin goes on. A new tapiOca shares every one at once."""
+    import json
+
+    from app import setup
+
+    caplog.set_level(logging.INFO)
+    data = tmp_path / "data"
+    data.mkdir()
+    db = Database(data / "stationplay.db")
+    db.set_meta(setup.META_ANSWERED, json.dumps({**setup.QUESTIONS, "library": 1}))
+    settings = Settings(plex_url="http://plex.test", plex_token="token", data_dir=data)
+
+    def started() -> TestClient:
+        return TestClient(
+            create_app(
+                settings, PlexClient("http://plex.test", "token", transport=plex.transport())
+            )
+        )
+
+    with started() as home:
+        listed = home.get("/api/app-libraries").json()
+        assert (
+            listed["everything"] is False and listed["shared"] == [] and listed["waiting"] is True
+        )
+        assert [x["key"] for x in listed["libraries"]] == ["1", "2", "3"]
+        assert "library" not in home.get("/api/v1/server").json()["features"]
+        assert home.get("/api/internal/items/300").status_code == 404
+        assert home.get("/api/setup").json()["pending"] == ["library"]
+    assert "Media in tapiOca's apps stays off until an Admin chooses" in caplog.text
+    # Started again, still waiting, and still asked.
+    with started() as home:
+        assert home.get("/api/app-libraries").json()["waiting"] is True
+        assert home.get("/api/setup").json()["pending"] == ["library"]
+        # Going on from setup's step, with every one ticked: shared.
+        home.put("/api/app-libraries", json={"libraries": ["1", "2", "3"]})
+        listed = home.get("/api/app-libraries").json()
+        assert listed["shared"] == ["1", "2", "3"] and listed["waiting"] is False
+        assert home.get("/api/internal/items/300").status_code == 200
+    # And it stays chosen; nothing is asked again.
+    with started() as home:
+        assert home.get("/api/app-libraries").json()["shared"] == ["1", "2", "3"]
+        assert "library" not in home.get("/api/setup").json()["pending"]
+
+
+def test_a_choice_made_after_rolling_back_is_kept_when_updating_again(plex, tmp_path):
+    """(1.34.1, the second audit) Updated (so waiting), rolled back to
+    1.34.0, where an Admin shares one Media folder (1.34.0 writes only its
+    choice), then updated again: that choice is kept, never offered as
+    every folder ticked."""
+    import json
+
+    from app import setup
+
+    data = tmp_path / "data"
+    data.mkdir()
+    db = Database(data / "stationplay.db")
+    db.set_meta(setup.META_ANSWERED, json.dumps({**setup.QUESTIONS, "library": 1}))
+    settings = Settings(plex_url="http://plex.test", plex_token="token", data_dir=data)
+
+    def started() -> TestClient:
+        return TestClient(
+            create_app(
+                settings, PlexClient("http://plex.test", "token", transport=plex.transport())
+            )
+        )
+
+    with started() as home:
+        assert home.get("/api/app-libraries").json()["waiting"] is True
+    db.set_meta(ondemand.META, '["1"]')  # (1.34.0, choosing)
+    with started() as home:
+        listed = home.get("/api/app-libraries").json()
+        assert listed["shared"] == ["1"] and listed["waiting"] is False
+        assert "library" not in home.get("/api/setup").json()["pending"]
+
+
+def test_a_new_tapioca_keeps_sharing_every_folder_however_often_it_starts(plex, tmp_path):
+    """A new tapiOca shares every Media folder; starting again partway
+    through setup doesn't count it as one from before 1.34.1."""
+    from app import setup
+
+    settings = Settings(plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "data")
+
+    def started() -> TestClient:
+        return TestClient(
+            create_app(
+                settings, PlexClient("http://plex.test", "token", transport=plex.transport())
+            )
+        )
+
+    with started() as home:
+        assert home.get("/api/app-libraries").json()["everything"] is True
+        setup.mark(home.app.state.ctx.db, ["playback"])
+    with started() as home:
+        listed = home.get("/api/app-libraries").json()
+        assert listed["everything"] is True and listed["waiting"] is False
+
+
+def test_every_media_folder_is_shown_until_an_admin_chooses(app, plex, caplog):
+    """(1.34.1, the owner) Media is on to start: every Media folder of shows
+    and movies, new ones too, until an Admin chooses."""
     caplog.set_level(logging.INFO)
     with TestClient(app) as home:
+        assert "library" in home.get("/api/v1/server").json()["features"]
+        listed = home.get("/api/app-libraries").json()
+        assert listed["shared"] == ["1", "2", "3"] and listed["everything"] is True
+        titles = [x["title"] for x in home.get("/api/internal/libraries").json()["libraries"]]
+        assert titles == ["TV Shows", "Movies", "Home Videos"]
+        assert home.get("/api/internal/items/300").status_code == 200
+        # A Media folder added to Plex later is shared too.
+        plex.add_section("4", "Concerts", "movie")
+        app.state.ctx.catalog._libraries = None  # (as when what Plex has is asked again)
+        titles = [x["title"] for x in home.get("/api/internal/libraries").json()["libraries"]]
+        assert titles == ["TV Shows", "Movies", "Home Videos", "Concerts"]
+        # Chosen: just those, from then on.
+        home.put("/api/app-libraries", json={"libraries": ["1"]})
+        listed = home.get("/api/app-libraries").json()
+        assert listed["shared"] == ["1"] and listed["everything"] is False
+        assert home.get("/api/internal/items/300").status_code == 404
+        # Saved without the folders (as the page does while Plex can't list
+        # them): as they are.
+        home.put("/api/app-libraries", json={"evenSound": False})
+        assert home.get("/api/app-libraries").json()["shared"] == ["1"]
+
+
+def test_nothing_is_shown_while_an_admin_shares_no_library(app, caplog):
+    caplog.set_level(logging.INFO)
+    with TestClient(app) as home:
+        assert home.put("/api/app-libraries", json={"libraries": []}).status_code == 200
         assert "library" not in home.get("/api/v1/server").json()["features"]
         for address in ("/api/internal/libraries", "/api/internal/home", "/api/internal/items/300"):
             refused = home.get(address)

@@ -158,3 +158,22 @@ def test_splitting_by_people_needs_some_named_when_plex_doesnt_say(films):  # no
     client, _fp = films
     res = client.post("/api/smart/split", json={"filter": movie_filter(), "split": "producer"})
     assert res.status_code == 400 and "choose which producers to make stations for" in res.text
+
+
+def test_smart_stations_skip_99_which_is_kept_for_info(films):  # noqa: F811
+    """(1.34.1) Station 99 is kept for INFO: the next free numbers pass over
+    it, even with no INFO station now."""
+    client, _fp = films
+    stations = [
+        {
+            "name": "1980s Movies",
+            "source": {**movie_filter(decade=[1980]), "title": "Movies: 1980s"},
+        },
+        {
+            "name": "1990s Movies",
+            "source": {**movie_filter(decade=[1990]), "title": "Movies: 1990s"},
+        },
+    ]
+    res = client.post("/api/smart/stations", json={"firstNumber": 98, "stations": stations})
+    assert res.status_code == 201, res.text
+    assert [m["number"] for m in res.json()["made"]] == [98, 100]

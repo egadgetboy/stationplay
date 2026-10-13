@@ -117,6 +117,10 @@ def world(tmp_path):
         # (By themselves: what most of these are about. When you say so, the
         # default, is tested on its own.)
         assert c.put("/api/arr/when", json={"when": "auto"}).json()["when"] == "auto"
+        # (Nothing shared with the apps unless a test shares it, as an Admin
+        # may choose: a new tapiOca shares every Media folder from 1.34.1,
+        # and these were written for the stations' files alone.)
+        ctx.shared.save([])
         yield World(c, ctx, fp, sonarr, radarr, made.json())
 
 

@@ -1,0 +1,5 @@
+[
+  {"name": "Android", "version": "0.6.0", "new": "double-tap to skip, Automatic subtitles"},
+  {"name": "iPhone and iPad", "version": "0.5.0", "new": "double-tap to skip, Automatic subtitles"},
+  {"name": "Roku", "version": "0.8.0", "new": "Automatic subtitles, the new look"}
+]

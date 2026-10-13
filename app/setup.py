@@ -11,8 +11,12 @@ everything, with the current answers filled in. The page asks the
 questions (web/js/setup.js); this says which, and runs the
 checks.
 
-The checks look at Plex, the media files, video encoding, the clock and
-backups. Each gives a state ("good", "warn" for something to look at,
+The first step's checks look at the server itself: its media folder, video
+encoding, the clock and backups. None of them waits on Plex, which is
+checked in the Plex step: whether it answers, whether tapiOca finds the
+files Plex lists, and whether Plex has tapiOca as a DVR (1.34.1, the
+owner: a new tapiOca said Plex was Not working on the first page, before
+there was any chance to connect it). Each gives a state ("good", "warn" for something to look at,
 "bad" for something that keeps tapiOca from working, "info" for
 something to know, "wait" for something that can't be checked yet), a
 title, and a sentence or two, with what to do when something's wrong.
@@ -48,7 +52,7 @@ QUESTIONS: dict[str, int] = {
     "signIn": 1,  # who can use tapiOca
     "viewing": 1,  # who sees what: Viewing Levels (1.23)
     "away": 1,  # tapiOca's apps away from home
-    "library": 1,  # Media in tapiOca's apps
+    "library": 2,  # Media in tapiOca's apps (2: on to start, 1.34.1)
     "fileChecks": 1,  # the overnight deep scan
     "plex": 1,  # adding tapiOca to Plex
 }
@@ -87,7 +91,9 @@ def mark(db: Any, questions: list[str]) -> list[str]:
     return pending(db)
 
 
-def start(db: Any, stations: int, away_on: bool, sharing: bool, others: bool = False) -> None:
+def start(
+    db: Any, stations: int, away_on: bool, sharing: bool, others: bool = False, chose: bool = False
+) -> None:
     """At startup, the first time with this setup: what a tapiOca set up
     before it has already answered. A new one (no stations, no welcome seen)
     is asked everything. Otherwise, what the welcome asked counts as answered;
@@ -96,10 +102,14 @@ def start(db: Any, stations: int, away_on: bool, sharing: bool, others: bool = F
     without anyone noticing them) are asked once.
 
     Who sees what is asked of a tapiOca set up before it only if there
-    are people to choose for (`others`: Users, not Admins)."""
+    are people to choose for (`others`: Users, not Admins). Media in the
+    apps, on to start from 1.34.1, is asked again once, unless an Admin
+    has chosen which folders (`chose`)."""
     if db.get_meta(META_ANSWERED):
         if not others and "viewing" in pending(db):
             mark(db, ["viewing"])
+        if chose and "library" in pending(db):
+            mark(db, ["library"])
         return
     welcomed = db.get_meta(playback.META_WELCOMED, "")
     if not welcomed and not stations:
@@ -133,7 +143,8 @@ def state(db: Any, stations: int) -> dict[str, Any]:
 GOOD, WARN, BAD, INFO, WAIT = "good", "warn", "bad", "info", "wait"
 
 FIND_FILES_S = 8.0  # (as when a program plays: a stuck share can't hold the check up)
-PLEX_ASK_S = 8.0
+PLEX_ASK_S = 5.0  # the longest Plex is waited for, for a check or the page
+PLEX_FILES_S = 8.0  # (and for the newest file in each library: a few questions)
 BACKUP_FIRST_S = 20 * 60  # the first backup comes within 15 minutes of starting
 BACKUP_OLD_S = 2 * 86400  # one a night: older than this, something's stopping them
 
@@ -166,6 +177,9 @@ def plex_check(plex_state: dict[str, Any], plex_pass: bool | None) -> Check:
             "the token.",
         ])  # fmt: skip
     if not plex_state.get("ok"):
+        if plex_state.get("trouble"):
+            # (What happened, and what to check for that: see plex.trouble.)
+            return Check("plex", title, BAD, [_sentence(str(plex_state["trouble"]))])
         return Check("plex", title, BAD, [
             _sentence(str(plex_state.get("error") or "Plex didn’t answer")),
             "Check that Plex is running, and that PLEX_URL in tapiOca’s app settings is "
@@ -186,21 +200,193 @@ def plex_check(plex_state: dict[str, Any], plex_pass: bool | None) -> Check:
     return Check("plex", title, GOOD, lines)
 
 
+# The media folder ---------------------------------------------------------------------
+# MEDIA_DIR (and any folder PATH_MAPPINGS names), looked at directly, with
+# or without Plex: whether it's there, whether it can be read, what it
+# holds, and whether a video in it can be read.
+
+VIDEO_ENDINGS = (
+    ".mkv", ".mp4", ".m4v", ".avi", ".mov", ".ts", ".m2ts", ".mts", ".wmv", ".webm", ".mpg",
+    ".mpeg", ".flv", ".vob",
+)  # fmt: skip
+FOLDER_LOOK_S = 8.0  # (a stuck share can't hold the check up)
+LOOK_MOST = 2000  # entries looked through, at most, for a video to read
+LOOK_DEEP = 4  # folders down, at most
+FOLDERS_SHOWN = 3
+
+
+def _system(name: str) -> bool:
+    """A name a system keeps, not media: hidden, a NAS's own (@eaDir,
+    #recycle), or a disk's lost+found."""
+    return name.startswith((".", "@", "#", "$")) or name in (
+        "lost+found",
+        "System Volume Information",
+    )
+
+
+@dataclass
+class Folder:
+    """What looking at a folder found. `state`: "ok", "missing", "denied",
+    "empty" or "error" (`error` says what)."""
+
+    state: str
+    folders: list[str]  # the folders in it, by name (not the system's own)
+    files: int  # the files in it (not in its folders)
+    video: str | None = None  # a video in it (or below), read
+    video_problem: str | None = None  # "denied", or why `video` couldn't be read
+    error: str = ""
+
+
+def look_at_folder(path: str) -> Folder:
+    """Looks at a folder (run off the event loop: a share can be slow)."""
+    try:
+        if not os.path.isdir(path):
+            return Folder("missing", [], 0)
+        with os.scandir(path) as found:
+            entries = [e for e in found if not _system(e.name)]
+    except PermissionError:
+        return Folder("denied", [], 0)
+    except OSError as e:
+        return Folder("error", [], 0, error=e.strerror or type(e).__name__)
+    if not entries:
+        return Folder("empty", [], 0)
+    folders = sorted((e.name for e in entries if _is_dir(e)), key=str.casefold)
+    files = sum(1 for e in entries if not _is_dir(e))
+    video = _a_video(path)
+    return Folder("ok", folders, files, video, _read_problem(video) if video is not None else None)
+
+
+def _is_dir(entry: os.DirEntry) -> bool:
+    try:
+        return entry.is_dir()
+    except OSError:
+        return False
+
+
+def _a_video(top: str) -> str | None:
+    """A video in a folder or below it (the first found, breadth first),
+    looking through at most LOOK_MOST entries."""
+    looked = 0
+    level = [top]
+    for _ in range(LOOK_DEEP):
+        below: list[str] = []
+        for folder in level:
+            try:
+                with os.scandir(folder) as found:
+                    for e in found:
+                        looked += 1
+                        if looked > LOOK_MOST:
+                            return None
+                        if _system(e.name):
+                            continue
+                        if _is_dir(e):
+                            below.append(e.path)
+                        elif e.name.lower().endswith(VIDEO_ENDINGS):
+                            return e.path
+            except OSError:
+                continue
+        level = sorted(below)
+    return None
+
+
+def _holds(folder: Folder) -> str:
+    """What a folder holds, in a few words: "Movies and TV Shows"."""
+    if folder.folders:
+        names = folder.folders[:FOLDERS_SHOWN]
+        more = len(folder.folders) - len(names)
+        if more:
+            return f"{', '.join(names)} and {more} other folder{'s' if more != 1 else ''}"
+        return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+    return f"{folder.files} file{'s' if folder.files != 1 else ''}"
+
+
+def folders_check(looked: list[tuple[str, Folder | None]], media_dir: str) -> Check:
+    """The media folder check: what looking at MEDIA_DIR and the folders
+    PATH_MAPPINGS names found (None: it took too long)."""
+    shown = [
+        (path, f)
+        for path, f in looked
+        # (Nothing at MEDIA_DIR is fine while PATH_MAPPINGS points elsewhere.)
+        if not (
+            path == media_dir
+            and f is not None
+            and f.state == "missing"
+            and any(g is not None and g.state == "ok" for _, g in looked[1:])
+        )
+    ]
+    title = "Your media folders" if len(shown) > 1 else "Your media folder"
+    lines: list[str] = []
+    fixes: list[str] = []
+    for path, f in shown:
+        if f is None:
+            lines.append(
+                f"Reading {path} took too long. A network share may be slow or out of reach."
+            )
+            fixes.append("slow")
+        elif f.state == "missing":
+            lines.append(f"Nothing is mounted at {path}.")
+            fixes.append("missing")
+        elif f.state == "denied":
+            lines.append(f"tapiOca isn’t allowed to read {path}.")
+            fixes.append("denied")
+        elif f.state == "error":
+            lines.append(f"tapiOca couldn’t read {path} ({f.error}).")
+            fixes.append("slow")
+        elif f.state == "empty":
+            lines.append(f"{path} is empty.")
+            fixes.append("empty")
+        elif f.video_problem == "denied":
+            lines.append(f"tapiOca can see {path} but isn’t allowed to read the videos in it.")
+            fixes.append("denied")
+        elif f.video_problem:
+            lines.append(
+                f"tapiOca can see {path} but couldn’t read a video in it ({f.video_problem})."
+            )
+            fixes.append("slow")
+        else:
+            lines.append(f"tapiOca can read {path}, which holds {_holds(f)}.")
+    if not fixes:
+        lines.append("The Plex step checks that tapiOca finds the files Plex lists.")
+        return Check("media", title, GOOD, lines)
+    if "denied" in fixes:
+        lines.append(
+            "Give the user tapiOca runs as (1000, unless you changed it) permission to read "
+            "your media, then choose Check again."
+        )
+    if "missing" in fixes:
+        lines.append(
+            "tapiOca can still stream your files from Plex, but reading them from disk is faster "
+            f"and puts less load on Plex. Mount your media folder at {media_dir} in tapiOca’s app "
+            "settings (its YAML or Compose file), then restart tapiOca."
+        )
+    if "empty" in fixes:
+        lines.append(
+            "If your media is on a share or another disk, check that it’s mounted on the server, "
+            "then restart tapiOca."
+        )
+    if "slow" in fixes and not {"missing", "empty"} & set(fixes):
+        lines.append("Until tapiOca can read it, it streams your files from Plex.")
+    return Check("media", title, WARN, lines)
+
+
 async def media_check(ctx: AppContext, plex_ok: bool, present: bool) -> Check:
-    """Whether tapiOca can read the files Plex has: the newest in a
-    library, looked for where tapiOca looks when a program plays."""
-    title = "Your media files"
+    """(The Plex step.) Whether tapiOca can read the files Plex has: the
+    newest in a library, looked for where tapiOca looks when a program
+    plays."""
+    title = "Plex’s files"
     media_dir = ctx.settings.media_dir
     if not plex_ok:
-        return Check("media", title, WAIT, ["This is checked once tapiOca is connected to Plex."])
+        return Check(
+            "plexFiles", title, WAIT, ["This is checked once tapiOca is connected to Plex."]
+        )
     try:
-        files = await asyncio.wait_for(ctx.plex.newest_files(), PLEX_ASK_S)
+        files = await asyncio.wait_for(ctx.plex.newest_files(), PLEX_FILES_S)
     except (PlexError, TimeoutError):
         return Check(
-            "media", title, WAIT, ["Plex didn’t say which files it has. Try again in a moment."]
+            "plexFiles", title, WAIT, ["Plex didn’t say which files it has. Try again in a moment."]
         )
     if not files:
-        return Check("media", title, INFO, [
+        return Check("plexFiles", title, INFO, [
             "Plex doesn’t list any shows or movies yet, so there’s nothing to check. Add them "
             "in Plex, then check again.",
         ])  # fmt: skip
@@ -212,35 +398,35 @@ async def media_check(ctx: AppContext, plex_ok: bool, present: bool) -> Check:
     problem = await asyncio.to_thread(_read_problem, found.path) if found is not None else None
     if found is not None and problem is None:
         learn_mapping(ctx.media_access, found)
-        return Check("media", title, GOOD, [
+        return Check("plexFiles", title, GOOD, [
             f"tapiOca reads your files straight from disk: it found {name} at {found.path}.",
         ])  # fmt: skip
     slower = "That works, but reading files from disk is faster and puts less load on Plex."
     if timed_out:
-        return Check("media", title, WARN, [
+        return Check("plexFiles", title, WARN, [
             f"Looking for {name} in {media_dir} took too long. A network share may be slow or "
             "out of reach, so tapiOca streams files from Plex for now.",
             slower,
         ])  # fmt: skip
     if found is not None and problem == "denied":
-        return Check("media", title, WARN, [
+        return Check("plexFiles", title, WARN, [
             f"tapiOca found {found.path} but isn’t allowed to read it, so it streams files "
             "from Plex. Give the user tapiOca runs as (1000, unless you changed it) "
             "permission to read your media.",
             slower,
         ])  # fmt: skip
     if found is not None:
-        return Check("media", title, WARN, [
+        return Check("plexFiles", title, WARN, [
             f"tapiOca found {found.path} but couldn’t read it ({problem}), so it streams "
             "files from Plex. The disk or share it’s on may have a problem.",
             slower,
         ])  # fmt: skip
     if not present:
-        return Check("media", title, WARN, [
+        return Check("plexFiles", title, WARN, [
             f"Nothing is mounted at {media_dir}, so tapiOca streams files from Plex.",
             slower + f" Mount your media folder at {media_dir} in tapiOca’s app settings.",
         ])  # fmt: skip
-    return Check("media", title, WARN, [
+    return Check("plexFiles", title, WARN, [
         f"tapiOca couldn’t find {name} in {media_dir} (Plex has it at {plex_file}), so it "
         "streams files from Plex.",
         slower + f" Mount the folder that holds your shows and movies at {media_dir}, or set "

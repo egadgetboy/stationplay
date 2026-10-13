@@ -32,6 +32,7 @@ import argparse
 import asyncio
 import colorsys
 import io
+import json
 import logging
 import socket
 import subprocess
@@ -53,8 +54,9 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeout
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app import jobs, scanner, stats  # noqa: E402
+from app import jobs, ondemand, scanner, stats  # noqa: E402
 from app import main as server  # noqa: E402
+from app import setup as setup_questions  # noqa: E402
 from app.access import COOKIE as SESSION_COOKIE  # noqa: E402
 from app.breaks import COMMERCIALS, TRAILERS, Clip  # noqa: E402
 from app.broadcaster import Viewer  # noqa: E402
@@ -63,6 +65,7 @@ from app.db import Database, Item  # noqa: E402
 from app.plex import PlexClient  # noqa: E402
 from app.releases import META as UPDATE_CHECK  # noqa: E402
 from app.releases import RELEASES  # noqa: E402
+from app.setup import META_ANSWERED as SETUP_ANSWERED  # noqa: E402
 from tests.fakeplex_library import LibraryPlex  # noqa: E402
 from tests.helpers import Proxy  # noqa: E402
 
@@ -1161,9 +1164,154 @@ def signin_by_pin(page: Page, look: Look) -> None:
     page.goto(signin)
     if until(page, "() => !document.querySelector('#signinByPin').hidden"):
         page.click("#signinOther")
-        look.expect("Use your password: her name, already there", page.input_value("#signinName"), JO["name"])
+        look.expect(
+            "Use your password: her name, already there",
+            page.input_value("#signinName"),
+            JO["name"],
+        )
         look.expect("Use your password: the password's box has the focus",
                     page.evaluate("() => document.activeElement.id"), "signinPassword")  # fmt: skip
+
+
+def plex_step(page: Page, look: Look) -> None:
+    """(1.34.1, the owner) The setup's Plex step: its own checks (Plex, its
+    files, tapiOca in Plex), and Copy copying the tuner's address, in the
+    setup's window, at a home address (http: no clipboard to write to)."""
+    page.wait_for_selector("#setupBody .copyrow button")
+    until(page, "() => document.querySelectorAll('#setupBody .setup-check').length === 3")
+    look.expect("the Plex step's checks",
+                page.eval_on_selector_all("#setupBody .setup-check strong",
+                                          "els => els.map(e => e.textContent)"),
+                ["Plex", "Plex’s files", "tapiOca in Plex"])  # fmt: skip
+    page.evaluate(
+        """() => { window.copied = null; document.addEventListener('copy', e => {
+             const t = e.target; window.copied = t && 'value' in t
+               ? t.value.slice(t.selectionStart, t.selectionEnd) : String(getSelection()); }, { once: true }); }"""
+    )
+    page.locator("#setupBody .copyrow button").first.click()
+    page.wait_for_timeout(200)
+    look.expect("the Plex step's Copy copies the tuner address",
+                page.evaluate("() => window.copied"),
+                page.inner_text("#setupBody .copyrow code"))  # fmt: skip
+    look.expect("Copied, said over the setup's window",
+                page.evaluate("() => { const t = document.querySelector('#toast'); return !t.hidden && t.closest('dialog[open]') !== null && t.textContent; }"),
+                "Copied")  # fmt: skip
+    look("setup-plex")
+
+
+def connection_test(page: Page, look: Look) -> None:
+    """(1.34.1, the owner) The apps' connection test, run from the Access
+    tab: its result kept with the apps' tests, and recommended from."""
+    panel = page.locator("#appLimitsBody")
+    panel.scroll_into_view_if_needed()
+    panel.locator("button:has-text('Test the connection')").click()
+    shown = until(
+        page,
+        "() => /Mbps at home: room for about/.test(document.querySelector('#toast').textContent)",
+    )
+    look.expect("Test the connection from the page: a result at home", shown, True)
+    page.wait_for_timeout(500)
+    look.expect("the page's test is kept with the apps' tests",
+                page.locator("#appLimitsBody td", has_text="tapiOca’s page").count() > 0, True)  # fmt: skip
+    look.expect("the limit away from home's label",
+                page.inner_text("label[for=appLimitAway]"), "Away from home, at most")  # fmt: skip
+    look("access-connection-test")
+
+
+def setup_before_status(context: Any, base: str, look: Look, sp: Running) -> None:
+    """(1.34.1, the owner) The setup opens for an Admin at once: never
+    waiting on tapiOca's status, which asks Plex (it took 20 seconds with
+    Plex down). Here the status never answers at all."""
+    before = sp.call(lambda: sp.ctx.db.get_meta(SETUP_ANSWERED))
+    sp.call(lambda: sp.ctx.db.set_meta(SETUP_ANSWERED, "{}"))
+    early = context.new_page()
+    early.route("**/api/status", lambda route: route.abort())
+    early.goto(base + "/")
+    opened = until(early, "() => document.querySelector('#setupDlg').open")
+    look.expect("the setup opens without waiting on tapiOca's status", opened, True)
+    early.close()
+    sp.call(lambda: sp.ctx.db.set_meta(SETUP_ANSWERED, before))
+
+
+def waiting_media_step(context: Any, base: str, look: Look, sp: Running) -> None:
+    """(1.34.1, the audits) A tapiOca updated from before 1.34.1 whose
+    Admin never chose its Media folders: setup's Media step offers every
+    one, ticked, and going on shares them. While they can't be listed
+    (Plex down), going on shares nothing, and the question stays to ask."""
+    shared = sp.ctx.shared
+    before = sp.call(lambda: (
+        sp.ctx.db.get_meta(SETUP_ANSWERED), sp.ctx.db.get_meta(ondemand.META),
+        sp.ctx.db.get_meta(ondemand.WAITING_META), shared.everything, shared._chosen, shared.waiting,
+    ))  # fmt: skip
+    answered = json.dumps({**setup_questions.QUESTIONS, "library": 1})
+
+    def waiting() -> None:
+        sp.ctx.db.set_metas(
+            {SETUP_ANSWERED: answered, ondemand.META: "[]", ondemand.WAITING_META: "1"}
+        )
+        shared.everything, shared._chosen, shared.waiting = False, (), True
+
+    def to_media_step(page: Page) -> None:
+        page.goto(base + "/")
+        until(page, "() => document.querySelector('#setupDlg').open")
+        # (Next, step by step: on a phone the steps' list is hidden.)
+        for _ in range(4):
+            if "Media in tapiOca" in page.inner_text("#setupBody h4.wstep"):
+                break
+            page.locator("#setupFoot .btn.primary").click()
+            page.wait_for_timeout(600)
+        page.wait_for_selector("#setupBody .playback", timeout=10_000)
+
+    # Plex down: nothing listed; going on shares nothing and asks again.
+    sp.call(waiting)
+    down = context.new_page()
+    down.route("**/api/app-libraries", lambda route: route.fulfill(json={
+        "libraries": [], "shared": [], "everything": False, "waiting": True,
+        "problem": "Plex isn’t answering, so tapiOca can’t list your Media folders right now.",
+        "whenSlow": {"home": "offer", "away": "switch"}, "evenSound": True, "playing": 0,
+    }) if route.request.method == "GET" else route.continue_())  # fmt: skip
+    to_media_step(down)
+    until(
+        down,
+        "() => /can’t list your Media folders/.test(document.querySelector('#setupBody').textContent)",
+    )
+    down.locator("#setupFoot .btn.primary").click()
+    down.wait_for_timeout(800)
+    down.click("#closeSetup")  # (✕: what's shown counts as answered, but not this)
+    down.wait_for_timeout(500)
+    look.expect("Plex down at the waiting Media step: nothing shared",
+                sp.call(lambda: (list(shared.keys), shared.waiting)), ([], True))  # fmt: skip
+    look.expect("Plex down at the waiting Media step: asked again",
+                "library" in sp.call(lambda: setup_questions.pending(sp.ctx.db)), True)  # fmt: skip
+    down.close()
+    # Listed: every one ticked, said so; Next shares them all.
+    sp.call(waiting)
+    page = context.new_page()
+    to_media_step(page)
+    boxes = page.locator("#setupBody .playback input[type=checkbox]")
+    look.expect("the waiting Media step ticks every folder",
+                all(boxes.nth(n).is_checked() for n in range(boxes.count())) and boxes.count() > 0, True)  # fmt: skip
+    look.expect("the waiting Media step says none are shared yet",
+                "No Media folders are shared in tapiOca’s apps yet" in page.inner_text("#setupBody"), True)  # fmt: skip
+    look("setup-media-waiting")
+    ticked = boxes.count()
+    page.locator("#setupFoot .btn.primary").click()
+    page.wait_for_timeout(800)
+    look.expect("going on from the waiting Media step shares every folder",
+                sp.call(lambda: (len(list(shared.keys)), shared.waiting)), (ticked, False))  # fmt: skip
+    page.close()
+
+    def restore() -> None:
+        answers, chosen, waits, everything, kept, was = before
+        sp.ctx.db.set_metas({SETUP_ANSWERED: answers, ondemand.WAITING_META: waits or "0"})
+        if everything:
+            with sp.ctx.db._lock, sp.ctx.db._conn:
+                sp.ctx.db._conn.execute("DELETE FROM meta WHERE key = ?", (ondemand.META,))
+        else:
+            sp.ctx.db.set_meta(ondemand.META, chosen)
+        shared.everything, shared._chosen, shared.waiting = everything, kept, was
+
+    sp.call(restore)
 
 
 def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> None:
@@ -1245,6 +1393,8 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
         ran_on = []
         for n in range(steps):
             look(f"setup-{n + 1}")
+            if page.inner_text("#setupBody h4.wstep").endswith("· Plex"):
+                plex_step(page, look)
             if scrolled_arrows(page, look, f"setup step {n + 1}", "#setupBody"):
                 if not ran_on:
                     # The first that does, partway down: both arrows.
@@ -1278,6 +1428,11 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
     if wanted("addtoplex"):
         tab(page, "setup")
         look("addtoplex", full=True)
+        # (1.34.1) The INFO station's panel: there's one, on 99.
+        page.wait_for_selector("#infoPanel p")
+        look.expect(
+            "the INFO station's panel", "INFO is station 99" in page.inner_text("#infoPanel"), True
+        )
         # The question a tapiOca updated from before 1.34.0 asks once,
         # then Yes: the New versions panel shows the answer, and the banner a
         # newer tapiOca brings (hidden, as Not now, in the other views)
@@ -1305,6 +1460,19 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
         look("update-banner")
         page.click("#updateBanner button:has-text('Not now')")
         look.expect("Not now hides the banner", page.is_hidden("#updateBanner"), True)
+        # (1.34.1, the owner) The header's pill stays, and brings it back.
+        look.expect("after Not now, the header's pill says a newer one is out",
+                    page.inner_text("#updatePill") if page.is_visible("#updatePill") else None,
+                    f"tapiOca {NEWER} is out" if (page.viewport_size or {}).get("width", 0) > 560
+                    else "Update")  # fmt: skip
+        page.evaluate("() => window.scrollTo(0, 0)")
+        look("update-pill")
+        page.click("#updatePill")
+        page.wait_for_selector("#updateBanner:not([hidden])")
+        look.expect("the pill brings the banner back",
+                    page.inner_text("#updateBanner .update-title strong"),
+                    f"tapiOca {NEWER} is available.")  # fmt: skip
+        page.click("#updateBanner button:has-text('Not now')")
         sp.newest_out("9.1.0")
         page.evaluate("() => loadUpdates()")
         page.wait_for_selector("#updateBanner:not([hidden])")
@@ -1343,6 +1511,13 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
             "() => document.querySelector('.clip-ratings').scrollIntoView({block: 'center'})"
         )
         look("access-clips")
+        connection_test(page, look)
+        look.expect("Viewing Levels: the level new people start on",
+                    page.eval_on_selector("#newLevel", "s => s.selectedOptions[0]?.textContent"),
+                    "Unrestricted")  # fmt: skip
+        look.expect(
+            "Add a user offers a Viewing Level", page.is_visible("#newUserLevelField"), True
+        )
         row = page.locator("#userTable tr", has_text=USER["name"])
         row.locator("button:has-text('Devices')").click()
         look("access-devices")
@@ -1527,6 +1702,9 @@ def main() -> None:
                             look = Look(page, folder, f"{person}-{theme}", size in touch, said)
                             if person == "admin":
                                 admin_views(page, look, only, sp)
+                                if only is None or "setup" in only:
+                                    setup_before_status(context, base, look, sp)
+                                    waiting_media_step(context, base, look, sp)
                             elif person == "user":
                                 user_views(page, look, only)
                             elif person == "signin-pin":

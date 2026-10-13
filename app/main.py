@@ -51,6 +51,7 @@ from . import (
     hdhr,
     health,
     hls,
+    infostation,
     intro,
     jobs,
     languages,
@@ -119,7 +120,16 @@ from .logos import (
     to_trimmed_logo_png,
 )
 from .markers import MarkerFinder
-from .plex import PEOPLE_FIELDS, TAG_FIELDS, PlexClient, PlexError, collection_key, genres
+from .plex import (
+    NOT_ANSWERING,
+    PEOPLE_FIELDS,
+    TAG_FIELDS,
+    PlexClient,
+    PlexError,
+    collection_key,
+    genres,
+    trouble,
+)
 from .scanner import Scanner
 from .schedule import ORDER_MODES, StationSchedule, forget_eras, prepare
 from .sources import MediaAccess, ResolvedSource, ShareCheck, locate, readable, resolve_source
@@ -135,7 +145,7 @@ NOTICES = Path(__file__).parent.parent / "THIRD_PARTY_NOTICES.md"
 PRIVACY = Path(__file__).parent.parent / "PRIVACY.md"
 # tapiOca's own guide covers the same two days as Plex's.
 STATION_GUIDE_MAX_HOURS = GUIDE_FUTURE_MS / 3_600_000
-SOURCE_TYPES = ("show", "movie", "section", "filter", "collection")
+SOURCE_TYPES = ("show", "movie", "section", "filter", "collection", "info")
 NAME_MAX = 60  # the longest a station's name can be
 # The editor's posters: drawn at up to 64x96, so this is sharp on most
 # screens; and larger ones, for when the list is zoomed in (drawn at 120x180).
@@ -538,6 +548,8 @@ class AppContext:
     scanner: Scanner = field(init=False)
     # People's reports of problems, from the apps (see reports.py).
     reports: reports.Reports = field(init=False)
+    # The INFO station's panels, kept written (see infostation.py).
+    info_panels: infostation.Panels = field(init=False)
 
     def restart(self) -> None:
         """Stops tapiOca; Docker starts it again."""
@@ -586,6 +598,7 @@ class AppContext:
         self.scanner.on_checked = self.reports.checked
         self.who_watches = stats.WhoWatches(self)
         self.limits = limits.Limits(self.db)
+        self.info_panels = infostation.Panels(self)
 
     def media_here(self, outside: bool) -> bool:
         """Whether Media is offered to the apps where a request came from
@@ -729,18 +742,52 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         if took > 2:
             log.info("Prepared the station schedules in %.1fs", took)
 
+    async def make_info_station() -> Channel:
+        """INFO, station 99 (see infostation.py)."""
+        pb = playback.load(ctx.db)
+        chosen = {**NEW_STATION, **pb.new_station, "picture": pb.picture, **infostation.SETTINGS}
+        logo = infostation.LOGO if ctx.logos.exists(infostation.LOGO) else ""
+        channel = ctx.db.create_channel(
+            infostation.NUMBER, infostation.NAME, [infostation.SOURCE], logo, **chosen
+        )
+        items = [infostation.program()]
+        await ctx.updater.create(
+            channel.id,
+            await as_aired(channel, items, {}),
+            channel.order_mode,
+            await ctx.updater.sets_as_aired(channel, {}, main=items),
+        )
+        infostation.made(ctx.db, channel.id)
+        ctx.info_panels.wake.set()
+        return channel
+
+    async def first_info_station() -> None:
+        """A new tapiOca's INFO station, made once, by itself."""
+        new = not setup.answered(ctx.db) and not ctx.db.get_meta(playback.META_WELCOMED, "")
+        if infostation.wanted(ctx.db, new):
+            await make_info_station()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         log.info("tapiOca %s is starting", __version__)
         playback.start(ctx.db, settings)
+        await first_info_station()
+        ctx.shared.first_start(
+            not setup.answered(ctx.db)
+            and not ctx.db.get_meta(playback.META_WELCOMED, "")
+            and not infostation.others(ctx.db.list_channels())
+        )
         setup.start(
             ctx.db,
-            len(ctx.db.list_channels()),
+            infostation.others(ctx.db.list_channels()),
             ctx.away.on,
-            ctx.shared.on,
+            ctx.shared.on and not ctx.shared.everything,
             any(u.role != access.ADMIN for u in ctx.db.users()),
+            chose=not ctx.shared.everything and not ctx.shared.waiting,
         )
-        releases.note_version(ctx.db, setup.state(ctx.db, len(ctx.db.list_channels()))["fresh"])
+        releases.note_version(
+            ctx.db, setup.state(ctx.db, infostation.others(ctx.db.list_channels()))["fresh"]
+        )
         await asyncio.to_thread(prepare_schedules)
         problem = await tone_mapping_problem(settings)
         ctx.tone_mapping = problem is None
@@ -762,6 +809,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             asyncio.create_task(jobs.look_again_forever(ctx)),
             asyncio.create_task(ctx.who_watches.run_forever()),
             asyncio.create_task(ctx.updater.run_forever()),
+            asyncio.create_task(ctx.info_panels.run_forever()),
             asyncio.create_task(ctx.fillers.refresh()),
             asyncio.create_task(backups.nightly_forever(ctx)),
             asyncio.create_task(ctx.scanner.run_forever()),
@@ -1666,18 +1714,24 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     async def plex_status(find_dvr: bool = True) -> dict:
         """Whether Plex answers; and (find_dvr) looks for tapiOca's tuner
-        in Plex, for the Add to Plex tab."""
+        in Plex, for the Add to Plex tab. Whether it answers is asked first:
+        with Plex down, nothing more is asked of it, so the page hears at
+        once (1.34.1)."""
         if not ctx.plex.configured:
             return {"configured": False, "ok": False, "error": "PLEX_URL and PLEX_TOKEN aren't set"}
+        try:
+            ident = await asyncio.wait_for(ctx.plex.identity(), setup.PLEX_ASK_S)
+        except PlexError as e:
+            return {"configured": True, "ok": False, "error": str(e), "trouble": trouble(
+                ctx.plex.base_url, e
+            )}  # fmt: skip
+        except TimeoutError:
+            return {"configured": True, "ok": False, "error": NOT_ANSWERING, "trouble": trouble(
+                ctx.plex.base_url, None
+            )}  # fmt: skip
         if find_dvr:
             with contextlib.suppress(PlexError, TimeoutError):
-                await asyncio.wait_for(ctx.updater.find_dvr(), 5)
-        try:
-            ident = await asyncio.wait_for(ctx.plex.identity(), 5)
-        except PlexError as e:
-            return {"configured": True, "ok": False, "error": str(e)}
-        except TimeoutError:
-            return {"configured": True, "ok": False, "error": "Plex isn't responding"}
+                await asyncio.wait_for(ctx.updater.find_dvr(), setup.PLEX_ASK_S)
         return {"configured": True, "ok": True, "version": ident.get("version")}
 
     media_check: dict[str, asyncio.Future] = {}
@@ -1709,6 +1763,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 "fillers": {k: fillers[k] for k in ("commercials", "trailers")},
             }
         plex_state, present = await asyncio.gather(plex_status(), media_dir_present())
+        plex_state.pop("trouble", None)  # (for the setup's Plex step)
         files_count = await asyncio.to_thread(ctx.reports.needing_count)
         url = base_url(request)
         return {
@@ -1953,7 +2008,15 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         current = ctx.db.get_channel(channel_id) if channel_id is not None else None
         ids = {str(b.get("id")) for b in current.blocks} if current else set()
         taken: set[str] = set()
+        if any(infostation.is_info_source(s) for s in body.sources) and (
+            body.blocks
+            or body.featureMode not in (None, "off")
+            or body.marathonMode not in (None, "off")
+        ):
+            raise HTTPException(400, infostation.ONLY_ITS_FILM)
         for block in body.blocks or []:
+            if any(infostation.is_info_source(s) for s in block.sources):
+                raise HTTPException(400, infostation.ONLY_ON_INFO)
             problem = specials.block_problem(block.model_dump())
             if problem:
                 raise HTTPException(400, problem)
@@ -1971,7 +2034,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 raise HTTPException(
                     400, "That Intro Bumper video isn't available. Choose another one."
                 )
-        check_number(body.number, channel_id)
+        check_number(body.number, channel_id, body.sources)
 
     def check_sources(sources: list[dict], what: str) -> None:
         for source in sources:
@@ -2029,7 +2092,13 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                     400, f"The block \u201c{block.get('name')}\u201d has nothing to play"
                 )
 
-    def check_number(number: int, channel_id: int | None = None) -> None:
+    def check_number(
+        number: int, channel_id: int | None = None, sources: list[dict] | None = None
+    ) -> None:
+        current = ctx.db.get_channel(channel_id) if channel_id is not None else None
+        problem = infostation.number_problem(current, number, sources or [])
+        if problem:
+            raise HTTPException(409 if problem == infostation.TAKEN else 400, problem)
         clash = ctx.db.get_channel_by_number(number)
         if clash and clash.id != channel_id:
             raise HTTPException(409, f"Station {number} already exists ({clash.name})")
@@ -2113,7 +2182,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         # Again: while Plex was asked, the logo may have been deleted, another
         # station given the number, or another station made by them.
         check_logo(logo)
-        check_number(body.number)
+        check_number(body.number, sources=body.sources)
         room_for_one_more(user)
         channel = ctx.db.create_channel(
             body.number,
@@ -2191,7 +2260,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 "type": "collection", "ratingKey": c["ratingKey"], "title": c["title"],
                 "library": c["library"], "kind": c["kind"],
             }  # fmt: skip
-            used = {ch.number for ch in ctx.db.list_channels()}
+            used = {ch.number for ch in ctx.db.list_channels()} | {infostation.NUMBER}
             number = next(n for n in range(1, 10_000) if n not in used)
             made_from = ChannelIn(number=number, name=c["name"], logo=logo, sources=[source])
             try:
@@ -2247,7 +2316,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             # The next free number (and the next again, if it's taken
             # while Plex is being asked).
             for _ in range(5):
-                used = {c.number for c in ctx.db.list_channels()}
+                used = {c.number for c in ctx.db.list_channels()} | {infostation.NUMBER}
                 number = next((x for x in range(body.firstNumber, 10_000) if x not in used), None)
                 if number is None:
                     stop = f"there are no free station numbers at or above {body.firstNumber}"
@@ -2313,7 +2382,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         # Again: while Plex was asked, the logo may have been deleted, or
         # another station given the number.
         check_logo(body.logo)
-        check_number(body.number, channel_id)
+        check_number(body.number, channel_id, body.sources)
         ctx.db.update_channel(
             channel_id,
             number=body.number,
@@ -2882,7 +2951,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.get("/api/setup")
     async def setup_get():
-        return setup.state(ctx.db, len(ctx.db.list_channels()))
+        return setup.state(ctx.db, infostation.others(ctx.db.list_channels()))
 
     @app.put("/api/setup")
     async def setup_put(body: SetupIn):
@@ -2890,32 +2959,112 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             setup.mark(ctx.db, body.answered)
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
-        return setup.state(ctx.db, len(ctx.db.list_channels()))
+        return setup.state(ctx.db, infostation.others(ctx.db.list_channels()))
+
+    # Looking at the media folders: off the event loop, with a time limit,
+    # and one look at a folder at a time (a stuck share can't use up the
+    # worker threads).
+    folder_looks: dict[str, asyncio.Future] = {}
+
+    async def look_at_folder(path: str) -> setup.Folder | None:
+        look = folder_looks.get(path)
+        if look is None or look.done():
+            look = folder_looks[path] = asyncio.ensure_future(
+                asyncio.to_thread(setup.look_at_folder, path)
+            )
+        try:
+            return await asyncio.wait_for(asyncio.shield(look), setup.FOLDER_LOOK_S)
+        except TimeoutError:
+            return None
+
+    # The INFO station (see infostation.py): whether there is one, and
+    # bringing it back --------------------------------------------------------
+
+    def info_state() -> dict:
+        channels = ctx.db.list_channels()
+        info = infostation.find(channels)
+        other = ctx.db.get_channel_by_number(infostation.NUMBER)
+        return {
+            "station": info.id if info else None,
+            "number": infostation.NUMBER,
+            "name": info.name if info else infostation.NAME,
+            # (Another station on 99, from before INFO: it has to move first.)
+            "taken": other.name if other is not None and info is None else None,
+        }
+
+    @app.get("/api/info-station")
+    async def info_station():
+        return info_state()
+
+    @app.post("/api/info-station", status_code=201)
+    async def add_info_station(request: Request):
+        state = info_state()
+        if state["station"] is not None:
+            raise HTTPException(409, "INFO is already station 99")
+        if state["taken"]:
+            raise HTTPException(
+                409,
+                f"Station 99 is {state['taken']} now. Give it another number first: "
+                "INFO is always station 99.",
+            )
+        if not infostation.FILE.is_file():
+            raise HTTPException(500, "INFO's film is missing from this tapiOca")
+        await make_info_station()
+        user = access.signed_in(request)
+        log.info("%s added the INFO station, station 99", user.name if user else "Someone")
+        await after_change()
+        return info_state()
 
     @app.get("/api/setup/checks")
     async def setup_checks(offset: int | None = None, zone: str = ""):
-        """Whether what's set up is working. `offset` and `zone`: the
-        browser's clock (minutes ahead of UTC, and its time zone's name), to
-        compare tapiOca's with."""
+        """Whether the server itself is working: its media folder, video
+        encoding, its clock and backups. Nothing here waits on Plex (see
+        /api/setup/plex). `offset` and `zone`: the browser's clock (minutes
+        ahead of UTC, and its time zone's name), to compare tapiOca's with."""
         if offset is not None and not -1080 <= offset <= 1080:
             offset = None
-        plex_state, present = await asyncio.gather(plex_status(), media_dir_present())
-        plex_ok = bool(plex_state["ok"])
-        plex_pass = None
-        if plex_ok:
-            with contextlib.suppress(PlexError, TimeoutError):
-                plex_pass = await asyncio.wait_for(ctx.plex.plex_pass(), 5)
+        folders = list(dict.fromkeys([settings.media_dir, *(d for _, d in settings.path_mappings)]))
+        looked = await asyncio.gather(*(look_at_folder(f) for f in folders[:5]))
         made = await asyncio.to_thread(backups.list_backups, settings.data_dir)
         now = now_ms()
         checks = [
-            setup.plex_check(plex_state, plex_pass),
-            await setup.media_check(ctx, plex_ok, present),
+            setup.folders_check(list(zip(folders, looked, strict=False)), settings.media_dir),
             setup.encoding_check(ctx.gpu.as_dict(), ctx.tone_mapping, ctx.subtitling),
             setup.clock_check(offset, zone[:80]),
             setup.backups_check(made, time.monotonic() - up_since, now),
-            setup.dvr_check(plex_ok, ctx.updater.as_dict(), now),
         ]
         return {"checks": [c.as_dict() for c in checks]}
+
+    @app.get("/api/setup/plex")
+    async def setup_plex(request: Request):
+        """The Plex step: whether Plex answers, whether tapiOca finds the
+        files Plex lists, and whether Plex has tapiOca as a DVR; and the
+        addresses Plex is given."""
+        plex_state, present = await asyncio.gather(plex_status(), media_dir_present())
+        plex_ok = bool(plex_state["ok"])
+
+        async def plex_pass() -> bool | None:
+            if not plex_ok:
+                return None
+            try:
+                return await asyncio.wait_for(ctx.plex.plex_pass(), setup.PLEX_ASK_S)
+            except (PlexError, TimeoutError):
+                return None
+
+        has_pass, files = await asyncio.gather(
+            plex_pass(), setup.media_check(ctx, plex_ok, present)
+        )
+        checks = [
+            setup.plex_check(plex_state, has_pass),
+            files,
+            setup.dvr_check(plex_ok, ctx.updater.as_dict(), now_ms()),
+        ]
+        url = base_url(request)
+        return {
+            "checks": [c.as_dict() for c in checks],
+            "tunerUrl": url,
+            "xmltvUrl": f"{url}/xmltv.xml",
+        }
 
     @app.post("/api/playback/speed-test")
     async def playback_speed_test():
@@ -3245,12 +3394,12 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.put("/api/updates")
     async def updates_save(body: UpdateCheckIn, request: Request):
-        """An Admin's answer: whether tapiOca asks GitHub once a day."""
+        """An Admin's answer: whether tapiOca asks GitHub every 4 hours."""
         ctx.releases.save(body.on)
         who = access.signed_in(request)
         log.info(
             "The update check: %s%s",
-            "on (tapiOca asks GitHub once a day whether a new version is out)"
+            "on (tapiOca asks GitHub every 4 hours whether a new version is out)"
             if body.on
             else "off",
             f" (set by {who.name})" if who else "",
@@ -3561,6 +3710,9 @@ def _source_problem(source: dict) -> str | None:
     kind = source.get("type")
     if kind not in SOURCE_TYPES:
         return f"Unknown source type {kind!r}"
+    if kind == "info":
+        # (INFO's own, as it is: see infostation.py.)
+        return None if source == infostation.SOURCE else infostation.NOT_ITS_SOURCE
     # Plex's keys are numbers: anything else isn't from Plex.
     key = {"show": "ratingKey", "movie": "ratingKey", "section": "key"}.get(kind)
     if key and not _plex_key(source.get(key)):

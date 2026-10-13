@@ -121,7 +121,13 @@ async def test_an_alert_starts_once_and_is_fixed_once(tmp_path, caplog, db):
         plex.down = 0
         await found.look(ctx)
     [alert] = found.now()
-    sentence = "tapiOca can't reach Plex at 192.168.1.10:32400. Check that Plex is running."
+    # (1.34.1, the owner: this is the example address in tapiOca's YAML, and
+    # the alert says so.)
+    sentence = (
+        "tapiOca can't reach Plex at 192.168.1.10:32400. Check that Plex is running. "
+        "PLEX_URL is still the example address from tapiOca's YAML: change it to your Plex "
+        "server's address, then restart tapiOca."
+    )
     assert (alert.kind, alert.sentence, alert.fixed_ms) == ("plex", sentence, None)
     assert told.said == [(sentence, "plex", "started")]
     # Back once: not yet fixed (and its ID stays the same while it lasts).
@@ -1003,3 +1009,92 @@ async def test_what_wasnt_sent_when_stationplay_stopped_is_sent_after(tmp_path, 
         await asyncio.sleep(0.01)
     running.cancel()
     assert sent == [(going.sentence, "started")]
+
+
+@pytest.mark.parametrize(
+    ("error", "said"),
+    [
+        (
+            httpx.ConnectError("[Errno 111] Connection refused"),
+            "tapiOca can't reach Plex at 192.168.50.2:32400: nothing there accepted the "
+            "connection. Check that Plex is running, and that PLEX_URL is its address.",
+        ),
+        (
+            httpx.ConnectTimeout(""),
+            "tapiOca can't reach Plex at 192.168.50.2:32400: nothing answered. Check that "
+            "PLEX_URL is your Plex server's address, and that Plex is running.",
+        ),
+        (
+            httpx.ConnectError("[Errno 113] No route to host"),
+            "tapiOca can't reach Plex at 192.168.50.2:32400: nothing answered. Check that "
+            "PLEX_URL is your Plex server's address, and that Plex is running.",
+        ),
+        (
+            httpx.ConnectError("[Errno -2] Name or service not known"),
+            "tapiOca can't find 192.168.50.2, the address in PLEX_URL. Check that it's your "
+            "Plex server's address.",
+        ),
+        (
+            httpx.ReadTimeout(""),
+            "Plex at 192.168.50.2:32400 is answering too slowly. Restart Plex if it stays "
+            "that way.",
+        ),
+        (
+            503,
+            "Plex at 192.168.50.2:32400 answers, but with a problem. Restarting Plex usually "
+            "fixes it.",
+        ),
+        (
+            403,
+            "Plex at 192.168.50.2:32400 turns down tapiOca's requests. Check that PLEX_TOKEN "
+            "is the token for this Plex server.",
+        ),
+        (
+            401,
+            "Plex at 192.168.50.2:32400 doesn't accept tapiOca's token. Check PLEX_TOKEN in "
+            "tapiOca's settings.",
+        ),
+        # (1.34.1, the audit) Something else at that address: a NAS's own
+        # page, say, without Plex's port.
+        (
+            404,
+            "Something answered at 192.168.50.2:32400, but it isn't Plex. Check that PLEX_URL "
+            "is your Plex server's address, with Plex's port (usually 32400).",
+        ),
+        (
+            "<html>",
+            "Something answered at 192.168.50.2:32400, but it isn't Plex. Check that PLEX_URL "
+            "is your Plex server's address, with Plex's port (usually 32400).",
+        ),
+        (
+            429,
+            "Plex at 192.168.50.2:32400 is too busy to answer right now. tapiOca will try "
+            "again soon.",
+        ),
+    ],
+)
+async def test_the_plex_alert_says_what_happened(tmp_path, db, monkeypatch, error, said):
+    """(1.34.1, the owner) "Can't reach Plex" was said for everything: it
+    says what happened now, and what to check for that."""
+    from app import plex as plex_module
+
+    monkeypatch.setattr(plex_module, "RETRY_S", 0)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if isinstance(error, int):
+            return httpx.Response(error, json={})
+        if isinstance(error, str):
+            return httpx.Response(200, text=error, headers={"content-type": "text/html"})
+        raise type(error)(str(error), request=request)
+
+    client = PlexClient("http://192.168.50.2:32400", "token", transport=httpx.MockTransport(handle))
+    told = Told()
+    found = Alerts(told, db)  # type: ignore[arg-type]
+    ctx = checks(tmp_path, client)  # type: ignore[arg-type]
+    try:
+        for _ in range(5):
+            await found.look(ctx)
+    finally:
+        await client.close()
+    [alert] = found.now()
+    assert alert.sentence == said

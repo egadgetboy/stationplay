@@ -374,6 +374,13 @@ async def test_an_app_away_from_home_watches_through_the_public_port(
         ):
             assert (await inside.post("/api/access/users", json=PAT)).status_code == 201
 
+            # (Media in the apps off, as an Admin may choose: this is about
+            # stations away from home. A new tapiOca shares every Media
+            # folder from 1.34.1; Media away from home is tested on its own.)
+            assert (
+                await inside.put("/api/app-libraries", json={"libraries": []})
+            ).status_code == 200
+
             async def sign_in() -> dict[str, str]:
                 signed = await phone.post("/api/internal/sign-in", json=PAT)
                 assert signed.status_code == 200, signed.text

@@ -35,6 +35,7 @@
     <span class="pill" id="livePill" hidden><span class="dot live"></span><span></span></span>
     <button class="pill away" id="awayPill" type="button" hidden><span class="dot"></span><span class="long">Away from home</span><span class="short">Away</span><span class="word"></span></button>
     <button class="pill alerts" id="alertsPill" type="button" hidden aria-haspopup="dialog"><span class="dot bad"></span><span class="count"></span></button>
+    <button class="pill update" id="updatePill" type="button" hidden><span class="dot accent"></span><span class="long"></span><span class="short">Update</span></button>
     <button class="pill userpill" id="userPill" type="button" hidden title="Your account"><span></span></button>
   </header>
   <!-- A new tapiOca is out (for Admins: see updates.js). -->
@@ -227,6 +228,7 @@
         <div class="field"><label for="newUserPassword">Password</label><input type="password" id="newUserPassword" minlength="__PASSWORD_MIN__" maxlength="__PASSWORD_MAX__" autocomplete="new-password" required></div>
         <div class="field" id="newUserPinField"><label for="newUserPin">PIN (optional)</label><input type="text" id="newUserPin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off" placeholder="4 digits"></div>
         <div class="field"><label for="newUserRole">Role</label><select id="newUserRole"><option value="user">User</option><option value="admin">Admin</option></select></div>
+        <div class="field" id="newUserLevelField" hidden><label for="newUserLevel">Viewing Level</label><select id="newUserLevel"></select></div>
         <div class="field" id="newUserStationsField"><label for="newUserStations">Stations they can make</label><select id="newUserStations"></select></div>
         <button class="btn primary" type="submit">Add</button>
       </div>
@@ -306,6 +308,8 @@
     <div class="panel" id="backupList"></div>
     <div class="section-head" style="margin-top:22px"><h2>New versions</h2></div>
     <div class="panel setup" id="updatesPanel"></div>
+    <div class="section-head" style="margin-top:22px"><h2>The INFO station</h2></div>
+    <div class="panel setup" id="infoPanel"></div>
   </section>
 
   <footer class="foot"><span id="appVersion"></span><span id="footSetupWrap" hidden><button type="button" class="linkish" id="footSetup">Setup</button> · </span>© 2026 egadgetboy · Open source under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer">GNU AGPL v3</a> · <a href="https://github.com/egadgetboy/tapioca-server" target="_blank" rel="noopener noreferrer">Source</a> · <a href="/open-source-notices" target="_blank" rel="noopener noreferrer">Open-source notices</a> · No warranty · <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy</a><br><span class="appearance"><label for="appearance">Appearance</label><select id="appearance"><option value="">Automatic</option><option value="light">Light</option><option value="dark">Dark</option></select></span></footer>

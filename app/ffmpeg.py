@@ -729,6 +729,109 @@ BANNER_IN_S = 0.5
 BANNER_OUT_S = 0.6
 
 
+@dataclass(frozen=True)
+class Info:
+    """What the INFO station draws over its film (see infostation.py): the
+    date and time each frame airs, its web address, and its panels, each in
+    turn (`panels`: the files with each one's title and body, as
+    infostation.Panels keeps them, and how many lines the body has), every
+    `panel_s` seconds, fading over `fade_s`. The film's second video stream
+    (`pearls`) is where its pearls are in front, so they're put back over
+    what's drawn."""
+
+    panels: tuple[tuple[str, str, int], ...]
+    clock: str = "12"  # 12 or 24 hours
+    airs_at_s: float = 0.0  # (as Watermark's)
+    panel_s: float = 10.0
+    fade_s: float = 0.8
+    pearls: int = 1  # the pearls' stream, among the film's video streams
+
+
+FONTS = Path(__file__).resolve().parent / "assets" / "fonts"
+INFO_DISPLAY = FONTS / "Unbounded" / "Unbounded-Regular.ttf"  # (the wordmark's face)
+INFO_TEXT = FONTS / "SpaceGrotesk" / "SpaceGrotesk-Medium.ttf"
+TEAL = "0x00BFA6"  # Signal Teal: the pearl's
+# How far apart drawtext puts lines of Space Grotesk, as a share of its size
+# (before line_spacing): its ascender to its descender, 984 and 292 of its
+# 1000 units.
+TEXT_LINE = 1.276
+INFO_ADDRESS = "tapioca.tv"
+
+
+def info_text(settings: Settings, info: Info) -> str:
+    """The drawtext filters for INFO's time and date, top right, its web
+    address, bottom right (each set right), and its panels, bottom left, as
+    a chain to add to the picture's, the stream's size: sizes and places as
+    shares of its size, and drifting with the corner mark (see drift).
+
+    The margins match (the owner, October 12): the same at the left and
+    right, and at the top and bottom, where the address and each panel's
+    last line share a baseline. So each panel is placed from its body's
+    lines, counted as its files were read (drawn once, not reloaded: a
+    program of INFO is 2 minutes, and what's drawn then always matches
+    what was counted)."""
+    w, h = settings.video_width, settings.video_height
+    side, edge = round(0.06 * w), round(0.065 * h)
+    dx, dy = drift(0, info.airs_at_s), drift(1, info.airs_at_s)
+    left = f"{side}+{dx}"
+    # (Set right: each line's right edge where the margin is.)
+    right = f"w-tw-{side}+{dx}"
+    display, text = filter_path(str(INFO_DISPLAY)), filter_path(str(INFO_TEXT))
+    # (As the corner clock's: see _clock.)
+    fmt = r"%H\\\:%M" if info.clock == "24" else r"%-I\\\:%M %p"
+    stamp = rf"%{{pts\:localtime\:{info.airs_at_s:.3f}\:"
+    # Readable, not big (the owner, October 12).
+    time_size, date_size = round(0.046 * h), round(0.027 * h)
+    date_y = edge + round(0.064 * h)
+    out = [
+        f"drawtext=fontfile={display}:text='{stamp}{fmt}}}':fontsize={time_size}"
+        f":fontcolor=white@0.94:x='{right}':y='{edge}+{dy}'",
+        f"drawtext=fontfile={text}:text='{stamp}%A, %B %-d}}':fontsize={date_size}"
+        f":fontcolor=0xBDBDBD:x='{right}':y='{date_y}+{dy}'",
+        # The address, as the date is drawn, its baseline the bottom margin.
+        f"drawtext=fontfile={text}:text='{INFO_ADDRESS}':expansion=none:fontsize={date_size}"
+        f":fontcolor=0xBDBDBD:x='{right}':y='h-{edge}+{dy}':y_align=baseline",
+    ]
+    cycle = info.panel_s * len(info.panels)
+    into = info.airs_at_s % cycle
+    phase = f"mod(t+{into:.3f},{cycle:g})"
+    title_size, body_size, spacing = round(0.040 * h), round(0.034 * h), round(0.014 * h)
+    pitch = round(TEXT_LINE * body_size) + spacing
+    title_gap = round(0.068 * h)  # (baseline to baseline)
+    for n, (title, body, lines) in enumerate(info.panels):
+        start, end = n * info.panel_s, (n + 1) * info.panel_s
+        shown = (
+            f":alpha='clip(min(({phase}-{start:g})/{info.fade_s:g},({end:g}-{phase})/{info.fade_s:g}),0,1)'"
+            f":enable='between({phase},{start:g},{end:g})'"
+        )
+        first = edge + (max(lines, 1) - 1) * pitch  # (its first line's baseline, from the bottom)
+        out.append(
+            f"drawtext=fontfile={display}:textfile={filter_path(title)}:expansion=none"
+            f":fontsize={title_size}:fontcolor={TEAL}:x='{left}':y='h-{first + title_gap}+{dy}'"
+            f":y_align=baseline{shown}"
+        )
+        out.append(
+            f"drawtext=fontfile={text}:textfile={filter_path(body)}:expansion=none"
+            f":fontsize={body_size}:line_spacing={spacing}:fontcolor=white@0.92"
+            f":x='{left}':y='h-{first}+{dy}':y_align=baseline{shown}"
+        )
+    return ",".join(out)
+
+
+def info_pearls(settings: Settings, info: Info) -> str:
+    """The graph that puts the film's pearls in front back over what's
+    drawn on it (`[info_drawn]`, the picture with the text), from its
+    second video stream: where they are, in shades of gray, made Signal
+    Teal and laid over."""
+    w, h = settings.video_width, settings.video_height
+    return (
+        f"[0:v:{info.pearls}]scale={w}:{h},format=gray[info_where];"
+        f"color=c={TEAL}:s={w}x{h}:r={FPS_NUM}/{FPS_DEN},format=rgba[info_teal];"
+        "[info_teal][info_where]alphamerge[info_pearls];"
+        "[info_drawn][info_pearls]overlay=shortest=1:format=auto,format=yuv420p"
+    )
+
+
 def drift(axis: int, airs_at_s: float) -> str:
     """How far the corner mark has moved from its place along `axis` (0:
     right, 1: down), as an expression of each frame's time t in what's
@@ -1017,6 +1120,7 @@ def _video_filter(
     subtitles: Subtitles | None = None,
     offset_s: float = 0.0,
     video_index: int = 0,
+    info: Info | None = None,
 ) -> str:
     """Scaling and padding stay on the CPU for every encoder: they're cheap
     at these sizes, and they behave identically on any file. So does
@@ -1063,8 +1167,20 @@ def _video_filter(
         f"fps={FPS_NUM}/{FPS_DEN}",
         "format=yuv420p",
     ]
+    chain = ",".join(steps)
+    if info is not None:
+        # INFO's date, time and panels, with its pearls back over them (the
+        # graph names its inputs from here: see program_command).
+        chain = (
+            f"[0:v:{video_index}]{chain},{info_text(settings, info)}[info_drawn];"
+            f"{info_pearls(settings, info)}"
+        )
     # The corner mark and the banner go on after the picture is its final size.
-    chain = with_overlays(settings, ",".join(steps), watermark, banner)
+    chain = with_overlays(settings, chain, watermark, banner)
+    if info is not None:
+        if encoder.kind == "vaapi":
+            chain += ",format=nv12,hwupload"
+        return chain + "[vout]"
     if subtitles is not None and subtitles.image:
         # The subtitles' own picture fitted to the stream's (as the film's
         # was), and laid over it.
@@ -1208,6 +1324,7 @@ def program_command(
     subtitles: Subtitles | None = None,
     container: str = "",
     file_start_s: float | None = None,
+    info: Info | None = None,
 ) -> list[str]:
     """ffmpeg arguments to play `duration_s` of `source` from `offset_s`.
     `tone_map`: for an HDR picture, the filters that make it ordinary (see
@@ -1232,9 +1349,9 @@ def program_command(
     args += [*start, "-i", source]
     graph = _video_filter(
         settings, encoder, aspect_mode, source_aspect, picture, watermark, banner, tone_map,
-        subtitles, offset_s if offset_s > 0.05 else 0.0, video_index,
+        subtitles, offset_s if offset_s > 0.05 else 0.0, video_index, info,
     )  # fmt: skip
-    if not (subtitles is not None and subtitles.image):
+    if info is None and not (subtitles is not None and subtitles.image):
         graph = f"[0:v:{video_index}]{graph}[vout]"
     if audio_index is None:
         # No sound in the file: silence, so every program has a track. (Not

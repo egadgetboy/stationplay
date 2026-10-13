@@ -254,9 +254,12 @@ $('#addFilter').addEventListener('click', () => {
   updateCount();
 });
 
+// (99 is always INFO's: see infostation.py on the server.)
+const INFO_NUMBER = 99;
+const isInfo = c => (c?.sources || []).length > 0 && c.sources.every(s => s.type === 'info');
 function nextNumber() {
   const used = new Set(channels.map(c => c.number));
-  let n = 1; while (used.has(n)) n++; return n;
+  let n = 1; while (used.has(n) || n === INFO_NUMBER) n++; return n;
 }
 
 async function loadLibItems() {

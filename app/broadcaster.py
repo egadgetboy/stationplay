@@ -43,7 +43,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import cliprules, intro, playing, specials, subtitles, upnext
+from . import cliprules, infostation, intro, playing, specials, subtitles, upnext
 from . import ffmpeg as ff
 from .breaks import COMMERCIALS, ID_CARD, TRAILERS, clip_at
 from .broken import OPENING, PLAYING, of_part, part_key
@@ -1541,6 +1541,25 @@ class Broadcaster:
             if drawing is not None:
                 await drawing.close()
 
+    def _info_over(self, item: Item, source: str, ts: float) -> ff.Info | None:
+        """What the INFO station's film has drawn over it (see
+        infostation.py): the date and time, and its panels, telling the time
+        from when this stretch airs; None for anything else."""
+        if item.rating_key != infostation.KEY or source != str(infostation.FILE):
+            return None
+        channel = self.ctx.db.get_channel(self.channel_id)
+        self.ctx.info_panels.ensure()
+        return ff.Info(
+            panels=tuple(
+                (str(t), str(b), infostation.lines(b))
+                for t, b in infostation.files(self.ctx.info_panels.folder)
+            ),
+            clock="24" if channel is not None and channel.clock_format == "24" else "12",
+            airs_at_s=self._cursor(ts) / 1000,
+            panel_s=infostation.PANEL_S,
+            fade_s=infostation.FADE_S,
+        )
+
     async def _play_program(
         self,
         item: Item,
@@ -1714,6 +1733,7 @@ class Broadcaster:
                     banner = await drawing.for_part(position, play_s, wait_s)
                 if played:
                     burst = self._burst_at(ts)
+                info = self._info_over(item, here.source, ts)
                 args = ff.program_command(
                     self.settings,
                     here.source,
@@ -1739,6 +1759,7 @@ class Broadcaster:
                     subtitles=subs,
                     container=probe.container,
                     file_start_s=probe.start_s,
+                    info=info,
                 )
                 # Don't wait for a first frame longer than the stream's cushion lasts.
                 first_frame_timeout = min(FIRST_FRAME_TIMEOUT_S, max(4.0, self._lead_s(ts) - 1.0))

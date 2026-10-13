@@ -1,0 +1,8 @@
+{
+  "version": "1.34.1",
+  "new": [
+    "INFO, station 99: the date, the time and what's new",
+    "Setup opens at once, and checks your media folder",
+    "Media in tapiOca's apps is on to start"
+  ]
+}

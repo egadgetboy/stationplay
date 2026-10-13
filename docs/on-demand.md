@@ -8,10 +8,12 @@ covers the server's side. The full product plan is in the document
 
 ## Goals
 
-1. **Off until an Admin chooses.** The apps get nothing from Media
-   until an Admin picks which Media folders to share, on the **Access** tab.
-   Setups that use only Plex, Jellyfin or other apps see no difference, and
-   stations don't change at all.
+1. **On to start (from 1.34.1).** On a new tapiOca, every Media folder of
+   shows and movies is shared with the apps, and Media folders added later
+   too, until an Admin saves a choice on the **Access** tab or in the setup. A choice is kept,
+   even none: then the apps get nothing from Media. Viewing Levels still
+   decide what each person sees. Setups that use only Plex, Jellyfin or
+   other apps see no difference, and stations don't change at all.
 2. **Only what's shared.** An app can see and play only what's in a shared
    Media folder. Every key an app asks about is checked against that.
 3. **The best picture and sound first.** A file plays directly whenever the
@@ -75,9 +77,23 @@ offers where the app is:
 
 The **Access** tab has **Media in tapiOca's apps** (named for the apps'
 Media section from 1.25.0): a checkbox for each Media folder of shows or
-movies in Plex. None is checked at first. The choice is kept in `meta` as
-`app_libraries` (a JSON list of Media folders' keys), and each change is written to
-the log. A shared Media folder that's gone from Plex is simply skipped.
+movies in Plex. From 1.34.1, every one is shared at first, and so is any
+added later, until an Admin saves a choice (before 1.34.1, none was).
+The choice is kept in `meta` as `app_libraries` (a JSON list of Media
+folders' keys); with no row there, every Media folder is shared. Each
+change is written to the log. A shared Media folder that's gone from Plex
+is simply skipped.
+
+A server updated from an earlier version that never saved a choice shared
+none, and shares none after the update until an Admin chooses: at its first
+start from 1.34.1, `app_libraries` is set to `[]` and `app_libraries_waiting`
+to `1` (`app_libraries_since` says that start has looked, so a new server
+starting again partway through setup isn't taken for an old one). The
+setup asks about Media once, with every Media folder ticked to start, and
+going on from that step saves the choice. One that saved a choice, even
+none, keeps it. While Plex isn't answering, the setup's Media
+step says so within a few seconds, and Media folders already shared stay
+shared.
 
 Everyone who can use the apps sees the shared Media folders, within their
 Viewing Level (from 1.23.0: see `docs/users.md`). That includes Admins and

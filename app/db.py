@@ -1658,11 +1658,15 @@ class Database:
         return row["value"] if row else default
 
     def set_meta(self, key: str, value: str) -> None:
+        self.set_metas({key: value})
+
+    def set_metas(self, values: dict[str, str]) -> None:
+        """Several at once: all of them written, or none."""
         with self._lock, self._conn:
-            self._conn.execute(
+            self._conn.executemany(
                 "INSERT INTO meta (key, value) VALUES (?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (key, value),
+                list(values.items()),
             )
 
     # Users and signing in (see access.py) ------------------------------------
@@ -1691,19 +1695,21 @@ class Database:
         max_stations: int | None,
         pin_hash: str = "",
         show_on: str = "",
+        level_id: int | None = None,
     ) -> User:
-        """Adds a user, with their PIN and where they're shown in the same
-        write (so they never exist without them); sqlite3.IntegrityError if
-        there's one by that name."""
+        """Adds a user, with their PIN, where they're shown and their
+        Viewing Level in the same write (so they never exist without them);
+        sqlite3.IntegrityError if there's one by that name."""
         with self._lock, self._conn:
             cur = self._conn.execute(
-                "INSERT INTO users (name, password, role, created_ms, max_stations, pin, show_on) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (name, password_hash, role, created_ms, max_stations, pin_hash, show_on),
+                "INSERT INTO users (name, password, role, created_ms, max_stations, pin, show_on, "
+                "level_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (name, password_hash, role, created_ms, max_stations, pin_hash, show_on, level_id),
             )
         return User(
             int(cur.lastrowid or 0), name, role, created_ms, 0, max_stations,
             has_pin=bool(pin_hash), show_on=show_on, has_password=bool(password_hash),
+            level_id=level_id,
         )  # fmt: skip
 
     def user(self, user_id: int) -> User | None:

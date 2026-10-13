@@ -518,6 +518,7 @@ function mediaAwayFields(got, onEdit) {
   };
 }
 // How many can watch at once in tapiOca's apps (see capacity.py) ---------------
+const CONNECTION_TEST_MB = 20;  // (as the apps' test: capacity.TEST_MB)
 const shortDate = ms => new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric' });
 async function loadAppLimits() {
   let got;
@@ -564,6 +565,26 @@ async function loadAppLimits() {
     const t = r.test;
     return h('li', {}, `${where === 'away' ? 'Away from home' : 'At home'}: the fastest recent test (${t.mbps} Mbps, from ${t.device}${t.user ? ` as ${t.user}` : ''}, ${shortDate(t.at)}) leaves room for about ${plural(r.devices, 'device')} at once.`);
   };
+  // The apps' connection test, run from this browser (1.34.1, the owner):
+  // tapiOca's data timed as it arrives here, then what was found said to
+  // tapiOca, which keeps it with the apps' tests.
+  const testSaid = h('span', { class: 'hint', role: 'status' });
+  const testBtn = h('button', { type: 'button', class: 'btn', onclick: async () => {
+    testBtn.disabled = true;
+    testSaid.textContent = 'Testing… (a few seconds)';
+    try {
+      const began = performance.now();
+      const data = await api(`/api/internal/speed-test?mb=${CONNECTION_TEST_MB}`, { blob: true });
+      const seconds = Math.max(0.001, (performance.now() - began) / 1000);
+      const mbps = Math.round(data.size * 8 / seconds / 1e5) / 10;
+      const found = await api('/api/internal/speed-test', { method: 'POST', body: { mbps, app: 'tapiOca’s page' } });
+      const said = `${found.mbps} Mbps ${found.where === 'away' ? 'away from home' : 'at home'}: room for about ${plural(found.room, 'device')} at once.`;
+      testSaid.textContent = said;
+      toast(said);
+      if (!body.dataset.editing) loadAppLimits();
+    } catch (e) { testSaid.textContent = e.message; }
+    finally { testBtn.disabled = false; }
+  } }, 'Test the connection');
   const tests = got.tests.length ? h('table', { class: 'users' },
     h('tr', {}, h('th', {}, 'When'), h('th', {}, 'Where'), h('th', {}, 'App'), h('th', {}, 'Speed')),
     ...got.tests.map(t => h('tr', {}, h('td', {}, new Date(t.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })),
@@ -572,14 +593,15 @@ async function loadAppLimits() {
     h('p', { style: 'margin:0' }, 'Each device watching in tapiOca’s apps gets its own copy of the station: at home over your network, and away from home over your internet connection’s upload. A station still uses one tuner no matter how many people watch it, so these limits are about your network, not your server’s processor. Programs played from Media in the apps count too. Plex, Jellyfin and other apps aren’t counted here: they have limits of their own, and the tuners cover them.'),
     h('p', { class: 'muted small', style: 'margin:0' }, `Watching in tapiOca’s apps now: ${plural(got.watching.devices, 'device')}${got.watching.away ? ` (${got.watching.away} away from home)` : ''}.`),
     h('div', { class: 'scan-set' }, h('label', { for: 'appLimitDevices', style: 'min-width:220px' }, 'Devices watching at once'), devices),
-    h('div', { class: 'scan-set' }, h('label', { for: 'appLimitAway', style: 'min-width:220px' }, 'Of those, away from home'), away),
-    h('p', { class: 'hint', style: 'margin:0' }, 'Leave a box empty for no limit. A device that’s already watching can always change stations. Any device beyond the limit sees a message such as: “An Admin has limited tapiOca to 5 devices watching at once, so it runs smoothly for everyone. Please try again later.”'),
+    h('div', { class: 'scan-set' }, h('label', { for: 'appLimitAway', style: 'min-width:220px' }, 'Away from home, at most'), away),
+    h('p', { class: 'hint', style: 'margin:0' }, 'Leave a box empty for no limit. Devices away from home count toward the first number too: the second keeps your home’s internet upload from running out. A device that’s already watching can always change stations. Any device beyond a limit sees a message such as: “An Admin has limited tapiOca to 5 devices watching at once, so it runs smoothly for everyone. Please try again later.”'),
     warnings,
     h('div', { class: 'limit-note' }, h('strong', {}, 'What tapiOca recommends'),
       h('ul', {},
         h('li', {}, `Each device uses about ${got.eachMbps} Mbps (at ${got.picture}, the largest picture size your stations use).`),
         tested('home'), tested('away'),
-        h('li', {}, 'To run a test, open Options in a tapiOca app and choose Test the connection. To test away from home, run it on a phone using mobile data, or anywhere outside your home; this measures your home’s upload the way viewers away from home experience it. Test when your connection isn’t busy, and again from time to time. The fastest recent test is used.'))),
+        h('li', {}, 'Test the connection runs the same test as tapiOca’s apps, from this browser. It counts as at home or away from home by where this page is opened. To test away from home, run it on a phone using mobile data (in a tapiOca app, under Options), or from this page opened outside your home: that measures your home’s upload the way viewers away from home get it. Test when your connection isn’t busy, and again from time to time. The fastest recent test is used.')),
+      h('div', { class: 'scan-set' }, testBtn, testSaid)),
     h('div', { class: 'scan-set' }, save, useBtn, result),
     ...(tests ? [h('div', {}, h('strong', {}, 'Recent connection tests'), tests)] : []));
   paint();
@@ -590,7 +612,8 @@ async function loadAppLimits() {
 function libraryFields(got, onEdit) {
   const boxes = new Map();
   const choices = got.libraries.map(l => {
-    const box = h('input', { type: 'checkbox', checked: got.shared.includes(l.key), oninput: onEdit });
+    // (None shared yet, from before 1.34.1: every one is offered, ticked.)
+    const box = h('input', { type: 'checkbox', checked: got.waiting || got.shared.includes(l.key), oninput: onEdit });
     boxes.set(l.key, box);
     return h('label', {}, box, ` ${l.title} `, h('span', { class: 'muted small' }, l.kind === 'movie' ? '(movies)' : '(shows)'));
   });
@@ -604,14 +627,19 @@ function libraryFields(got, onEdit) {
   };
   const [slowHome, slowHomeRow] = slow('home', 'At home:', '');
   const [slowAway, slowAwayRow] = slow('away', 'Away from home:', '');
+  // (While the Media folders can't be listed, they're left as they are.)
   const values = () => ({
-    libraries: [...boxes].filter(([, b]) => b.checked).map(([key]) => key),
+    ...(got.problem && !got.libraries.length ? {} : { libraries: [...boxes].filter(([, b]) => b.checked).map(([key]) => key) }),
     whenSlow: { home: slowHome.value, away: slowAway.value },
   });
   const first = JSON.stringify(values());
   return {
     nodes: [
-      h('p', { style: 'margin:0' }, 'Choose the Media folders people can browse and watch on demand in tapiOca’s apps, beside your stations. None are shared until you choose. Stations don’t change, and neither do Plex, Jellyfin or other apps.'),
+      h('p', { style: 'margin:0' }, got.everything
+        ? 'People can browse and watch every Media folder on demand in tapiOca’s apps, beside your stations, and Media folders added later too. Untick any you’d rather keep out, then save. Stations don’t change, and neither do Plex, Jellyfin or other apps.'
+        : got.waiting
+          ? 'No Media folders are shared in tapiOca’s apps yet. Every one is ticked to start: untick any you’d rather keep out. People can browse and watch the ones you share on demand, beside your stations. Stations don’t change, and neither do Plex, Jellyfin or other apps.'
+          : 'The Media folders people can browse and watch on demand in tapiOca’s apps, beside your stations. Stations don’t change, and neither do Plex, Jellyfin or other apps.'),
       h('div', { class: 'limit-note' }, h('strong', {}, 'How it works'),
         h('ul', {},
           h('li', {}, h('strong', {}, 'The best picture and sound. '), 'A file plays as it is whenever the device can play it, including 4K and HDR. If it can’t, tapiOca makes a copy as it plays: repackaged, with the picture kept as it is (this costs next to nothing), or converted, with the picture made again (this takes a share of the server’s processor, so at most 3 at once; on a GPU it’s light on the processor, so up to 6). Converted copies are 1080p at most, and HDR is made ordinary.'),
@@ -621,7 +649,7 @@ function libraryFields(got, onEdit) {
           h('li', {}, 'Programs played this way count toward the limit on devices watching at once, set on the Access tab.'))),
       ...(got.problem ? [h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' ', got.problem)] : []),
       ...(choices.length ? [h('div', { class: 'arr-body', style: 'margin:0;gap:6px' }, ...choices)]
-        : [h('p', { class: 'muted small', style: 'margin:0' }, got.problem ? '' : 'Plex doesn’t list any Media folders of shows or movies.')]),
+        : [h('p', { class: 'muted small', style: 'margin:0' }, got.problem ? '' : 'There are no Media folders of shows or movies yet.')]),
       h('div', { class: 'arr-body', style: 'margin:0;gap:6px' },
         h('strong', { class: 'small' }, 'When playing can’t keep up'), slowHomeRow, slowAwayRow),
     ],
@@ -634,7 +662,8 @@ async function loadAppLibraries() {
   try { got = await api('/api/app-libraries'); }
   catch (e) { $('#appLibrariesSum').textContent = ''; $('#appLibrariesBody').replaceChildren(h('p', { class: 'muted', style: 'margin:0' }, e.message)); return; }
   const shared = got.libraries.filter(l => got.shared.includes(l.key));
-  $('#appLibrariesSum').textContent = shared.length ? `Shared: ${shared.map(l => l.title).join(', ')}` : 'Off';
+  $('#appLibrariesSum').textContent = got.everything ? 'Every Media folder'
+    : shared.length ? `Shared: ${shared.map(l => l.title).join(', ')}` : got.shared.length ? 'On' : 'Off';
   const body = $('#appLibrariesBody');
   if (body.dataset.editing) return;  // (not while it's being changed)
   const fields = libraryFields(got, () => { body.dataset.editing = '1'; });
@@ -648,7 +677,7 @@ async function loadAppLibraries() {
     const chosen = { ...fields.values(), evenSound: even.checked };
     try { await api('/api/app-libraries', { method: 'PUT', body: chosen }); }
     catch (e) { result.textContent = e.message; return; }
-    toast(chosen.libraries.length ? 'Saved. tapiOca’s apps can show the Media folders you chose.' : 'Saved. tapiOca’s apps don’t show any Media folder.');
+    toast(!chosen.libraries ? 'Saved' : chosen.libraries.length ? 'Saved. tapiOca’s apps can show the Media folders you chose.' : 'Saved. tapiOca’s apps don’t show any Media folder.');
     delete body.dataset.editing;
     loadAppLibraries();
   } }, 'Save');

@@ -74,6 +74,12 @@ source package.
   Station ID card and corner clock. Copyright 2024 The Montserrat.Git
   Project Authors (<https://github.com/JulietaUla/Montserrat>). License:
   SIL Open Font License, version 1.1, in `app/assets/fonts/OFL.txt`.
+- **Space Grotesk** (Medium) and **Unbounded** (Regular), in
+  `app/assets/fonts/SpaceGrotesk/` and `app/assets/fonts/Unbounded/`,
+  used to draw the INFO station's time, date and panels. Each is a single
+  weight taken from the page's copy of the font (below), unchanged
+  otherwise, under the same copyright and the same license: the SIL Open
+  Font License, version 1.1, in the `OFL.txt` beside it.
 
 - **Space Grotesk** (in `app/web/fonts/SpaceGrotesk/`), the page's text.
   Copyright 2020 The Space Grotesk Project Authors

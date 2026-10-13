@@ -6,7 +6,7 @@
 // update check's setting, on the Add to Plex tab. "Not now" hides the
 // banner for that version, in this browser.
 const UPDATE_NOT_NOW = 'tapioca.updateNotNow';
-const UPDATE_PRIVACY = 'Once a day, tapiOca asks GitHub whether a newer version is out. GitHub sees your server’s internet address when it asks, as any website does. tapiOca sends only its version, and never updates by itself.';
+const UPDATE_PRIVACY = 'Every 4 hours, tapiOca asks GitHub whether a newer version is out. GitHub sees your server’s internet address when it asks, as any website does. tapiOca sends only its version, and never updates by itself.';
 const notNowFor = () => { try { return localStorage.getItem(UPDATE_NOT_NOW) || ''; } catch { return ''; } };
 let updates = null;
 // An Admin's answer, from the question, the setting or setup: then the
@@ -20,10 +20,18 @@ async function answerUpdates(on) {
 }
 async function loadUpdates() {
   const banner = $('#updateBanner');
-  if (!isAdmin() || signedOut()) { banner.hidden = true; return; }
+  const pill = $('#updatePill');
+  if (!isAdmin() || signedOut()) { banner.hidden = pill.hidden = true; return; }
   try { updates = await api('/api/updates'); } catch { return; }
   renderUpdatesPanel();
   const u = updates;
+  // The header's pill, for as long as a newer tapiOca is out (even after
+  // Not now): it brings the banner back (1.34.1, the owner).
+  pill.hidden = !u.latest;
+  if (u.latest) {
+    pill.querySelector('.long').textContent = `tapiOca ${u.latest.version} is out`;
+    pill.title = `tapiOca ${u.latest.version} is available. This is ${u.current}. Choose to see how to update.`;
+  }
   if (u.ask) {
     const answer = on => async e => {
       for (const b of banner.querySelectorAll('button')) b.disabled = true;
@@ -87,4 +95,36 @@ function renderUpdatesPanel() {
         try { updates = await api('/api/updates/check', { method: 'POST' }); } catch (err) { toast(err.message, true); }
         loadUpdates();
       } }, 'Check now') : null));
+}
+$('#updatePill').addEventListener('click', () => {
+  try { localStorage.removeItem(UPDATE_NOT_NOW); } catch {}
+  loadUpdates().then(() => {
+    window.scrollTo(0, 0);
+    $('#updateBanner').querySelector('a.btn, button')?.focus();
+  });
+});
+// The INFO station (see infostation.py on the server): station 99, its
+// state, and Add the INFO station to bring it back, on the Add to Plex tab.
+async function loadInfoStation() {
+  const panel = $('#infoPanel');
+  if (!panel || !isAdmin()) return;
+  let got;
+  try { got = await api('/api/info-station'); } catch { return; }
+  const about = h('p', { class: 'hint', style: 'margin:0' }, 'Station 99, INFO, shows the date and time, what’s new in this version of tapiOca and in its apps, how many stations you have and what’s in the Media folders shared with tapiOca’s apps (counts only, never titles), and tips for tapiOca’s apps, over a film of pearls flying through tapiOca’s ring. Everyone who can watch your stations sees it, in Plex too, so it never shows your server’s addresses or how it’s doing. It plays even without Plex, so Plex always has a station to find when you add tapiOca to it.');
+  if (got.station !== null) {
+    panel.replaceChildren(about, h('p', { style: 'margin:0' }, `INFO is station 99${got.name !== 'INFO' ? `, called ${got.name}` : ''}. To remove it, delete it on the Stations tab. You can add it back here any time.`));
+    return;
+  }
+  const said = h('span', { class: 'hint', role: 'status' });
+  const add = h('button', { type: 'button', class: 'btn', disabled: !!got.taken, onclick: async () => {
+    add.disabled = true;
+    try { await api('/api/info-station', { method: 'POST' }); }
+    catch (e) { said.textContent = e.message; add.disabled = false; return; }
+    toast('INFO is back on station 99');
+    loadChannels();
+    loadInfoStation();
+  } }, 'Add the INFO station');
+  panel.replaceChildren(about,
+    got.taken ? h('p', { style: 'margin:0' }, `Station 99 is ${got.taken} now. To add INFO, give that station another number first: INFO is always station 99.`) : null,
+    h('div', { class: 'scan-set' }, add, said));
 }

@@ -48,6 +48,7 @@ from . import access, ratings
 from .access import ADMIN
 from .catalog import EPISODE, MOVIE, SHOW, Entry, Tags
 from .db import Database, Item, User
+from .infostation import KEY as INFO_KEY
 from .text import plain
 from .titles import Judged, Titles
 
@@ -74,6 +75,10 @@ UNRESTRICTED_STAYS = (
 )
 LEVELS_MOST = 50
 NAME_MAX = 40
+# The level new people start on (1.34.1, the owner), by its id; none:
+# Unrestricted. An Admin may choose another as each is added.
+META_NEW_LEVEL = "viewing_new_level"
+NO_SUCH_LEVEL = "There's no such Viewing Level now. Choose another one."
 AGE_MOST = 18
 
 
@@ -406,6 +411,8 @@ def reach_of(items: list[Item], titles: Titles) -> Reach:
     tags: dict[str, set[str]] = {kind: set() for kind in TAG_KINDS}
     keys: set[str] = set()
     for item in items:
+        if item.rating_key == INFO_KEY:
+            continue  # (INFO's film, tapiOca's own, is for everyone: see infostation.py)
         judged = titles.judge(item)
         if judged.key:
             keys.add(judged.key)
@@ -618,7 +625,10 @@ class Viewing:
         return self._levels[level_id]
 
     def remove_level(self, level_id: int) -> None:
-        """Removes a level, if no one's on it (but never Unrestricted). ValueError."""
+        """Removes a level, if no one's on it (but never Unrestricted). If
+        it was the one new people start on, they start on Unrestricted again
+        (and a level added later never takes its place by chance, with the
+        same id). ValueError."""
         level = self._levels.get(level_id)
         if level is None:
             return
@@ -626,8 +636,36 @@ class Viewing:
             raise ValueError(UNRESTRICTED_STAYS)
         if any(u.level_id == level_id for u in self.db.users()):
             raise ValueError(f"Choose another level for everyone on {level.name} first")
+        if self._new_level_id() == level_id:
+            self.db.set_meta(META_NEW_LEVEL, "")
         self.db.delete_level(level_id)
         self.reload()
+
+    def _new_level_id(self) -> int | None:
+        said = self.db.get_meta(META_NEW_LEVEL, "") or ""
+        return int(said) if said.isdigit() else None
+
+    def new_level(self) -> Level:
+        """The level new people start on (Unrestricted, until an Admin
+        chooses another)."""
+        return self.level(self._new_level_id())
+
+    def set_new_level(self, level_id: int) -> Level:
+        """Chooses the level new people start on. ValueError."""
+        if level_id not in self._levels:
+            raise ValueError(NO_SUCH_LEVEL)
+        level = self._levels[level_id]
+        self.db.set_meta(META_NEW_LEVEL, "" if level.builtin == UNRESTRICTED else str(level_id))
+        return level
+
+    def for_someone_new(self, level_id: int | None) -> tuple[int | None, str]:
+        """The level someone new starts on: the one chosen as they're added,
+        or (None) the one new people start on. Their level's id (None:
+        Unrestricted) and its name. ValueError if the one chosen is gone."""
+        if level_id is not None and level_id not in self._levels:
+            raise ValueError(NO_SUCH_LEVEL)
+        level = self.level(level_id) if level_id is not None else self.new_level()
+        return (None if level.builtin == UNRESTRICTED else level.id), level.name
 
     def users_on(self) -> dict[int, int]:
         """How many users each level has (Unrestricted counts those with none)."""
@@ -814,6 +852,10 @@ class LevelIn(BaseModel):
     blocks: dict[str, Any] | None = None
 
 
+class NewLevel(BaseModel):
+    level: int
+
+
 class UserViewing(BaseModel):
     """What's given changes: a level (null: Unrestricted), and the stations allowed
     (true) or blocked (false) for them, by id (any not listed are neither); and
@@ -852,11 +894,16 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         hidden = hides_said(level.blocks)
         return f"{movies}, {tv}, {unrated}, {libraries}{f', hiding {hidden}' if hidden else ''}"
 
+    # (Who's added starts on the level chosen for them, or the one new
+    # people start on: see access.add_user.)
+    ctx.access.level_for_new = v.for_someone_new
+
     @app.get("/api/access/viewing")
     async def viewing_state() -> dict[str, Any]:
         on = v.users_on()
         return {
             "levels": [lv.as_json(on.get(lv.id, 0)) for lv in v.levels()],
+            "newLevel": v.new_level().id,
             "users": {
                 str(u.id): {
                     "level": v.level(u.level_id).id,
@@ -905,14 +952,32 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     @app.delete("/api/access/levels/{level_id}", status_code=204)
     async def remove_level(level_id: int, request: Request):
         level = v.level(level_id)
+        was_new = v.new_level().id == level_id
         try:
             v.remove_level(level_id)
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
         if level.id == level_id:
             ctx.access.record(
-                logging.INFO, f"{who(request)} removed the Viewing Level {level.name}"
+                logging.INFO,
+                f"{who(request)} removed the Viewing Level {level.name}"
+                + (f" (new people start on {v.new_level().name} now)" if was_new else ""),
             )
+
+    @app.put("/api/access/new-level")
+    async def choose_new_level(body: NewLevel, request: Request):
+        """The level new people start on."""
+        before = v.new_level()
+        try:
+            level = v.set_new_level(body.level)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        if level.id != before.id:
+            ctx.access.record(
+                logging.INFO,
+                f"{who(request)} chose {level.name} as the Viewing Level new people start on",
+            )
+        return {"newLevel": level.id}
 
     @app.put("/api/access/users/{user_id}/viewing")
     async def set_user_viewing(user_id: int, body: UserViewing, request: Request):

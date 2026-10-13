@@ -706,7 +706,7 @@ function picksTotal() {
     } else if (s.type === 'section') {
       const items = libCache.get(String(s.key));
       if (items) items.forEach(add); else missing++;
-    } else others++;
+    } else if (s.type !== 'info') others++;  // (INFO's film: see infostation.py)
   }
   if (missing) fillLibCache();
   const parts = [];
@@ -745,6 +745,9 @@ async function openEditor(ch = null, copy = false) {
   editing = copy ? null : ch;
   $('#editorTitle').textContent = copy ? `New station (a copy of ${ch.number})` : ch ? `Edit station ${ch.number}` : 'New station';
   $('#fNumber').value = ch && !copy ? ch.number : nextNumber();
+  // (INFO is always 99.)
+  $('#fNumber').disabled = Boolean(ch && !copy && isInfo(ch));
+  $('#fNumber').title = $('#fNumber').disabled ? 'INFO is always station 99' : '';
   $('#fName').value = copy ? `${ch.name} (copy)`.slice(0, 60) : ch ? ch.name : `Station ${$('#fNumber').value}`;
   $('#fName').placeholder = `Station ${$('#fNumber').value}`;
   const st = ch || NEW_STATION;  // a new station starts with what new stations start with

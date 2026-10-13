@@ -41,11 +41,21 @@ async function api(path, opts = {}) {
 }
 
 let toastTimer;
+// The dialog open on top, if one is (everything else is out of reach under
+// it: a toast, or the copy's text, goes in it to be seen and selected).
+const topDialog = () => [...document.querySelectorAll('dialog[open]')].filter(d => d.matches(':modal')).pop() || null;
+// The toast, in sight: in the dialog on top, if there is one, or the page.
+function toastBox() {
+  const t = $('#toast');
+  const host = topDialog() || document.body;
+  if (t.parentElement !== host) host.append(t);
+  return t;
+}
 function toast(msg, error = false) {
   // (Not over the sign-in page, which says what's needed: a problem then is
   // only something the page was doing as it was signed out.)
   if (error && signedOut()) return;
-  const t = $('#toast');
+  const t = toastBox();
   t.textContent = msg;
   t.className = 'toast' + (error ? ' error' : '');
   t.hidden = false;
@@ -73,7 +83,7 @@ function madeNotice(made, problems = []) {
 }
 // A message with an Undo button, shown until it's too late to undo.
 function toastWithUndo(msg, undo) {
-  const t = $('#toast');
+  const t = toastBox();
   t.replaceChildren(msg, h('button', { type: 'button', class: 'undo', onclick: () => { t.hidden = true; undo(); } }, 'Undo'));
   t.className = 'toast';
   t.hidden = false;
@@ -110,7 +120,7 @@ function showTab(name) {
   for (const id of TABS) $('#tab-' + id).hidden = id !== name;
   if (name === 'broken') { loadArr().then(loadBroken); loadScan(); loadReportSettings(); }
   if (name === 'logs') { loadLogs(true); loadProblems(); loadNotify(); }
-  if (name === 'setup') { loadBackups(); renderPlaybackPanel(); loadUpdates(); }
+  if (name === 'setup') { loadBackups(); renderPlaybackPanel(); loadUpdates(); loadInfoStation(); }
   if (name === 'stats') { loadStats(); loadNow(); }
   if (name === 'access') { loadAccess(); loadApps(); loadTuner(); loadLimits(); loadAway(); loadAppLimits(); loadAppLibraries(); loadApiTokens(); }
   history.replaceState(null, '', '#' + name);
@@ -201,12 +211,22 @@ async function copyText(text) {
   if (navigator.clipboard && window.isSecureContext) {
     try { await navigator.clipboard.writeText(text); return true; } catch {}
   }
-  const area = h('textarea', { style: 'position:fixed;top:0;left:0;opacity:0', readonly: true });
+  // (At a home address, over http, the browser has no clipboard to write
+  // to: the text is selected and copied instead, in the dialog on top if
+  // one's open, where it can be: 1.34.1, the owner.)
+  const was = document.activeElement;
+  const area = h('textarea', { style: 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0', readonly: true, 'aria-hidden': 'true', tabindex: '-1' });
   area.value = text;
-  document.body.append(area);
+  (topDialog() || document.body).append(area);
+  area.focus({ preventScroll: true });
   area.select();
   let ok = false;
   try { ok = document.execCommand('copy'); } catch {}
   area.remove();
+  was?.focus?.({ preventScroll: true });
   return ok;
 }
+// A Copy button: says Copied, or how to copy it otherwise.
+const copyButton = value => h('button', { type: 'button', class: 'btn', onclick: async () => {
+  toast(await copyText(value) ? 'Copied' : `Couldn’t copy. Select it and copy it yourself: ${value}`, false);
+} }, 'Copy');

@@ -256,3 +256,84 @@ def test_with_no_limits_everything_is_as_it_was(app):
         made = page.post("/api/channels", json={"number": 11, "name": "Mine", "sources": [
             {"type": "show", "ratingKey": "100"}]})  # fmt: skip
         assert made.status_code == 201, made.text
+
+
+def test_new_people_start_on_the_level_an_admin_chooses(app):
+    """(1.34.1, the owner) An Admin chooses the Viewing Level new people
+    start on (Unrestricted until then), and can choose another as each is
+    added. They're on it from the moment they're added. Admins always see
+    everything."""
+    with TestClient(app) as admin:
+        set_up(admin)
+        admin.post("/api/access/users", json=ADA)
+        state = admin.get("/api/access/viewing").json()
+        unrestricted = next(lv["id"] for lv in state["levels"] if lv["builtin"] == "unrestricted")
+        teen = next(lv["id"] for lv in state["levels"] if lv["builtin"] == "teen")
+        assert state["newLevel"] == unrestricted
+        # Unrestricted, as before, until an Admin chooses.
+        bo = admin.post(
+            "/api/access/users", json={"name": "Bo", "password": "battery staple", "role": "user"}
+        ).json()
+        assert (
+            admin.get("/api/access/viewing").json()["users"][str(bo["id"])]["level"] == unrestricted
+        )
+
+        kid = kid_level(admin)
+        chose = admin.put("/api/access/new-level", json={"level": kid})
+        assert chose.status_code == 200, chose.text
+        assert admin.get("/api/access/viewing").json()["newLevel"] == kid
+        kit = admin.post("/api/access/users", json={**KIT, "role": "user"}).json()
+        users = admin.get("/api/access/viewing").json()["users"]
+        assert users[str(kit["id"])]["level"] == kid
+        assert users[str(bo["id"])]["level"] == unrestricted  # (no one else changes)
+        # On it from the start: what's above Kid never shows.
+        as_kit = sign_in_app(app, KIT)
+        listed = TestClient(app).get("/api/v1/stations", headers=as_kit).json()["stations"]
+        assert [s["number"] for s in listed] == [3, 9]
+        # Another chosen as someone is added; an Admin is on none.
+        jo = admin.post(
+            "/api/access/users",
+            json={"name": "Jo", "password": "staple battery", "role": "user", "level": teen},
+        ).json()
+        al = admin.post(
+            "/api/access/users",
+            json={"name": "Al", "password": "horse battery", "role": "admin", "level": kid},
+        ).json()
+        users = admin.get("/api/access/viewing").json()["users"]
+        assert users[str(jo["id"])]["level"] == teen
+        assert users[str(al["id"])]["level"] == unrestricted
+        assert admin.app.state.ctx.db.user(al["id"]).level_id is None
+        gone = admin.post(
+            "/api/access/users",
+            json={"name": "Cy", "password": "battery horse", "role": "user", "level": 999},
+        )
+        # (One that never was isn't "removed": 1.34.1's audit.)
+        assert (
+            gone.status_code == 400
+            and gone.json()["detail"] == "There's no such Viewing Level now. Choose another one."
+        )
+        missing = admin.put("/api/access/new-level", json={"level": 999})
+        assert missing.status_code == 400
+        assert missing.json()["detail"] == "There's no such Viewing Level now. Choose another one."
+        logs = admin.get("/api/logs?access_log=true").json()["text"]
+        assert "Ada chose Kid as the Viewing Level new people start on" in logs
+        assert "Ada added Kit as a User (up to 3 stations), on the Viewing Level Kid" in logs
+
+        # Removing that level: new people start on Unrestricted again (and
+        # a level added later never takes its place by chance).
+        admin.put(f"/api/access/users/{kit['id']}/viewing", json={"level": teen})
+        assert admin.delete(f"/api/access/levels/{kid}").status_code == 204
+        assert admin.get("/api/access/viewing").json()["newLevel"] == unrestricted
+        logs = admin.get("/api/logs?access_log=true").json()["text"]
+        assert "removed the Viewing Level Kid (new people start on Unrestricted now)" in logs
+        admin.post("/api/access/levels", json={"name": "Later", "movieAge": 10})
+        assert admin.get("/api/access/viewing").json()["newLevel"] == unrestricted
+
+
+def test_the_level_new_people_start_on_is_for_admins(app):
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        admin.post("/api/access/users", json={**KIT, "role": "user"})
+        kit = TestClient(app)
+        kit.post("/api/access/sign-in", json=KIT)
+        assert kit.put("/api/access/new-level", json={"level": kid_level(admin)}).status_code == 403

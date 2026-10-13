@@ -1,4 +1,5 @@
-"""The update check (releases.py, from 1.34.0): once a day, whether a newer
+"""The update check (releases.py, from 1.34.0): every 4 hours (once a day
+before 1.34.1), whether a newer
 tapiOca is out, from GitHub's list of releases; an Admin's setting;
 what the banner says for each kind of install; and nothing asked,
 downloaded or followed beyond that one answer.
@@ -354,3 +355,12 @@ def test_not_now_hides_the_banner_for_that_version_only():
     assert page.index("if (u.ask) {") < page.index("notNowFor() === u.latest.version")
     # Nothing's ticked until an Admin says yes.
     assert "checked: u.on === true" in page
+
+
+def test_the_update_check_looks_every_four_hours():
+    """(1.34.1, the owner) Every 4 hours, as it costs next to nothing: one
+    small request to GitHub's public API, well inside what GitHub allows
+    an address without an account (60 an hour)."""
+    assert releases.EVERY_S == 4 * 3600
+    page = Path(__file__).resolve().parent.parent / "app" / "web" / "js" / "updates.js"
+    assert "Every 4 hours, tapiOca asks GitHub" in page.read_text(encoding="utf-8")

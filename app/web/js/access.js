@@ -255,6 +255,7 @@ const showNewUserStations = () => {
   $('#newUserPassword').required = !user || !me.required;
   $('#newUserPassword').placeholder = user && me.required ? 'Optional for a User' : '';
   $('#newUserPinField').hidden = !me.required;
+  $('#newUserLevelField').hidden = !user || !me.required || !viewing;
 };
 $('#newUserRole').addEventListener('change', showNewUserStations);
 let viewing = null;  // Viewing Levels, and each user's (see viewing.py on the server)
@@ -265,6 +266,7 @@ async function loadAccess() {
     if (me.required) [users, viewing, linked] = await Promise.all([api('/api/access/users'), api('/api/access/viewing'), api('/api/access/devices'), loadClipRatings()]);
   } catch (e) { $('#accessState').textContent = e.message; return; }
   renderViewing();
+  if (!$('#addUserForm').contains(document.activeElement)) fillNewUserLevel();
   renderDevices();
   $('#accessState').textContent = me.required
     ? `Sign-in is on: ${plural(users.length, 'user')} can sign in, and everyone else sees only the sign-in page.`

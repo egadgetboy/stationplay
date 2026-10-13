@@ -11,6 +11,7 @@ import secrets
 import time
 from pathlib import Path
 
+from . import infostation
 from .db import Database
 from .ffmpeg import UPLOADED_PICTURE
 from .text import name_from_file
@@ -67,6 +68,11 @@ class LogoLibrary:
         self.uploads = uploads  # where uploaded logos are kept (the data folder's logos/)
         self.db = db
         self.version, self._catalog, self.replaced = _load(directory)
+        # tapiOca's own mark, INFO's logo (see infostation.py): offered
+        # with the library's, never handed out at random.
+        if directory == LOGO_DIR and infostation.LOGO_FILE.is_file():
+            self._catalog = [*self._catalog, {"id": infostation.LOGO, "name": "tapiOca",
+                                              "category": "On the air", "tags": ["tapioca"]}]  # fmt: skip
         self._ids = {logo["id"] for logo in self._catalog}
 
     def _uploaded(self) -> list[tuple[str, str]]:
@@ -91,6 +97,8 @@ class LogoLibrary:
 
     def path(self, logo_id: str) -> Path | None:
         logo_id = self.resolve(logo_id)
+        if logo_id == infostation.LOGO and logo_id in self._ids:
+            return infostation.LOGO_FILE
         if logo_id in self._ids:
             return self.directory / f"{logo_id}.png"
         if logo_id.startswith(UPLOAD_PREFIX) and self.uploads is not None:
@@ -114,7 +122,8 @@ class LogoLibrary:
         pool = [
             logo["id"]
             for logo in self._catalog
-            if logo["category"] not in LETTERING and logo["id"] != COLLECTION_LOGO
+            if logo["category"] not in LETTERING
+            and logo["id"] not in (COLLECTION_LOGO, infostation.LOGO)
         ]
         free = [logo_id for logo_id in pool if logo_id not in taken]
         return rng.choice(free or pool) if pool else ""

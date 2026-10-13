@@ -39,6 +39,12 @@ short string.
   (digits, or `f` + digits) in Phase 3, with the folder source. Accepting
   folder keys before anything can answer for them would only let bad data
   in.
+- **One program belongs to no source (from 1.34.1).** The INFO station's
+  one program (`app/infostation.py`) has the key `f0`: a folder library's
+  shape, with a number no folder library is given. Its station's one source
+  is `{"type": "info"}`. The layer answers for it itself, from the film in
+  the image (`app/assets/info/`), without asking Plex: its program, its
+  file, no markers, and its logo as its art and poster.
 
 Keys are stored in these places, all unchanged: `channels.sources` and the
 feature and block sources (JSON), `era_items` (rating, show and part keys),

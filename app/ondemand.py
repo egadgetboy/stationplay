@@ -3,9 +3,10 @@
 movies and episodes, deciding whether a device can play a file as it is,
 play sessions, and where each person is in what they watch.
 
-Off until an Admin shares a library on the Access tab: until then the apps
-see no library at all, and nothing here asks Plex anything. Stations don't
-change either way.
+On to start (1.34.1, the owner): every Media folder of shows and movies is
+shared, new ones too, until an Admin chooses on the Access tab or in the
+setup. A choice is kept, even none: then the apps see no library at all,
+and nothing here asks Plex anything. Stations don't change either way.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ import secrets
 import time
 import unicodedata
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Collection, Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
@@ -34,7 +35,14 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-META = "app_libraries"
+META = "app_libraries"  # the Media folders an Admin chose, as JSON (none: every one)
+NEVER_CHOSEN = "\0"  # (what reading it gives when there's none)
+# A tapiOca from before 1.34.1 whose Admin never chose shared none, and
+# shares none after updating until an Admin goes on from setup's Media step,
+# which offers every folder, ticked ("1" while it waits). Looked at once, at
+# the first start from 1.34.1 (SINCE_META).
+WAITING_META = "app_libraries_waiting"
+SINCE_META = "app_libraries_since"
 # When playing can't keep up (see docs/on-demand.md, "Keeping up"): offer a
 # smaller version of the title, or switch to it on its own; at home, and
 # away from home.
@@ -120,16 +128,56 @@ ENDED_KEPT = 200
 # Sharing libraries -------------------------------------------------------------
 
 
+class Every:
+    """Every Media folder of shows and movies (`known`: as the library last
+    listed them; None: not listed yet, so any key counts until they are)."""
+
+    def __init__(self) -> None:
+        self.known: tuple[str, ...] | None = None
+
+    def __contains__(self, key: object) -> bool:
+        return self.known is None or str(key) in self.known
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.known or ())
+
+    def __len__(self) -> int:
+        return len(self.known or ())
+
+
 class Shared:
-    """Which of the libraries the apps may see: none until an Admin chooses."""
+    """Which of the libraries the apps may see: on a new tapiOca, every one
+    of shows and movies (`everything`) until an Admin chooses; on one from
+    before 1.34.1 that never chose, none until an Admin does (`waiting`)."""
 
     def __init__(self, db: Database) -> None:
         self.db = db
-        self.keys: tuple[str, ...] = self._load()
+        self._every = Every()
+        self.everything = db.get_meta(META, NEVER_CHOSEN) == NEVER_CHOSEN
+        self._chosen: tuple[str, ...] = () if self.everything else self._load()
+        # (Only while none is chosen: 1.34.0, rolled back to, writes its
+        # choice alone, and that choice stands.)
+        self.waiting = not self._chosen and not self.everything and db.get_meta(WAITING_META) == "1"
         self.when_slow: dict[str, str] = self._load_slow()
         # Every episode played brought to the stations' loudness, so a show's
         # episodes match (see applibrary.py); movies never are.
         self.even_sound: bool = db.get_meta(EVEN_META) != "0"
+
+    def first_start(self, new: bool) -> None:
+        """Once, at the first start from 1.34.1: a tapiOca from before it
+        (not `new`) whose Admin never chose keeps sharing none, as before,
+        and waits for an Admin (see WAITING_META); a new one shares every
+        Media folder."""
+        if self.db.get_meta(SINCE_META):
+            return
+        if self.everything and not new:
+            self.db.set_metas({WAITING_META: "1", META: "[]"})
+            self.everything, self._chosen, self.waiting = False, (), True
+            log.info(
+                "Media in tapiOca's apps stays off until an Admin chooses its Media folders, "
+                "in setup or on the Access tab"
+            )
+        self.db.set_meta(SINCE_META, "1.34.1")
 
     def save_even_sound(self, on: bool) -> None:
         self.even_sound = on
@@ -171,8 +219,25 @@ class Shared:
         return tuple(dict.fromkeys(str(k) for k in got if _a_key(k)))
 
     @property
+    def keys(self) -> Collection[str]:
+        """The shared libraries' keys (for `in`, and listed in order)."""
+        return self._every if self.everything else self._chosen
+
+    @property
     def on(self) -> bool:
-        return bool(self.keys)
+        return self.everything or bool(self._chosen)
+
+    @property
+    def unlisted(self) -> bool:
+        """Every Media folder is shared, but which they are isn't known yet."""
+        return self.everything and self._every.known is None
+
+    def note(self, libraries: list[dict[str, Any]]) -> None:
+        """What the library lists (its libraries, as it said them): which
+        are every Media folder of shows and movies."""
+        self._every.known = tuple(
+            str(s["key"]) for s in libraries if s.get("type") in (catalog.SHOW, catalog.MOVIE)
+        )
 
     def save(self, keys: Iterable[Any]) -> tuple[str, ...]:
         """Shares these libraries (by key), and only these. ValueError if one
@@ -180,8 +245,9 @@ class Shared:
         chosen = tuple(dict.fromkeys(str(k) for k in keys))
         if len(chosen) > LIBRARIES_MOST or not all(_a_key(k) for k in chosen):
             raise ValueError("Choose Media folders from the list")
-        self.keys = chosen
-        self.db.set_meta(META, json.dumps(list(chosen)))
+        self._chosen = chosen
+        self.everything = self.waiting = False
+        self.db.set_metas({META: json.dumps(list(chosen)), WAITING_META: "0"})
         return chosen
 
 
@@ -305,6 +371,7 @@ class Catalog:
 
             found = await self._once(("libraries",), fetch)
             self._libraries = (now, found)
+            self.shared.note(found)
         return [
             {"key": str(s["key"]), "title": plain(str(s.get("title") or "")), "kind": s["type"]}
             for s in found
@@ -323,6 +390,8 @@ class Catalog:
         if it isn't in one (LibraryError if the library can't be reached)."""
         if not (key.isascii() and key.isdigit() and len(key) < 20) or not self.shared.on:
             raise NotShared(key)
+        if self.shared.unlisted:
+            await self.libraries()  # (which they are, before anything in one is shown)
         now = time.monotonic()
         kept = self._entries.get(key)
         if kept is not None and now - kept[0] < ENTRY_S:

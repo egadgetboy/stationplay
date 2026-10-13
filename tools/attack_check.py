@@ -435,9 +435,19 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
             ("PUT", "/api/notify", {"on": True, "url": "https://evil.test/hook",
                                     "more": [{"url": "https://evil.test/2"}]}),
             ("POST", "/api/notify/test", {"on": True, "url": "https://evil.test/hook", "which": 1}),
+            # (1.34.1) The Plex step's checks, INFO, and the level new people start on.
+            ("GET", "/api/setup/plex", None), ("GET", "/api/info-station", None),
+            ("POST", "/api/info-station", None), ("PUT", "/api/access/new-level", {"level": 1}),
         ):  # fmt: skip
             r = await c.request(method, path, json=body, headers=sam_h)
             checks.ok(r.status_code == 403, f"a User can't {method} {path}", f"got {r.status_code}")
+        # (1.34.1) 99 is INFO's: no one takes it with a station of their own, or
+        # gives another station INFO's film.
+        for body in ({"number": 99, "name": "Mine", "sources": [{"type": "show", "ratingKey": "100"}]},
+                     {"number": 77, "name": "Copy", "sources": [{"type": "info"}]}):  # fmt: skip
+            r = await c.post("/api/channels", json=body, headers=admin_h)
+            checks.ok(r.status_code in (400, 409), f"station {body['number']} can't be {body['name']}",
+                      f"got {r.status_code}")  # fmt: skip
         # (Never true here: an Admin's yes would have tapiOca ask GitHub.)
         for said in ("true", 1, "yes", None):
             r = await c.put("/api/updates", json={"on": said}, headers=admin_h)
@@ -459,7 +469,9 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
     async with httpx.AsyncClient(base_url=home) as pat:
         await pat.post("/api/access/sign-in", json=ADMIN)
         for method, path, body in (("PUT", "/api/updates", {"on": False}),
-                                   ("PUT", "/api/notify", {"on": False})):  # fmt: skip
+                                   ("PUT", "/api/notify", {"on": False}),
+                                   ("POST", "/api/info-station", None),
+                                   ("PUT", "/api/access/new-level", {"level": 1})):  # fmt: skip
             cross = await pat.request(
                 method, path, json=body, headers={"Sec-Fetch-Site": "cross-site"}
             )

@@ -16,7 +16,7 @@ const SETUP_TITLES = {
   away: 'Watching away from home',
   library: 'Media in tapiOca’s apps',
   fileChecks: 'Checking files',
-  plex: 'Adding tapiOca to Plex',
+  plex: 'Plex',
   done: 'All set',
 };
 // What each check's state is called beside it (the dot's color says it too).
@@ -41,11 +41,19 @@ async function runSetup() {
   try { st = await api('/api/setup'); } catch (e) { toast(e.message, true); return; }
   showSetup(st, 'again');
 }
+// The first step's checks: the server itself (its media folder, video
+// encoding, its clock and backups), never waiting on Plex.
 async function setupChecks() {
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
   try {
     return (await api(`/api/setup/checks?offset=${-new Date().getTimezoneOffset()}&zone=${encodeURIComponent(zone)}`)).checks;
   } catch { return null; }
+}
+// The Plex step's: whether Plex answers, whether tapiOca finds the files
+// Plex lists, and whether Plex has tapiOca as a DVR; with the addresses to
+// give Plex.
+async function setupPlex() {
+  try { return await api('/api/setup/plex'); } catch { return null; }
 }
 function checkRow(c) {
   const [chip, words] = CHECK_STATES[c.state] || CHECK_STATES.info;
@@ -74,6 +82,7 @@ async function showSetup(st, why) {
     : ['checks', ...st.questions, 'done'];
   const shownQuestions = steps.filter(s => st.questions.includes(s));
   const saved = new Set();  // (steps saved, or looked at, this time)
+  const notYet = new Set();  // (questions a step says can't be answered yet)
   let step = 0, page = null, leaving = false;
   const nav = h('ol', { class: 'setup-nav', 'aria-label': 'Steps' });
   const title = h('h4', { class: 'wstep' });
@@ -88,7 +97,10 @@ async function showSetup(st, why) {
   const next = h('button', { type: 'button', class: 'btn primary', autofocus: true, onclick: () => step === steps.length - 1 ? finish() : go(step + 1) });
   const later = h('button', { type: 'button', class: 'btn ghost', onclick: closeSetup,
     title: `Your answers so far are kept. ${SETUP_AGAIN}` }, why === 'new' ? 'Skip setup' : 'Close');
-  // Checks are loaded once, and again on Check again; while they load, the step says so.
+  // Checks are loaded once, and again on Check again; while they load, the
+  // step says so. The Plex step's load on their own, in the background: a
+  // Plex that doesn't answer never holds up the rest.
+  let plexInfo = null;
   const loadChecks = async () => {
     checks = null;
     paintNav();
@@ -96,11 +108,19 @@ async function showSetup(st, why) {
     paintNav();
     return checks;
   };
-  if (!checks && steps.includes('checks')) loadChecks().then(() => { if (steps[step] === 'checks' || steps[step] === 'plex' || steps[step] === 'done') show(); });
+  const loadPlex = async () => {
+    plexInfo = null;
+    paintNav();
+    plexInfo = await setupPlex();
+    paintNav();
+    return plexInfo;
+  };
+  if (!checks && steps.includes('checks')) loadChecks().then(() => { if (steps[step] === 'checks' || steps[step] === 'done') show(); });
+  if (steps.includes('plex')) loadPlex().then(() => { if (steps[step] === 'plex' || steps[step] === 'done') show(); });
 
   function paintNav() {
     nav.replaceChildren(...steps.map((s, n) => {
-      const attention = (s === 'checks' && checks?.some(needsLook)) || (s === 'plex' && checks?.some(c => c.id === 'dvr' && needsLook(c)));
+      const attention = (s === 'checks' && checks?.some(needsLook)) || (s === 'plex' && plexInfo?.checks.some(needsLook));
       const mark = attention ? h('span', { class: 'dot warn', 'aria-label': 'Needs a look' })
         : saved.has(s) ? h('span', { class: 'done', 'aria-label': 'Done' }, '✓') : h('span', { class: 'num' }, String(n + 1));
       return h('li', {}, h('button', { type: 'button', 'aria-current': n === step ? 'step' : 'false', onclick: () => go(n) }, mark, h('span', {}, SETUP_TITLES[s])));
@@ -117,7 +137,7 @@ async function showSetup(st, why) {
     paintNav();
     body.replaceChildren(h('p', { class: 'muted' }, 'Loading…'));
     try {
-      page = await SETUP_PAGES[s]({ checks, loadChecks, why, st, shownQuestions, saved });
+      page = await SETUP_PAGES[s]({ checks, loadChecks, plexInfo, loadPlex, why, st, shownQuestions, saved, notYet });
     } catch (e) {
       page = { node: h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' ', e.message) };
     }
@@ -131,7 +151,7 @@ async function showSetup(st, why) {
       const problem = await page.save();
       if (problem) { said.textContent = problem; return false; }
     }
-    if (st.questions.includes(s)) {
+    if (st.questions.includes(s) && !notYet.has(s)) {
       try { await api('/api/setup', { method: 'PUT', body: { answered: [s] } }); } catch {}
     }
     saved.add(s);
@@ -157,7 +177,7 @@ async function showSetup(st, why) {
     try {
       if (!(await leave())) return;
       // (What wasn't stepped through counts as answered too: it was shown.)
-      try { await api('/api/setup', { method: 'PUT', body: { answered: shownQuestions } }); } catch {}
+      try { await api('/api/setup', { method: 'PUT', body: { answered: shownQuestions.filter(q => !notYet.has(q)) } }); } catch {}
       dlg.close();
       toast(why === 'new' ? 'All set. Choose New station to make your first one.' : 'All set');
       loadStatus();
@@ -176,10 +196,11 @@ async function showSetup(st, why) {
   if (!dlg.open) dlg.showModal();
 
   // Skip setup, Close, ✕ or Escape: the questions shown count as answered
-  // (they aren't asked again by themselves), and nothing else changes.
+  // (they aren't asked again by themselves, unless a step said it couldn't
+  // be answered yet), and nothing else changes.
   async function closeSetup() {
     dlg.close();
-    try { await api('/api/setup', { method: 'PUT', body: { answered: shownQuestions } }); } catch {}
+    try { await api('/api/setup', { method: 'PUT', body: { answered: shownQuestions.filter(q => !notYet.has(q)) } }); } catch {}
     if (why === 'new') toast(SETUP_AGAIN);
     loadStatus();
   }
@@ -220,12 +241,12 @@ const SETUP_PAGES = {
       again.textContent = 'Check again';
     } }, 'Check again');
     function paint(got) {
-      list.replaceChildren(...(got ? got.filter(c => c.id !== 'dvr').map(checkRow)
+      list.replaceChildren(...(got ? got.map(checkRow)
         : [h('p', { class: 'muted', style: 'margin:0' }, 'Checking… (this takes a few seconds)')]));
     }
     paint(checks);
     return { node: h('div', { class: 'playback' },
-      h('p', { class: 'hint', style: 'margin:0' }, 'tapiOca checks that it can reach Plex and read your files, how it encodes video, its clock, and its backups. Anything marked Needs a look or Not working says what to do. After changing tapiOca’s app settings, restart it, then choose Check again.'),
+      h('p', { class: 'hint', style: 'margin:0' }, 'tapiOca checks the server itself: that it can read your media folder, how it encodes video, its clock, and its backups. Plex has a step of its own, near the end. Anything marked Needs a look or Not working says what to do. After changing tapiOca’s app settings, restart it, then choose Check again.'),
       list,
       h('div', { class: 'row-btns' }, again)) };
   },
@@ -318,27 +339,38 @@ const SETUP_PAGES = {
   },
 
   async viewing() {
-    const intro = h('p', { class: 'hint', style: 'margin:0' }, 'A Viewing Level says what each person can see in tapiOca’s apps and on this page: movies and shows up to a rating, whether unrated ones are shown, and which Media folders. Everyone starts on Unrestricted, which shows everything. Teen, Kid and Young Child are there to start from: on the Access tab you can rename them, change them or remove them, and add levels of your own, such as “Adults” with no R-rated movies. Admins always see everything.');
+    const intro = h('p', { class: 'hint', style: 'margin:0' }, 'A Viewing Level says what each person can see in tapiOca’s apps and on this page: movies and shows up to a rating, whether unrated ones are shown, and which Media folders. Unrestricted shows everything. Teen, Kid and Young Child are there to start from: on the Access tab you can rename them, change them or remove them, and add levels of your own, such as “Adults” with no R-rated movies. Admins always see everything.');
     const [users, view] = me.required
       ? await Promise.all([api('/api/access/users').catch(() => []), api('/api/access/viewing').catch(() => null)])
       : [[], null];
-    const people = users.filter(u => u.role !== 'admin');
-    if (!view || !people.length) {
+    if (!view) {
       return { node: h('div', { class: 'playback' }, intro,
         h('p', { style: 'margin:0' }, me.required
-          ? 'Everyone who signs in now is an Admin. When you add people on the Access tab, choose a Viewing Level for each there, and the devices they’re on. On a shared TV, tapiOca’s apps ask Who’s tuning in? The first time, each person signs in on it with their password or an invite code. After that, they pick themselves, with their PIN if they have one.'
+          ? 'The Viewing Levels can’t be read right now. You’ll find them on the Access tab.'
           : 'Viewing Levels come with signing in: choose Only people who sign in under Who can use tapiOca, then add people on the Access tab.')) };
     }
     viewing = view;
+    // The level new people start on (1.34.1, the owner): Unrestricted until it's chosen.
+    const startsOn = levelSelect(view.newLevel, { id: 'setupNewLevel' });
+    const startsWas = startsOn.value;
+    const newRow = h('div', { class: 'opt' }, h('label', { class: 'opt-label', for: 'setupNewLevel' }, 'New people start on'),
+      h('div', { class: 'opt-ctl' }, startsOn, h('span', { class: 'hint' }, 'Everyone you add as a User starts on this level. You can choose another for each person as you add them, or later.')));
+    const people = users.filter(u => u.role !== 'admin');
     const picks = new Map();
     const rows = people.map(u => {
       const select = levelSelect(view.users[u.id]?.level, { 'aria-label': `${u.name}’s Viewing Level` });
       picks.set(u.id, [select, select.value]);
       return h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, u.name), h('div', { class: 'opt-ctl' }, select));
     });
-    return { node: h('div', { class: 'playback' }, intro, ...rows,
-      h('p', { class: 'hint', style: 'margin:0' }, 'On the Access tab, Stations beside someone’s name allows or blocks a station for them, and Devices chooses which devices they’re on and gives them a PIN.')),
+    return { node: h('div', { class: 'playback' }, intro, newRow, ...rows,
+      h('p', { class: 'hint', style: 'margin:0' }, people.length
+        ? 'On the Access tab, Stations beside someone’s name allows or blocks a station for them, and Devices chooses which devices they’re on and gives them a PIN.'
+        : 'Everyone who signs in now is an Admin. When you add people on the Access tab, choose the devices they’re on there. On a shared TV, tapiOca’s apps ask Who’s tuning in? The first time, each person signs in on it with their password or an invite code. After that, they pick themselves, with their PIN if they have one.')),
     save: async () => {
+      if (startsOn.value !== startsWas) {
+        try { viewing.newLevel = (await api('/api/access/new-level', { method: 'PUT', body: { level: Number(startsOn.value) } })).newLevel; }
+        catch (e) { return e.message; }
+      }
       for (const [id, [select, was]] of picks) {
         if (select.value === was) continue;
         try { await api(`/api/access/users/${id}/viewing`, { method: 'PUT', body: { level: Number(select.value) } }); }
@@ -373,11 +405,16 @@ const SETUP_PAGES = {
     } };
   },
 
-  async library() {
+  async library({ notYet }) {
     const got = await api('/api/app-libraries');
     const fields = libraryFields(got, () => {});
+    // (Waiting for a choice, from before 1.34.1: going on is the choice,
+    // once the Media folders can be listed. Until then nothing's shared, and
+    // setup asks again next time, however it's left: 1.34.1's audit.)
+    const cant = got.waiting && !('libraries' in fields.values());
+    if (cant) notYet.add('library'); else notYet.delete('library');
     return { node: h('div', { class: 'playback' }, ...fields.nodes), save: async () => {
-      if (!fields.changed()) return;
+      if (cant || (!fields.changed() && !got.waiting)) return;
       try { await api('/api/app-libraries', { method: 'PUT', body: fields.values() }); } catch (e) { return e.message; }
     } };
   },
@@ -397,38 +434,44 @@ const SETUP_PAGES = {
     } };
   },
 
-  async plex({ checks, loadChecks }) {
-    const where = h('div', {});
+  async plex({ plexInfo, loadPlex }) {
+    const list = h('div', { class: 'setup-checks' });
     const again = h('button', { type: 'button', class: 'btn', onclick: async () => {
       again.disabled = true;
       again.textContent = 'Checking…';
-      paint(await loadChecks());
+      paint(await loadPlex());
       again.disabled = false;
       again.textContent = 'Check again';
     } }, 'Check again');
+    const copyRow = (what, value) => h('div', { class: 'copyrow' }, h('span', { class: 'what' }, what), h('code', {}, value), copyButton(value));
+    const addresses = h('div', { class: 'playback' });
     function paint(got) {
-      const dvr = got?.find(c => c.id === 'dvr');
-      where.replaceChildren(dvr ? checkRow(dvr) : h('p', { class: 'muted small', style: 'margin:0' }, got ? '' : 'Checking whether Plex has tapiOca…'));
+      list.replaceChildren(...(got ? got.checks.map(checkRow)
+        : [h('p', { class: 'muted', style: 'margin:0' }, 'Checking Plex… (this takes a few seconds)')]));
+      const tuner = got?.tunerUrl || status?.tunerUrl, guide = got?.xmltvUrl || status?.xmltvUrl;
+      addresses.replaceChildren(...[tuner ? copyRow('Tuner address', tuner) : null, guide ? copyRow('Guide (XMLTV) for Plex', guide) : null].filter(Boolean));
     }
-    paint(checks);
-    const copyRow = (what, value) => h('div', { class: 'copyrow' }, h('span', { class: 'what' }, what), h('code', {}, value),
-      h('button', { type: 'button', class: 'btn', onclick: () => copyText(value) }, 'Copy'));
+    paint(plexInfo);
     return { node: h('div', { class: 'playback' },
-      h('div', { class: 'row-btns', style: 'align-items:flex-start' }, h('div', { style: 'flex:1' }, where), again),
+      h('p', { class: 'hint', style: 'margin:0' }, 'tapiOca works with your own Plex Media Server. This step checks that tapiOca can reach Plex and read the files Plex lists, and shows how to add tapiOca to Plex, to watch your stations in Plex too.'),
+      list,
+      h('div', { class: 'row-btns' }, again),
+      h('strong', { class: 'small' }, 'Adding tapiOca to Plex'),
       h('ol', { class: 'steps' },
         h('li', {}, 'In Plex, open ', h('em', {}, 'Settings → Live TV & DVR → Set Up Plex DVR'), '.'),
         h('li', {}, 'Choose ', h('em', {}, 'Don’t see your HDHomeRun device? Enter its network address manually'), ' (Plex can’t find tapiOca on its own) and enter the tuner address below.'),
         h('li', {}, 'When Plex asks for guide data, choose ', h('em', {}, 'Have an XMLTV guide on your server? Click here to use it'), ' and enter the guide address below.'),
         h('li', {}, 'Plex matches your stations automatically (it calls them channels). Each time you make a new station, choose ', h('em', {}, 'Scan for channels'), ' in Plex’s Live TV & DVR settings so Plex adds it.'),
         h('li', {}, 'Then choose Check again here.')),
-      status?.tunerUrl ? copyRow('Tuner address', status.tunerUrl) : null,
-      status?.xmltvUrl ? copyRow('Guide (XMLTV) for Plex', status.xmltvUrl) : null,
-      h('p', { class: 'hint', style: 'margin:0' }, 'Watching in Plex needs Plex Pass on the account that owns your Plex server. You’ll find these addresses, plus the ones for Jellyfin, Emby, Kodi and other apps, on the Add to Plex tab.'),
+      h('p', { class: 'hint', style: 'margin:0' }, 'Plex needs at least one station to add tapiOca, so a new tapiOca starts with INFO on station 99: the date and time, what’s new in tapiOca and tips for watching. It plays even before Plex is connected.'),
+      addresses,
+      h('p', { class: 'hint', style: 'margin:0' }, 'Watching in Plex needs Plex Pass on the account that owns your Plex server. Jellyfin, Emby, Kodi and tapiOca’s own apps don’t need it. You’ll find these addresses, plus the ones for Jellyfin, Emby, Kodi and other apps, on the Add to Plex tab.'),
       PERSONAL_USE()) };
   },
 
-  async done({ checks, why }) {
-    const look = (checks || []).filter(needsLook);
+  async done({ checks, plexInfo, why }) {
+    const all = [...(checks || []), ...(plexInfo?.checks || [])];
+    const look = all.filter(needsLook);
     // What's set now, in a few words each.
     const [pb, away, libs, scan, view, upd] = await Promise.all([
       api('/api/playback'), api('/api/away'), api('/api/app-libraries').catch(() => null), api('/api/scan'),
@@ -439,13 +482,14 @@ const SETUP_PAGES = {
     setAway(away);
     const limited = view ? Object.values(view.users).filter(u => { const lv = view.levels.find(l => l.id === u.level); return (lv && levelLimited(lv)) || hidesCount(u.own?.blocks) > 0 || u.ownUnreadable; }).length : 0;
     const shared = libs ? libs.libraries.filter(l => libs.shared.includes(l.key)).map(l => l.title) : [];
+    const sharing = libs?.everything ? 'Every Media folder' : shared.length ? `Shared: ${shared.join(', ')}` : libs?.shared.length ? 'On' : 'Not shared';
     const w = scan.window;
     const set = [
       ['playback', `${pb.picture} for new stations, ${plural(pb.tuners, 'tuner')}`],
       ['signIn', me.required ? 'Only people who sign in' : 'Anyone on your network'],
       ...(view ? [['viewing', limited ? `${limited === 1 ? '1 person' : `${limited} people`} with limits` : 'Everyone sees everything']] : []),
       ['away', h('span', { 'data-away-sum': 'Ready for apps away from home' }, awaySummary(away, 'Ready for apps away from home'))],
-      ['library', shared.length ? `Shared: ${shared.join(', ')}` : 'Not shared'],
+      ['library', sharing],
       ['fileChecks', w.on ? `Deep scan every night from ${clock(w.start)} to ${clock(w.end)}` : 'Quick checks only (the deep scan is off)'],
     ];
     // The update check (see updates.js), asked here: never ticked until an
@@ -463,8 +507,8 @@ const SETUP_PAGES = {
       h('dl', { class: 'details', style: 'margin:0;font-size:14px' }, ...set.flatMap(([what, value]) => [h('dt', {}, SETUP_TITLES[what]), h('dd', {}, value)])),
       look.length
         ? h('div', { class: 'playback' }, h('p', { style: 'margin:0' }, look.length === 1 ? 'One thing still needs a look:' : 'A few things still need a look:'), h('div', { class: 'setup-checks' }, ...look.map(checkRow)))
-        : h('p', { style: 'margin:0' }, !checks ? 'That’s everything.'
-          : checks.some(c => c.state === 'wait') ? 'Everything tapiOca could check is working.' : 'Everything tapiOca checks is working.'),
+        : h('p', { style: 'margin:0' }, !all.length ? 'That’s everything.'
+          : all.some(c => c.state === 'wait') ? 'Everything tapiOca could check is working.' : 'Everything tapiOca checks is working.'),
       h('label', {}, lookOut, ' Tell me when a new tapiOca is out'),
       h('p', { class: 'hint', style: 'margin:0' }, `${UPDATE_PRIVACY} You can change this under New versions on the Add to Plex tab.`),
       h('p', { class: 'hint', style: 'margin:0' }, why === 'new' ? `Choose Finish, then New station to make your first one. ${SETUP_AGAIN}` : SETUP_AGAIN)) };
