@@ -210,7 +210,7 @@ docker run -d --name stationplay --restart unless-stopped --init \
 
 Save your command in a file (such as `stationplay.sh`). You'll run the same one each time you update.
 
-- **The page from the internet.** The `3311` port and `PUBLIC_PORT` are for that (see [Security and remote access](#security-and-remote-access)). If you don't need it, remove `-p 3311:3311` and `-e PUBLIC_PORT=3311`.
+- **The page and apps from the internet.** The `3311` port and `PUBLIC_PORT` are for that (see [Security and remote access](#security-and-remote-access)). If you don't need it, remove `-p 3311:3311` and `-e PUBLIC_PORT=3311`.
 - **Intel or AMD GPU.** Add `--device /dev/dri:/dev/dri --group-add <group number>` (see [GPU encoding](#gpu-encoding)).
 - **NVIDIA GPU.** Add `--gpus all` (needs the NVIDIA Container Toolkit).
 
@@ -270,7 +270,7 @@ If your media share takes more than 8 seconds to answer, tapiOca treats it as te
 
 **Keep port 3310 on your home network.** It serves Plex's tuner, guide and video streams, which never ask for a password, because Plex can't sign in to a tuner. Never forward it on your router or point a tunnel or reverse proxy at it. Plex only needs it inside your network. Plex users away from home can still watch, because Plex relays the stream. To choose which devices at home can use it, see [Tuner access](#tuner-access) on the **Access** tab.
 
-**Using tapiOca's page from the internet.** tapiOca can open a second port just for its page, set with `PUBLIC_PORT`. It's 3311 in the YAML and Compose files, and it must differ from `PORT`. On that port:
+**Using tapiOca's page and apps from the internet.** tapiOca can open a second port for its page and for tapiOca's apps away from home, set with `PUBLIC_PORT`. It's 3311 in the YAML and Compose files, and it must differ from `PORT`. On that port:
 
 - **No Plex addresses.** The addresses Plex and other apps use (the tuner, guides, streams and playlist) don't exist there.
 - **Sign-in always required.** Before signing in, visitors see only the sign-in page, its icons, what a browser needs to install the page as an app (see **As an app** under [First-time setup](#first-time-setup)), tapiOca's name and version, its open-source notices and its privacy notice. tapiOca's apps also ask it the server's name, its away-from-home address and which features are on, to connect. Until tapiOca has its first user, the sign-in page there says to add one from your home network, and no one can sign in or make themselves the first Admin from outside.
@@ -434,9 +434,9 @@ Channels DVR and VLC accept the playlist address, `http://<server-ip>:3310/stati
 
 ### tapiOca's own apps
 
-**tapiOca for Android** is in private testing. It isn't in any app store yet. The Apple app and the Roku app are coming. The apps connect directly to your tapiOca server, so you can watch your stations without Plex Pass or any other app.
+**tapiOca for Android** is a beta test build, in private testing. It isn't in any app store yet. The Apple app and the Roku app are coming. The apps connect directly to your tapiOca server, so you can watch your stations without Plex Pass or any other app.
 
-- **Platforms.** In private testing: Android phones and tablets, Google TV and Android TV, in tapiOca for Android. Coming: iPhone, iPad and Apple TV, and Roku.
+- **Platforms.** In private testing: Android phones, foldables and tablets, Google TV and Android TV, in tapiOca for Android. Coming: iPhone, iPad and Apple TV, and Roku.
 - **A guide for every screen.** On a TV, you browse it with your remote. On a phone, you see every station at a glance and swipe through the hours. On a tablet, the selected program and a live picture sit above the guide.
 - **Changing stations.** While a station tunes in, you see its card in the same colors as its Intro Bumper. Flip up and down through your stations, enter a station number on your remote, or jump back to the last station you watched. If every tuner is in use, the app says so and lets you join a station that's already playing.
 - **Favorites.** Mark the stations you watch most, and choose to show only those in the guide.
@@ -456,8 +456,9 @@ Channels DVR and VLC accept the playlist address, `http://<server-ip>:3310/stati
 | 1.22.0 | The minimum |
 | 1.28.0 | PINs |
 | 1.29.0 | Languages and Admin alerts |
-| 1.29.1 | Converted copies on request, and more detail on problems |
-| 1.30.0 | Reporting a problem |
+| 1.29.1 | A converted copy of a file the device can't play, and more detail on problems |
+| 1.30.0 | Report a problem |
+| 1.34.0 | Automatic subtitles |
 
 The apps read the stations and guide through [tapiOca's API](#tapiocas-api), like any other program. They sign in, test connections and browse Media through their own addresses, documented for the apps in [docs/internal-api.md](docs/internal-api.md).
 
@@ -490,7 +491,7 @@ The video stream itself needs no sign-in. Each title an app plays through the pu
 
 Even sound is on by default. To keep each episode's original sound, such as Dolby Atmos or DTS sent on to a receiver, turn off **Even sound for a show's episodes** on the Access tab, under **Media in tapiOca's apps**. With it on, that sound plays as ordinary 5.1 or stereo. Apps that predate the copies in tapiOca 1.24.0 get each file unchanged.
 
-**Languages.** Each person chooses their sound language and subtitles in an app's Options. tapiOca saves the choices, so they follow that person to every device. Subtitles are **Automatic** to start: they show in your language when the sound is in another (your Subtitles language if you choose one, else your device's language). Choose **On** to always have them, or **Off** for only the parts meant to be read. From the player, a person can choose differently for one episode or movie, or for a whole show with **Sticky Audio** and **Sticky Subtitles**: what you pick holds for every episode of that show.
+**Languages.** Each person chooses their sound language and subtitles in an app's Options. tapiOca saves the choices, so they follow that person to every device. Subtitles are **Automatic** to start: they show in your language when the sound is in another (your Subtitles language if you choose one, else your device's language). Choose **On** to always have them, or **Off** for only the parts meant to be read. From the player, a person can choose differently for one episode or movie, or for a whole show with **Sticky Audio & Subtitles**: what you pick holds for every episode of that show.
 
 tapiOca uses the most specific choice: the episode's or movie's, then the show's, then the person's own, then the file's default. It picks sound in their language, never a commentary track when there's another. With subtitles on, it picks their language, preferring a full track over a forced one. With subtitles off, it shows only forced subtitles, for parts in another language.
 
@@ -820,7 +821,7 @@ A new station numbered 1 to 50 starts with its number's logo, which follows the 
 
 **Your own logos.** In the logo picker, choose **Upload your own…** and pick a PNG, JPEG, WebP, GIF or BMP image up to 10 MB. tapiOca makes it a 512×512 PNG on a clear background, so square images look best. Your logos are listed first, under **Your logos**, and stored in `data/logos`. Once no station uses one, you can delete it with its ×.
 
-**Logos from Plex.** A new station with one show or movie is named after it. If Plex has a logo for it (the title artwork Plex shows on its pages), that becomes the station's logo. A name you type or a logo you choose yourself isn't replaced. On other stations, the first show's Plex logo is offered as **Use the logo from Plex**. tapiOca trims it, keeps its shape (most are wide) and sizes it to match the library's logos. It adds the logo to **Your logos** when you save the station.
+**Logos from Plex.** A new station with one show or movie is named after it. If Plex has a logo for it (the title artwork Plex shows on its pages), that becomes the station's logo. A name you type or a logo you choose yourself isn't replaced. On other stations, the first show's Plex logo is offered as **Use the logo from Plex**. tapiOca trims it, keeps its shape (most are wide) and sizes it to match the built-in logos. It adds the logo to **Your logos** when you save the station.
 
 Plex apps load logos from tapiOca's address, so they appear on your home network. Away from home, they appear only if tapiOca's address can be reached from there.
 
@@ -979,7 +980,7 @@ The checks wait in one line, in this order:
 2. **A file someone just had trouble with.** That can be a copy for an app that couldn't be made or stopped, an app reporting that something didn't play or stopped, or a person's report. tapiOca decodes the minute starting 20 seconds before where it happened, as the deep scan would, then gives the file the quick check. For a report that says where, it also runs the deep scan if those find nothing. Only what tapiOca finds puts the file on the list, so trouble caused by the network or the app changes nothing.
 3. **Quick check, when something arrives.** A program new to a station, then anything newly added to a Media folder shared for Media, is quick-checked within minutes, before it airs if possible. The file must open, and picture and sound must decode at five points (start, quarter, half, three quarters and end).
 4. **Weekly.** Every program on a station is quick-checked again once a week. This also catches files that went missing or were replaced. Media's files are checked when they arrive, and when someone has trouble with one.
-5. **Overnight deep scan.** Between 1 AM and 6 AM, files are decoded in full. To change the time or turn it off, use **Deep scan every night from** on the **Broken files** tab. The stations' programs go first, soonest to air first. Then come Media's files: what's in someone's Continue Watching, the next episode of a show someone is watching, then the rest, most recently added first. A file that hasn't had its quick check gets one first. The scan stops the moment anyone starts watching and continues later. Each file is deep-scanned once, and again only if it changes. A 45-minute episode usually takes a few minutes.
+5. **Overnight deep scan.** Between 1 AM and 6 AM, files are decoded in full. To change the time or turn it off, use **Deep scan every night from** on the **Broken files** tab. The stations' programs go first, soonest to air first. Then come Media's files: what's in someone's Resume row, the next episode of a show someone is watching, then the rest, most recently added first. A file that hasn't had its quick check gets one first. The scan stops the moment anyone starts watching and continues later. Each file is deep-scanned once, and again only if it changes. A 45-minute episode usually takes a few minutes.
 
 **Check files** on a station card quick-checks all of its programs right away. A new station gets this automatically.
 
@@ -1235,7 +1236,7 @@ tapiOca is set up mostly on its page. These environment variables, in the YAML o
 | `HW_ACCEL` | `auto` | `auto`, `nvidia`, `intel`, `amd` or `cpu`. See [GPU encoding](#gpu-encoding). |
 | `HW_DEVICE` | *(automatic)* | With more than one GPU: a render node (`/dev/dri/renderD129`) or an NVIDIA GPU number. |
 | `PORT` | `3310` | The port for Plex, other apps and your home network. |
-| `PUBLIC_PORT` | *(off)* | A separate port for the page from the internet. Must differ from `PORT`. See [Security and remote access](#security-and-remote-access). |
+| `PUBLIC_PORT` | *(off)* | A separate port for the page, and tapiOca's apps, from the internet. Must differ from `PORT`. See [Security and remote access](#security-and-remote-access). |
 | `AUDIO_LANGUAGE` | `eng` | Preferred language for sound tracks and subtitles. |
 | `FRIENDLY_NAME` | `tapiOca` | The tuner's name in Plex. |
 | `BASE_URL` | *(automatic)* | Only if Plex reaches tapiOca at a different address than your browser does. |
@@ -1266,7 +1267,7 @@ Each problem shows how often it happened, on how many devices, for whom, and on 
 - **What the app said** gives the error exactly as the app sent it.
 - **What led up to it** shows the app's last lines before the error.
 
-Problems are kept for 30 days. **Clear** removes them, and the log keeps its own record. For more about one device, use its **Send a report to tapiOca** (in the app's Options), which adds what the app did recently.
+Problems are kept for 30 days. **Clear** removes them, and the log keeps its own record. For more about one device, use its **Send app details to tapiOca** (in the app's Options), which adds what the app did recently.
 
 **Alerts.** tapiOca alerts Admins when something needs attention:
 
@@ -1401,10 +1402,10 @@ This is the advanced choice: most people should use the published image (see [In
 2. **Build the image,** from the folder that holds `src` (or your clone's folder). The first build takes a few minutes, mostly to install FFmpeg. On TrueNAS (in **System → Shell**) and over SSH on Synology, use `sudo docker build` instead.
 
    ```
-   docker build -t stationplay:1.34.0 ./src          # or ./tapioca-server for a clone
+   docker build -t tapioca:1.34.1 ./src              # or ./tapioca-server for a clone
    ```
 
-3. **Point `image:` at your build.** In your YAML or compose file, set `image: stationplay:1.34.0` (your build's name) and `pull_policy: never`, so Docker uses your build and never looks for it online. With `docker run`, put `stationplay:1.34.0` at the end instead. Remove `TAPIOCA_INSTALL`, so the page doesn't suggest fetching the published image.
+3. **Point `image:` at your build.** In your YAML or compose file, set `image: tapioca:1.34.1` (your build's name) and `pull_policy: never`, so Docker uses your build and never looks for it online. With `docker run`, put `tapioca:1.34.1` at the end instead. Remove `TAPIOCA_INSTALL`, so the page doesn't suggest fetching the published image.
 
 To update, get the new source, build it under the new version, and change `image:` to match. Then save the app in TrueNAS, or run `docker compose up -d`.
 
@@ -1500,7 +1501,7 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/web/page.css`, `app/web/js/` | The page's styles, and its scripts, one file for each part of the page (loaded in the order `PAGE_FILES` in `app/access.py` lists them) |
 | `tests/` | Unit and end-to-end tests |
 | `Dockerfile`, `stationplay.yaml`, `docker-compose.yml` | The image, the TrueNAS app, and the Compose file |
-| `docs/` | tapiOca's logo; tapiOca's API (`api.md`, `openapi-v1.json`); the apps' own addresses (`internal-api.md`); the designs of the layer that reads your movies and shows (`library.md`), of Media in the apps (`on-demand.md`), and of who sees what (`users.md`); each release's notes (`releases/`) |
+| `docs/` | tapiOca's logo; tapiOca's API (`api.md`, `openapi-v1.json`); the apps' own addresses (`internal-api.md`); the designs of the layer that reads your movies and shows (`library.md`), of Media in the apps (`on-demand.md`), and of who sees what (`users.md`); each release's notes (`releases/`); and the old names other programs still match (`notes/names-kept.md`) |
 
 ## Contributing
 

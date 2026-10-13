@@ -26,9 +26,10 @@ services:
     user: "1000:1000"                                  # <- CHANGE if your media belongs to another user
     ports:
       - "3310:3310"     # Plex, other apps and your home network. Never forward it to the internet.
-      # The page for the internet, through a Cloudflare Tunnel or other reverse
-      # proxy (README: "Security and remote access"). Remove it if
-      # you don't need that, and remove PUBLIC_PORT below too.
+      # tapiOca's page and apps from the internet, through a reverse proxy or
+      # a Cloudflare Tunnel (README: "Security and remote access"). Plex's
+      # addresses aren't on it, and signing in is always required. Remove
+      # this line and PUBLIC_PORT below if you don't need it.
       - "3311:3311"
     environment:
       # How the page says to update (README: Updating): compose (Unraid's
@@ -44,9 +45,9 @@ services:
       # Other values: intel, amd, nvidia, cpu
       HW_ACCEL: "auto"
     volumes:
-      # Stations, settings, logos, backups
+      # Stations, settings, logos, the Broken files list and backups
       - ./data:/data
-      # Your media library, read-only. tapiOca matches the paths Plex
+      # Your media folder, read-only. tapiOca matches the paths Plex
       # reports to this folder automatically.
       - /path/to/your/media:/media:ro                  # <- CHANGE
 

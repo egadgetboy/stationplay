@@ -2,7 +2,7 @@
 
 ## Which versions get fixes
 
-Only the newest release. tapiOca is still in alpha, so a fix comes as a new release, not as a change to an older one. Keep tapiOca up to date (README: [Updating](README.md#updating)).
+Only the newest release. tapiOca is in beta, so a fix comes as a new release, not as a change to an older one. Keep tapiOca up to date (README: [Updating](README.md#updating)).
 
 ## Reporting a problem
 

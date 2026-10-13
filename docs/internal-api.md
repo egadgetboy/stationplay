@@ -155,7 +155,8 @@ work on these addresses, which are for the apps' own sign-ins.
    picture.) Show `chosen.audioWhy` and `chosen.subtitleWhy` in the
    player's info. When `chosen` is null, the player chooses, as before.
 3. **The player's Audio & subtitles.** Offer **Remember for the whole
-   show**, on by default for an episode. (A movie's choice belongs to the
+   show** (**Sticky Audio & Subtitles** from 1.34.0), on by default for an
+   episode. (A movie's choice belongs to the
    movie.) When the viewer chooses a sound track, or subtitles (or none),
    save it with `PUT /api/internal/items/{key}/languages`:
    - With it on, save it for the show (`showKey`), and clear the episode's
@@ -295,12 +296,13 @@ Nothing new is required.
    your language when you haven't chosen a Subtitles language. Without it,
    Automatic doesn't apply: subtitles nobody turned on or off are off, as
    before 1.34.0, so an older app plays exactly as it did.
-3. **Sticky Audio and Sticky Subtitles.** The player's Audio & subtitles
+3. **Sticky Audio & Subtitles.** The player's Audio & subtitles
    switch, **Remember for the whole show** until now, is called **Sticky
    Audio & Subtitles**, with the line "Keep these for every episode of this
    show." It works as before (see What 1.29.0 asks of the apps). The
    reasons in `chosen` now say so for a show's choice ("Japanese, kept for
-   this show by Sticky Audio"). Show them as they come.
+   this show by Sticky Audio", or "by Sticky Subtitles"). Show them as they
+   come.
 
 A server before 1.34.0 doesn't send `languages.subtitles` and ignores
 `language`. Without `subtitles`, offer Subtitles On or Off from
@@ -964,8 +966,9 @@ everyone shares one set.)
   `GET /api/internal/items/{key}`; set from the player with
   `PUT /api/internal/items/{key}/languages`, cleared with `DELETE`). Any of
   the three, each null where nothing is chosen there. A show's choice
-  applies to all its episodes: that's **Sticky Audio** and **Sticky
-  Subtitles** (named so from 1.34.0). An episode's applies to it alone.
+  applies to all its episodes: that's the player's **Sticky Audio &
+  Subtitles** (from 1.34.0; the reasons in `chosen` say "Sticky Audio" or
+  "Sticky Subtitles"). An episode's applies to it alone.
 
 Languages are ISO 639-2 codes, as files carry them (`eng`, `jpn`). For the
 few with two codes, it's the one files use (`fre`, `ger`). Each comes with
@@ -1542,7 +1545,7 @@ is, and otherwise offer it. With none, say so plainly.
 | `drawnSubtitle` | string or null | The subtitle track drawn into a copy's picture, if any |
 | `chosen` | object or null | What tapiOca chose for this person from their languages, and plays (from 1.29.0: see Languages); null when the app sent `audio` or `subtitle`, or nothing is chosen anywhere for them |
 | `chosen.audio` | string or null | The sound track that plays: select it in the player (a copy holds only it); null for a file without sound |
-| `chosen.audioWhy` | string | Why, in a few words to show: "Japanese, as chosen for this show", "The file's default: it has no Japanese sound" |
+| `chosen.audioWhy` | string | Why, in a few words to show: "Japanese, kept for this show by Sticky Audio", "Japanese, as chosen for this episode", "The file's default: it has no Japanese sound" |
 | `chosen.subtitle` | string or null | The subtitle track to show: select it in the player (for a file of its own, add it from `subtitles[].url`), unless it's `drawnSubtitle`; null for none |
 | `chosen.subtitleWhy` | string | Why: "English subtitles, as you chose", "Forced English subtitles, for the parts in another language", "Subtitles are off" (from 1.29.1; "captions" before) |
 | `leave` | string | Where to `POST` when the player stops |

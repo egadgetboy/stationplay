@@ -27,10 +27,10 @@ services:
     user: "1000:1000"                                # <- CHANGE if your media belongs to another user
     ports:
       - "3310:3310"     # Plex and your home network. Never forward it or tunnel to it.
-      # The page for the internet: point your Cloudflare Tunnel at this one
-      # (README: "Security and remote access"). Plex's addresses aren't on
-      # it, and signing in is always required. Remove this line and
-      # PUBLIC_PORT below if you don't need it.
+      # tapiOca's page and apps from the internet: point your reverse proxy
+      # or Cloudflare Tunnel at this one (README: "Security and remote
+      # access"). Plex's addresses aren't on it, and signing in is always
+      # required. Remove this line and PUBLIC_PORT below if you don't need it.
       - "3311:3311"
     environment:
       TAPIOCA_INSTALL: "truenas"                     # how the page says to update (README: Updating)
@@ -46,7 +46,7 @@ services:
     volumes:
       # Stations, settings, logos, the Broken files list and backups
       - /mnt/tank/apps/stationplay/data:/data        # <- CHANGE to your data folder
-      # Your media library, read-only. tapiOca matches the paths Plex
+      # Your media folder, read-only. tapiOca matches the paths Plex
       # reports to this folder automatically.
       - /mnt/tank/media:/media:ro                    # <- CHANGE to your media folder
 

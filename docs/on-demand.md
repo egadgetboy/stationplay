@@ -46,6 +46,11 @@ covers the server's side. The full product plan is in the document
 - **1.27.0.** Media through the public port while watching away from home
   is on, with the Admin's quality away from home (see Away from home). Even
   sound for a show's episodes (see Even sound).
+- **1.29.0.** Each person's sound and subtitle languages, kept by tapiOca
+  so they follow them to every device (see Languages in
+  `docs/internal-api.md`).
+- **1.29.1.** A converted copy when an app asks for one. Nothing the apps
+  receive names a file or a folder.
 - **1.30.0.** Media made solid. Answers come within 8 seconds whatever
   state Plex is in (see When Plex is slow or away). tapiOca sorts, pages
   and searches lists itself, ignoring case and accents (see Lists). Up next
@@ -58,6 +63,11 @@ covers the server's side. The full product plan is in the document
 - **1.31.0.** A movie in several files plays as one. Its length covers all
   of them, and resume, progress, seeking, Up next and watched work across
   the whole (see A movie in several files).
+- **1.34.0.** Automatic subtitles, from the device's language, and the
+  player's **Sticky Audio & Subtitles** (see Languages in
+  `docs/internal-api.md`).
+- **1.34.1.** On to start: a new tapiOca shares every Media folder until an
+  Admin chooses (see Sharing Media folders).
 - **Later.** Fragmented MP4 copies, so Apple's player can get an HEVC
   picture unchanged.
 

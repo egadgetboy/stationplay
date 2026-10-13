@@ -6,6 +6,10 @@ This is the design for Phase 1: one library layer that everything reads
 through, with Plex as its first source. Nothing about the stations changes.
 The full product plan is in the document "tapiOca: the full plan."
 
+"Library" here is the code's name for this layer and for Plex's libraries.
+What people read says **Media** for the titles shared with tapiOca's apps,
+and **Media folders** for Plex's libraries.
+
 ## Goals
 
 1. Every part of tapiOca that reads the media library reads it through

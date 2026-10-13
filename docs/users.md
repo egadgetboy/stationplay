@@ -139,8 +139,8 @@ From 1.33.0, an Admin can choose, for each person who isn't an Admin:
   allowed; a hidden genre, tag, collection or studio doesn't.
 
 A hidden title is hidden everywhere tapiOca shows titles to that
-person: Media, search, More like this, cast and crew pages and Continue
-Watching (the Resume row), and any station that plays it. Someone with
+person: Media, search, More like this, cast and crew pages and the Resume
+row, and any station that plays it. Someone with
 anything hidden for them watches only, as on a level with limits: the
 station editor, which shows Media folders whole, isn't for them.
 
@@ -539,9 +539,9 @@ stations.)
   and Remove me from this device.
 - **No filtering on the device.** The apps show exactly what the server
   sends.
-- **The free app's station.** The free app's one station stays the
-  **server's first station**, never the first one a person can see. If the
-  person can't see it, the app says so and offers the unlock.
+- **The Free tier's station.** In an app's Free tier, the one station is
+  always the **server's first station**, never the first one a person can
+  see. If the person can't see it, the app says so and offers **Unlock**.
 
 ## Tests that must pass
 
