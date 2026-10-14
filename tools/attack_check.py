@@ -495,7 +495,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
             # (1.34.1) The Plex step's checks, INFO, and the level new people start on.
             ("GET", "/api/setup/plex", None), ("GET", "/api/info-station", None),
             ("POST", "/api/info-station", None), ("PUT", "/api/access/new-level", {"level": 1}),
-            # (1.36.2) Where you watch: the Tuner step's question, an Admin's.
+            # (1.36.3) Where you watch: the Tuner step's question, an Admin's.
             ("GET", "/api/setup/watch-in", None), ("PUT", "/api/setup/watch-in", {"watchIn": ["kodi"]}),
             # (1.36.1) Trust this proxy: an Admin's.
             ("POST", "/api/away/trust-proxy", {"address": "192.168.1.3"}),

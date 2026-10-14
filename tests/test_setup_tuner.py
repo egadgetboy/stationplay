@@ -1,4 +1,4 @@
-"""The setup's Tuner step (1.36.2, the owner: "I think maybe calling the
+"""The setup's Tuner step (1.36.3, the owner: "I think maybe calling the
 step Tuner is better"): where an Admin will watch their stations (Plex,
 Jellyfin, Emby, Kodi, another app, or only tapiOca's own apps, more than
 one allowed), kept server-side for Admins only, with Plex suggested until

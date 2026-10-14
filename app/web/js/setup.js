@@ -16,7 +16,7 @@ const SETUP_TITLES = {
   away: 'Watching away from home',
   library: 'Media in tapiOca’s apps',
   fileChecks: 'Checking files',
-  plex: 'Tuner',  // (where you watch, and how to add tapiOca there: 1.36.2)
+  plex: 'Tuner',  // (where you watch, and how to add tapiOca there: 1.36.3)
   done: 'All set',
 };
 // What each check's state is called beside it (the dot's color says it too).
@@ -70,7 +70,7 @@ const PERSONAL_USE = () => h('div', { class: 'limit-note' }, h('strong', {}, 'Pl
   'Plex’s terms license Plex Media Server for personal use, on hardware and storage you own. Use tapiOca with your Plex server as those terms allow. ',
   h('a', { href: 'https://www.plex.tv/about/privacy-legal/plex-terms-of-service/', target: '_blank', rel: 'noopener noreferrer' }, 'Plex’s terms'), ' · ',
   h('a', { href: '/privacy', target: '_blank', rel: 'noopener noreferrer' }, 'tapiOca’s privacy notice'));
-// Where you watch (1.36.2, see setup.py): the Tuner step's question, which
+// Where you watch (1.36.3, see setup.py): the Tuner step's question, which
 // apps you'll watch your stations in, each with its own steps below it.
 // Kept as saved (GET /api/setup/watch-in), so All set can say it. It only
 // changes what the step shows: every app can still use the tuner.
@@ -584,7 +584,7 @@ const SETUP_PAGES = {
     } };
   },
 
-  // The Tuner step (1.36.2, the owner: "I think maybe calling the step
+  // The Tuner step (1.36.3, the owner: "I think maybe calling the step
   // Tuner is better"): where you'll watch, then for each app ticked, how to
   // add tapiOca to it. Plex's checks show with Plex ticked; and without it,
   // while tapiOca gets your shows and movies from Plex, or they need a look.

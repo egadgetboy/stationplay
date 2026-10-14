@@ -13,7 +13,7 @@ checks.
 
 The first step's checks look at the server itself: its media folder, video
 encoding, the clock and backups. None of them waits on Plex, which is
-checked in the Tuner step (called Plex before 1.36.2, still "plex" here):
+checked in the Tuner step (called Plex before 1.36.3, still "plex" here):
 whether it answers, whether tapiOca finds the files Plex lists, and
 whether Plex has tapiOca as a DVR (1.34.1, the
 owner: a new tapiOca said Plex was Not working on the first page, before
@@ -57,7 +57,7 @@ QUESTIONS: dict[str, int] = {
     "away": 1,  # tapiOca's apps away from home
     "library": 2,  # Media in tapiOca's apps (2: on to start, 1.34.1)
     "fileChecks": 1,  # the overnight deep scan
-    "plex": 2,  # the Tuner step: where you watch, and how to add tapiOca there (2: 1.36.2)
+    "plex": 2,  # the Tuner step: where you watch, and how to add tapiOca there (2: 1.36.3)
 }
 # The questions the welcome before this one asked (until 1.22.3): someone who
 # saw it answered them. Its version "3" added which corner, so with an
@@ -65,7 +65,7 @@ QUESTIONS: dict[str, int] = {
 WELCOME_ASKED = ("playback", "newStation", "signIn", "fileChecks", "plex")
 
 
-# Where you watch (1.36.2): the Tuner step's question, which apps an Admin
+# Where you watch (1.36.3): the Tuner step's question, which apps an Admin
 # will watch stations in, each with its own steps on the page. It changes
 # only what the step shows, never what the tuner, playlist or guide give any
 # app ("Never limit Plex, Jellyfin or other clients"). Kept in one `meta`
