@@ -7,6 +7,7 @@ import contextlib
 import functools
 import hashlib
 import inspect
+import ipaddress
 import json
 import logging
 import os
@@ -464,6 +465,12 @@ class SetupIn(BaseModel):
     """Questions in the setup that have been answered (see setup.py)."""
 
     answered: list[str] = Field(default_factory=list, max_length=20)
+
+
+class TrustProxyIn(BaseModel):
+    """Trust this proxy: the address the page showed (1.36.1)."""
+
+    address: str = Field(max_length=64)
 
 
 class ScanWindow(BaseModel):
@@ -925,7 +932,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     give_logos_to_older_stations(ctx)
     move_to_new_logos(ctx)
     ctx.bumpers.clear_leftovers()
-    ctx.access.reset_if_asked(settings.data_dir)
+    if ctx.access.reset_if_asked(settings.data_dir) and ctx.trusted.proxies:
+        # (1.36.1: a trusted proxy listed by mistake, the Admin's own
+        # computer say, can keep the page from them at home. The cold audit.)
+        ctx.trusted.save({"proxies": []}, by=None)
+        ctx.access.record(logging.WARNING, "The reset-access file also cleared Trusted proxies.")
     ctx.access.forget_old_sessions()
     app = FastAPI(
         title="tapiOca", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
@@ -3690,6 +3701,60 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             raise HTTPException(400, "Watching away from home is off, so there's nothing to check")
         return (await ctx.reach.check_now()).as_dict()
 
+    @app.post("/api/away/trust-proxy")
+    async def away_trust_proxy(body: TrustProxyIn, request: Request):
+        """Trust this proxy (1.36.1): lists, under Trusted proxies, the
+        reverse proxy tapiOca's own check from outside last came through,
+        then checks again. Only that address, and only as the page showed
+        it (`address`), so a stale page, or a form on another site, lists
+        nothing."""
+        if not ctx.away.on:
+            raise HTTPException(400, "Watching away from home is off, so there's no proxy to trust")
+        proxy = ctx.reach.proxy_to_trust()
+        if not proxy:
+            raise HTTPException(
+                409, "There's no reverse proxy to trust from the last check. Choose Check now."
+            )
+        if body.address != proxy:
+            raise HTTPException(
+                409, "tapiOca's last check found another proxy. Choose Check now, then try again."
+            )
+        # (Checked again first: the proxy may have moved since, its address
+        # now another device's. Listed only if this check sees it too.)
+        await ctx.reach.check_now()
+        if ctx.trusted.is_proxy(ipaddress.ip_address(body.address)):
+            # (Trusted since the page showed it, on the Access tab say.)
+            return ctx.reach.status().as_dict()
+        proxy = ctx.reach.proxy_to_trust()
+        if proxy != body.address:
+            raise HTTPException(
+                409,
+                "tapiOca checked again, and the proxy isn't at that address now. See what it "
+                "found, then try again.",
+            )
+        user = access.signed_in(request)
+        if not ctx.trusted.is_proxy(ipaddress.ip_address(proxy)):
+            listed = [
+                {"network": p["network"], "label": p.get("label", "")} for p in ctx.trusted.proxies
+            ]
+            try:
+                ctx.trusted.save(
+                    {"proxies": [*listed, {"network": proxy, "label": "Reverse proxy"}]},
+                    by=user.id if user else None,
+                )
+            except trusted.Wide as e:
+                raise HTTPException(
+                    409, f"{e} To list it anyway, add it on the Access tab, under Trusted proxies."
+                ) from None
+            except trusted.Refused as e:
+                raise HTTPException(400, str(e)) from None
+            ctx.access.record(
+                logging.INFO,
+                f"{user.name if user else 'Someone'} trusted the reverse proxy at {proxy} "
+                "(Trust this proxy)",
+            )
+        return (await ctx.reach.check_now()).as_dict()
+
     @app.get(access.REACH)
     async def reach_answer(request: Request):
         """tapiOca checking that apps can reach it from outside (see
@@ -3699,7 +3764,39 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         # (The port itself: a proxy pointed at the home port never passes
         # for the public one, 1.36.0.)
         outside, https = access.on_public_port(request.scope), access.over_https(request.scope)
-        if not ctx.reach.answer(request.query_params.get("n", ""), outside, https):
+        # (The device that brought it, to offer to trust as the reverse
+        # proxy when it isn't listed yet: 1.36.1.)
+        hop = access.hop(request.scope)
+        if hop is not None:
+            peer = request.scope["state"]["verdict"].peer
+            # (Docker's gateway or this computer's own address; loopback isn't
+            # one here, as on the Access tab: a tunnel in tapiOca's own
+            # container. See relays.py.)
+            hop["relay"] = ctx.relays.is_relay(peer) and not peer.is_loopback
+            # (Offered only if it can be listed, and isn't also a device that
+            # uses the tuner, such as Plex on the proxy's computer: listed,
+            # what it asks for naming nobody would be taken as from the
+            # internet, and Plex would lose the tuner. A relay or loopback
+            # naming nobody is itself, so they're fine: see networks.judge.
+            # The cold audit of 1.36.1.)
+            try:
+                trusted.network_of(hop["address"], loopback=True)
+                hop["unlisted"] = "full" if len(ctx.trusted.proxies) >= trusted.PROXIES_MOST else ""
+            except trusted.Refused:
+                hop["unlisted"] = "internet"
+            # (Plex's address is known before Plex uses the tuner: PLEX_URL's,
+            # or where Plex was let in lately. Recent tuner use is kept in
+            # memory only. The cold audit of 1.36.1, again.)
+            plex = {*ctx.tuner.plex_addresses(), tuner.plex_address(settings.plex_url or "")}
+            hop["tuner"] = (
+                not ctx.relays.is_relay(peer)
+                and not peer.is_loopback
+                and (
+                    hop["address"] in plex
+                    or any(s.address == hop["address"] for s in ctx.tuner.lately())
+                )
+            )
+        if not ctx.reach.answer(request.query_params.get("n", ""), outside, https, hop):
             raise HTTPException(404, "Not Found")
         return {"stationplay": True, "port": "public" if outside else "home", "https": https}
 

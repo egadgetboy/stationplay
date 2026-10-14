@@ -430,6 +430,12 @@ function reachIcon(state) {
   }[state] || '';
   return svg;
 }
+// What Trust this proxy does, under its button (1.36.1).
+function trustProxyWords(offer) {
+  return offer.relay
+    ? `${offer.address} is Docker’s own address, or this computer’s, which carries other connections too. Trust it only for a reverse proxy in another container on this server. tapiOca then believes what the proxy says about its visitors, but never lets anyone through this address skip signing in.`
+    : `This lists ${offer.address} under Trusted proxies, on the Access tab. tapiOca then believes what it says about each visitor: who they are, and that they came over HTTPS. Anything else from that computer with no forwarding headers, such as Plex, is then taken as from the internet, so trust it only if it runs just your proxy.`;
+}
 // The status: an icon and what it is, when it was checked (and when an app
 // last came in from outside, for an https:// address), and Check now.
 // `save`: what Check now saves first (a sentence if that didn't work);
@@ -454,7 +460,27 @@ function reachStatus({ save = null, shown = () => false } = {}) {
       check.textContent = 'Check now';
     }
   } }, 'Check now');
-  const box = h('div', { class: 'reach' }, icon, h('div', {}, what, when), check);
+  // (1.36.1) A reverse proxy the check came through that isn't trusted
+  // yet: trusted right here, in the setup too, not on another tab.
+  const trustWhy = h('p', { class: 'hint', style: 'margin:4px 0 0' });
+  const trust = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
+    trust.disabled = check.disabled = true;
+    trust.textContent = 'Trusting…';
+    try {
+      // (The address shown: one found since isn't trusted unseen.)
+      const reach = await api('/api/away/trust-proxy', { method: 'POST', body: { address: awayNow?.reach?.trustProxy?.address || '' } });
+      if (awayNow?.on) { awayNow.reach = reach; paintAway(); }
+      toast(reach.state === 'up' ? 'Trusted. Apps can reach tapiOca from outside now.' : 'Trusted. tapiOca checked again: see what it found.');
+      if (typeof loadTrusted === 'function' && $('#trustedPanel')) loadTrusted();
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      trust.disabled = check.disabled = false;
+      trust.textContent = 'Trust this proxy';
+    }
+  } }, 'Trust this proxy');
+  const trustBox = h('div', { class: 'reach-trust', hidden: true }, trust, trustWhy);
+  const box = h('div', { class: 'reach' }, icon, h('div', {}, what, when, trustBox), check);
   box.paint = () => {
     const reach = awayNow?.on ? awayNow.reach : null;
     box.hidden = !reach && !shown();
@@ -463,6 +489,8 @@ function reachStatus({ save = null, shown = () => false } = {}) {
     icon.replaceChildren(reachIcon(reach ? reach.state : ''));
     // (Text is set only when it changes: `what` is read out when it does.)
     const say = (el, text) => { if (el.textContent !== text) el.textContent = text; };
+    trustBox.hidden = !reach?.trustProxy;
+    if (reach?.trustProxy) say(trustWhy, trustProxyWords(reach.trustProxy));
     if (!reach) {
       say(what, 'Check now saves this, and checks that apps can reach tapiOca at that address.');
       say(when, '');

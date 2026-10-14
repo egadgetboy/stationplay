@@ -5,11 +5,16 @@ the checks and the apps, and where the page gets it."""
 from __future__ import annotations
 
 import asyncio
+import ipaddress
+import json
 import logging
+import shutil
 import socket
 import ssl
+import subprocess
 import time
 from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -655,3 +660,329 @@ def test_an_apps_own_requests_from_outside_count_as_getting_in(app):
         # (Nothing answers checks in the tests: an app that came in lately
         # says apps get in all the same.)
         assert home.post("/api/away/check").json()["state"] == "up"
+
+
+class UnlistedProxy:
+    """A reverse proxy in front of tapiOca's public port that isn't listed
+    under Trusted proxies yet: it names the visitor (X-Forwarded-For), and
+    says HTTPS (X-Forwarded-Proto) if `https`. From `peer`."""
+
+    def __init__(
+        self, app, https: bool = True, peer: str = "192.168.1.3", names: bool = True
+    ) -> None:
+        self.https, self.answers = https, []
+        stationplay = httpx.ASGITransport(app=app, client=(peer, 123))
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            url = request.url.copy_with(scheme="http", host="testserver", port=PUBLIC_PORT)
+            headers = {k: v for k, v in request.headers.items() if k != "host"}
+            if names:
+                headers["X-Forwarded-For"] = "203.0.113.9"
+            if self.https:
+                headers["X-Forwarded-Proto"] = "https"
+            got = await stationplay.handle_async_request(
+                httpx.Request(request.method, url, headers=headers)
+            )
+            await got.aread()
+            self.answers.append(got)
+            return httpx.Response(got.status_code, headers=got.headers, content=got.content)
+
+        self.transport = httpx.MockTransport(handler)
+
+
+def away_on(home) -> None:
+    assert home.post("/api/access/users", json=PAT).status_code == 201
+    home.put("/api/away", json={"on": True, "address": "https://tv.example.com"})
+
+
+def trust(client, address: str = "192.168.1.3"):
+    return client.post("/api/away/trust-proxy", json={"address": address})
+
+
+def test_a_proxy_not_trusted_yet_is_trusted_right_there(app):
+    """The owner, October 13 (1.36.1): the setup's check said to list the
+    proxy on the Access tab, so an Admin had to leave the setup to fix it.
+    Now it offers to trust the proxy the check came through, by itself."""
+    ctx = app.state.ctx
+    with TestClient(app) as home:
+        away_on(home)
+        # Nothing to trust before a check found one.
+        assert trust(home).status_code == 409
+        ctx.reach.transport = UnlistedProxy(app).transport
+        found = home.post("/api/away/check").json()
+        assert ctx.reach._latest.short == "Proxy not trusted yet"  # (the alert's words)
+        assert found["detail"].startswith(
+            "https://tv.example.com reaches tapiOca through a reverse proxy at 192.168.1.3, "
+            "which isn't a trusted proxy yet, so tapiOca turns apps away there. To fix it, "
+            "choose Trust this proxy."
+        )
+        assert "X-Forwarded-Proto" not in found["detail"]
+        assert found["trustProxy"] == {"address": "192.168.1.3", "relay": False}
+        assert home.get("/api/away").json()["reach"]["trustProxy"]["address"] == "192.168.1.3"
+        # Only by an Admin, signed in.
+        assert home.post("/api/access/users", json={**SAM, "role": "user"}).status_code == 201
+        sam = TestClient(app)
+        assert sam.post("/api/access/sign-in", json=SAM).status_code == 200
+        assert trust(sam).status_code == 403
+        assert trust(TestClient(app)).status_code == 401
+        # Only the address the page showed: a stale page lists nothing, and
+        # neither does a plain form from another site (no JSON).
+        assert trust(home, "192.168.1.99").status_code == 409
+        form = home.post("/api/away/trust-proxy", data={"address": "192.168.1.3"})
+        assert form.status_code == 422
+        assert ctx.trusted.proxies == []
+        # Trusted: listed, by itself only, and checked again: ready.
+        ready = trust(home)
+        assert ready.status_code == 200, ready.text
+        assert ready.json()["state"] == "up" and "trustProxy" not in ready.json()
+        assert [p["network"] for p in ctx.trusted.proxies] == ["192.168.1.3/32"]
+        logged = home.get("/api/logs?access_log=true").json()["text"]
+        assert "Pat trusted the reverse proxy at 192.168.1.3 (Trust this proxy)" in logged
+        # Nothing more to trust after that.
+        assert trust(home).status_code == 409
+        # And with watching away from home off, there's nothing to trust.
+        home.put("/api/away", json={"on": False, "address": "https://tv.example.com"})
+        off = trust(home)
+        assert off.status_code == 400 and "no proxy to trust" in off.json()["detail"]
+
+
+def test_what_a_proxy_that_doesnt_say_https_is_told(app):
+    ctx = app.state.ctx
+    with TestClient(app) as home:
+        away_on(home)
+        # Not listed, and not saying HTTPS: trust it, and send the header.
+        ctx.reach.transport = UnlistedProxy(app, https=False).transport
+        found = home.post("/api/away/check").json()
+        assert found["trustProxy"]["address"] == "192.168.1.3"
+        assert (
+            "To fix it, choose Trust this proxy. Also set the proxy to send X-Forwarded-Proto: "
+            "https." in found["detail"]
+        )
+        assert trust(home).json()["state"] == "checking"
+        # Listed now, still not saying HTTPS: only the header is left.
+        again = home.post("/api/away/check").json()
+        assert "trustProxy" not in again
+        assert again["detail"].startswith(
+            "https://tv.example.com reaches tapiOca through your trusted proxy at 192.168.1.3, "
+            "but the proxy doesn't say a request came over HTTPS, so tapiOca turns apps away "
+            "there. Set the proxy to send X-Forwarded-Proto: https."
+        )
+        assert trust(home).status_code == 409
+
+
+def test_docker_s_own_address_is_offered_with_a_warning_and_loopback_isnt_one(app):
+    ctx = app.state.ctx
+    with TestClient(app) as home:
+        away_on(home)
+        ctx.relays.found = lambda: {ipaddress.ip_address("172.17.0.1")}
+        ctx.relays.refresh()
+        # (Plex, through the same gateway, uses the tuner: the gateway is
+        # offered all the same, as listing it never takes the tuner away.)
+        plex = TestClient(app, client=("172.17.0.1", 5), headers={"User-Agent": "PlexMediaServer"})
+        assert plex.get("/discover.json").status_code == 200
+        ctx.reach.transport = UnlistedProxy(app, peer="172.17.0.1").transport
+        assert home.post("/api/away/check").json()["trustProxy"] == {
+            "address": "172.17.0.1", "relay": True,
+        }  # fmt: skip
+        # (A tunnel in tapiOca's own container: loopback, not Docker's.)
+        ctx.reach.transport = UnlistedProxy(app, peer="127.0.0.1").transport
+        assert home.post("/api/away/check").json()["trustProxy"] == {
+            "address": "127.0.0.1", "relay": False,
+        }  # fmt: skip
+
+
+def test_a_listed_docker_gateway_leaves_plex_and_the_apps_at_home_alone(app):
+    """The cold audit of 1.36.1, its first finding, a 1.36.0 bug: Docker's
+    gateway listed as a trusted proxy (for a reverse proxy in another
+    container, as the README says) turned everything through it that names
+    nobody into the internet: Plex's tuner, tapiOca's apps at home, and,
+    with signing in off, the page. A relay naming nobody is itself now;
+    what it names is judged as before."""
+    ctx = app.state.ctx
+    with TestClient(app) as home:
+        ctx.relays.found = lambda: {ipaddress.ip_address("172.17.0.1")}
+        ctx.relays.refresh()
+        ctx.trusted.save({"proxies": [{"network": "172.17.0.1"}]}, by=None)
+        gateway = TestClient(app, client=("172.17.0.1", 5))
+        # Signing in off: the page and the tuner, as from home.
+        for path in ("/discover.json", "/lineup.json", "/xmltv.xml", "/api/status"):
+            assert gateway.get(path).status_code == 200, path
+        # What the proxy names from the internet, on the home port, is still
+        # the internet (a proxy pointed at the home port).
+        named = gateway.get("/api/status", headers={"X-Forwarded-For": "203.0.113.9"})
+        assert named.status_code == 403
+        # Signing in on: an app at home through the gateway signs in and
+        # asks as before, and nothing is trusted through it.
+        assert home.post("/api/access/users", json=PAT).status_code == 201
+        signed = gateway.post("/api/internal/sign-in", json={**PAT, "app": "tapiOca"})
+        assert signed.status_code == 200, signed.text
+        token = bearer(signed.json()["token"])
+        assert gateway.get("/api/internal/me", headers=token).status_code == 200
+        assert "trusted" not in gateway.get("/api/access/me").json()
+        # (A proxy that isn't a relay keeps 1.36.0's rule: naming nobody at
+        # home, it's taken as a proxy pointed at the home port.)
+        ctx.trusted.save({"proxies": [{"network": "192.168.1.3"}]}, by=None)
+        box = TestClient(app, client=("192.168.1.3", 5))
+        assert box.get("/discover.json").status_code == 404
+
+
+def test_what_cant_be_trusted_isnt_offered(app):
+    ctx = app.state.ctx
+    with TestClient(app) as home:
+        away_on(home)
+        # An internet address can't be a trusted proxy.
+        ctx.reach.transport = UnlistedProxy(app, peer="198.51.100.7").transport
+        found = home.post("/api/away/check").json()
+        assert "trustProxy" not in found
+        assert "That's an internet address, which can't be a trusted proxy" in found["detail"]
+        # Nor an eleventh.
+        ctx.trusted.save({"proxies": [{"network": f"192.168.9.{n}"} for n in range(10)]}, by=None)
+        ctx.reach.transport = UnlistedProxy(app).transport
+        found = home.post("/api/away/check").json()
+        assert "trustProxy" not in found and "remove one on the Access tab" in found["detail"]
+        ctx.trusted.save({"proxies": []}, by=None)
+        # Nor a computer that uses the tuner too (Plex on the proxy's
+        # computer): listed, Plex would lose the tuner.
+        plex = TestClient(app, client=("192.168.1.3", 5), headers={"User-Agent": "PlexMediaServer"})
+        assert plex.get("/discover.json").status_code == 200
+        found = home.post("/api/away/check").json()
+        assert "trustProxy" not in found
+        assert "That address is Plex's too, or uses tapiOca's tuner" in found["detail"]
+
+
+def test_only_the_newest_check_and_the_first_answer_count():
+    """A slower, older check never overwrites a newer one; and a second
+    device answering a check means no proxy is offered."""
+    r = reach_at("https://tv.example.com")
+    hop = {"address": "192.168.1.3", "sentHeaders": True, "unlisted": ""}
+    gate = asyncio.Event()
+
+    async def slow_then_ready(request: httpx.Request) -> httpx.Response:
+        value = request.url.params["n"]
+        if not gate.is_set():
+            gate.set()
+            await asyncio.sleep(0.2)  # (the older check, answered late)
+            r.answer(value, True, False, hop)
+        else:
+            r.answer(value, True, True)
+        return httpx.Response(200, json={"stationplay": True, "port": "public", "https": True})
+
+    async def both() -> None:
+        r.transport = httpx.MockTransport(slow_then_ready)
+        older = asyncio.create_task(r.check_now())
+        await gate.wait()
+        await r.check_now()  # (the newer one: ready)
+        await older
+
+    asyncio.run(both())
+    assert r.status().short == "Ready" and r.status().trust_proxy is None
+
+    r = reach_at("https://tv.example.com")
+
+    def two_devices(request: httpx.Request) -> httpx.Response:
+        value = request.url.params["n"]
+        r.answer(value, True, False, hop)
+        r.answer(value, True, False, {**hop, "address": "192.168.1.66"})
+        return httpx.Response(200, json={"stationplay": True, "port": "public", "https": False})
+
+    answering(r, two_devices)
+    asyncio.run(r.check_now())
+    assert r.status().trust_proxy is None and r.proxy_to_trust() == ""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_page_says_what_trusting_the_proxy_does():
+    script = (Path(__file__).resolve().parents[1] / "app/web/js/apps.js").read_text()
+    start = script.index("function trustProxyWords(")
+    code = script[start : script.index("\n}\n", start) + 3] + (
+        "console.log(JSON.stringify([trustProxyWords({address: '192.168.1.3', relay: false}),"
+        " trustProxyWords({address: '172.17.0.1', relay: true})]));"
+    )
+    done = subprocess.run(["node", "-e", code], capture_output=True, text=True, timeout=30)
+    plain, relay = json.loads(done.stdout)
+    assert plain == (
+        "This lists 192.168.1.3 under Trusted proxies, on the Access tab. tapiOca then believes "
+        "what it says about each visitor: who they are, and that they came over HTTPS. Anything "
+        "else from that computer with no forwarding headers, such as Plex, is then taken as from "
+        "the internet, so trust it only if it runs just your proxy."
+    )
+    assert relay.startswith("172.17.0.1 is Docker’s own address, or this computer’s, which "
+                            "carries other connections too.")  # fmt: skip
+    assert "Trust it only for a reverse proxy in another container on this server." in relay
+    # (The button sends the address it showed.)
+    assert "body: { address: awayNow?.reach?.trustProxy?.address || '' }" in script
+
+
+def test_plexs_own_address_isnt_offered_before_plex_uses_the_tuner(tmp_path):
+    """The cold audit of 1.36.1, again: the setup asks about watching away
+    from home before Plex's step, and recent tuner use is kept in memory
+    only. PLEX_URL's own address is known all along."""
+    fp = FakePlex()
+    settings = Settings(
+        plex_url="http://192.168.1.3:32400", plex_token="token", data_dir=tmp_path / "data",
+        port=PORT, public_port=PUBLIC_PORT,
+    )  # fmt: skip
+    app = create_app(
+        settings, PlexClient("http://192.168.1.3:32400", "token", transport=fp.transport())
+    )
+    with TestClient(app) as home:
+        away_on(home)
+        app.state.ctx.reach.transport = UnlistedProxy(app).transport
+        found = home.post("/api/away/check").json()
+        assert "trustProxy" not in found
+        assert "That address is Plex's too" in found["detail"]
+
+
+def test_a_relay_saying_only_https_is_trusted_and_ready(app):
+    """A proxy in another container that sends X-Forwarded-Proto but no
+    visitor's address: listed, it's a proxy (not the relay itself), so its
+    HTTPS is believed and the offer doesn't come back."""
+    ctx = app.state.ctx
+    with TestClient(app) as home:
+        away_on(home)
+        ctx.relays.found = lambda: {ipaddress.ip_address("172.17.0.1")}
+        ctx.relays.refresh()
+        ctx.reach.transport = UnlistedProxy(app, peer="172.17.0.1", names=False).transport
+        assert home.post("/api/away/check").json()["trustProxy"]["address"] == "172.17.0.1"
+        ready = trust(home, "172.17.0.1").json()
+        assert ready["state"] == "up" and "trustProxy" not in ready
+
+
+def test_the_click_checks_again_before_listing(app):
+    """The proxy may have moved since the check (a container restarted):
+    its old address, now maybe another device's, isn't listed."""
+    ctx = app.state.ctx
+    with TestClient(app) as home:
+        away_on(home)
+        ctx.reach.transport = UnlistedProxy(app).transport
+        assert home.post("/api/away/check").json()["trustProxy"]["address"] == "192.168.1.3"
+        ctx.reach.transport = UnlistedProxy(app, peer="192.168.1.4").transport
+        moved = trust(home)
+        assert moved.status_code == 409 and "isn't at that address now" in moved.json()["detail"]
+        assert ctx.trusted.proxies == []
+        assert home.get("/api/away").json()["reach"]["trustProxy"]["address"] == "192.168.1.4"
+        # Trusted meanwhile (on the Access tab, say): the click just says how
+        # it is now.
+        ctx.reach.transport = UnlistedProxy(app).transport
+        assert home.post("/api/away/check").json()["trustProxy"]["address"] == "192.168.1.3"
+        ctx.trusted.save({"proxies": [{"network": "192.168.1.3"}]}, by=None)
+        already = trust(home)
+        assert already.status_code == 200 and already.json()["state"] == "up"
+        assert [p["network"] for p in ctx.trusted.proxies] == ["192.168.1.3/32"]
+
+
+def test_trusting_with_signing_in_off(app):
+    """With signing in off, anyone at home may, by a home name (as every
+    Admin setting then); never by another name, or from the internet."""
+    ctx = app.state.ctx
+    with TestClient(app, base_url="http://192.168.1.20:3310") as home:
+        home.put("/api/away", json={"on": True, "address": "https://tv.example.com"})
+        ctx.reach.transport = UnlistedProxy(app).transport
+        assert home.post("/api/away/check").json()["trustProxy"]["address"] == "192.168.1.3"
+        named = TestClient(app, base_url="http://tv.example.com:3310")
+        assert trust(named).status_code == 403
+        internet = TestClient(app, base_url=f"http://testserver:{PUBLIC_PORT}")
+        assert trust(internet).status_code == 403
+        assert ctx.trusted.proxies == []
+        assert trust(home).status_code == 200
+        assert [p["network"] for p in ctx.trusted.proxies] == ["192.168.1.3/32"]

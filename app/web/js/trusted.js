@@ -170,7 +170,7 @@ function renderProxies() {
       h('tbody', {}, ...proxies.map(p => h('tr', {},
         h('td', {}, h('strong', {}, p.label || p.network), p.label ? h('span', { class: 'hint' }, p.network) : null,
           // (Docker's gateway or this machine's own address: see relays.py.)
-          p.relay ? h('span', { class: 'hint' }, warnIcon(), ' This is Docker’s own address, or this computer’s, which carries other connections too. Nothing is trusted through it, wrong passwords at home through it count as it, and anything else from it that names no visitor is treated as from the internet. List it only for a proxy in another container on this server.') : null),
+          p.relay ? h('span', { class: 'hint' }, warnIcon(), ' This is Docker’s own address, or this computer’s, which carries other connections too. Nothing is trusted through it, and wrong passwords at home through it count as it. What comes from it with no forwarding headers, such as Plex or another container, is taken as from it, at home. List it only for a proxy in another container on this server.') : null),
         h('td', {}, h('button', { class: 'btn danger', type: 'button', onclick: () => {
           if (!confirm(`Remove ${p.label || p.network}? Visitors through it then count as its own address.`)) return;
           save(proxies.filter(x => x.network !== p.network), `${p.label || p.network} is off the list`);

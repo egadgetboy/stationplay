@@ -489,6 +489,8 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
             # (1.34.1) The Plex step's checks, INFO, and the level new people start on.
             ("GET", "/api/setup/plex", None), ("GET", "/api/info-station", None),
             ("POST", "/api/info-station", None), ("PUT", "/api/access/new-level", {"level": 1}),
+            # (1.36.1) Trust this proxy: an Admin's.
+            ("POST", "/api/away/trust-proxy", {"address": "192.168.1.3"}),
         ):  # fmt: skip
             r = await c.request(method, path, json=body, headers=sam_h)
             checks.ok(r.status_code == 403, f"a User can't {method} {path}", f"got {r.status_code}")

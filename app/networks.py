@@ -300,12 +300,14 @@ def judge(
     home_names: Collection[str] = (),
     also_home: Collection[str] = (),
     never_home: Collection[str] = (),
+    relays: Collection[IP] = (),
 ) -> Verdict:
     """Where a request is from (see the module's notes). `proxies`: the
     trusted proxies an Admin listed, the only devices whose forwarding
     headers say who a request is for (the owner, October 13: never assumed
     from the headers themselves); `cloudflare`: Cloudflare's own addresses,
-    whose CF-Connecting-IP is believed on the public port."""
+    whose CF-Connecting-IP is believed on the public port; `relays`: this
+    machine's relays (see relays.py)."""
     headers = list(headers)
     peer_ip = parse_peer(peer)
     said = forwarded(headers)
@@ -313,8 +315,18 @@ def judge(
     through = said or []
     # (Loopback with no forwarding headers at all is this machine itself,
     # such as the image's health check, even when a tunnel in tapiOca's own
-    # container is listed as 127.0.0.1: that tunnel always names who.)
-    itself = said is None and peer_ip is not None and peer_ip.is_loopback
+    # container is listed as 127.0.0.1: that tunnel always names who. So is
+    # a relay, Docker's gateway, listed for a reverse proxy in another
+    # container on this server: Plex, Jellyfin and tapiOca's apps reach
+    # tapiOca through it too, and name nobody. 1.36.1: listed, it took the
+    # tuner from Plex, the cold audit's first finding.)
+    proto = any(k in (b"x-forwarded-proto", b"cf-visitor") for k, _ in headers)
+    itself = (
+        said is None
+        and not proto
+        and peer_ip is not None
+        and (peer_ip.is_loopback or peer_ip in relays)
+    )
     listed = _in(peer_ip, proxies) and not itself
     untrusted = said is not None and not listed
     visitor: IP | None = peer_ip

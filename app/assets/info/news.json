@@ -1,8 +1,8 @@
 {
-  "version": "1.36.0",
+  "version": "1.36.1",
   "new": [
+    "Trust your reverse proxy where tapiOca checks it",
     "Trusted networks: devices at home skip signing in",
-    "Safe when a door is left open by mistake",
-    "Trusted proxies, listed by an Admin"
+    "Safe when a door is left open by mistake"
   ]
 }

@@ -460,6 +460,19 @@ def _where_it_is(
     ))  # fmt: skip
     settings = "tapiOca’s app settings (its YAML or Compose file)"
     restart = "Then restart tapiOca."
+    if line := _volume_line(media_dir):
+        # (A whole volume line in MEDIA_DIR: the owner's, October 13, 1.36.1.
+        # Never advice to mount media at / or over tapiOca's data folder.)
+        host, inside, mode = line
+        if inside.rstrip("/") in ("", "/data"):
+            inside = "/media"
+        whole = f"{host}:{inside}" + (f":{mode}" if mode else "")
+        return [
+            f"MEDIA_DIR holds a whole volume line, {media_dir}. It should be only where tapiOca "
+            f"sees your media: {inside}.",
+            f"In {settings}, set MEDIA_DIR to {inside}, and put {whole} under volumes as your "
+            f"media line. {restart}",
+        ]
     if own_roots and all(_within(r, media_dir) for r in own_roots):
         # (Your own Media folders were read from MEDIA_DIR: the media goes
         # back there, or they'd stay out of reach.)
@@ -499,6 +512,18 @@ def _where_it_is(
         "The middle part (/media here) is where tapiOca sees that folder. Set MEDIA_DIR to it, "
         "then restart tapiOca.",
     ]
+
+
+_VOLUME_LINE = re.compile(r"((?:[A-Za-z]:)?[/\\][^:]*):(/[^:]*)(?::([A-Za-z,]+))?")
+
+
+def _volume_line(media_dir: str) -> tuple[str, str, str] | None:
+    """A volume line ("/mnt/pool/media:/media:ro") put in MEDIA_DIR, as
+    pasted (with its "- " or quotes too): the folder on the server, where
+    tapiOca would see it, and how ("ro")."""
+    text = media_dir.strip().removeprefix("-").strip().strip("'\"")
+    m = _VOLUME_LINE.fullmatch(text)
+    return (m.group(1), m.group(2), m.group(3) or "") if m else None
 
 
 def _inside_media(paths: list[str]) -> list[str]:

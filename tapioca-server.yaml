@@ -9,7 +9,7 @@
 #        sudo mkdir -p /mnt/tank/apps/stationplay/data
 #        sudo chown -R 1000:1000 /mnt/tank/apps/stationplay/data
 #   2. Change every line marked  <- CHANGE. On a volumes line, change only
-#      the part before the first colon: the folder on your server.
+#      the folder on your server, the part before :/data or :/media.
 #
 # Paths are case-sensitive: Data and data are different folders.
 #
@@ -48,8 +48,8 @@ services:
       # Other values: intel, amd, nvidia, cpu
       HW_ACCEL: "auto"
     volumes:
-      # Each line is  folder on your server:where tapiOca sees it[:ro].
-      # Change only the part before the first colon.
+      # Each line is the folder on your server, then where tapiOca sees it
+      # (and :ro, read-only). Change only the folder on your server.
       # Stations, settings, logos, the Broken files list and backups:
       - /mnt/tank/apps/stationplay/data:/data        # <- CHANGE /mnt/tank/apps/stationplay/data
       # Your media folder, read-only. tapiOca matches the paths Plex

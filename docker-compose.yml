@@ -9,8 +9,8 @@
 #      (Docker Desktop on Windows or macOS: just make the folder, and delete
 #      the "user:" line below.)
 #   2. Change the lines marked  <- CHANGE, and set TAPIOCA_INSTALL. On a
-#      volumes line, change only the part before the first colon: the
-#      folder on your computer.
+#      volumes line, change only the folder on your computer, the part
+#      before :/data or :/media.
 #   3. In that folder:  docker compose up -d
 #
 # To update: in that folder,  docker compose up -d --pull always
@@ -50,8 +50,8 @@ services:
       # Other values: intel, amd, nvidia, cpu
       HW_ACCEL: "auto"
     volumes:
-      # Each line is  folder on your computer:where tapiOca sees it[:ro].
-      # Change only the part before the first colon.
+      # Each line is the folder on your computer, then where tapiOca sees it
+      # (and :ro, read-only). Change only the folder on your computer.
       # Stations, settings, logos, the Broken files list and backups:
       - ./data:/data
       # Your media folder, read-only. tapiOca matches the paths Plex

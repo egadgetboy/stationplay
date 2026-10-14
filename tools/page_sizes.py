@@ -1625,6 +1625,17 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
         )
         page.wait_for_timeout(800)
         look("access-panels", full=True)
+        # (1.36.1) A reverse proxy the check came through, not trusted yet:
+        # Trust this proxy, right there (Docker's own address, with its
+        # warning, the longest words).
+        page.evaluate("""() => { awayNow.reach = {...awayNow.reach, state: 'checking',
+          detail: 'https://tv.example.com reaches tapiOca through a reverse proxy at 172.17.0.1, which isn’t a trusted proxy yet. Until it is, tapiOca can’t tell that the request came over HTTPS, so it turns apps away there. Choose Trust this proxy to fix it. Checking again in a minute to be sure.',
+          trustProxy: {address: '172.17.0.1', relay: true}}; paintAway(); }""")
+        page.evaluate("() => document.querySelector('#awayBody .reach').scrollIntoView({block: 'center'})")
+        look.expect("Trust this proxy, in the away check", page.is_visible(
+            "#awayBody .reach-trust button:has-text('Trust this proxy')"), True)  # fmt: skip
+        look("access-away-trust")
+        page.evaluate("() => loadAway()")
         page.click("#viewingBody button:has-text('Add a level')")
         page.wait_for_timeout(400)
         page.evaluate(

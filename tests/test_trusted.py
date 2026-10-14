@@ -443,6 +443,30 @@ def test_reset_access_takes_what_signed_in_someone_with_it(home, tmp_path):
     assert [(e["network"], e["gives"]) for e in left] == [("192.168.1.0/24", "picker")]
 
 
+def test_reset_access_clears_trusted_proxies_too(home, tmp_path):
+    """The cold audit of 1.36.1: a trusted proxy listed by mistake (the
+    Admin's own computer, say) keeps the page from them at home, and the
+    reset-access file didn't clear it."""
+    from fastapi.testclient import TestClient
+
+    from app import access
+    from app.config import Settings
+    from app.main import create_app
+    from app.plex import PlexClient
+
+    from .fakeplex import FakePlex
+
+    home.state.ctx.trusted.save({"proxies": [{"network": "192.168.1.50"}]}, by=None)
+    (tmp_path / "data" / access.RESET_FILE).write_text("")
+    again = create_app(
+        Settings(plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "data"),
+        PlexClient("http://plex.test", "token", transport=FakePlex().transport()),
+    )
+    assert again.state.ctx.trusted.proxies == []
+    with TestClient(again, client=("192.168.1.50", 5)) as me:
+        assert me.get("/api/status").status_code == 200
+
+
 def test_a_sign_in_made_without_a_secret_mints_nothing_that_leaves_its_network(home):
     """A trusted network's sign-in made with no PIN or password (Signed in
     as, or Who's tuning in? for someone with neither) can't change anyone's

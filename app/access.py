@@ -577,12 +577,12 @@ class Access:
         """Whether signing in is on (there are users)."""
         return self._users_exist
 
-    def reset_if_asked(self, data_dir: Path) -> None:
+    def reset_if_asked(self, data_dir: Path) -> bool:
         """Turns signing in off if the reset-access file is there (and
-        removes the file), for when you're locked out."""
+        removes the file), for when you're locked out. Whether it was."""
         flag = data_dir / RESET_FILE
         if not flag.exists():
-            return
+            return False
         self.db.delete_all_users()
         self._users_exist = False
         flag.unlink(missing_ok=True)
@@ -591,6 +591,7 @@ class Access:
             "The reset-access file turned off sign-in and removed every user. "
             "Add a user in the Access tab to turn sign-in back on.",
         )
+        return True
 
     def app_came_from_outside(self) -> None:
         """A signed-in app came in through the public port, over HTTPS."""
@@ -1246,6 +1247,7 @@ class Gate:
             home_names=listed.home_names if listed else (),
             also_home=also_home,
             never_home=never_home,
+            relays=self.relays.relays() if self.relays is not None else (),
         )
         state = scope.setdefault("state", {})
         state["port"] = "public" if port_public else "home"
@@ -1493,6 +1495,32 @@ def over_https(scope: dict) -> bool:
         if (proxy or edge) and name == b"cf-visitor" and b'"https"' in value:
             return True
     return False
+
+
+def hop(scope: dict) -> dict[str, Any] | None:
+    """The device that brought a request to tapiOca, as a reverse proxy
+    (1.36.1, for tapiOca's own check from outside: see reach.py): its
+    address; whether it's listed under Trusted proxies; whether it sent
+    forwarding headers (as a proxy does); and whether it says the request
+    came over HTTPS (believed only once it's listed: see over_https). None
+    without a peer."""
+    verdict = scope.get("state", {}).get("verdict")
+    if verdict is None or verdict.peer is None:
+        return None
+    says_https = sent = False
+    for name, value in scope.get("headers") or ():
+        if name == b"x-forwarded-proto":
+            sent = True
+            says_https = says_https or value.split(b",")[0].strip() == b"https"
+        elif name == b"cf-visitor":
+            sent = True
+            says_https = says_https or b'"https"' in value
+    return {
+        "address": str(verdict.peer),
+        "listed": bool(verdict.via_proxy),
+        "sentHeaders": bool(sent or verdict.untrusted_headers or verdict.via_proxy),
+        "saysHttps": says_https,
+    }
 
 
 def _from_another_site(scope: dict) -> bool:

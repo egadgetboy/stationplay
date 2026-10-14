@@ -259,6 +259,29 @@ def test_the_media_folder_check_reads_the_folder_itself(tmp_path):
     )
     assert neither.lines[-1].startswith("Until then, tapiOca can’t read your files itself.")
     assert not any("Plex where it can" in line for line in own.lines + neither.lines)
+    # A whole volume line in MEDIA_DIR (the owner, October 13: 1.36.0 said
+    # only "Nothing is at /mnt/hddpool/mediashare/media:/media:ro"): said
+    # plainly, with what to set instead.
+    line = "/mnt/pool/media:/media:ro"
+    got = setup.folders_check([(line, setup.Folder("missing", [], 0))], line)
+    assert got.lines[0] == f"Nothing is at {line} inside tapiOca."
+    assert got.lines[1] == (
+        "MEDIA_DIR holds a whole volume line, /mnt/pool/media:/media:ro. It should be only "
+        "where tapiOca sees your media: /media."
+    )
+    assert got.lines[2] == (
+        "In tapiOca’s app settings (its YAML or Compose file), set MEDIA_DIR to /media, and put "
+        "/mnt/pool/media:/media:ro under volumes as your media line. Then restart tapiOca."
+    )
+    for pasted in ("D:/Media:/media", "C:\\Media:/media", "- /mnt/pool/media:/media:ro",
+                   '"/mnt/pool/media:/media"'):  # fmt: skip
+        said = setup.folders_check([(pasted, setup.Folder("missing", [], 0))], pasted).lines
+        assert said[1].endswith("where tapiOca sees your media: /media."), pasted
+    # (Never advice to mount the media at / or over tapiOca's data folder.)
+    for wrong in ("/mnt/pool/media:/data:ro", "/mnt/pool/media:/"):
+        said = setup.folders_check([(wrong, setup.Folder("missing", [], 0))], wrong).lines
+        assert said[1].endswith("your media: /media.") and "/data:ro under" not in said[2], wrong
+        assert "set MEDIA_DIR to /media, and put /mnt/pool/media:/media" in said[2], wrong
     # An empty folder: a share or disk that isn't mounted, most often.
     empty = tmp_path / "empty"
     (empty / "lost+found").mkdir(parents=True)

@@ -82,6 +82,7 @@ import httpx
 from . import __version__
 from .access import REACH
 from .away import port_problem
+from .trusted import PROXIES_MOST
 
 if TYPE_CHECKING:
     from .access import Access
@@ -139,6 +140,11 @@ class Finding:
     reached: bool = False
     sure: bool = False
     found: str = ""
+    # (1.36.1) The reverse proxy the check came through, to offer to trust
+    # (Trust this proxy): it isn't listed yet. `proxy_relay`: it's Docker's
+    # own address or this computer's (see relays.py).
+    proxy: str = ""
+    proxy_relay: bool = False
 
 
 @dataclass(frozen=True)
@@ -152,12 +158,17 @@ class Status:
     checked_ms: int | None  # when it was last checked (None: not yet)
     since_ms: int  # since when it's been what it is
     app_ms: int | None  # when an app last came in through the public port (None: not yet)
+    # (1.36.1) A reverse proxy to offer to trust: {"address", "relay"}.
+    trust_proxy: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        said = {
             "state": self.state, "detail": self.detail, "short": self.short,
             "checkedAt": self.checked_ms, "since": self.since_ms, "lastApp": self.app_ms,
         }  # fmt: skip
+        if self.trust_proxy:
+            said["trustProxy"] = self.trust_proxy  # (only while there's one: 1.36.1)
+        return said
 
 
 @dataclass
@@ -166,7 +177,7 @@ class _Waiting:
     request came, how (through the public port or not, over HTTPS or not)."""
 
     until: float
-    seen: tuple[bool, bool] | None = None
+    seen: tuple[bool, bool, dict[str, Any] | None] | None = None
 
 
 class Reach:
@@ -188,6 +199,9 @@ class Reach:
     ) -> None:
         self.away, self.access, self.settings, self.clock = away, access, settings, clock
         self._waiting: dict[str, _Waiting] = {}  # each check's value
+        # Each check's number, and the newest recorded: an older check that
+        # ends after a newer one is never recorded over it (1.36.1).
+        self._started = self._recorded = 0
         # The checks' loop (see run_forever), and how it's told to look again.
         self._loop: asyncio.AbstractEventLoop | None = None
         self._wake: asyncio.Event | None = None
@@ -208,15 +222,33 @@ class Reach:
 
     # GET /api/internal/reach --------------------------------------------------
 
-    def answer(self, value: str, outside: bool, https: bool) -> bool:
+    def answer(
+        self, value: str, outside: bool, https: bool, hop: dict[str, Any] | None = None
+    ) -> bool:
         """Whether `value` is one a check is waiting for; if it is, notes how
         its request came (`outside`: through the public port; `https`: over
-        HTTPS, as the reverse proxy says)."""
+        HTTPS, as the reverse proxy says; `hop`: the device that brought it,
+        see access.hop, with "relay")."""
         waiting = self._waiting.get(value)
         if waiting is None or self.clock() > waiting.until:
             return False
-        waiting.seen = (outside, https)
+        if waiting.seen is not None:
+            # (The first answer counts. Another, from another device, means
+            # tapiOca can't be sure which one is the proxy: none is offered.)
+            first = waiting.seen
+            if (first[2] or {}).get("address") != (hop or {}).get("address"):
+                waiting.seen = (first[0], first[1], None)
+            return True
+        waiting.seen = (outside, https, hop)
         return True
+
+    def proxy_to_trust(self) -> str:
+        """The reverse proxy the last check came through, when it found
+        apps turned away because it isn't listed yet (Trust this proxy)."""
+        latest = self._latest
+        if not self._address or latest is None or latest.kind != NOT_HTTPS:
+            return ""
+        return latest.proxy
 
     # Checking ------------------------------------------------------------------
 
@@ -256,12 +288,17 @@ class Reach:
             return self.status()
         value = secrets.token_urlsafe(VALUE_BYTES)
         waiting = self._waiting[value] = _Waiting(self.clock() + VALUE_S)
+        self._started += 1
+        mine = self._started
         try:
             finding = await self._look(address, value, waiting)
         finally:
             del self._waiting[value]
         self._settle()
-        if address == self._address:  # (not if it changed meanwhile)
+        # (Not if the address changed meanwhile, or a newer check was
+        # recorded already.)
+        if address == self._address and mine > self._recorded:
+            self._recorded = mine
             self._record(finding)
         return self.status()
 
@@ -307,7 +344,13 @@ class Reach:
         detail, short = self._words()
         app = self.access.app_outside_at
         app_ms = None if app is None else _now_ms() - int((self.clock() - app) * 1000)
-        return Status(self._state, detail, short, self._checked_ms, self._since_ms, app_ms)
+        latest = self._latest
+        offer = (
+            {"address": latest.proxy, "relay": latest.proxy_relay}
+            if latest is not None and latest.proxy and self._address and self._state != UP
+            else None
+        )
+        return Status(self._state, detail, short, self._checked_ms, self._since_ms, app_ms, offer)
 
     def _settle(self) -> None:
         """Brings the state up to date (the setting may have changed, or an
@@ -414,9 +457,12 @@ class Reach:
             return await self._answered(address, *waiting.seen)
         return self._other(address, got)
 
-    async def _answered(self, address: str, outside: bool, https: bool) -> Finding:
+    async def _answered(
+        self, address: str, outside: bool, https: bool, hop: dict[str, Any] | None = None
+    ) -> Finding:
         """What a check that reached this tapiOca found (`outside`:
-        through the public port; `https`: over HTTPS, as the proxy says)."""
+        through the public port; `https`: over HTTPS, as the proxy says;
+        `hop`: the device that brought it)."""
         port, public = self.settings.port, self.settings.public_port
         secure = urlsplit(address).scheme == "https"
         if secure and not outside:
@@ -458,6 +504,48 @@ class Reach:
                     "internet unencrypted. Use your reverse proxy's https:// address instead."
                 )
             return Finding(NOT_HTTPS, detail, "Not over HTTPS", reached=True, sure=True)
+        if outside and not https and secure and hop and hop.get("listed"):
+            detail = (
+                f"{address} reaches tapiOca through your trusted proxy at {hop['address']}, but "
+                "the proxy doesn't say a request came over HTTPS, so tapiOca turns apps away "
+                "there. Set the proxy to send X-Forwarded-Proto: https."
+            )
+            return Finding(NOT_HTTPS, detail, "Not over HTTPS", reached=True, sure=True)
+        if outside and not https and secure and hop and hop.get("sentHeaders"):
+            # (A reverse proxy tapiOca doesn't believe yet: offered to trust,
+            # right here, rather than on another tab. The owner, October 13.)
+            proxy = hop["address"]
+            header = (
+                ""
+                if hop.get("saysHttps")
+                else " Also set the proxy to send X-Forwarded-Proto: https."
+            )
+            if hop.get("tuner"):
+                detail = (
+                    f"{address} reaches tapiOca through a reverse proxy at {proxy}, which isn't "
+                    "a trusted proxy yet, so tapiOca turns apps away there. That address is Plex's "
+                    "too, or uses tapiOca's tuner, so it shouldn't be a trusted proxy: give the "
+                    "proxy an address of its own, then trust it." + header
+                )
+                return Finding(NOT_HTTPS, detail, "Proxy not trusted yet", reached=True, sure=True)
+            unlisted = hop.get("unlisted", "")
+            detail = (
+                f"{address} reaches tapiOca through a reverse proxy at {proxy}, which isn't a "
+                "trusted proxy yet, so tapiOca turns apps away there. "
+                + {
+                    "": "To fix it, choose Trust this proxy.",
+                    "full": f"Trusted proxies has {PROXIES_MOST} already: remove one on the Access "
+                    "tab, then choose Check now.",
+                    "internet": "That's an internet address, which can't be a trusted proxy. "
+                    "Have the proxy reach tapiOca at a home address (its IPv4 address, say), or "
+                    "through a VPN.",
+                }.get(unlisted, "")
+                + header
+            )
+            return Finding(
+                NOT_HTTPS, detail, "Proxy not trusted yet", reached=True, sure=True,
+                proxy="" if unlisted else proxy, proxy_relay=bool(hop.get("relay")),
+            )  # fmt: skip
         if outside and not https:
             detail = (
                 f"{address} reaches tapiOca's public port, but your reverse proxy doesn't "

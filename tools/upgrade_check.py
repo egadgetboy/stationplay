@@ -402,7 +402,8 @@ def has_data(checks: Checks, url: str, made: dict, version: str, where: str) -> 
               f"{where}: the settings are kept", playback)  # fmt: skip
     stations = sorted((c["number"], c["name"]) for c in page.get("/api/channels").json())
     checks.ok(
-        stations == [(STATION["number"], STATION["name"]), *([INFO] if made.get("info") else [])],
+        stations == [(STATION["number"], STATION["name"]), *([OWN_STATION] if made.get("own") else []),
+                     *([INFO] if made.get("info") else [])],
         f"{where}: the station is kept",
         stations,
     )
@@ -552,16 +553,21 @@ def own_folders(checks: Checks, page: httpx.Client) -> None:
 HOME_NET = {"network": "192.168.1.0/24", "label": "Home Wi-Fi", "gives": "picker"}
 
 
-def trusted_after_update(checks: Checks, page: httpx.Client) -> None:
-    """(From 1.36.0) Updated with signing in on: nothing is trusted, and
-    the setup asks Who can use tapiOca again (to offer the network). Then a
+def trusted_after_update(checks: Checks, page: httpx.Client, before: str) -> None:
+    """(From 1.36.0) Updated with signing in on: nothing is trusted, and,
+    from a release before 1.36.0, the setup asks Who can use tapiOca again
+    (to offer the network); from 1.36.0 on, it was answered then. Then a
     trusted network, a name for home, and Tuner access by network only (so
     the release before is started below on a database that has them)."""
     got = page.get("/api/access/trusted").json()
     checks.ok(got.get("entries") == [] and got.get("proxies") == [],
               "nothing is trusted after the update", got)  # fmt: skip
     pending = page.get("/api/setup").json().get("pending", [])
-    checks.ok("signIn" in pending, "the setup asks Who can use tapiOca again", pending)
+    if version_of(before) < (1, 36, 0):
+        checks.ok("signIn" in pending, "the setup asks Who can use tapiOca again", pending)
+    else:
+        checks.ok("signIn" not in pending, "Who can use tapiOca isn't asked again (answered "
+                  "in the release before)", pending)  # fmt: skip
     listed = page.put("/api/access/trusted", json={"entries": [HOME_NET],
                                                    "homeNames": ["tv.home.example.com"]})  # fmt: skip
     tuner = page.put("/api/tuner", json={"only": True, "devices": [],
@@ -687,7 +693,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         if version_of(__version__) >= (1, 35, 0):
             own_folders(checks, page)
         if version_of(__version__) >= (1, 36, 0):
-            trusted_after_update(checks, page)
+            trusted_after_update(checks, page, before)
         sent = page.post("/api/internal/problem", json={
             "kind": "crashed", "detail": "after the update", "journal": "a\nb", **APP})  # fmt: skip
         checks.ok(sent.status_code == 200, "what's new works (a problem with its journal)",
@@ -744,7 +750,10 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                   "neither was sent again, and the fix was sent once", said)  # fmt: skip
         # (With no copy to put back, the release before finds what's changed
         # since, and the app's sign-in from just now.)
-        since = {**new_people(checks, sp.url, made), "bearer": bearer, "info": made["info"]}
+        since = {**new_people(checks, sp.url, made), "bearer": bearer, "info": made["info"],
+                 # (With no copy to put back, the station of a Media folder of
+                 # tapiOca's own made since is there too.)
+                 "own": version_of(__version__) >= (1, 35, 0)}  # fmt: skip
         if version_of(__version__) >= (1, 34, 0):
             # Alerts to a first address in Slack's format (from 1.34.0), and another.
             slack = {"on": True, "url": f"{plex.url}/slack", "format": "slack",
@@ -896,8 +905,10 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                       "asked for by a name that isn't home's, only the page (DNS rebinding)",
                       (rebound.status_code, me))  # fmt: skip
             pending = page.get("/api/setup").json().get("pending", [])
-            checks.ok(pending == ["signIn"], "the setup asks Who can use tapiOca again, and only "
-                      "that", pending)  # fmt: skip
+            # (Asked again only when the update crosses 1.36.0, which changed it.)
+            again = ["signIn"] if version_of(before) < (1, 36, 0) else []
+            checks.ok(pending == again, "the setup asks Who can use tapiOca again, and only "
+                      "that" if again else "nothing new is asked", pending)  # fmt: skip
 
             def open_alert() -> bool:
                 got = (
