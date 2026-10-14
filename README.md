@@ -91,7 +91,7 @@ The `data` folder holds your stations and settings, so the user tapiOca runs as 
 
 **2. Install the app.** Go to **Apps → Discover Apps → ⋮ (top right) → Install via YAML**. Name the app `stationplay` and paste the contents of `tapioca-server.yaml`. Then change every line marked `<- CHANGE`:
 
-- **The two folder paths:** the `data` folder and your media folder.
+- **The two folder paths:** the `data` folder and your media folder. On each `volumes` line, change only the part before the first colon, the folder on your server, such as `/mnt/tank/media:/media:ro`. Leave `MEDIA_DIR` as `/media`: that's where tapiOca sees the folder.
 - **Plex and time zone:** `PLEX_URL`, `PLEX_TOKEN` and `TZ` (your time zone, such as `America/Chicago`).
 - **The user:** change `user:` if your media belongs to another user. TrueNAS's built-in apps user is `568:568`. If you use it, also run `sudo chown -R 568:568 /mnt/tank/apps/stationplay/data`.
 

@@ -8,7 +8,8 @@
 #      user below:
 #        sudo mkdir -p /mnt/tank/apps/stationplay/data
 #        sudo chown -R 1000:1000 /mnt/tank/apps/stationplay/data
-#   2. Change every line marked  <- CHANGE
+#   2. Change every line marked  <- CHANGE. On a volumes line, change only
+#      the part before the first colon: the folder on your server.
 #
 # Paths are case-sensitive: Data and data are different folders.
 #
@@ -40,16 +41,20 @@ services:
       TZ: "America/Chicago"                          # <- CHANGE to your time zone
       PORT: "3310"
       PUBLIC_PORT: "3311"
-      MEDIA_DIR: "/media"
+      # Where tapiOca sees your media, inside its container. Leave it as
+      # /media: the media line under volumes puts your folder there.
+      MEDIA_DIR: "/media"                            # leave as it is
       # auto = use a GPU if one passes a test encode, otherwise the CPU.
       # Other values: intel, amd, nvidia, cpu
       HW_ACCEL: "auto"
     volumes:
-      # Stations, settings, logos, the Broken files list and backups
-      - /mnt/tank/apps/stationplay/data:/data        # <- CHANGE to your data folder
+      # Each line is  folder on your server:where tapiOca sees it[:ro].
+      # Change only the part before the first colon.
+      # Stations, settings, logos, the Broken files list and backups:
+      - /mnt/tank/apps/stationplay/data:/data        # <- CHANGE /mnt/tank/apps/stationplay/data
       # Your media folder, read-only. tapiOca matches the paths Plex
       # reports to this folder automatically.
-      - /mnt/tank/media:/media:ro                    # <- CHANGE to your media folder
+      - /mnt/tank/media:/media:ro                    # <- CHANGE /mnt/tank/media
 
     # --- GPU: Intel or AMD (such as Quick Sync) --------------------------
     # If the server has no Intel or AMD graphics, delete everything from

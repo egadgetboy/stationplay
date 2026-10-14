@@ -8,7 +8,9 @@
 #        mkdir -p data && sudo chown -R 1000:1000 data
 #      (Docker Desktop on Windows or macOS: just make the folder, and delete
 #      the "user:" line below.)
-#   2. Change the lines marked  <- CHANGE, and set TAPIOCA_INSTALL.
+#   2. Change the lines marked  <- CHANGE, and set TAPIOCA_INSTALL. On a
+#      volumes line, change only the part before the first colon: the
+#      folder on your computer.
 #   3. In that folder:  docker compose up -d
 #
 # To update: in that folder,  docker compose up -d --pull always
@@ -41,16 +43,20 @@ services:
       TZ: "America/Chicago"                            # <- CHANGE to your time zone
       PORT: "3310"
       PUBLIC_PORT: "3311"
-      MEDIA_DIR: "/media"
+      # Where tapiOca sees your media, inside its container. Leave it as
+      # /media: the media line under volumes puts your folder there.
+      MEDIA_DIR: "/media"                              # leave as it is
       # auto = use a GPU if one passes a test encode, otherwise the CPU.
       # Other values: intel, amd, nvidia, cpu
       HW_ACCEL: "auto"
     volumes:
-      # Stations, settings, logos, the Broken files list and backups
+      # Each line is  folder on your computer:where tapiOca sees it[:ro].
+      # Change only the part before the first colon.
+      # Stations, settings, logos, the Broken files list and backups:
       - ./data:/data
       # Your media folder, read-only. tapiOca matches the paths Plex
       # reports to this folder automatically.
-      - /path/to/your/media:/media:ro                  # <- CHANGE
+      - /path/to/your/media:/media:ro                  # <- CHANGE /path/to/your/media
 
     # --- GPU: Intel or AMD -------------------------------------------------
     # Uncomment these lines to let tapiOca use the GPU (check that
