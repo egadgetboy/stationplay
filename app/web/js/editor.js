@@ -55,15 +55,18 @@ function setAspect(a) {
 }
 document.querySelectorAll('[data-aspect]').forEach(b => b.addEventListener('click', () => setAspect(b.dataset.aspect)));
 
-const skipHints = {
-  off: 'Programs play in full.',
-  on: 'Skips intros and end credits wherever Plex has found them, like Skip Intro and Skip Credits in Plex, so the next program starts right away. Anything before the intro still plays, and so does a scene after the credits. Programs Plex hasn’t marked, and those in your own Media folders, play in full.',
-};
+// Skipping intros: what Plex has found, where tapiOca uses Plex.
+function skipHint(on) {
+  if (!on) return 'Programs play in full.';
+  return plexUsed()
+    ? 'Skips intros and end credits wherever Plex has found them, like Skip Intro and Skip Credits in Plex, so the next program starts right away. Anything before the intro still plays, and so does a scene after the credits. Programs Plex hasn’t marked, and those in your own Media folders, play in full.'
+    : 'Skips intros and end credits where tapiOca knows where they are. Programs from your own Media folders play in full for now.';
+}
 let skipIntros = false;
 function setSkip(on) {
   skipIntros = on;
   pressOne('skip', on ? 'on' : 'off');
-  $('#skipHint').textContent = skipHints[on ? 'on' : 'off'];
+  $('#skipHint').textContent = skipHint(on);
 }
 document.querySelectorAll('[data-skip]').forEach(b => b.addEventListener('click', () => setSkip(b.dataset.skip === 'on')));
 
@@ -289,7 +292,9 @@ function breaksHintText() {
   if (f) {
     const found = `Found ${plural(f.commercials, 'commercial')} and ${plural(f.trailers, 'trailer')}.`;
     parts.push(found);
-    if (!f.commercials && !f.trailers) parts.push('To add some, make a folder named commercials at the top of your TV shows’ Media folder and one named trailers at the top of your movies’ Media folder (both lowercase). Put a .plexignore file containing * in each, so Plex doesn’t add them to your Media folders.');
+    // (Hiding them from Plex where tapiOca uses Plex; 1.36.0's words while
+    // nothing is chosen.)
+    if (!f.commercials && !f.trailers) parts.push(`To add some, make a folder named commercials at the top of your TV shows’ Media folder and one named trailers at the top of your movies’ Media folder (both lowercase).${!appsNamed() || plexUsed() ? ' Put a .plexignore file containing * in each, so Plex doesn’t add them to your Media folders.' : ''}`);
   }
   return parts.join(' ');
 }
@@ -668,11 +673,11 @@ function renderSelected() {
     ? `Picked: ${sources.length}${picksTotal()}` : 'Nothing picked yet — choose shows or movies above.';
   const remove = s => { sources = sources.filter(x => sourceKey(x) !== sourceKey(s)); renderSelected(); renderLibItems(); };
   box.replaceChildren(...sources.map(s => s.type === 'filter'
-    ? h('span', { class: 'sel filter', title: 'A filter. tapiOca keeps checking Plex for matches, and new matches are added automatically. Click to change it.' },
+    ? h('span', { class: 'sel filter', title: 'A filter. tapiOca keeps checking for matches, and new matches are added automatically. Click to change it.' },
         h('span', { onclick: async () => { setPickMode('filter', false); if (await initFilter(s)) remove(s); } }, `⚲ ${s.title}`),
         h('button', { type: 'button', 'aria-label': `Remove ${s.title}`, onclick: () => remove(s) }, '×'))
     : s.type === 'collection'
-    ? h('span', { class: 'sel filter', title: 'A Plex collection. Anything added to it in Plex joins the station automatically.' },
+    ? h('span', { class: 'sel filter', title: 'A collection. Anything added to it joins the station automatically.' },
         h('span', {}, `▦ ${s.title}`),
         h('button', { type: 'button', 'aria-label': `Remove ${s.title}`, onclick: () => remove(s) }, '×'))
     : h('span', { class: 'sel' },
@@ -740,6 +745,10 @@ async function fillLibCache() {
   }
 }
 
+// When the Media folders can't be listed: Plex where tapiOca uses Plex.
+function cantListMedia() {
+  return plexUsed() ? 'Can’t reach Plex' : 'Can’t list your Media folders';
+}
 async function openEditor(ch = null, copy = false) {
   editorOpened++;
   editing = copy ? null : ch;
@@ -808,7 +817,7 @@ async function openEditor(ch = null, copy = false) {
     try {
       libraries = await api('/api/libraries');
     } catch (e) {
-      $('#libSelect').replaceChildren(h('option', {}, 'Can’t reach Plex'));
+      $('#libSelect').replaceChildren(h('option', {}, cantListMedia()));
       $('#libItems').replaceChildren(h('p', { class: 'hint', style: 'padding:12px' }, e.message));
       return;
     }

@@ -34,8 +34,11 @@ function folderLibraryState(lib) {
 }
 function renderFolderLibraries(got) {
   const panel = $('#foldersPanel');
+  // (Shown where your own folders are chosen, or nothing is (see
+  // renderPlaces, addtoplex.js), and always while there's one: 1.37.0.)
+  if (got.libraries.length) $('#ownFolders').hidden = false;
   if (!got.libraries.length) {
-    panel.replaceChildren(h('p', { class: 'muted empty' }, 'None yet. Add one to use your own folders, with or without Plex.'));
+    panel.replaceChildren(h('p', { class: 'muted empty' }, 'None yet. Add one to use your own folders.'));
     return;
   }
   const what = l => l.kind === 'show' ? `${plural(l.shows, 'show')}, ${plural(l.episodes, 'episode')}` : plural(l.movies, 'movie');

@@ -23,7 +23,7 @@ function renderCollections() {
           onchange: e => { if (e.target.checked) colPicked.add(c.ratingKey); else colPicked.delete(c.ratingKey); updateColMake(); } }),
         h('span', { class: 't' }, c.name),
         h('span', { class: 'hint' }, c.station ? `Station ${c.station}` : describeCollection(c))))
-    : [h('p', { class: 'hint', style: 'padding:8px 12px' }, collections.length ? 'No collections match your search.' : 'Plex has no collections in your TV or movie Media folders.')]));
+    : [h('p', { class: 'hint', style: 'padding:8px 12px' }, collections.length ? 'No collections match your search.' : 'There are no collections in your TV or movie Media folders.')]));
 }
 $('#fromCollections').addEventListener('click', async () => {
   collections = [];
@@ -31,7 +31,7 @@ $('#fromCollections').addEventListener('click', async () => {
   updateColMake();
   $('#colSearch').value = '';
   $('#colList').replaceChildren();
-  $('#colStatus').textContent = 'Getting collections from Plex…';
+  $('#colStatus').textContent = 'Getting collections…';
   $('#collections').showModal();
   try {
     collections = await api('/api/collections');
@@ -43,7 +43,7 @@ $('#colSearch').addEventListener('input', renderCollections);
 for (const id of ['#closeCollections', '#colCancel']) $(id).addEventListener('click', () => $('#collections').close());
 $('#colMake').addEventListener('click', async () => {
   $('#colMake').disabled = true;
-  $('#colStatus').textContent = 'Building the schedules from Plex…';
+  $('#colStatus').textContent = 'Building the schedules…';
   try {
     const res = await api('/api/collections/stations', { method: 'POST', body: { ratingKeys: [...colPicked] } });
     $('#collections').close();
@@ -125,7 +125,7 @@ function smartSplitNow() {
   const seq = ++smartSeq;
   smartGroups = [];
   smartLimited = '';
-  renderSmart('Checking Plex…');
+  renderSmart('Counting…');
   if (!flt?.libraries.length) { renderSmart(); return; }
   smartTimer = setTimeout(async () => {
     const asking = smartAsking = new AbortController();
@@ -180,7 +180,7 @@ $('#smartMake').addEventListener('click', async () => {
     return { name: g.name.trim(), source: { ...source, title: describeFilter({ ...flt, ...source, tags: { ...source.tags } }) } };
   });
   $('#smartMake').disabled = true;
-  $('#smartStatus').textContent = `Building ${stations.length === 1 ? 'the schedule' : `schedules for ${stations.length} stations`} from Plex…`;
+  $('#smartStatus').textContent = `Building ${stations.length === 1 ? 'the schedule' : `schedules for ${stations.length} stations`}…`;
   try {
     const res = await api('/api/smart/stations', { method: 'POST', body: { firstNumber: Number($('#smartFrom').value) || 1, stations } });
     $('#smart').close();

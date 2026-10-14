@@ -348,6 +348,14 @@ Nothing is required: an app that does nothing new signs in as before.
    from a device that isn't a trusted proxy, signing in off). Show its
    sentence as it comes, as for every kind.
 
+## What 1.37.0 asks of the apps
+
+1. **Episodes with no season.** A show's seasons list has `season: null`
+   for its episodes without one. Ask
+   `GET /api/internal/items/{key}/episodes?season=none` for those, from a
+   server of 1.37.0 or later. Before 1.37.0, leave `season` out (the answer
+   is every episode).
+
 ## POST /api/internal/trusted
 
 What an app gets on a trusted network (1.36.0). Open to anyone; refused
@@ -1316,6 +1324,8 @@ has no genres.
 A show's episodes, in order: seasons in order, specials last, and episodes
 without a season or a number after those with one (those alike always in
 the same order). It lists all of them, or one season's with `?season=`.
+From 1.37.0, `?season=none` lists just the episodes without a season (the
+seasons list's `null` row).
 From 1.30.0, it answers a page at a time, with `?start=` (0 if it isn't
 given) and `?size=` (1 to 500; 500 if it isn't given). Ask for the next
 page while `start` plus the episodes you have is less than `total`.
@@ -1323,7 +1333,7 @@ page while `start` plus the episodes you have is less than `total`.
 | Field | Type | What it is |
 |---|---|---|
 | `show` | string | The show's key |
-| `season` | number or null | The season asked for (null: all of them) |
+| `season` | number or null | The season asked for (null: all of them; from 1.37.0, `"none"` for the episodes without a season) |
 | `total` | number | How many episodes there are in all, of the season asked for (from 1.30.0) |
 | `start` | number | Where this page starts (from 1.30.0) |
 | `episodes` | list | Its episodes: this page |

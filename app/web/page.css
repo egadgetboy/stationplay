@@ -647,6 +647,21 @@ table.stats .station img.shaped { padding: 2px; }
 .limit-stations label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .limit-note { margin: 0; padding: 10px 12px; border-radius: var(--radius); background: var(--panel-2); }
 .limit-note ul { margin: 6px 0 0; padding-left: 20px; }
+/* What you use (1.37.0): two groups of choices, in the setup and on the
+   Setup tab; and a section for each place you watch. */
+.uses-group { display: grid; gap: 8px; }
+.uses-group .choice .hint { display: block; }
+.choice.locked input:disabled + span { opacity: 1; }
+.uses-folders { display: grid; gap: 6px; margin-left: 26px; }
+.places-before { display: contents; }
+#placesPanel, #morePlacesBody { display: grid; gap: 12px; }
+#placesPanel { margin-top: 12px; }
+#morePlaces { margin-top: 12px; }
+#morePlacesBody { margin-top: 10px; }
+.place-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.place-title { margin: 0; font-size: 15px; }
+.setup-page .places { display: grid; gap: 14px; }
+.setup-page .place { display: grid; gap: 10px; padding-top: 12px; border-top: 1px solid var(--line); }
 /* Whether tapiOca's apps can reach it from outside: an icon, what it
    is, when it was checked, and Check now (the Access tab, and the setup). */
 .reach { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 4px 10px; align-items: start; padding: 10px 12px; border-radius: var(--radius); background: var(--panel-2); border: 1px solid var(--line); }

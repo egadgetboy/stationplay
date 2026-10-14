@@ -35,6 +35,11 @@ function renderRoom() {
   }
 }
 
+// Why a station is off the air when nothing on it could play: Plex only
+// where tapiOca uses Plex (1.35.0's rule).
+function offAirWhy() {
+  return `nothing on it could play just now, usually because ${plexUsed() ? 'Plex or your media' : 'your media'} can’t be reached, so viewers see the off-air card (an Admin can see why on the Logs tab)`;
+}
 // When a ready update starts, by what tapiOca has seen (the server's
 // waitsFor, 1.37.0): when Plex next downloads the guide, or once the guide
 // other apps downloaded runs out.
@@ -166,7 +171,7 @@ function stationDetails(ch, check, now) {
   // their own).
   const problems = [
     ch.offAir && ch.offAirWhy === 'failing' ? 'its stream keeps failing to start, so viewers see the off-air card (an Admin can see why on the Logs tab)' : '',
-    ch.offAir && ch.offAirWhy !== 'failing' ? 'nothing on it could play just now, usually because Plex or your media can’t be reached, so viewers see the off-air card (an Admin can see why on the Logs tab)' : '',
+    ch.offAir && ch.offAirWhy !== 'failing' ? offAirWhy() : '',
     !ch.itemCount ? 'it has nothing to play' : ch.brokenCount >= ch.itemCount ? 'it has nothing to play because every program on it is broken' : '',
   ].filter(Boolean);
   return h('details', {
@@ -179,7 +184,7 @@ function stationDetails(ch, check, now) {
     ...row('Programs',
       text(plural(ch.itemCount, 'program')),
       text(`each airs once every ${fmtDur(ch.loopMs)}`),
-      pic ? text(pic.size === 'Mixed' ? `files: mixed sizes (${SIZES.filter(size => pic.counts[size]).join(', ')})` : `files: ${pic.size}`, `Picture sizes of the program files, according to Plex: ${sizes}. The station plays them all at its own size (${ch.picture}).`) : null),
+      pic ? text(pic.size === 'Mixed' ? `files: mixed sizes (${SIZES.filter(size => pic.counts[size]).join(', ')})` : `files: ${pic.size}`, `Picture sizes of the program files: ${sizes}. The station plays them all at its own size (${ch.picture}).`) : null),
     ...row('How it plays',
       text(ch.picture, 'The picture size the station plays everything at (set in its editor)'),
       text(ch.orderMode === 'rotate' ? 'Episode order' : 'Shuffle'),
@@ -280,10 +285,21 @@ function ago(ms) {
   const hrs = Math.round(m / 60);
   return hrs < 48 ? `${hrs} hr ago` : `${Math.round(hrs / 24)} days ago`;
 }
+// What a station's change means for the guides: 1.36.0's words while
+// nothing is chosen; else for Plex and the other apps chosen (none with
+// tapiOca's apps alone, which follow at once).
 function changedMessage(res) {
   const when = res.lastChange?.startsAt ? `at ${fmtClock(res.lastChange.startsAt)}` : 'shortly';
-  const guide = res.plexGuideRefreshed ? 'The Plex guide is being refreshed.' : plexUsed() ? 'Refresh the guide in Plex so it matches.' : 'Apps that downloaded the guide show the change once they refresh it.';
-  return `${res.name} changes ${when}. ${guide}`;
+  const others = appsBesidesPlex();
+  if (!others) {
+    const guide = res.plexGuideRefreshed ? 'The Plex guide is being refreshed.' : plexUsed() ? 'Refresh the guide in Plex so it matches.' : 'Apps that downloaded the guide show the change once they refresh it.';
+    return `${res.name} changes ${when}. ${guide}`;
+  }
+  const guides = [
+    !watches('plex') ? '' : res.plexGuideRefreshed ? 'The Plex guide is being refreshed.' : 'Refresh the guide in Plex so it matches.',
+    !others.text ? '' : `${upFirst(others.text)} ${others.one ? 'shows the change once it refreshes its guide.' : 'show the change once they refresh their guide.'}`,
+  ].filter(Boolean);
+  return [`${res.name} changes ${when}.`, ...guides].join(' ');
 }
 async function updateNow(ch) {
   try {

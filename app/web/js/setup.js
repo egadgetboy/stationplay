@@ -9,6 +9,8 @@
 // on from it; Skip setup (or Close) keeps everything else as it is.
 const SETUP_TITLES = {
   checks: 'Checking your server',
+  sources: 'Your shows and movies',
+  watchIn: 'Where you watch',
   playback: 'How stations play',
   newStation: 'New station settings',
   signIn: 'Who can use tapiOca',
@@ -16,7 +18,7 @@ const SETUP_TITLES = {
   away: 'Watching away from home',
   library: 'Media in tapiOca’s apps',
   fileChecks: 'Checking files',
-  plex: 'Plex',
+  plex: 'Connecting your apps',
   done: 'All set',
 };
 // What each check's state is called beside it (the dot's color says it too).
@@ -64,6 +66,134 @@ function checkRow(c) {
       ...c.lines.map(line => h('p', { class: 'small', style: 'margin:3px 0 0' }, line))));
 }
 const needsLook = c => c.state === 'bad' || c.state === 'warn';
+// The steps: after an update, the checks (if something needs a look) and
+// the new questions; otherwise the checks and every question.
+function setupSteps(st, why, checks) {
+  return why === 'updated'
+    ? [...(checks?.some(needsLook) ? ['checks'] : []), ...st.pending, 'done']
+    : ['checks', ...st.questions, 'done'];
+}
+
+// What tapiOca uses (1.37.0, see uses.py): the setup's Your shows and
+// movies and Where you watch, and What you use on the Setup tab. Kept here
+// as the setup saves it (GET /api/setup/uses), so later steps follow it at
+// once. Nothing saved: the setup says what 1.36.0 said.
+let setupUses = null;
+const setupWatchIn = () => (Array.isArray(setupUses?.watchIn) ? setupUses.watchIn : null);
+// Whether Plex is a source or a place (nothing saved: as 1.36.0, always).
+function setupPlexWanted() {
+  const u = setupUses;
+  if (!u || (!u.sources && !u.watchIn)) return true;
+  const source = u.locked?.plex || (u.sources ? u.sources.includes('plex') : plexUsed());
+  const place = u.watchIn ? u.watchIn.includes('plex') : plexUsed();
+  return source || place;
+}
+// What signing in doesn't change, in the apps chosen ("Neither changes...":
+// the two choices' hint, for a tapiOca set up before). Nothing chosen:
+// 1.36.0's sentence. Only tapiOca's apps (and other apps): nothing to say.
+function whoWatchesLine(watchIn, neither = false) {
+  if (!watchIn) {
+    return neither
+      ? 'Neither changes who can watch in Plex, Jellyfin, Emby or Kodi: each app decides that itself.'
+      : 'Signing in doesn’t change who can watch in Plex, Jellyfin, Emby or Kodi: each app decides that itself.';
+  }
+  const names = [['plex', 'Plex'], ['jellyfin', 'Jellyfin'], ['emby', 'Emby'], ['kodi', 'Kodi']]
+    .filter(([place]) => watchIn.includes(place)).map(([, name]) => name);
+  if (!names.length) return '';
+  const apps = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`;
+  return `${neither ? 'Neither changes' : 'Signing in doesn’t change'} who can watch in ${apps}: ${names.length === 1 ? names[0] : 'each app'} decides that itself.`;
+}
+// What's chosen, in a few words each ("Plex and Media folders of your own";
+// "tapiOca’s apps, Plex and Jellyfin"); empty while nothing is.
+function usesWords(sources, watchIn) {
+  const SOURCE_WORDS = { plex: 'Plex', folders: 'Media folders of your own' };
+  const PLACE_WORDS = { tapioca: 'tapiOca’s apps', plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby', kodi: 'Kodi', other: 'other apps' };
+  const say = (values, words) => {
+    const names = Object.keys(words).filter(v => (values || []).includes(v)).map(v => words[v]);
+    const text = names.length < 2 ? (names[0] || '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+    return text.startsWith('other') ? `O${text.slice(1)}` : text;
+  };
+  return { sources: say(sources, SOURCE_WORDS), watchIn: say(watchIn, PLACE_WORDS) };
+}
+// The choices, as checkboxes: `sources` (Your shows and movies) and
+// `watchIn` (Where you watch), each a group with its hint. What's set up
+// is ticked and can't be unticked (it says how to stop using it). Ticked
+// from what's saved, or (nothing saved) from what tapiOca has seen.
+// `onTab`: on the Setup tab, not in the setup.
+const PLACE_CHOICES = [
+  ['tapioca', 'tapiOca’s apps', 'tapiOca’s own apps, for your stations and Media.'],
+  ['plex', 'Plex', 'Plex’s Live TV guide, in every Plex app. Needs Plex Pass.'],
+  ['jellyfin', 'Jellyfin', 'Jellyfin’s Live TV.'],
+  ['emby', 'Emby', 'Emby’s Live TV. Needs Emby Premiere.'],
+  ['kodi', 'Kodi', 'Kodi’s TV, with its PVR Simple Client add-on.'],
+  ['other', 'Other apps', 'Apps that take a playlist and guide, such as Channels DVR or VLC.'],
+];
+function usesFields(got, { onChange = () => {}, onTab = false } = {}) {
+  const locked = { plex: !!got.locked?.plex, folders: !!got.locked?.folders };
+  const sources = new Set(got.sources ?? got.suggested?.sources ?? []);
+  const places = new Set(got.watchIn ?? got.suggested?.watchIn ?? []);
+  for (const s of ['plex', 'folders']) if (locked[s]) sources.add(s);
+  const first = () => JSON.stringify(values());
+  let libs = null, loading = false;  // (your own Media folders, once they're shown)
+  const sourcesNode = h('div', { class: 'uses-group uses-sources' });
+  const placesNode = h('div', { class: 'uses-group uses-places' });
+  const box = (set, value, disabled) => h('input', { type: 'checkbox', checked: set.has(value), disabled, onchange: e => {
+    if (e.target.checked) set.add(value); else set.delete(value);
+    paint();
+    onChange();
+  } });
+  const choice = (input, name, ...hints) => h('label', { class: `choice${input.disabled ? ' locked' : ''}` }, input,
+    h('span', {}, h('strong', {}, name), ...hints.filter(Boolean).map(t => h('span', { class: 'hint' }, t))));
+  async function loadLibs() {
+    if (loading) return;
+    loading = true;
+    try { libs = (await api('/api/folder-libraries')).libraries; } catch { libs = []; }
+    loading = false;
+    if (libs.length) { locked.folders = true; sources.add('folders'); }
+    paint();
+  }
+  function foldersList() {
+    if (!sources.has('folders')) return null;
+    if (!libs) { loadLibs(); return h('p', { class: 'hint', style: 'margin:0' }, 'Loading…'); }
+    const what = l => l.kind === 'show' ? `Shows · ${plural(l.shows, 'show')}` : `Movies · ${plural(l.movies, 'movie')}`;
+    const add = h('button', { type: 'button', class: 'btn', onclick: async () => {
+      $('#folderLib').addEventListener('close', () => { libs = null; paint(); }, { once: true });
+      await folderLibraryDialog();
+    } }, 'Add a Media folder');
+    return h('div', { class: 'uses-folders' },
+      ...(libs.length ? libs.map(l => h('div', { class: 'small' }, h('strong', {}, l.name), h('span', { class: 'muted' }, ` · ${what(l)}`)))
+        : [h('p', { class: 'hint', style: 'margin:0' }, 'None yet.')]),
+      h('div', { class: 'row-btns' }, add));
+  }
+  function paint() {
+    // (replaceChildren would show a null as the word "null".)
+    sourcesNode.replaceChildren(...[
+      // (In the setup, the step's title says it.)
+      onTab ? h('strong', {}, 'Your shows and movies') : null,
+      h('p', { class: 'hint', style: 'margin:0' }, 'Where tapiOca gets your shows and movies. Choose one or both.'),
+      choice(box(sources, 'plex', locked.plex), 'Plex', locked.plex
+        ? 'tapiOca is set up with Plex. To stop using it, delete PLEX_URL and PLEX_TOKEN from tapiOca’s app settings, then restart tapiOca.'
+        : `Your own Plex Media Server. To connect it, set PLEX_URL and PLEX_TOKEN in tapiOca’s app settings, then restart tapiOca. ${onTab ? 'Run setup again to check it, in Connecting your apps.' : 'Connecting your apps, near the end, checks it.'}`),
+      choice(box(sources, 'folders', locked.folders), 'Media folders of my own',
+        'Shows and movies tapiOca reads straight from folders in its media folder.',
+        locked.folders ? 'To stop using one, remove it on the Setup tab, under Your own folders.' : null),
+      foldersList(),
+      sources.size ? null : h('p', { class: 'hint', role: 'status', style: 'margin:0' }, 'Choose Plex, Media folders of your own, or both.'),
+    ].filter(Boolean));
+    placesNode.replaceChildren(...[
+      onTab ? h('strong', {}, 'Where you watch') : null,
+      h('p', { class: 'hint', style: 'margin:0' }, 'Where you’ll watch your stations. tapiOca then shows the steps for each. This only changes what tapiOca shows you: every app can still use tapiOca’s tuner, playlist and guide.'),
+      ...PLACE_CHOICES.map(([value, name, hint]) => choice(box(places, value, false), name, hint)),
+      places.size ? null : h('p', { class: 'hint', role: 'status', style: 'margin:0' }, 'Choose at least one place you’ll watch.'),
+    ].filter(Boolean));
+  }
+  function values() {
+    return { sources: ['plex', 'folders'].filter(s => sources.has(s)), watchIn: PLACE_CHOICES.map(([v]) => v).filter(v => places.has(v)) };
+  }
+  paint();
+  const was = first();
+  return { sources: sourcesNode, watchIn: placesNode, values, changed: () => first() !== was };
+}
 // Plex's terms, which tapiOca's own use of Plex goes by (see the README's
 // What you need, and PRIVACY.md).
 const PERSONAL_USE = () => h('div', { class: 'limit-note' }, h('strong', {}, 'Plex’s terms. '),
@@ -77,9 +207,9 @@ async function showSetup(st, why) {
   const dlg = $('#setupDlg');
   // Checks run first after an update: they decide whether that step is shown.
   let checks = why === 'updated' ? await setupChecks() : null;
-  const steps = why === 'updated'
-    ? [...(checks?.some(needsLook) ? ['checks'] : []), ...st.pending, 'done']
-    : ['checks', ...st.questions, 'done'];
+  const steps = setupSteps(st, why, checks);
+  // (What tapiOca uses: the steps follow it. It never asks Plex.)
+  setupUses = await api('/api/setup/uses').catch(() => null);
   const shownQuestions = steps.filter(s => st.questions.includes(s));
   const saved = new Set();  // (steps saved, or looked at, this time)
   const notYet = new Set();  // (questions a step says can't be answered yet)
@@ -116,11 +246,15 @@ async function showSetup(st, why) {
     return plexInfo;
   };
   if (!checks && steps.includes('checks')) loadChecks().then(() => { if (steps[step] === 'checks' || steps[step] === 'done') show(); });
-  if (steps.includes('plex')) loadPlex().then(() => { if (steps[step] === 'plex' || steps[step] === 'done') show(); });
+  // (Again once what you use is saved: Plex's checks follow it.)
+  const reloadPlex = () => {
+    if (steps.includes('plex')) loadPlex().then(() => { if (steps[step] === 'plex' || steps[step] === 'done') show(); });
+  };
+  reloadPlex();
 
   function paintNav() {
     nav.replaceChildren(...steps.map((s, n) => {
-      const attention = (s === 'checks' && checks?.some(needsLook)) || (s === 'plex' && plexInfo?.checks.some(needsLook));
+      const attention = (s === 'checks' && checks?.some(needsLook)) || (s === 'plex' && setupPlexWanted() && plexInfo?.checks.some(needsLook));
       const mark = attention ? h('span', { class: 'dot warn', 'aria-label': 'Needs a look' })
         : saved.has(s) ? h('span', { class: 'done', 'aria-label': 'Done' }, '✓') : h('span', { class: 'num' }, String(n + 1));
       return h('li', {}, h('button', { type: 'button', 'aria-current': n === step ? 'step' : 'false', onclick: () => go(n) }, mark, h('span', {}, SETUP_TITLES[s])));
@@ -137,7 +271,7 @@ async function showSetup(st, why) {
     paintNav();
     body.replaceChildren(h('p', { class: 'muted' }, 'Loading…'));
     try {
-      page = await SETUP_PAGES[s]({ checks, loadChecks, plexInfo, loadPlex, why, st, shownQuestions, saved, notYet });
+      page = await SETUP_PAGES[s]({ checks, loadChecks, plexInfo, loadPlex, reloadPlex, why, st, shownQuestions, saved, notYet });
     } catch (e) {
       page = { node: h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' ', e.message) };
     }
@@ -246,9 +380,33 @@ const SETUP_PAGES = {
     }
     paint(checks);
     return { node: h('div', { class: 'playback' },
-      h('p', { class: 'hint', style: 'margin:0' }, 'tapiOca checks the server itself: that it can read your media folder, how it encodes video, its clock, and its backups. Plex has a step of its own, near the end. Anything marked Needs a look or Not working says what to do. After changing tapiOca’s app settings, restart it, then choose Check again.'),
+      h('p', { class: 'hint', style: 'margin:0' }, `tapiOca checks the server itself: that it can read your media folder, how it encodes video, its clock, and its backups. ${
+        // (1.36.0's words until what you use is saved; then Plex only where it's used.)
+        !setupUses?.sources && !setupUses?.watchIn ? 'Plex has a step of its own, near the end. '
+          : setupPlexWanted() ? 'Plex is checked in Connecting your apps, near the end. ' : ''
+      }Anything marked Needs a look or Not working says what to do. After changing tapiOca’s app settings, restart it, then choose Check again.`),
       list,
       h('div', { class: 'row-btns' }, again)) };
+  },
+
+  async sources({ reloadPlex }) {
+    const got = setupUses || await api('/api/setup/uses');
+    const fields = usesFields(got);
+    return { node: h('div', { class: 'playback' }, fields.sources), save: async () => {
+      try { setupUses = await api('/api/setup/uses', { method: 'PUT', body: { sources: fields.values().sources } }); }
+      catch (e) { return e.message; }
+      reloadPlex();
+    } };
+  },
+
+  async watchIn({ reloadPlex }) {
+    const got = setupUses || await api('/api/setup/uses');
+    const fields = usesFields(got);
+    return { node: h('div', { class: 'playback' }, fields.watchIn), save: async () => {
+      try { setupUses = await api('/api/setup/uses', { method: 'PUT', body: { watchIn: fields.values().watchIn } }); }
+      catch (e) { return e.message; }
+      reloadPlex();
+    } };
   },
 
   async playback() {
@@ -340,7 +498,10 @@ const SETUP_PAGES = {
       h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'Password'), h('div', { class: 'opt-ctl' }, adminPassword,
         h('span', { class: 'hint' }, `At least ${ACCESS.passwordMin} characters.`))),
     ];
-    const neither = h('span', { class: 'hint' }, 'Signing in doesn’t change who can watch in Plex, Jellyfin, Emby or Kodi: each app decides that itself.');
+    // (What signing in doesn't change, in the apps you watch in: 1.37.0.)
+    const watchLine = whoWatchesLine(setupWatchIn());
+    const neither = watchLine ? h('span', { class: 'hint' }, watchLine) : null;
+    const neitherLine = whoWatchesLine(setupWatchIn(), true);
     function paint() {
       if (me.required) {
         who.replaceChildren(
@@ -364,7 +525,7 @@ const SETUP_PAGES = {
           h('span', { class: 'hint' }, signIn === 'off'
             ? 'No signing in. Anyone at home, on your network or through a VPN into it (port 3310), can use tapiOca’s page and apps and change anything, as an Admin can. Nobody can from the internet (port 3311), even with Away from home on. tapiOca suggests Only people who sign in, with your home network trusted so its devices skip it.'
             : 'Everyone signs in, at home and away, as an Admin or a User. Make yourself the first Admin now, and you’ll be signed in right away. On the Access tab, you can add other people as Admins, or as Users who can make and change only their own stations. To use tapiOca’s apps from the internet (port 3311), also turn on Away from home on the Access tab.'),
-          h('span', { class: 'hint' }, 'Neither changes who can watch in Plex, Jellyfin, Emby or Kodi: each app decides that itself.'))),
+          neitherLine ? h('span', { class: 'hint' }, neitherLine) : null)),
         ...(signIn === 'on' ? [...admin(), ...trustRows()] : []),
       ].filter(Boolean));
     }
@@ -498,7 +659,12 @@ const SETUP_PAGES = {
     } };
   },
 
+  // Connecting your apps: Plex's checks, where Plex is a source or a place
+  // to watch; then how to add tapiOca to each place you watch (each one,
+  // while nothing's chosen), with its addresses (see addtoplex.js).
   async plex({ plexInfo, loadPlex }) {
+    const wanted = setupPlexWanted();
+    const chosen = setupWatchIn();
     const list = h('div', { class: 'setup-checks' });
     const again = h('button', { type: 'button', class: 'btn', onclick: async () => {
       again.disabled = true;
@@ -507,34 +673,31 @@ const SETUP_PAGES = {
       again.disabled = false;
       again.textContent = 'Check again';
     } }, 'Check again');
-    const copyRow = (what, value) => h('div', { class: 'copyrow' }, h('span', { class: 'what' }, what), h('code', {}, value), copyButton(value));
-    const addresses = h('div', { class: 'playback' });
+    const places = h('div', { class: 'places' });
     function paint(got) {
       list.replaceChildren(...(got ? got.checks.map(checkRow)
         : [h('p', { class: 'muted', style: 'margin:0' }, 'Checking Plex… (this takes a few seconds)')]));
-      const tuner = got?.tunerUrl || status?.tunerUrl, guide = got?.xmltvUrl || status?.xmltvUrl;
-      addresses.replaceChildren(...[tuner ? copyRow('Tuner address', tuner) : null, guide ? copyRow('Guide (XMLTV) for Plex', guide) : null].filter(Boolean));
+      const tuner = got?.tunerUrl || status?.tunerUrl;
+      const urls = { tuner, xmltv: got?.xmltvUrl || status?.xmltvUrl };
+      places.replaceChildren(...WATCH_PLACES.filter(p => !chosen || chosen.includes(p))
+        .map(p => placeSection(p, status, { inSetup: true, urls, plexConfigured: setupUses?.locked?.plex })));
     }
     paint(plexInfo);
     return { node: h('div', { class: 'playback' },
-      h('p', { class: 'hint', style: 'margin:0' }, 'tapiOca works with your own Plex Media Server. This step checks that tapiOca can reach Plex and read the files Plex lists, and shows how to add tapiOca to Plex, to watch your stations in Plex too.'),
-      list,
-      h('div', { class: 'row-btns' }, again),
-      h('strong', { class: 'small' }, 'Adding tapiOca to Plex'),
-      h('ol', { class: 'steps' },
-        h('li', {}, 'In Plex, open ', h('em', {}, 'Settings → Live TV & DVR → Set Up Plex DVR'), '.'),
-        h('li', {}, 'Choose ', h('em', {}, 'Don’t see your HDHomeRun device? Enter its network address manually'), ' (Plex can’t find tapiOca on its own) and enter the tuner address below.'),
-        h('li', {}, 'When Plex asks for guide data, choose ', h('em', {}, 'Have an XMLTV guide on your server? Click here to use it'), ' and enter the guide address below.'),
-        h('li', {}, 'Plex matches your stations automatically (it calls them channels). Each time you make a new station, choose ', h('em', {}, 'Scan for channels'), ' in Plex’s Live TV & DVR settings so Plex adds it.'),
-        h('li', {}, 'Then choose Check again here.')),
-      h('p', { class: 'hint', style: 'margin:0' }, 'Plex needs at least one station to add tapiOca, so a new tapiOca starts with INFO on station 99: the date and time, what’s new in tapiOca and tips for watching. It plays even before Plex is connected.'),
-      addresses,
-      h('p', { class: 'hint', style: 'margin:0' }, 'Watching in Plex needs Plex Pass on the account that owns your Plex server. Jellyfin, Emby, Kodi and tapiOca’s own apps don’t need it. You’ll find these addresses, plus the ones for Jellyfin, Emby, Kodi and other apps, on the Setup tab.'),
-      PERSONAL_USE()) };
+      h('p', { class: 'hint', style: 'margin:0' }, 'How to add tapiOca to each place you watch, with the addresses to enter there.'),
+      ...(wanted ? [
+        h('p', { class: 'hint', style: 'margin:0' }, 'tapiOca works with your own Plex Media Server. These checks say whether tapiOca can reach Plex and read its files, and whether Plex has added tapiOca.'),
+        list,
+        h('div', { class: 'row-btns' }, again),
+      ] : []),
+      places,
+      h('p', { class: 'hint', style: 'margin:0' }, 'You’ll find these addresses on the Setup tab too, under Tuner integration.'),
+      wanted ? PERSONAL_USE() : null) };
   },
 
   async done({ checks, plexInfo, why }) {
-    const all = [...(checks || []), ...(plexInfo?.checks || [])];
+    // (Plex's checks count only where Plex is a source or a place: 1.37.0.)
+    const all = [...(checks || []), ...(setupPlexWanted() ? plexInfo?.checks || [] : [])];
     const look = all.filter(needsLook);
     // What's set now, in a few words each.
     const [pb, away, libs, scan, view, upd] = await Promise.all([
@@ -548,7 +711,10 @@ const SETUP_PAGES = {
     const shared = libs ? libs.libraries.filter(l => libs.shared.includes(l.key)).map(l => l.title) : [];
     const sharing = libs?.everything ? 'Every Media folder' : shared.length ? `Shared: ${shared.join(', ')}` : libs?.shared.length ? 'On' : 'Not shared';
     const w = scan.window;
+    const using = usesWords(setupUses?.sources, setupUses?.watchIn);
     const set = [
+      ...(using.sources ? [['sources', using.sources]] : []),
+      ...(using.watchIn ? [['watchIn', using.watchIn]] : []),
       ['playback', `${pb.picture} for new stations, ${plural(pb.tuners, 'tuner')}`],
       ['signIn', me.required ? 'Only people who sign in' : 'Anyone on your network'],
       ...(view ? [['viewing', limited ? `${limited === 1 ? '1 person' : `${limited} people`} with limits` : 'Everyone sees everything']] : []),

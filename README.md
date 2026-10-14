@@ -13,11 +13,11 @@
 
 tapiOca was called StationPlay until version 1.34.0.
 
-tapiOca turns your own movies and shows, in Plex or in folders of your own, into always-on TV stations. Pick some shows or movies, give the station a number and a name, and it plays them around the clock like a broadcast station. It comes with a program guide. You can also add commercials, station IDs, a corner logo, movie nights and Saturday-morning blocks.
+tapiOca turns your own movies and shows into always-on TV stations: from your own Plex Media Server, from folders of your own, or both. Pick some shows or movies, give the station a number and a name, and it plays them around the clock like a broadcast station. It comes with a program guide. You can also add commercials, station IDs, a corner logo, movie nights and Saturday-morning blocks.
 
 Watch them in tapiOca's own apps, in Jellyfin, Emby or Kodi, in Plex's **Live TV** guide on every Plex app (Plex sees tapiOca as an HDHomeRun network tuner), or in other apps on your home network.
 
-tapiOca is free, open source and self-hosted (see [License](#license)). It runs in Docker on your own hardware and gets everything from your Plex server, or straight from [folders of your own](#media-folders-of-your-own), with no Plex at all. It needs no outside accounts or cloud services. It can tell you when a new version is out, if an Admin says yes: every 4 hours it asks GitHub, which sees your server's internet address, as any website does (see [Updating](#updating)).
+tapiOca is free, open source and self-hosted (see [License](#license)). It runs in Docker on your own hardware and reads your shows and movies from your own Plex Media Server, from [folders of your own](#media-folders-of-your-own), or both. It needs no outside accounts or cloud services. It can tell you when a new version is out, if an Admin says yes: every 4 hours it asks GitHub, which sees your server's internet address, as any website does (see [Updating](#updating)).
 
 If you find it useful, you can [buy me a coffee](https://buymeacoffee.com/egadgetboy).
 
@@ -42,9 +42,10 @@ If you find it useful, you can [buy me a coffee](https://buymeacoffee.com/egadge
 ## What you need
 
 - **If you use Plex: your own Plex Media Server, under Plex's terms.** [Plex's terms](https://www.plex.tv/about/privacy-legal/plex-terms-of-service/) license Plex Media Server for personal use, on hardware and storage you own. Use tapiOca with your Plex server as those terms allow. tapiOca's [privacy notice](PRIVACY.md) says what it keeps, what it contacts, and that it sends nothing to its developer.
-- **Your shows and movies, in Plex Media Server or in folders of your own** (see [Media folders of your own](#media-folders-of-your-own)), or both. To watch in Plex, you need Plex, and **Plex Pass**, because Plex's Live TV & DVR feature requires it. Jellyfin, Emby, Kodi, other apps and tapiOca's own apps need neither.
+- **Your shows and movies,** in your own Plex Media Server, in folders of your own, or both (see [Media folders of your own](#media-folders-of-your-own)).
+- **Where you watch.** tapiOca's own apps, Jellyfin, Kodi and other apps need nothing more. Watching in Plex needs **Plex Pass**, because Plex's Live TV & DVR requires it. Watching in Emby needs **Emby Premiere**, because Emby's Live TV requires it.
 - **A computer that runs Docker** on your home network (the same one as Plex, if you use it). It can be a NAS (TrueNAS SCALE, Synology, Unraid), a Linux server or virtual machine, a Raspberry Pi 4 or 5 with a 64-bit OS, or a Windows or Mac computer with Docker Desktop. Both x86-64 (Intel/AMD) and ARM64 work.
-- **Access to your media folder** from that computer. tapiOca reads files directly from disk. If it can't see a file Plex has, it streams it from Plex instead, which works but adds load to Plex.
+- **Access to your media folder** from that computer. tapiOca reads files directly from disk. With Plex, if tapiOca can't see a file Plex has, it streams it from Plex instead, which works but adds load to Plex.
 - **Enough processing power.** Each station being watched is converted in real time. A modern 4-core CPU can usually run several 720p stations at once. A GPU (Intel Quick Sync, AMD or NVIDIA) handles many more, and 1080p easily. tapiOca can't use the GPU in a Raspberry Pi or a Mac, so plan on one or two stations at smaller picture sizes there. **Test this server** on tapiOca's page measures what your hardware can do (see [Tuners](#tuners)).
 
 ## Install
@@ -65,12 +66,14 @@ Download the first two from the [latest release](https://github.com/egadgetboy/t
 
 To build the image yourself instead, see [Building from source](#building-from-source).
 
-**Before you start, gather four things:**
+**Before you start, gather these things:**
 
-1. **Your Plex server's address**, such as `http://192.168.1.10:32400`. Use the server's network IP address, not `localhost`. Inside a container, `localhost` means the container itself.
-2. **Your Plex token** (see the next section).
-3. **Where your media lives** on the Docker host, such as `/mnt/tank/media`.
-4. **The user tapiOca runs as**, written as `UID:GID` (numbers). This user must be able to read your media and write to tapiOca's data folder. The examples use `1000:1000`. To see who owns your media, run `ls -ln /path/to/media`. The third and fourth columns are the UID and GID.
+1. **Where your media lives** on the Docker host, such as `/mnt/tank/media`.
+2. **The user tapiOca runs as**, written as `UID:GID` (numbers). This user must be able to read your media and write to tapiOca's data folder. The examples use `1000:1000`. To see who owns your media, run `ls -ln /path/to/media`. The third and fourth columns are the UID and GID.
+3. **If you use Plex: your Plex server's address**, such as `http://192.168.1.10:32400`. Use the server's network IP address, not `localhost`. Inside a container, `localhost` means the container itself.
+4. **If you use Plex: your Plex token** (see the next section).
+
+Without Plex, you need neither. After tapiOca starts, you add [Media folders of your own](#media-folders-of-your-own) on its page.
 
 #### Finding your Plex token
 
@@ -92,7 +95,8 @@ The `data` folder holds your stations and settings, so the user tapiOca runs as 
 **2. Install the app.** Go to **Apps → Discover Apps → ⋮ (top right) → Install via YAML**. Name the app `stationplay` and paste the contents of `tapioca-server.yaml`. Then change every line marked `<- CHANGE`:
 
 - **The two folder paths:** the `data` folder and your media folder.
-- **Plex and time zone:** `PLEX_URL`, `PLEX_TOKEN` and `TZ` (your time zone, such as `America/Chicago`).
+- **Time zone:** `TZ` (your time zone, such as `America/Chicago`).
+- **Plex, if you use it:** `PLEX_URL` and `PLEX_TOKEN`. Without Plex, leave those two lines as they are, or delete them.
 - **The user:** change `user:` if your media belongs to another user. TrueNAS's built-in apps user is `568:568`. If you use it, also run `sudo chown -R 568:568 /mnt/tank/apps/stationplay/data`.
 
 Leave `TAPIOCA_INSTALL` set to `truenas`. Also check the GPU lines (see [GPU encoding](#gpu-encoding)). The Intel/AMD lines are turned on in this file. If the server has no Intel or AMD graphics, delete them, or the app won't start.
@@ -113,7 +117,7 @@ mkdir -p data && sudo chown -R 1000:1000 data      # use your UID:GID
 
 (Or download `docker-compose.yml` from the [latest release](https://github.com/egadgetboy/tapioca-server/releases/latest) in a browser, and put it in that folder.)
 
-Open `docker-compose.yml` in a text editor and change every line marked `<- CHANGE`: the user, Plex's address, your Plex token, your time zone and your media folder. Leave `TAPIOCA_INSTALL` set to `compose`. For a GPU, uncomment its lines (see [GPU encoding](#gpu-encoding)). Then start tapiOca:
+Open `docker-compose.yml` in a text editor and change every line marked `<- CHANGE`: the user, your time zone and your media folder, and Plex's address and your Plex token if you use Plex. Leave `TAPIOCA_INSTALL` set to `compose`. For a GPU, uncomment its lines (see [GPU encoding](#gpu-encoding)). Then start tapiOca:
 
 ```
 docker compose up -d
@@ -160,7 +164,7 @@ The simplest way is tapiOca's template, from the repo's `unraid` folder. You can
    ```
 
 2. On the **Docker** tab, choose **Add Container**, and pick **stationplay** under **Template**. That's the container's name, as on every other kind of install.
-3. Fill in Plex's address, your Plex token, your time zone and your media folder (such as `/mnt/user/media`). The data folder is already `/mnt/user/appdata/stationplay/data`, the same folder a compose install there uses. Leave `TAPIOCA_INSTALL` set to `unraid`. The template runs tapiOca as `99:100`: to change that, turn on **Advanced View** and edit `--user` under **Extra Parameters**.
+3. Fill in your time zone and your media folder (such as `/mnt/user/media`), and Plex's address and your Plex token if you use Plex. Without Plex, leave **PLEX_TOKEN** empty. The data folder is already `/mnt/user/appdata/stationplay/data`, the same folder a compose install there uses. Leave `TAPIOCA_INSTALL` set to `unraid`. The template runs tapiOca as `99:100`: to change that, turn on **Advanced View** and edit `--user` under **Extra Parameters**.
 4. Choose **Apply**. Unraid downloads the image and starts tapiOca.
 
 **With the compose file instead.** From the **Apps** tab, install the **Compose Manager** plugin, which adds the `docker compose` command. Then follow the [Docker Compose](#docker-compose-linux-proxmox-raspberry-pi) steps in `/mnt/user/appdata/stationplay`, with `user: "99:100"` and `chown -R 99:100 data`. Set `TAPIOCA_INSTALL` to `"compose"`, since you'll update it with `docker compose`, not from the Docker tab.
@@ -214,6 +218,7 @@ Save your command in a file (such as `stationplay.sh`). You'll run the same one 
 - **The page and apps from the internet.** The `3311` port and `PUBLIC_PORT` are for that (see [Security and remote access](#security-and-remote-access)). If you don't need it, remove `-p 3311:3311` and `-e PUBLIC_PORT=3311`.
 - **Intel or AMD GPU.** Add `--device /dev/dri:/dev/dri --group-add <group number>` (see [GPU encoding](#gpu-encoding)).
 - **NVIDIA GPU.** Add `--gpus all` (needs the NVIDIA Container Toolkit).
+- **Without Plex.** Leave out the two `-e PLEX_` lines.
 
 Keep `--restart unless-stopped`. Restoring a backup restarts tapiOca, and Docker must start it again.
 
@@ -250,7 +255,7 @@ To find the group number, run `ls -ln /dev/dri` on the host and look at the grou
 
 tapiOca backs itself up automatically: about 15 minutes after it first starts, then every night at about 3 AM (in your `TZ` time zone). It keeps the newest 7 backups in `data/backups`. The database copies made before updates are kept there too, separately from these (see [Rolling back](#rolling-back)).
 
-A backup includes your stations and their schedules, all settings, the Broken files list, the tuner's identity (so Plex still recognizes it), your logos (uploaded or from Plex), users and their passwords (stored only as hashes) and viewing stats. Intro Bumper videos aren't included, to keep backups small. They stay in `data/bumpers`, and a restore leaves them alone.
+A backup includes your stations and their schedules, all settings, the Broken files list, the tuner's identity (so Plex still recognizes it), your logos (uploaded, or a show's or movie's own), users and their passwords (stored only as hashes) and viewing stats. Intro Bumper videos aren't included, to keep backups small. They stay in `data/bumpers`, and a restore leaves them alone.
 
 On the **Setup** tab:
 
@@ -261,19 +266,19 @@ After a restore, everyone signs in again as the users in the backup. A backup wi
 
 ### How tapiOca reads your files
 
-tapiOca asks Plex where each file is, then reads it straight from disk. Plex reports paths as its own container sees them, such as `/data/tv/Show/episode.mkv`. You don't need to match those paths. Mount your media at `/media` (as the YAML and Compose files do), and tapiOca finds each file by matching the end of Plex's path inside `/media`. At least the file name and its folder must match. Once a match works, tapiOca reuses it for every other file. The **Media files** line on the **Setup** tab shows whether files are read directly.
+Your own Media folders are read straight from `MEDIA_DIR`. With Plex, tapiOca asks Plex where each file is, then reads it straight from disk. Plex reports paths as its own container sees them, such as `/data/tv/Show/episode.mkv`. You don't need to match those paths. Mount your media at `/media` (as the YAML and Compose files do), and tapiOca finds each file by matching the end of Plex's path inside `/media`. At least the file name and its folder must match. Once a match works, tapiOca reuses it for every other file. The **Media files** line on the **Setup** tab shows whether files are read directly.
 
-If tapiOca can't see a file, it streams it from Plex instead, which works but adds load to Plex. For unusual layouts, set the translation yourself with `PATH_MAPPINGS` under `environment:`. For example, `PATH_MAPPINGS: "/data/media:/media"` means "where Plex says `/data/media/…`, read `/media/…`". If Plex runs in Docker, use the paths inside Plex's container. Separate several pairs with `;`.
+If tapiOca can't see one of Plex's files, it streams it from Plex instead, which works but adds load to Plex. For unusual layouts, set the translation yourself with `PATH_MAPPINGS` under `environment:`. For example, `PATH_MAPPINGS: "/data/media:/media"` means "where Plex says `/data/media/…`, read `/media/…`". If Plex runs in Docker, use the paths inside Plex's container. Separate several pairs with `;`.
 
 If your media share takes more than 8 seconds to answer, tapiOca treats it as temporarily unavailable. It skips those programs for now, without marking them broken.
 
 ### Security and remote access
 
-**Keep port 3310 on your home network.** It serves Plex's tuner, guide and video streams, which never ask for a password, because Plex can't sign in to a tuner. Never forward it on your router or point a tunnel or reverse proxy at it. If that happens anyway, tapiOca treats those connections as from the internet and alerts Admins (see [Doors left open](#doors-left-open)). Plex only needs it inside your network. Plex users away from home can still watch, because Plex relays the stream. To choose which devices at home can use it, see [Tuner access](#tuner-access) on the **Access** tab.
+**Keep port 3310 on your home network.** It serves the tuner, guide and streams that Plex, Jellyfin and other apps use, which never ask for a password, because those apps can't sign in to a tuner. Never forward it on your router or point a tunnel or reverse proxy at it. If that happens anyway, tapiOca treats those connections as from the internet and alerts Admins (see [Doors left open](#doors-left-open)). These apps only need it inside your network. Plex users away from home can still watch, because Plex relays the stream. To choose which devices at home can use it, see [Tuner access](#tuner-access) on the **Access** tab.
 
 **Using tapiOca's page and apps from the internet.** tapiOca can open a second port for its page and for tapiOca's apps away from home, set with `PUBLIC_PORT`. It's 3311 in the YAML and Compose files, and it must differ from `PORT`. On that port:
 
-- **No Plex addresses.** The addresses Plex and other apps use (the tuner, guides, streams and playlist) don't exist there.
+- **No tuner addresses.** The tuner, guides, streams and playlist that Plex, Jellyfin and other apps use don't exist there.
 - **Sign-in always required.** Before signing in, visitors see only the sign-in page, its icons, what a browser needs to install the page as an app (see **As an app** under [First-time setup](#first-time-setup)), tapiOca's name and version, its open-source notices and its privacy notice. tapiOca's apps also ask it the server's name, its away-from-home address and which features are on, to connect. Until signing in is on, the page there says only "This tapiOca client can't reach the server. Please check back later.", as tapiOca's apps do, and no one can sign in or make themselves the first Admin from outside.
 - **Wrong passwords limited.** The limits are 5 in 15 minutes per address, and 100 in 15 minutes for the internet as a whole. tapiOca knows a visitor's own address only through a [trusted proxy](#trusted-proxies) or Cloudflare's own network. Otherwise it counts the address that connected, so through a proxy you haven't listed, every visitor shares the proxy's address. A browser or app that has signed in before isn't held up by the internet-wide limit.
 
@@ -281,7 +286,7 @@ Put `PUBLIC_PORT` behind a Cloudflare Tunnel or a reverse proxy with HTTPS. [Rea
 
 **Built-in protections, however tapiOca is reached:**
 
-- **Plex.** The page can't send its own requests to Plex. tapiOca makes only the requests it needs (details of your movies and shows, guide refreshes, folder scans and stopping blocked playback), so no one can misuse your Plex token through it. The page never sees the token or Plex's address.
+- **With Plex.** The page can't send its own requests to Plex. tapiOca makes only the requests it needs (details of your movies and shows, guide refreshes, folder scans and stopping blocked playback), so no one can misuse your Plex token through it. The page never sees the token or Plex's address.
 - **Uploads.** A logo is accepted only as a PNG, JPEG, WebP, GIF or BMP image, and an Intro Bumper only as a video file. Each is turned into a clean copy before use. The limits are 500 of your own logos, 50 Intro Bumper videos, and no upload that would leave less than 2 GB free on the data folder's disk.
 - **The page.** It runs only its own scripts, can't be embedded in another site, and refuses changes sent from other sites.
 - **Backups.** tapiOca restores a backup only if it's a genuine tapiOca backup. Anything unexpected is refused before anything changes.
@@ -332,7 +337,7 @@ Before 1.34.0, tapiOca was built on your own machine from the release's zip. Fro
    - Delete the `build:` block: the `build:` line and the lines indented under it (`context:` and `dockerfile:`).
    - Change `image:` to `ghcr.io/egadgetboy/tapioca-server:latest`.
    - Add `TAPIOCA_INSTALL` under `environment:`, set to how you update (see [Updating](#updating)). On TrueNAS, set it to `"truenas"`. With Docker Compose on Linux, set it to `"compose"`, and with Docker Desktop, `"docker-desktop"`. On Synology, set it to `"synology"`: you installed it over SSH, and it updates that way. On Unraid, set it to `"compose"`: you installed it with the Compose Manager plugin, and it updates with `docker compose`.
-3. **Leave everything else as it is:** your Plex token, folders, user, ports and GPU lines.
+3. **Leave everything else as it is:** your Plex token (if you use Plex), folders, user, ports and GPU lines.
 4. **Save it in TrueNAS,** or run `docker compose up -d` in the compose file's folder. On Synology, connect over SSH and run `sudo docker compose up -d` there.
 
 The top of the file then looks like this:
@@ -378,12 +383,14 @@ Everyone stays signed in. Stations, settings and people return to how they were 
 
 ## Watch your stations
 
-tapiOca offers your stations in two ways at once, on your home network:
+tapiOca offers your stations to other apps in two ways at once, on your home network:
 
 | For | Address |
 |---|---|
 | Plex (as an HDHomeRun tuner) | Tuner: `http://<server-ip>:3310`<br>Guide: `http://<server-ip>:3310/xmltv.xml` |
 | Jellyfin, Emby, Kodi and other apps | Playlist: `http://<server-ip>:3310/stations.m3u`<br>Guide: `http://<server-ip>:3310/guide.xml` |
+
+Choose where you watch in the setup, or under **What you use** on the **Setup** tab, and tapiOca shows the steps for each. tapiOca's own apps need only tapiOca's address.
 
 **Tuner integration**, on the **Setup** tab, shows these addresses with **Copy** buttons. Station numbers and logos come with them. You can watch in as many apps as you like. Everyone watching the same station shares one stream.
 
@@ -396,7 +403,7 @@ Plex won't add a tuner whose guide has no stations. A new tapiOca starts with th
 3. When Plex asks for guide data, choose **Have an XMLTV guide on your server? Click here to use it** and enter `http://<server-ip>:3310/xmltv.xml`.
 4. Continue. Plex matches your stations automatically (Plex calls them channels), and they appear under **Live TV**.
 
-After that, tapiOca keeps Plex's guide up to date. Whenever a station changes, it asks Plex to refresh the guide. The **Guide updates** line on the **Setup** tab shows whether that's working. If it isn't, refresh the guide yourself in **Settings → Live TV & DVR → your tuner → Refresh Guide**.
+After that, with `PLEX_URL` and `PLEX_TOKEN` set, tapiOca keeps Plex's guide up to date. Whenever a station changes, it asks Plex to refresh the guide. The **Guide updates** line on the **Setup** tab shows whether that's working. If it isn't, or tapiOca isn't set up with Plex, refresh the guide yourself in **Settings → Live TV & DVR → your tuner → Refresh Guide**.
 
 **After you create a new station,** choose **Scan for channels** in Plex's Live TV & DVR settings so Plex adds it.
 
@@ -429,7 +436,7 @@ Channels DVR and VLC accept the playlist address, `http://<server-ip>:3310/stati
 
 **HLS players.** Each station is also available as HLS, the format used by Safari, iPhones, iPads, Apple TV and many other players: `http://<server-ip>:3310/hls/<station number>/index.m3u8`. It shares the station's one stream with everyone else watching, so a station never takes a second tuner. The HLS stream runs only while a player is asking for it. It stops 30 seconds after the last player stops asking, or right away when tapiOca's own apps tune away.
 
-**Keeping other apps' guides current.** These apps download the guide on their own schedule, usually once a day. When you change a station, refresh the guide in the app (in Jellyfin, **Dashboard → Scheduled Tasks → Refresh Guide**). Otherwise the app shows that station's old schedule until its next refresh. Changes such as new episodes wait until the guide these apps downloaded runs out, so it stays right (see [Updates to stations](#updates-to-stations)). With Plex, they take effect when Plex downloads its guide, and an app that refreshes less often may briefly show an older schedule.
+**Keeping other apps' guides current.** These apps download the guide on their own schedule, usually once a day. When you change a station, refresh the guide in the app (in Jellyfin, **Dashboard → Scheduled Tasks → Refresh Guide**). Otherwise the app shows that station's old schedule until its next refresh. Changes such as new episodes wait until the guide these apps downloaded runs out, so it stays right (see [Updates to stations](#updates-to-stations)). When Plex downloads the guide too, they take effect when Plex downloads it, and an app that refreshes less often may briefly show an older schedule.
 
 **Away from home.** These addresses only work on your home network. Plex users away from home watch through Plex as usual. Other apps must be on your network or reach it over a VPN.
 
@@ -474,7 +481,7 @@ A tapiOca updated from before 1.34.1 that never saved a choice shared no Media f
 - **Copies only when needed.** A file plays unchanged whenever the device can play it. Otherwise tapiOca makes a copy as it plays, and the app can seek anywhere in it. A repackaged copy keeps the picture and converts only the sound, which costs almost nothing.
 - **Converted copies.** A converted copy remakes the picture at up to 1080p in standard color. This uses the server's processor, so at most 3 are converted at once, or 6 with a GPU, which is light on the processor.
 - **What else copies do.** A copy draws in subtitles the device can't show itself. It also makes a smaller picture when the connection can't keep up with any version.
-- **Movies in several files.** A movie Plex keeps in several files ("cd1" and "cd2") plays as one program with their combined length. Resume, progress, seeking and watched status cover the whole movie. It plays as a copy that joins the files, repackaged when their pictures are alike (nearly always) and converted when they're not. Apps that predate the copies in tapiOca 1.24.0 can't play such a movie, and say so.
+- **Movies in several files.** A movie kept in several files ("cd1" and "cd2") plays as one program with their combined length. Resume, progress, seeking and watched status cover the whole movie. It plays as a copy that joins the files, repackaged when their pictures are alike (nearly always) and converted when they're not. Apps that predate the copies in tapiOca 1.24.0 can't play such a movie, and say so.
 - **Where it plays.** Media plays on your home network or through a VPN. While **tapiOca's apps away from home** is on, it also plays through the public port.
 
 The design is in [docs/on-demand.md](docs/on-demand.md).
@@ -595,20 +602,22 @@ A Cloudflare Tunnel reaches tapiOca's page without opening any port. It's not fo
 
 The first time an Admin opens tapiOca's page, the setup opens right away. It doesn't wait for Plex. It asks a few questions and checks that everything works. Use **Next** and **Back**, or the steps down the side. Each answer is saved when you move to another step. **Skip setup** leaves everything else unchanged.
 
-1. **Checking your server:** the server itself. It never waits on Plex, which has a step of its own (step 9). It reads your media folder directly: `MEDIA_DIR`, and any folder `PATH_MAPPINGS` names. It checks whether the folder is there, whether tapiOca can read it, whether it holds anything, and whether tapiOca can read a video in it. If nothing is at `MEDIA_DIR`, it looks at the folders mounted into tapiOca and says where your media seems to be, and what to set `MEDIA_DIR` to: the folder's place inside tapiOca, not on your server. It also checks how tapiOca encodes video, whether its clock matches your browser's, and its backups. Anything marked **Needs a look** or **Not working** says what to do. After changing tapiOca's app settings, restart it, then choose **Check again**.
-2. **How stations play:** the picture size for new stations and the number of tuners, with **Test this server** to help you choose.
-3. **New station settings:** the defaults for new stations. These cover subtitles, commercials and trailers, the Station ID card, the Intro Bumper, the Up Next Banner, and what goes in the corner. Stations you already have don't change.
-4. **Who can use tapiOca:** everyone signs in, at home and away. Enter your name and a password (at least 8 characters) to become the first Admin, and you're signed in right away. To let your home's devices skip signing in, tick **Devices on my home network skip signing in**. It offers the network tapiOca sees you on (such as `192.168.1.0/24`), with a name you can change. Its devices then open on **Who's tuning in?**, and **New people show on** becomes **Every device at home**. Never use a guest network (see [Trusted networks](#trusted-networks)). A tapiOca updated with signing in off offers both choices here: **Anyone on my network**, or **Only people who sign in** (see [Who can use tapiOca](#who-can-use-tapioca)).
-5. **Who sees what:** the Viewing Level **New people start on** (Unrestricted until you choose another), and each person's Viewing Level (see [Viewing Levels](#viewing-levels)).
-6. **Watching away from home:** whether tapiOca's own apps can watch your stations away from home, and the address they use there (see [Reaching tapiOca from outside your home](#reaching-tapioca-from-outside-your-home)).
-7. **Media in tapiOca's apps:** which Media folders the apps can browse and play in Media. Every Media folder is shared to start. Untick any you'd rather keep out (see [tapiOca's own apps](#tapiocas-own-apps)). If Plex isn't answering, the step says so within a few seconds, and Media folders already shared stay shared.
-8. **Checking files:** when the overnight deep scan runs.
-9. **Plex:** the checks for Plex, then how to add tapiOca to it. Plex is optional: with a [Media folder of your own](#media-folders-of-your-own) and no `PLEX_URL`, this step says tapiOca isn't using Plex, and that's fine.
+1. **Checking your server:** the server itself. It never waits on Plex, which is checked in **Connecting your apps**, near the end. It reads your media folder directly: `MEDIA_DIR`, and any folder `PATH_MAPPINGS` names. It checks whether the folder is there, whether tapiOca can read it, whether it holds anything, and whether tapiOca can read a video in it. If nothing is at `MEDIA_DIR`, it looks at the folders mounted into tapiOca and says where your media seems to be, and what to set `MEDIA_DIR` to: the folder's place inside tapiOca, not on your server. It also checks how tapiOca encodes video, whether its clock matches your browser's, and its backups. Anything marked **Needs a look** or **Not working** says what to do. After changing tapiOca's app settings, restart it, then choose **Check again**.
+2. **Your shows and movies:** where tapiOca gets them: **Plex**, **Media folders of my own**, or both. Plex is ticked for you while `PLEX_URL` and `PLEX_TOKEN` are set, and Media folders of your own while you have one. To stop using Plex, delete those two settings and restart tapiOca. To stop using a Media folder of your own, remove it on the **Setup** tab. With Media folders of your own ticked, **Add a Media folder** adds one right there (see [Media folders of your own](#media-folders-of-your-own)).
+3. **Where you watch:** tapiOca's apps, Plex, Jellyfin, Emby, Kodi or other apps. Tick each one you'll use, and **Connecting your apps** shows the steps for each. This only changes what tapiOca shows you: every app can still use tapiOca's tuner, playlist and guide.
+4. **How stations play:** the picture size for new stations and the number of tuners, with **Test this server** to help you choose.
+5. **New station settings:** the defaults for new stations. These cover subtitles, commercials and trailers, the Station ID card, the Intro Bumper, the Up Next Banner, and what goes in the corner. Stations you already have don't change.
+6. **Who can use tapiOca:** everyone signs in, at home and away. Enter your name and a password (at least 8 characters) to become the first Admin, and you're signed in right away. To let your home's devices skip signing in, tick **Devices on my home network skip signing in**. It offers the network tapiOca sees you on (such as `192.168.1.0/24`), with a name you can change. Its devices then open on **Who's tuning in?**, and **New people show on** becomes **Every device at home**. Never use a guest network (see [Trusted networks](#trusted-networks)). A tapiOca updated with signing in off offers both choices here: **Anyone on my network**, or **Only people who sign in** (see [Who can use tapiOca](#who-can-use-tapioca)).
+7. **Who sees what:** the Viewing Level **New people start on** (Unrestricted until you choose another), and each person's Viewing Level (see [Viewing Levels](#viewing-levels)).
+8. **Watching away from home:** whether tapiOca's own apps can watch your stations away from home, and the address they use there (see [Reaching tapiOca from outside your home](#reaching-tapioca-from-outside-your-home)).
+9. **Media in tapiOca's apps:** which Media folders the apps can browse and play in Media. Every Media folder is shared to start. Untick any you'd rather keep out (see [tapiOca's own apps](#tapiocas-own-apps)). If you use Plex and it isn't answering, the step says so within a few seconds, and Media folders already shared stay shared.
+10. **Checking files:** when the overnight deep scan runs.
+11. **Connecting your apps:** how to add tapiOca to each place you watch, with the addresses to enter there, each with a **Copy** button. Where you use Plex, for your shows and movies or to watch in, Plex's checks come first:
    - **Plex:** whether tapiOca can reach Plex, and whether the account that owns your Plex server has Plex Pass, which watching in Plex needs. When tapiOca can't reach Plex, it says what happened: nothing answered, the connection was refused, the address couldn't be found, Plex answered with a problem, or Plex didn't accept the token. It also says so when `PLEX_URL` is still the example address from tapiOca's YAML, `http://192.168.1.10:32400`.
    - **Plex's files:** whether tapiOca finds the files Plex lists, so it can read them straight from disk.
    - **tapiOca in Plex:** whether Plex has tapiOca as a DVR yet.
-   - **Adding tapiOca to Plex:** the steps in Plex, and the tuner and guide addresses to enter there, each with a **Copy** button. **Check again** runs the checks again.
-10. **All set:** your current settings, and anything that still needs attention. It also asks whether tapiOca should tell you when a new version is out (see [Updating](#updating)). The box is never ticked for you, and leaving it unticked is No.
+   - **Each place you watch:** the steps there, such as **Adding tapiOca to Plex** or **Adding tapiOca to Jellyfin**, and the addresses that place uses. **Check again** runs Plex's checks again.
+12. **All set:** your current settings, what you use and where you watch, and anything that still needs attention. It also asks whether tapiOca should tell you when a new version is out (see [Updating](#updating)). The box is never ticked for you, and leaving it unticked is No.
 
 To open the setup at any time, choose **Run setup again** on the **Setup** tab, or **Setup** at the bottom of the page. Your current answers are filled in. The setup is the only place to change the settings for new stations. Everything else can also be changed on its own tab.
 
@@ -626,12 +635,12 @@ Install it from the address you sign in at, such as your reverse proxy's `https:
 
 ### The INFO station
 
-A new tapiOca starts with station 99, **INFO**, with tapiOca's logo. Plex's Live TV & DVR won't add a tuner whose guide has no stations, so INFO lets you add tapiOca to Plex before you've made a station of your own. It stays useful after that:
+A new tapiOca starts with station 99, **INFO**, with tapiOca's logo, so every app has a station to find when you add tapiOca to it, before you've made a station of your own. (Plex's Live TV & DVR won't add a tuner whose guide has no stations.) It stays useful after that:
 
 - **What it shows.** A film of teal pearls flying through tapiOca's ring, to a light tune, with the time and date in the top right corner, tapiOca's web address in the bottom right, and a panel in the bottom left that changes every 15 seconds: **What's new in tapiOca** (this version's highlights), **tapiOca's apps, in beta** (their newest versions and what's new in them), **By the numbers** (your stations, and the movies, shows and episodes in the Media folders shared with tapiOca's apps, with how many were added this week) and **A tip for tapiOca's apps**, a new one each hour.
-- **For everyone.** Everyone who can watch your stations sees INFO, whatever their Viewing Level, in Plex too. So it shows counts, never titles, and never your server's addresses or how it's doing.
+- **For everyone.** Everyone who can watch your stations sees INFO, whatever their Viewing Level, in every app. So it shows counts, never titles, and never your server's addresses or how it's doing.
 - **No burn-in.** Nothing on it holds still: the logo floats, and the text drifts a few pixels now and then. The pearls always fly in front of the text.
-- **It plays without Plex.** The film comes with tapiOca itself, and nothing on INFO asks anything of the internet. Plex is asked for its counts once an hour.
+- **It plays without any Media folders.** The film comes with tapiOca itself, and nothing on INFO asks anything of the internet. Your Media folders' counts are read once an hour.
 - **Always 99, and only its film.** You can rename INFO and change its settings, but not its number, and no other station can be 99. A station that was 99 before 1.34.1 keeps its number until you move it. INFO plays only its own film (no blocks, Feature Presentation or marathons), and no other station can play it.
 - **Removing it.** Delete it on the **Stations** tab. To bring it back, choose **Add the INFO station** under **The INFO station** on the **Setup** tab.
 - **Only new tapiOcas get it by themselves.** A tapiOca updated from an earlier version can add it on the **Setup** tab.
@@ -677,8 +686,8 @@ Choose **New station** on the **Stations** tab.
 
 **What's on it.** Under **What's on this station**, choose one of:
 
-- **Pick shows & movies:** select titles from your Media folders in Plex, shown with posters and genres.
-- **Use a filter:** describe what you want, and Plex keeps the station up to date as your movies and shows change. See [Filters](#filters).
+- **Pick shows & movies:** select titles from your Media folders, shown with posters and genres.
+- **Use a filter:** describe what you want, and tapiOca keeps the station up to date as your movies and shows change. See [Filters](#filters).
 
 **Picking titles.** The **Filter** box searches titles, genres and years. Every word must match one of them, so "western 1959" finds Westerns from 1959. The three buttons next to it change the poster size. A title already on another station is marked ("Already on station 12"). Below the list, tapiOca totals the shows, movies and episodes you picked, and about how many hours that is. To add a whole Media folder, choose **Everything in** that Media folder. The list shows up to 3,000 titles per Media folder. Type in the filter to find the rest.
 
@@ -688,13 +697,13 @@ Choose **New station** on the **Stations** tab.
 
 ### Filters
 
-Instead of picking titles, a station can ask Plex which titles match and follow the answer as your movies and shows change. Choose **Use a filter**, then combine any of these conditions. Each condition narrows the results. Several values in one condition mean "any of these".
+Instead of picking titles, a station can follow a filter: tapiOca finds the titles that match, and keeps up as your movies and shows change. Choose **Use a filter**, then combine any of these conditions. Each condition narrows the results. Several values in one condition mean "any of these".
 
 - **Media folders:** one or more. A movie in two Media folders plays once.
-- **Any Plex filter for those Media folders:** genre, content rating, network, studio, country, collection (including smart collections), label, director, writer, actor and more. People are searched as you type.
+- **Any filter those Media folders offer.** With Plex, Plex's own: genre, content rating, network, studio, country, collection (including smart collections), label, director, writer, actor and more. In your own Media folders: genre, collection, studio (network, for shows), content rating, director, actor and tag. People are searched as you type.
 - **Decade** (TV shows count by the year they started) and **Title contains**.
 - **Added in the last N days:** new arrivals. For TV, this means the episodes added in that time, so a "New This Week" station refreshes itself.
-- **Minimum audience rating:** Plex's audience rating, out of 10. Titles without a rating are left out.
+- **Minimum audience rating,** out of 10: Plex's audience rating, or the rating in an NFO file in your own Media folders. Titles without a rating are left out.
 
 A count of matches, with examples, updates as you go. **Choose which…** lists every match, so you can uncheck any you don't want. Those stay out, while new matches still join.
 
@@ -704,24 +713,24 @@ Examples:
 - **A favorite director's movies:** Director: the one you choose.
 - **Classic TV:** TV shows, Decade: 1950s and 1960s.
 - **Kids' TV:** Content Rating: TV-Y, TV-G.
-- **Christmas movies:** Plex has no Christmas genre. Select your Christmas movies in Plex, choose **Edit**, add the label "Christmas", and filter on **Label: Christmas**.
+- **Christmas movies:** Plex has no Christmas genre. Select your Christmas movies in Plex, choose **Edit**, add the label "Christmas", and filter on **Label: Christmas**. In your own Media folders, add `<tag>Christmas</tag>` to each movie's NFO file, and filter on **Tag: Christmas**.
 
-### Stations from Plex collections
+### Stations from collections
 
-On the **Stations** tab, **From Plex collections** lists the collections in your TV and movie Media folders, including smart collections. Check the ones you want and choose **Make station** (or **Make N stations**). Each becomes its own station, named after its collection, with the next free number and the default settings. A collection of shows plays every episode of those shows. You can make up to 200 at once. A collection that's already a station shows as checked.
+On the **Stations** tab, **From collections** lists the collections in your TV and movie Media folders, including Plex's smart collections. Check the ones you want and choose **Make station** (or **Make N stations**). Each becomes its own station, named after its collection, with the next free number and the default settings. A collection of shows plays every episode of those shows. You can make up to 200 at once. A collection that's already a station shows as checked.
 
-Each station follows its collection. Titles added to or removed from the collection in Plex join or leave the station within about an hour. If a tool recreates the collection, the station finds it again by name.
+Each station follows its collection. Titles added to or removed from the collection join or leave the station with its next update (see [Updates to stations](#updates-to-stations)), within about an hour for Plex's. If a tool recreates a Plex collection, the station finds it again by name.
 
 ### Smart stations
 
 **Smart stations** on the **Stations** tab makes stations from a filter (see [Filters](#filters)). Then choose:
 
 - **One station** of everything that matches, or
-- **One for each** decade, genre, studio, actor or anything else Plex offers. tapiOca asks Plex how much each would have ("1960s Comedy · 88 movies") and lists up to 40. Check the ones you want and rename them if you like. For directors, actors, writers and producers, pick the names yourself when Plex can't list who's in what.
+- **One for each** decade, genre, studio, actor or anything else your Media folders offer. tapiOca counts how much each would have ("1960s Comedy · 88 movies") and lists up to 40. Check the ones you want and rename them if you like. For directors, actors, writers and producers, pick the names yourself when Plex can't list who's in what.
 
 Examples: for 10 comedy stations, one per decade, use **Genre: Comedy** with **One for each → Decade**. For action and comedy shows together on one station, use **TV shows**, **Genre: Action, Comedy**, **One station**.
 
-Each new station takes the next free number and gets a logo and the default settings. After that, it's an ordinary station. You can make up to 50 at once. Everything comes from your Plex server.
+Each new station takes the next free number and gets a logo and the default settings. After that, it's an ordinary station. You can make up to 50 at once. Everything comes from your Media folders.
 
 ### Big stations
 
@@ -737,7 +746,7 @@ Card buttons:
 - **Edit:** opens the editor.
 - **Duplicate:** makes a copy with the same shows and settings and the next free number, to change before saving.
 - **Check files:** quick-checks every program on the station now (see [File checks](#file-checks)).
-- **Update now:** applies changes from Plex at the next program break at least a minute away.
+- **Update now:** brings in what's new or gone in its Media folders, at the next program break at least a minute away.
 - **Reshuffle** (shuffled stations only): starts a new random order, also at the next program break at least a minute away.
 - **Delete:** removes the station, with **Undo** for 10 seconds.
 
@@ -761,15 +770,15 @@ Sound adds 192 kbps. A new picture size takes effect the next time the station s
 
 **Dolby Vision profile 5** files (common from streaming services) have no standard picture that anything but a Dolby Vision player can show correctly, so tapiOca doesn't play them. They're listed on the **Broken files** tab as **Unsupported**. Replace the file with another version, and it goes back on the air.
 
-**Movies in several files.** Plex stacks a movie kept as several files (`Movie-cd1.mkv` and `Movie-cd2.mkv`, or "part 1" and "part 2") into one. tapiOca plays the files back to back as one program. The corner logo, the Up Next Banner and burn-in protection carry on across the join, and someone tuning in during the second file joins at the right place. The guide shows the files' combined time, as Plex reports it. If one file is missing or won't play, the movie is handled like any broken file. It goes on the **Broken files** list, which names the file ("part 2 of 3"), and a stand-in plays the rest of its time.
+**Movies in several files.** A movie kept as several files (`Movie-cd1.mkv` and `Movie-cd2.mkv`, or "part 1" and "part 2") is one movie, in Plex and in your own Media folders. tapiOca plays the files back to back as one program. The corner logo, the Up Next Banner and burn-in protection carry on across the join, and someone tuning in during the second file joins at the right place. The guide shows the files' combined time. If one file is missing or won't play, the movie is handled like any broken file. It goes on the **Broken files** list, which names the file ("part 2 of 3"), and a stand-in plays the rest of its time.
 
 ### Tuners
 
 tapiOca's **tuners** set how many different stations it can play at once. Set the number from 1 to 20 on the **Setup** tab. Plex doesn't cap this at 4 or any other number. It uses as many tuners as tapiOca offers. The real limit is your server, because each station being watched is converted in real time. The default, 4, is a safe start for most servers, and a GPU can usually handle more. **Test this server** (below) suggests a number for yours.
 
-Everyone watching the same station shares one stream, so a station uses one tuner no matter how many people watch it. With 4 tuners, 4 different stations can play at once, for any number of viewers. The limit covers Plex and every other app together. While anyone is watching, a pill at the top of the page shows how many tuners are in use.
+Everyone watching the same station shares one stream, so a station uses one tuner no matter how many people watch it. With 4 tuners, 4 different stations can play at once, for any number of viewers. The limit covers every app together. While anyone is watching, a pill at the top of the page shows how many tuners are in use.
 
-When every tuner is busy, someone tuning in to another station sees an **All tuners in use** card for 30 seconds, listing the stations that are on. Up to 3 people at a time see the card. Anyone beyond that gets Plex's own error. tapiOca reports more tuners to Plex than it really has, so Plex always lets it show that card. If you raise the number of tuners and Plex still won't play more stations at once, restart Plex.
+When every tuner is busy, someone tuning in to another station sees an **All tuners in use** card for 30 seconds, listing the stations that are on. Up to 3 people at a time see the card. Anyone beyond that gets their app's own error. tapiOca reports more tuners to Plex than it really has, so Plex always lets it show that card. If you raise the number of tuners and Plex still won't play more stations at once, restart Plex.
 
 A station keeps running for 20 seconds after its last viewer leaves, so flipping back is instant. During that time, the station gives up its tuner if someone else needs it.
 
@@ -798,7 +807,7 @@ Programs play back to back at their real lengths. Nothing is stretched or padded
 - **Episode order:** one episode of each show in turn, each show in episode order, like classic reruns. Shows go in alphabetical order, and a movie counts as a one-episode show. When a shorter show runs out, the others continue without it. So a long-running show can play many episodes in a row near the end of the run. Then the run starts again.
 - **Shuffle:** every program plays once per pass, and each pass is shuffled again, so a show doesn't air at the same time every day. No show plays more than twice in a row, and nothing from the end of one pass comes right back at the start of the next. If one show has more than twice as many episodes as everything else combined, that rule can't always hold, and the station card says "mostly one show".
 
-tapiOca works out the schedule the same way every time, starting from when you saved the station. That keeps Plex's guide accurate, and restarting tapiOca never changes what's on.
+tapiOca works out the schedule the same way every time, starting from when you saved the station. That keeps every app's guide accurate, and restarting tapiOca never changes what's on.
 
 ### Updates to stations
 
@@ -828,7 +837,7 @@ tapiOca uses markers only when they look right. An intro must start in the first
 
 **Skips end where the picture cuts.** Plex finds an intro by its theme music, which often starts under the last line of the cold open and runs on over the program's first shot. So tapiOca looks at a few seconds of each file around each marker (at low priority, one program at a time). It moves each skip to a change of shot or a moment of black inside it, so the cold open plays to its end and the program plays from its start. If the picture changes shot more than once under the music, tapiOca keeps the extra shots, so a few seconds of the titles may show (usually 3 at most, and never more than 6 at each end). Where there's no clean cut (a slow fade), the skip stays 2 seconds inside Plex's marker at that end. A skip only ever gets shorter, never longer. One left too short to keep (a few seconds) isn't made, and the program plays in full.
 
-When you save a station with only a few programs still to look at, tapiOca waits up to 10 seconds for them. (Stations made several at a time, as [smart stations](#smart-stations) or [from Plex collections](#stations-from-plex-collections), don't wait: their programs are looked at first.) The rest are looked at in the background and keep the 2-second margins until then. What's found in the background reaches your stations together, twice a day at most (and when tapiOca starts), with the next update from Plex. It's kept in `cuts.json` in the data folder, so each file is usually looked at just once. The **Logs** tab says when looking starts, how far along it is now and then, and when it's done.
+When you save a station with only a few programs still to look at, tapiOca waits up to 10 seconds for them. (Stations made several at a time, as [smart stations](#smart-stations) or [from collections](#stations-from-collections), don't wait: their programs are looked at first.) The rest are looked at in the background and keep the 2-second margins until then. What's found in the background reaches your stations together, twice a day at most (and when tapiOca starts), with the next update from Plex. It's kept in `cuts.json` in the data folder, so each file is usually looked at just once. The **Logs** tab says when looking starts, how far along it is now and then, and when it's done.
 
 Plex has to find the markers first. In Plex, go to **Settings → Library** and set **Generate intro video markers** and **Generate credits video markers** to run as a scheduled task and when media is added (a Plex Pass feature). tapiOca asks Plex again about programs without markers, first after 6 hours and then less often. Markers Plex finds later arrive like any other update.
 
@@ -840,7 +849,7 @@ Plex has to find the markers first. In Plex, go to **Settings → Library** and 
 
 ### The guide
 
-The guide covers the next 2 days, both in Plex and in tapiOca's own **Guide** button. Plex reloads the guide only about once a day on its own, which is why it covers 2 days.
+The guide covers the next 2 days, in every app and on tapiOca's own **Guide** button. Plex reloads the guide only about once a day on its own, which is why it covers 2 days.
 
 ## Station features
 
@@ -860,7 +869,7 @@ A new station numbered 1 to 50 starts with its number's logo, which follows the 
 
 **Your own logos.** In the logo picker, choose **Upload your own…** and pick a PNG, JPEG, WebP, GIF or BMP image up to 10 MB. tapiOca makes it a 512×512 PNG on a clear background, so square images look best. Your logos are listed first, under **Your logos**, and stored in `data/logos`. Once no station uses one, you can delete it with its ×.
 
-**Logos from Plex.** A new station with one show or movie is named after it. If Plex has a logo for it (the title artwork Plex shows on its pages), that becomes the station's logo. A name you type or a logo you choose yourself isn't replaced. On other stations, the first show's Plex logo is offered as **Use the logo from Plex**. tapiOca trims it, keeps its shape (most are wide) and sizes it to match the built-in logos. It adds the logo to **Your logos** when you save the station.
+**Logos of shows and movies.** A new station with one show or movie is named after it. If that title has a logo, it becomes the station's logo: in Plex, the title artwork Plex shows on its pages; in your own Media folders, a `clearlogo` or `logo` picture beside the files. A name you type or a logo you choose yourself isn't replaced. On other stations, the first show's logo is offered as **Use the title's logo**. tapiOca trims it, keeps its shape (most are wide) and sizes it to match the built-in logos. It adds the logo to **Your logos** when you save the station.
 
 Plex apps load logos from tapiOca's address, so they appear on your home network. Away from home, they appear only if tapiOca's address can be reached from there.
 
@@ -895,7 +904,7 @@ The clips come from two folders, named exactly as shown (Linux names are case-se
 - `commercials` at the top of your TV shows' Media folder, such as `/mnt/tank/media/tv/commercials`
 - `trailers` at the top of your movies' Media folder, such as `/mnt/tank/media/movies/trailers`
 
-tapiOca finds them through the folders Plex lists for each Media folder. If a Media folder is your whole media drive, put the folder directly inside it. Subfolders are fine. Clips from 3 seconds to 10 minutes long are used. Put a file named `.plexignore` containing `*` in each folder, so Plex doesn't add the clips to your Media folders:
+tapiOca finds them through each Media folder's own folders (for Plex's, the folders Plex lists). If a Media folder is your whole media drive, put the folder directly inside it. Subfolders are fine. Clips from 3 seconds to 10 minutes long are used. Your own Media folders skip `commercials` and `trailers` by themselves. With Plex, put a file named `.plexignore` containing `*` in each folder, so Plex doesn't add the clips to its Media folders:
 
 ```
 cd /mnt/tank/media
@@ -904,7 +913,9 @@ echo '*' > tv/commercials/.plexignore
 echo '*' > movies/trailers/.plexignore
 ```
 
-**Commercials from the right decade.** Put clips in a subfolder named for a decade (`commercials/1960s` or `commercials/60s`), and they play only after programs from that decade, by the year Plex gives each program. Trailers work the same way. Clips outside decade folders play after everything else.
+If Jellyfin also reads these folders, put an empty file named `.ignore` in each. For Emby, put a file named `.embyignore` containing `*` in each (a file named `.ignore` before Emby 4.9).
+
+**Commercials from the right decade.** Put clips in a subfolder named for a decade (`commercials/1960s` or `commercials/60s`), and they play only after programs from that decade, by each program's year. Trailers work the same way. Clips outside decade folders play after everything else.
 
 **Under Viewing Levels.** On a station someone with limits can see, a clip plays only if you've rated its folder, at or below the station's highest-rated program. Rate the folders on the **Access** tab (see [Viewing Levels](#viewing-levels)). On other stations, every clip plays.
 
@@ -924,7 +935,7 @@ The bumper plays when a station's stream starts. Someone tuning in while others 
 **Viewers join** (under **When someone tunes in**) sets what happens when someone tunes in:
 
 - **In progress** (the default): like real TV. Tune in at 10:20 PM to a show that started at 10:00 PM, and you join 20 minutes in. The program keeps its place in the schedule, so viewers join it as far in as the bumper is long. In the bumper's last third, the show's sound fades in and carries straight into the show.
-- **From the beginning:** the program on now starts from the beginning, right after the bumper. The station then runs that far behind the guide for as long as anyone is watching. Plex's guide still shows the schedule. When no one is watching anymore, the next viewer starts fresh. The bumper keeps its own sound to the end, so none of the program is missed. If someone tunes in during the commercials after a program, the next program starts from its beginning anyway. A program that began more than 2 hours earlier is joined in progress.
+- **From the beginning:** the program on now starts from the beginning, right after the bumper. The station then runs that far behind the guide for as long as anyone is watching. Every app's guide still shows the schedule. When no one is watching anymore, the next viewer starts fresh. The bumper keeps its own sound to the end, so none of the program is missed. If someone tunes in during the commercials after a program, the next program starts from its beginning anyway. A program that began more than 2 hours earlier is joined in progress.
 
 ### Subtitles
 
@@ -938,7 +949,7 @@ Under **Specials**, three kinds of event can take over a station's schedule now 
 
 If two would overlap, a block wins over a Feature Presentation, and both win over a marathon. The other is skipped that time, and the **Logs** tab says so. A special that would start more than 15 minutes late, because the one before it ran long, is skipped too.
 
-- **Marathons:** three episodes of one show in a row. Choose **Random times** (1 to 4 a week) or **Set times** (days and a time). Shows take turns. Each marathon plays **Next in order** (picking up where that show's last marathon ended) or from a **Random starting point**. A station needs at least 5 shows with 3 or more episodes each. Plex's guide adds "Show Name Marathon (1 of 3)." to each episode's description.
+- **Marathons:** three episodes of one show in a row. Choose **Random times** (1 to 4 a week) or **Set times** (days and a time). Shows take turns. Each marathon plays **Next in order** (picking up where that show's last marathon ended) or from a **Random starting point**. A station needs at least 5 shows with 3 or more episodes each. The guide adds "Show Name Marathon (1 of 3)." to each episode's description.
 - **Feature Presentation:** a movie night on the days and at the time you choose. A 10-second **Feature Presentation** card plays first (**Preview the card** shows it), then the movie. **Movies from** sets the source: the station's own movies, a movie Media folder or a movie collection. So a TV station can have movie nights too. Every movie is shown once before any repeats.
 - **Blocks:** up to 4 time-of-day blocks, such as Saturday Morning Cartoons. Each has a name (up to 40 characters), days, start and end times, and its own shows (**Choose shows…**). A block can run 30 minutes to 12 hours, and past midnight is fine. It plays its shows in the station's order, ends at the program break nearest its end time, and picks up where it left off next time. A block is skipped if the nearest program break comes after its end time.
 
@@ -958,13 +969,13 @@ A bad file should never take a station down. tapiOca is built around that.
 | Opening a file is slow (a sleeping drive, a busy NAS) | Keeps the stream alive with a few seconds of black. |
 | A file stalls (no new video for 8 seconds) | Resumes or replaces it as above. A stall is blamed on storage, not the file. The file is skipped for the rest of that viewing, and listed only if it stalls in two separate viewings. A stuck ffmpeg process is abandoned after 2 seconds, and the next program reads ahead to rebuild the stream's 10-second cushion. |
 | Something drawn over the picture fails (corner logo, banner or subtitles) | Tries the program again with nothing drawn over it before blaming the file. |
-| Plex or the media share can't be reached | Skips the affected programs for now, without listing them. |
-| A file is a few seconds shorter than Plex says | Fills the rest of its time with black. A file more than 10 seconds or 2% short counts as cut short. |
-| A movie in several files | Plays each file in turn, opening the next while one plays. A file that's missing or won't play is handled as above, and a stand-in plays from there. While Plex can't be reached, tapiOca can't ask which files the movie has. Then a file that ends a minute or more before its time gets a stand-in for the rest, instead of black. |
+| The media share (or Plex, if you use it) can't be reached | Skips the affected programs for now, without listing them. |
+| A file is a few seconds shorter than its stated length | Fills the rest of its time with black. A file more than 10 seconds or 2% short counts as cut short. |
+| A movie in several files | Plays each file in turn, opening the next while one plays. A file that's missing or won't play is handled as above, and a stand-in plays from there. While Plex can't be reached, tapiOca can't ask it which files one of its movies has. Then a file that ends a minute or more before its time gets a stand-in for the rest, instead of black. |
 | Nothing on the station can fill the time | Shows a "We'll be right back" card for the time that's left, then continues. |
 | Nothing could play for two programs in a row | Shows "This station is off the air. Please report it." and logs an error. It keeps trying each new program and comes back on the air by itself. |
 | The station's stream fails | Restarts it right away in the same stream, so viewers see at most a brief pause. It also restarts a stream that sends nothing for 45 seconds. After 3 failures within 5 minutes, the off-air card shows for 2 minutes before it tries again. A program that crashes the stream twice is skipped for that viewing. |
-| Sonarr or Radarr upgraded or renamed a file | Nothing. tapiOca asks Plex for the current file every time a program plays. |
+| Sonarr or Radarr upgraded or renamed a file | With Plex, nothing: tapiOca asks Plex for the current file every time a program plays. In your own Media folders, the new file keeps the program's place once tapiOca reads the folder again (see [Media folders of your own](#media-folders-of-your-own)). |
 
 ### The Broken files list
 
@@ -985,7 +996,7 @@ The tab has three parts:
 
 | Label | Meaning |
 |---|---|
-| **Missing** | The file is gone from disk, or the program is gone from Plex, while a station or Media still has it. |
+| **Missing** | The file is gone from disk, or the program is gone from Plex or your own Media folder, while a station or Media still has it. |
 | **Broken** | The file won't play. |
 | **Damaged** | It plays, but not properly (see [What counts as a problem](#what-counts-as-a-problem)). |
 | **Unsupported** | It plays, but can't be shown correctly (Dolby Vision profile 5). |
@@ -1000,7 +1011,7 @@ When the files that need you include both missing files and other kinds, buttons
 
 **Entries that clear themselves:**
 
-- **Every half hour,** tapiOca checks the list against Plex. An entry clears when Plex has the program again under a new ID, or when its file is missing (or Plex removed it) and neither a station nor Media has it anymore. An entry for one of a program's versions clears when Plex no longer has that version.
+- **Every half hour,** tapiOca checks the list against your Media folders. An entry clears when Plex has the program again under a new ID, or when its file is missing (or its Media folder no longer has it) and neither a station nor Media has it anymore. An entry for one of a program's versions clears when its Media folder no longer has that version.
 - **A new file** for a program gets a quick check, and the entry clears if the new file passes. Otherwise the entry says what's wrong with the new file.
 - **Every night,** when the overnight checks begin (1 AM unless you change it), tapiOca re-checks programs taken off the air by a quick check or because their file couldn't be opened. A share may have been down. It does the same when you choose **Check the list again**. These entries clear if the files pass.
 - **Deep-scan and playback problems** stay until the file changes, because checking the same file again would find the same thing.
@@ -1099,7 +1110,7 @@ Each report includes who sent it, from what device, where in the program it happ
 |---|---|
 | No picture, the picture breaking up, no sound, the sound cutting out, stopping early, or not playing | Checks the file right away, ahead of everything but a station's program about to air. It checks around where the problem happened, then runs the quick check. If the report says where and those find nothing, it runs the deep scan. If it finds the problem, the file goes on the list and is replaced according to your settings. If not, the report says tapiOca found nothing wrong, for you to **Dismiss**. |
 | The sound out of sync, the wrong language, the wrong episode or movie, poor picture quality, or subtitles | Waits for you, with what tapiOca can tell next to it: the file's sound languages, its length compared with the show's other episodes, its picture size and its subtitles. Choose **Replace with Sonarr** (or **Radarr**), **Find a better copy** or **Dismiss**. Replacing blocklists the release and fetches another, as for a broken file, and the program is off the air until then. **Find a better copy** has the app search for an upgrade, keeping the file until it finds one. |
-| Wrong title, details or artwork | Waits for you to fix it in Plex (**Fix Match** or **Edit** on its page there), then **Dismiss** it. |
+| Wrong title, details or artwork | Waits for you to fix it, then **Dismiss** it. In Plex, use **Fix Match** or **Edit** on its page there. In your own Media folders, fix its NFO file or its name. |
 
 A report never takes anything off the air, or out of Media, by itself. Only tapiOca's own checks or your choice can do that. Each person can send one report a day about each program, and 10 a day in all. An Admin can turn reporting off for someone with **Can report problems**, on the **Access** tab or under **Reports from tapiOca's apps** on the **Broken files** tab. Admins can always report. Reports are kept while they wait, and for 90 days after they're handled.
 
@@ -1115,7 +1126,7 @@ Anything else is treated as from the internet: it gets exactly what the public p
 
 **Home names.** [Trusted networks](#trusted-networks) also need tapiOca asked for by a home name: an address on your network, a single-word name (such as `nas`), a name ending in `.local`, `.lan`, `.home`, `.home.arpa`, `.internal`, `.localdomain` or `.ts.net`, `BASE_URL`'s name, or a name listed under [Names for tapiOca at home](#names-for-tapioca-at-home). Asked for by any other name, such as `tv.example.com`, a connection at home is never trusted, and Admins get an alert. With signing in off, it gets only tapiOca's page, saying to add the name, and the tuner: a web page elsewhere can't point a name of its own at tapiOca and use your browser to change it (this is called DNS rebinding).
 
-**Signing in.** A new tapiOca has everyone sign in, at home and away. The setup's step 4 makes you the first Admin, and can let your home network's devices skip signing in (see [Trusted networks](#trusted-networks)). You can also add the first user on the **Access** tab, with a name and a password of at least 8 characters. **The first user is always an Admin**, and you're signed in right away. After that, everyone else sees a sign-in page, or **Who's tuning in?** on a trusted network. Until there's an Admin, tapiOca's page and apps are open to anyone at home, and they can change anything, as an Admin can. Nobody can use them from the internet then, even with **Away from home** on: tapiOca's apps there say "This tapiOca client can't reach the server. Please check back later." tapiOca's apps work from the internet once **Away from home** is on, on the **Access** tab. Signing in doesn't change who can watch in Plex, Jellyfin, Emby or Kodi: each app decides that itself.
+**Signing in.** A new tapiOca has everyone sign in, at home and away. The setup's **Who can use tapiOca** step makes you the first Admin, and can let your home network's devices skip signing in (see [Trusted networks](#trusted-networks)). You can also add the first user on the **Access** tab, with a name and a password of at least 8 characters. **The first user is always an Admin**, and you're signed in right away. After that, everyone else sees a sign-in page, or **Who's tuning in?** on a trusted network. Until there's an Admin, tapiOca's page and apps are open to anyone at home, and they can change anything, as an Admin can. Nobody can use them from the internet then, even with **Away from home** on: tapiOca's apps there say "This tapiOca client can't reach the server. Please check back later." tapiOca's apps work from the internet once **Away from home** is on, on the **Access** tab. Signing in doesn't change who can watch in Plex, Jellyfin, Emby or Kodi: each app decides that itself.
 
 **Updated with signing in off.** A tapiOca that had signing in off (**Anyone on my network**) before 1.36.0 keeps working the same way at home. Admins get an alert suggesting signing in, with your home network trusted so its devices skip it (see [Doors left open](#doors-left-open)).
 
@@ -1133,11 +1144,11 @@ Anything else is treated as from the internet: it gets exactly what the public p
 - **Last signed in.** Each person's last sign-in shows its date and time, and below it the address it came from, as the access log has it. (Through a [trusted proxy](#trusted-proxies), it's the visitor's, as the proxy saw it. Through a proxy you haven't listed, it's the proxy's own address.)
 - **Sign-in limits.** A sign-in lasts 30 days after it was last used. After 5 wrong passwords from one address within 15 minutes, that address has to wait. That's the visitor's own address only through a trusted proxy, or Cloudflare's own network. Passwords are stored only as salted hashes.
 - **Page timeout.** tapiOca's page signs you out after an hour without activity. tapiOca's apps stay signed in. At home, you can sign in again with just your PIN (if you have one), on a browser where you've signed in with your password before. "At home" means tapiOca's address on your home network, as above. Through its internet address (your reverse proxy or tunnel), or anything tapiOca treats as from the internet, it's always your password, even from home. The sign-in page says which. After updating from a version before 1.32.0, each browser needs your password once before the PIN works there. After 5 wrong PINs, wait 15 minutes. If you sign out on purpose, or your password changes, that browser needs your password next time.
-- **No password for Plex.** Plex, Jellyfin and other apps never need a password, just like a real HDHomeRun. The tuner, guide, streams, logos and playlist stay open on your network. To limit all but the logos to devices and networks you list, choose **Only these devices** under [Tuner access](#tuner-access).
+- **No password for the tuner.** Plex, Jellyfin and other apps never need a password, just like a real HDHomeRun. The tuner, guide, streams, logos and playlist stay open on your network. To limit all but the logos to devices and networks you list, choose **Only these devices** under [Tuner access](#tuner-access).
 
 ### Trusted networks
 
-Devices on a trusted network skip signing in. Nothing is trusted until an Admin adds it, under **Trusted networks** on the **Access** tab (or in the setup's step 4). Add your own home network, one device, or your own VPN. **Never add a guest network.**
+Devices on a trusted network skip signing in. Nothing is trusted until an Admin adds it, under **Trusted networks** on the **Access** tab (or in the setup's **Who can use tapiOca** step). Add your own home network, one device, or your own VPN. **Never add a guest network.**
 
 - **What to add.** A whole home network, such as `192.168.1.0/24`. One device's address, such as `192.168.1.44`. Your own VPN's network, such as `10.8.0.0/24`. Give it a name if you like, such as "Home Wi-Fi". **Add the network you're on** adds yours in one step. The tab says where you are: "You're at 192.168.1.44, on Home Wi-Fi."
 - **What each one gives.** **Who's tuning in?** (the default): each person picks themselves, and kids get their own limits. It lists people shown on **Every device at home** or **Every device, at home and away**. Anyone with a PIN is asked for it, and an Admin always is (their PIN, or their password if they have none). Or **Signed in as** a person: the device is signed in as them. An Admin can be signed in only on one device's address. Whoever has that address is that person, so reserve it for the device in your router's DHCP settings.
@@ -1205,7 +1216,7 @@ Each person has a **Viewing Level** that sets what they can see in tapiOca's app
 | **Kid** | PG | TV-PG | Hidden |
 | **Young Child** | G | TV-G | Hidden |
 
-- **Ratings.** Plex's content ratings are read as ages, for the US and other countries alike (such as `gb/15` or `de/12`). An episode counts as its show's rating, or its own if that's stricter. A title with no rating, or one tapiOca doesn't recognize, counts as unrated.
+- **Ratings.** Content ratings are read as ages, for the US and other countries alike (such as `gb/15` or `de/12`). An episode counts as its show's rating, or its own if that's stricter. A title with no rating, or one tapiOca doesn't recognize, counts as unrated.
 - **Media folders.** A level can also be limited to some Media folders. That way, a show in both "TV Parents" and "TV Teens" is seen only through the Media folder a person's level includes.
 - **Genres, tags, collections and studios.** A level can also hide any show or movie with a genre, tag, collection or studio you name, whatever its rating. Choose **Edit** beside a level (or **Add a level**), type a name under **Genres**, **Tags**, **Collections** or **Studios**, and choose **Add**. Plex's own names are offered as you type. Tags are what Plex calls labels. Capital letters don't matter. An episode counts as its show, with its show's genres, tags, collections and studio. A title with no genre isn't caught by a genre. The levels' table shows what each one hides in **Also hides**, such as "2 genres and 1 studio".
 - **What they see.** Choose **What they see** next to someone's name (not an Admin's: Admins see everything). It shows "(3 set)" when you've chosen anything there. For someone named Kit, **What Kit sees** has three parts:
@@ -1220,7 +1231,7 @@ Each person has a **Viewing Level** that sets what they can see in tapiOca's app
 - **Plex and other apps.** Plex, Jellyfin and other apps don't report who's watching, so they show every station. To keep stations from some people in Plex, see **Blocking stations for some Plex users**, below.
 - **It's logged.** The access log (**Logs**, then **Access**) records each change, such as "Ada changed the Viewing Level Kid (movies up to PG, …, hiding 2 genres and 1 studio)", "Ada set what's hidden and allowed for Kit (hiding 1 genre, 2 titles allowed)" and "Ada rated the clip folders: commercials/1960s TV-14".
 
-tapiOca learns the ratings of what's on each station as it checks Plex for updates. Until it knows a station's ratings, that station is hidden from anyone with limits. While a level or a person hides by genre or tag, tapiOca also asks Plex for each title's genres and tags in the background: again every day, and at once when you hide a new name. Until it knows a title's, the title is hidden from anyone whose level or own choices hide by them. So the first time someone limited this way opens a big Media folder, it shows some titles at first, and the rest as Plex answers.
+tapiOca learns the ratings of what's on each station as it checks your Media folders for updates. Until it knows a station's ratings, that station is hidden from anyone with limits. While a level or a person hides by genre or tag, tapiOca also asks Plex for each title's genres and tags in the background: again every day, and at once when you hide a new name. Until it knows a title's, the title is hidden from anyone whose level or own choices hide by them. So the first time someone limited this way opens a big Media folder, it shows some titles at first, and the rest as Plex answers.
 
 ### Parental limits: what tapiOca enforces, and what it can't
 
@@ -1237,7 +1248,7 @@ Viewing Levels are limits in tapiOca's apps and on tapiOca's page. They don't re
 - **Plex, Jellyfin and anything else on the tuner.** They don't say who's watching, so they show every station. See [Tuner access](#tuner-access) and [Blocking stations for some Plex users](#blocking-stations-for-some-plex-users).
 - **Devices without PINs.** On a shared device, anyone can pick anyone without a PIN on **Who's tuning in?** Give everyone without limits a PIN on devices people with limits use.
 - **Signing in as someone else.** Someone who knows another person's password can sign in as them on their own device.
-- **A rating or genre Plex has wrong, or doesn't have.** tapiOca goes by what Plex says. Unrated titles follow the level's **Unrated titles** setting.
+- **A rating or genre that's wrong or missing,** in Plex or in an NFO file. tapiOca goes by what they say. Unrated titles follow the level's **Unrated titles** setting.
 - **What's inside a program,** beyond its rating, genres and tags.
 
 Use your devices' own controls too, such as Apple's Screen Time or Google's Family Link.
@@ -1306,7 +1317,7 @@ Plex, Jellyfin and other apps are never limited in any other way.
 
 The **Stats** tab shows how much each station is watched: viewings, hours watched, average viewing, when it was last watched, and its most-watched show or movie. Below that are the most-watched shows and movies overall, and the times of day people watch. Choose **Today** (since midnight), **7 days**, **30 days** or **All**.
 
-A viewing counts once it lasts a minute, so flipping past a station doesn't count. Viewings are counted per stream, so several people watching one station together in Plex can count as one viewing. Each of tapiOca's apps counts on its own. Stats are kept for 400 days, and a station's stats are deleted with it.
+A viewing counts once it lasts a minute, so flipping past a station doesn't count. Viewings are counted per stream, so several people watching one station together in another app can count as one viewing. Each of tapiOca's apps counts on its own. Stats are kept for 400 days, and a station's stats are deleted with it.
 
 Admins see more, and so does everyone while sign-in is off:
 
@@ -1318,7 +1329,7 @@ Admins see more, and so does everyone while sign-in is off:
 
 ## tapiOca's API
 
-*Optional.* Your own scripts, home automation (such as Home Assistant) and other players can use tapiOca's API, under `/api/v1`. It covers the server, its stations with what's on now and next, the guide, each station's HLS stream, and how tapiOca is doing. With an Admin token, scripts can also update a station from Plex, check a station's files, ask Plex to refresh its guide, and make a backup. It's documented in [docs/api.md](docs/api.md), with an OpenAPI spec at `/api/v1/openapi.json` (also in [docs/openapi-v1.json](docs/openapi-v1.json)).
+*Optional.* Your own scripts, home automation (such as Home Assistant) and other players can use tapiOca's API, under `/api/v1`. It covers the server, its stations with what's on now and next, the guide, each station's HLS stream, and how tapiOca is doing. With an Admin token, scripts can also update a station now, check a station's files, ask Plex to refresh its guide, and make a backup. It's documented in [docs/api.md](docs/api.md), with an OpenAPI spec at `/api/v1/openapi.json` (also in [docs/openapi-v1.json](docs/openapi-v1.json)).
 
 Version 1 is a stable contract: it only grows. New fields and addresses may be added, but nothing is renamed, removed or changed in meaning. A change that would break a client comes as version 2, served next to version 1. Version 1 then carries `Deprecation` and `Sunset` headers for at least 6 months before it's removed.
 
@@ -1381,7 +1392,7 @@ Problems are kept for 30 days. **Clear** removes them, and the log keeps its own
 
 **Alerts.** tapiOca alerts Admins when something needs attention:
 
-- **Plex.** Plex can't be reached, or won't accept tapiOca's token. The alert says what happened and what to check (see **Plex isn't connected** under **Plex**, below).
+- **Plex,** if you use it. Plex can't be reached, or won't accept tapiOca's token. The alert says what happened and what to check (see **Plex isn't connected** under **Plex**, below).
 - **The data folder.** It has less than 2 GB free, or can't be written to.
 - **A failing station.** A station keeps failing to start (3 times in 10 minutes).
 - **Backups.** Backups fail twice in a row.
@@ -1422,11 +1433,11 @@ Alerts are kept in tapiOca's database, so a restart doesn't repeat them. An open
 
 **Playing**
 
-- **A station shows "This station is off the air. Please report it."** Nothing on it could play for two programs in a row, or its stream failed 3 times within 5 minutes. The **Logs** tab says why. Usually Plex or the media share can't be reached, or every program on the station is on the Broken files list.
+- **A station shows "This station is off the air. Please report it."** Nothing on it could play for two programs in a row, or its stream failed 3 times within 5 minutes. The **Logs** tab says why. Usually the media share (or Plex) can't be reached, or every program on the station is on the Broken files list.
 - **A stream stops.** The **Logs** tab says what happened. "Viewer … left station … after …" means the player closed the connection itself. "Viewer … was disconnected from station …" gives tapiOca's reason. "is falling behind real time" means the server can't convert video as fast as it plays. Use a smaller picture size, fewer tuners, or a GPU.
 - **HDR movies look washed out.** At startup, the **Logs** tab notes if ffmpeg can't convert HDR. tapiOca's own image can.
 - **Subtitles don't show.** The program needs subtitles in the `AUDIO_LANGUAGE` language, in its file or next to it. With **Forced only**, it needs forced ones. A program's first airing may play without them while they're extracted.
-- **No commercials or trailers play.** The editor shows how many were found. The folders must be named exactly `commercials` and `trailers`, at the top of a Media folder as Plex lists it, and visible inside `/media`.
+- **No commercials or trailers play.** The editor shows how many were found. The folders must be named exactly `commercials` and `trailers`, at the top of a Media folder (for Plex's, as Plex lists it), and visible inside `/media`.
 - **A Feature Presentation or block doesn't happen.** The station card shows when the next one is. A more important special may have overlapped it, or it would have started too late. The **Logs** tab says which.
 - **Up Next Banners never appear, and the log mentions the data folder's path.** `DATA_DIR` is set to a path with characters ffmpeg can't handle. Remove the `DATA_DIR` setting, because the default, `/data`, always works. The folder's name on your server doesn't matter.
 
@@ -1434,7 +1445,7 @@ Alerts are kept in tapiOca's database, so a restart doesn't repeat them. An open
 
 - **Many files go on the list at once.** Check the reason. If tapiOca can neither see the files under `/media` nor reach Plex, programs are skipped, not listed. If Plex itself has lost the files, they're listed as "can't open the file" or "removed from Plex". Check the **Media files** line on the **Setup** tab, fix the cause, then use **Retry**.
 - **A file is listed as Damaged, but plays fine for you.** Choose **Retry**. It goes back on the air, and the checks leave that file alone.
-- **A station stopped following Plex.** An update that would remove more than half its programs waits for you. Choose **Update now** if it's right (see [Updates to stations](#updates-to-stations)).
+- **A station stopped following its Media folders.** An update that would remove more than half its programs waits for you. Choose **Update now** if it's right (see [Updates to stations](#updates-to-stations)).
 
 **GPU**
 
@@ -1558,7 +1569,7 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 
 | Path | Job |
 |---|---|
-| `app/main.py` | Web server: Plex tuner endpoints, streams and the API |
+| `app/main.py` | Web server: the tuner's addresses, streams and the API |
 | `app/config.py` | Settings from environment variables |
 | `app/broadcaster.py` | Each station's engine and its safeguards |
 | `app/tsstitch.py` | Joins programs into one continuous MPEG-TS stream |
@@ -1572,7 +1583,7 @@ Three logos also use system fonts: DejaVu Sans (Sing-Along) and Noto Sans CJK JP
 | `app/subtitles.py` | Subtitles drawn into the picture |
 | `app/replacement.py` | Choosing stand-ins for programs that can't play |
 | `app/markers.py` | Plex's intro and credits markers |
-| `app/updates.py` | Following Plex: hourly checks, and when updates take over |
+| `app/updates.py` | Following your Media folders: hourly checks, and when updates take over |
 | `app/db.py` | Stations and settings (SQLite) |
 | `app/library.py` | Your shows and movies, wherever they come from: Plex, or Media folders of your own |
 | `app/folders.py`, `app/folderscan.py` | Media folders of your own: their tables, reading them, their details put together, and the page's addresses |

@@ -19,6 +19,11 @@ function pillFor(st) {
   if (st.uses.sources.includes('plex')) return folders.count ? ['warn', 'Plex isn’t set up yet'] : ['bad', 'Nothing to play yet'];
   return folders.count ? ['ok', 'Media folders ready'] : ['bad', 'Nothing to play yet'];
 }
+// The live pill's tooltip: a station uses one tuner however many watch it.
+// 1.36.0's words while nothing is chosen; else in any app.
+function livePillTitle(tuners, full) {
+  return `Stations being watched right now, and how many connections there are. Each station uses one tuner (tapiOca has ${plural(tuners, 'tuner')}), no matter how many people watch it${appsNamed() ? ', in any app' : ' in Plex or another app'}.${full ? ' Every tuner is in use, so anyone tuning in to another station sees a card saying so.' : ''}`;
+}
 let pageVersion = null;  // (tapiOca's version when this page was loaded)
 async function loadStatus() {
   try {
@@ -44,7 +49,7 @@ async function loadStatus() {
   const connections = watched.reduce((n, s) => n + s.viewers, 0);
   const full = watched.length >= status.tuners;
   $('#livePill').hidden = !watched.length;
-  $('#livePill').title = `Stations being watched right now, and how many connections there are. Each station uses one tuner (tapiOca has ${plural(status.tuners, 'tuner')}), no matter how many people watch it in Plex or another app.${full ? ' Every tuner is in use, so anyone tuning in to another station sees a card saying so.' : ''}`;
+  $('#livePill').title = livePillTitle(status.tuners, full);
   $('#livePill').firstElementChild.className = full ? 'dot warn' : 'dot live';
   $('#livePill').lastElementChild.textContent = `${watched.length} of ${plural(status.tuners, 'tuner')} in use · ${plural(connections, 'connection')}`;
   // (What's for Admins comes only to Admins: Away from home and alerts too.)
@@ -76,6 +81,19 @@ async function loadStatus() {
 // with, how many stations play at once, and what this server can manage. On
 // the Setup tab, and in the setup.
 const SPEED_WAIT = 'Testing… (up to a minute)';
+// The tuners' hint: the limit counts every app (1.36.0's words while
+// nothing is chosen); what tapiOca tells Plex only where Plex is watched.
+function tunersHint(tuners) {
+  const plex = ` (tapiOca tells Plex it has ${Math.max(tuners + 1, 2 * tuners)} tuners so that Plex lets it show that card. If you raise this number and Plex still won’t play more, restart Plex.)`;
+  const named = appsNamed();
+  return `Up to ${plural(tuners, 'station')} can play at once, across ${named ? 'every app' : 'Plex and all other apps'}. Everyone watching the same station shares one stream, so a station uses one tuner no matter how many people watch it. When every tuner is in use, anyone tuning in to another station sees a card saying so.${!named || watches('plex') ? plex : ''}`;
+}
+// Why 4K and HDR are converted; Plex's part only where Plex is watched
+// (1.36.0's words while nothing is chosen).
+function hdrHint() {
+  const plex = !appsNamed() || watches('plex');
+  return `4K plays at the station’s picture size (1080p at most), and HDR is converted to standard color so it doesn’t look washed out. A station must play everything in its one format to run without glitches. Streaming in 4K HDR would need a GPU fast enough to convert everything in real time and about 20 Mbps per viewer${plex ? ', and Plex Live TV isn’t known to pass HDR through to the TV. (Plex still struggles with ATSC 3.0, the broadcast standard that brings HEVC and HDR from real tuners.)' : '.'} So, for stability, stations play at up to 1080p in standard color. Dolby Vision profile 5 files can’t play correctly without a Dolby Vision player, so they’re left out and listed on the Broken files tab.`;
+}
 function playbackForm(pb, { saveLabel, onSaved, extraButtons = [], embedded = false }) {
   let picture = pb.picture, tuners = pb.tuners, tested = pb.speedTest;
   const hint = h('span', { class: 'hint' });
@@ -94,7 +112,7 @@ function playbackForm(pb, { saveLabel, onSaved, extraButtons = [], embedded = fa
     seg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.textContent === picture)));
     hint.textContent = `${PICTURE_HINTS[picture]} You can give any station its own size under How it plays in its editor.`;
     select.value = String(tuners);
-    tunerHint.textContent = `Up to ${plural(tuners, 'station')} can play at once, across Plex and all other apps. Everyone watching the same station shares one stream, so a station uses one tuner no matter how many people watch it. When every tuner is in use, anyone tuning in to another station sees a card saying so. (tapiOca tells Plex it has ${Math.max(tuners + 1, 2 * tuners)} tuners so that Plex lets it show that card. If you raise this number and Plex still won’t play more, restart Plex.)`;
+    tunerHint.textContent = tunersHint(tuners);
     if (tested) {
       const p = tested.pictures;
       const when = new Date(tested.at).toLocaleDateString([], { month: 'short', day: 'numeric' });
@@ -145,7 +163,7 @@ function playbackForm(pb, { saveLabel, onSaved, extraButtons = [], embedded = fa
   paint();
   const form = h('div', { class: 'playback' },
     h('p', { class: 'hint', style: 'margin:0' }, 'As on broadcast TV, each station plays as one continuous stream in a single format. Every program, commercial, and card is converted to that format as it plays (H.264 at the station’s picture size), so one flows into the next without a glitch, in any app. Bigger pictures look sharper but take more work.'),
-    h('p', { class: 'hint', style: 'margin:0' }, h('strong', {}, '4K and HDR programs are converted to fit. '), '4K plays at the station’s picture size (1080p at most), and HDR is converted to standard color so it doesn’t look washed out. A station must play everything in its one format to run without glitches. Streaming in 4K HDR would need a GPU fast enough to convert everything in real time and about 20 Mbps per viewer, and Plex Live TV isn’t known to pass HDR through to the TV. (Plex still struggles with ATSC 3.0, the broadcast standard that brings HEVC and HDR from real tuners.) So, for stability, stations play at up to 1080p in standard color. Dolby Vision profile 5 files can’t play correctly without a Dolby Vision player, so they’re left out and listed on the Broken files tab.'),
+    h('p', { class: 'hint', style: 'margin:0' }, h('strong', {}, '4K and HDR programs are converted to fit. '), hdrHint()),
     h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'Picture for new stations'), h('div', { class: 'opt-ctl' }, seg, hint)),
     h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'Tuners'), h('div', { class: 'opt-ctl' }, select, tunerWarn, tunerHint)),
     h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'This server'), h('div', { class: 'opt-ctl' }, h('div', { class: 'row-btns' }, testBtn, useBtn), result)),

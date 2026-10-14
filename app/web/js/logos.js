@@ -100,7 +100,7 @@ function nameAfterOnlyTitle() {
 function showPlexLogo() {
   const offered = plexLogo;
   $('#plexLogo').hidden = !offered?.id || offered.id === logo || FROM_PLEX + offered.key === logo;
-  $('#plexLogo').title = offered ? `The logo Plex has for ${offered.title}` : '';
+  $('#plexLogo').title = offered ? `The logo for ${offered.title}` : '';
 }
 $('#plexLogo').addEventListener('click', () => {
   if (!plexLogo?.id) return;

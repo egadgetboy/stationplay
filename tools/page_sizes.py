@@ -66,6 +66,7 @@ from app.plex import PlexClient  # noqa: E402
 from app.releases import META as UPDATE_CHECK  # noqa: E402
 from app.releases import RELEASES  # noqa: E402
 from app.setup import META_ANSWERED as SETUP_ANSWERED  # noqa: E402
+from app.uses import META as USES  # noqa: E402
 from tests.fakeplex_library import LibraryPlex  # noqa: E402
 from tests.helpers import Proxy  # noqa: E402
 
@@ -1280,8 +1281,44 @@ def signin_by_pin(page: Page, look: Look) -> None:
                     page.evaluate("() => document.activeElement.id"), "signinPassword")  # fmt: skip
 
 
+PLACE_BOX = "#setupBody .uses-places label.choice:has(strong:text-is('{}')) input"
+
+
+def sources_step(page: Page, look: Look) -> None:
+    """(1.37.0) Your shows and movies: Plex is set up, so it's ticked and
+    can't be unticked; your own folders too, listed, with Add a Media
+    folder, which opens over the setup."""
+    plex = "#setupBody .uses-sources label.choice:has(strong:text-is('Plex')) input"
+    look.expect("Your shows and movies: Plex locked",
+                (page.is_checked(plex), page.is_disabled(plex)), (True, True))  # fmt: skip
+    page.wait_for_selector("#setupBody .uses-folders strong")
+    look.expect("Your shows and movies: your own folders listed",
+                page.locator("#setupBody .uses-folders strong").all_inner_texts(),
+                ["Our shows", "Our movies"])  # fmt: skip
+    look("setup-sources")
+    page.click("#setupBody .uses-folders button:has-text('Add a Media folder')")
+    page.wait_for_selector("#folderLib[open] #flFolders .pick")
+    look("setup-sources-add-folder")
+    page.click("#closeFolderLib")
+    page.wait_for_timeout(300)
+
+
+def watch_in_step(page: Page, look: Look) -> None:
+    """(1.37.0) Where you watch: with nothing ticked, the sentence; then
+    Plex and Jellyfin, ticked (the Plex step's copy button follows)."""
+    for box in page.locator("#setupBody .uses-places input").all():
+        box.uncheck()
+    look.expect("Where you watch, nothing ticked: the sentence",
+                "Choose at least one place you’ll watch." in page.inner_text("#setupBody"), True)  # fmt: skip
+    look("setup-watchin-none")
+    page.check(PLACE_BOX.format("Plex"))
+    page.check(PLACE_BOX.format("Jellyfin"))
+    look("setup-watchin-two")
+
+
 def plex_step(page: Page, look: Look) -> None:
-    """(1.34.1, the owner) The setup's Plex step: its own checks (Plex, its
+    """(1.34.1, the owner) The setup's Plex step (Connecting your apps, from
+    1.37.0, with Plex ticked in Where you watch): its own checks (Plex, its
     files, tapiOca in Plex), and Copy copying the tuner's address, in the
     setup's window, at a home address (http: no clipboard to write to)."""
     page.wait_for_selector("#setupBody .copyrow button")
@@ -1303,7 +1340,75 @@ def plex_step(page: Page, look: Look) -> None:
     look.expect("Copied, said over the setup's window",
                 page.evaluate("() => { const t = document.querySelector('#toast'); return !t.hidden && t.closest('dialog[open]') !== null && t.textContent; }"),
                 "Copied")  # fmt: skip
+    look.expect("Connecting your apps: Plex and Jellyfin",
+                page.locator("#setupBody .place h3").all_inner_texts(),
+                ["Adding tapiOca to Plex", "Adding tapiOca to Jellyfin"])  # fmt: skip
     look("setup-plex")
+
+
+def connecting_tapioca_only(page: Page, look: Look) -> None:
+    """(1.37.0) Connecting your apps, watched in tapiOca's apps only: no
+    Plex checks (Plex is still a source, so they show), and one place."""
+    page.evaluate(
+        "() => api('/api/setup/uses', { method: 'PUT', body: { watchIn: ['tapioca'] } }).then(() => runSetup())"
+    )
+    page.wait_for_selector("#setupDlg[open] #setupBody .playback, #setupDlg[open] #setupBody .setup-check")
+    # (By the steps' list, which a phone doesn't show.)
+    page.evaluate(
+        "() => [...document.querySelectorAll('.setup-nav button')].find(b => b.textContent.includes('Connecting your apps')).click()"
+    )
+    page.wait_for_selector("#setupBody .place")
+    look.expect("Connecting your apps, tapiOca's apps only",
+                page.locator("#setupBody .place h3").all_inner_texts(), ["tapiOca’s apps"])  # fmt: skip
+    look("setup-plex-tapioca-only")
+    close_dialogs(page)
+
+
+def uses_views(page: Page, look: Look, sp: Running) -> None:
+    """(1.37.0) The Setup tab by what you use: tapiOca's apps only (More
+    ways to watch closed and open), Plex and Jellyfin, all six; and the
+    Access tab's footer with tapiOca's apps only. Then nothing saved again,
+    as the other views expect."""
+
+    def choose(watch_in: list[str], sections: int) -> None:
+        page.evaluate(
+            "w => api('/api/setup/uses', { method: 'PUT', body: { watchIn: w } }).then(() => loadStatus())",
+            watch_in,
+        )
+        until(page, "n => !document.querySelector('#placesPanel').hidden && document.querySelectorAll('#placesPanel .place').length === n", sections)
+
+    choose(["tapioca"], 1)
+    look.expect("tapiOca's apps only: no addresses to copy",
+                [page.is_hidden(f"#{r}Row") for r in ("tuner", "xmltv", "m3u", "guide")],
+                [True] * 4)  # fmt: skip
+    look("addtoplex-tapioca", full=True)
+    page.evaluate("() => { document.querySelector('#morePlaces').open = true; }")
+    look.expect("More ways to watch holds the other five",
+                page.locator("#morePlacesBody .place").count(), 5)  # fmt: skip
+    look("addtoplex-tapioca-more", full=True)
+    page.evaluate("() => { document.querySelector('#morePlaces').open = false; }")
+    choose(["plex", "jellyfin"], 2)
+    look.expect("Plex and Jellyfin: Guide updates is in Plex's section",
+                page.locator("#placesPanel .place[data-place='plex'] #guideState").count(), 1)  # fmt: skip
+    # (The one row in a section: Plex's Guide updates.)
+    look.expect("Plex and Jellyfin: their addresses only in the panel above",
+                page.locator("#placesPanel .copyrow").count(), 1)  # fmt: skip
+    look("addtoplex-plex-jellyfin", full=True)
+    choose(["tapioca", "plex", "jellyfin", "emby", "kodi", "other"], 6)
+    look.expect("All six: nothing under More ways to watch", page.is_hidden("#morePlaces"), True)
+    look("addtoplex-all", full=True)
+    choose(["tapioca"], 1)
+    tab(page, "access")
+    look.expect("the Access tab's footer, tapiOca's apps only",
+                page.inner_text("#neverSignIn").startswith(
+                    "Apps other than tapiOca’s never sign in, so the tuner, guide, and stream "
+                    "addresses on the Setup tab are open to every device on your network"),
+                True)  # fmt: skip
+    look("access-tapioca-only", full=True)
+    sp.call(lambda: sp.ctx.db.set_meta(USES, ""))
+    page.evaluate("() => loadStatus()")
+    until(page, "() => !document.querySelector('#placesBefore').hidden")
+    tab(page, "setup")
 
 
 def connection_test(page: Page, look: Look) -> None:
@@ -1500,7 +1605,12 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
         ran_on = []
         for n in range(steps):
             look(f"setup-{n + 1}")
-            if page.inner_text("#setupBody h4.wstep").endswith("· Plex"):
+            title = page.inner_text("#setupBody h4.wstep")
+            if title.endswith("· Your shows and movies"):
+                sources_step(page, look)
+            if title.endswith("· Where you watch"):
+                watch_in_step(page, look)
+            if title.endswith("· Connecting your apps"):
                 plex_step(page, look)
             if scrolled_arrows(page, look, f"setup step {n + 1}", "#setupBody"):
                 if not ran_on:
@@ -1530,11 +1640,18 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
             False,
         )
         close_dialogs(page)
+        connecting_tapioca_only(page, look)
         sp.call(lambda: sp.ctx.releases.save(True))  # (as it was, for the other views)
+        sp.call(lambda: sp.ctx.db.set_meta(USES, ""))  # (nothing saved, for the other views)
+        page.evaluate("() => loadStatus()")
         short_dialog(page, look)
     if wanted("addtoplex"):
         tab(page, "setup")
+        # (1.37.0) Nothing saved: as 1.36.0, with What you use open.
+        page.wait_for_selector("#usesPanel[open] .uses-places")
+        look.expect("nothing saved: 1.36.0's steps", page.is_visible("#placesBefore strong"), True)
         look("addtoplex", full=True)
+        uses_views(page, look, sp)
         # (1.34.1) The INFO station's panel: there's one, on 99.
         page.wait_for_selector("#infoPanel p")
         look.expect(

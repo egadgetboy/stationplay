@@ -120,7 +120,7 @@ function renderFilter() {
   $('#fLibs').replaceChildren(...(libs.length ? libs.map(l => h('button', {
     type: 'button', class: 'chipbtn', 'aria-pressed': String(flt.libraries.includes(l.key)),
     onclick: () => { toggleIn(flt.libraries, l.key); renderFilter(); loadChoicesSoon(); },
-  }, l.title)) : [h('span', { class: 'hint' }, `Plex has no ${flt.kind === 'show' ? 'TV' : 'movie'} Media folders.`)]));
+  }, l.title)) : [h('span', { class: 'hint' }, `There are no ${flt.kind === 'show' ? 'TV' : 'movie'} Media folders yet.`)]));
   // Anything already chosen stays visible even if these libraries don't offer it.
   const shown = [...fFields];
   for (const [field, values] of Object.entries(flt.tags)) {
@@ -132,8 +132,8 @@ function renderFilter() {
   if ($('#fTitle').value !== flt.titleContains) $('#fTitle').value = flt.titleContains;
   $('#fAdded').value = flt.addedWithinDays || '';
   $('#fAddedHint').textContent = flt.kind === 'show'
-    ? 'Episodes added to Plex in that time, from any matching show (e.g., 30 for a New Arrivals station).'
-    : 'Movies added to Plex in that time (e.g., 30 for a New Arrivals station).';
+    ? 'Episodes added in that time, from any matching show (e.g., 30 for a New Arrivals station).'
+    : 'Movies added in that time (e.g., 30 for a New Arrivals station).';
   $('#fRating').value = String(flt.minRating || 0);
   if ($('#smart').open) renderSmartSplit();
 }
@@ -159,7 +159,7 @@ function updateCount() {
   // Anything already on its way back is out of date now.
   clearTimeout(countTimer);
   const seq = ++previewSeq;
-  $('#fCount').textContent = flt.libraries.length ? 'Checking Plex…' : 'Choose at least one Media folder.';
+  $('#fCount').textContent = flt.libraries.length ? 'Counting…' : 'Choose at least one Media folder.';
   if (!flt.libraries.length) return;
   countTimer = setTimeout(async () => {
     try {
@@ -247,7 +247,7 @@ $('#addFilter').addEventListener('click', () => {
   sources = sources.filter(s => sourceKey(s) !== sourceKey(source));
   sources.push(source);
   renderSelected();
-  toast('Filter added. New matches in Plex join the station automatically.');
+  toast('Filter added. New matches join the station automatically.');
   flt = newFilter(flt.kind);
   $('#fReview').hidden = true;
   renderFilter();
@@ -431,7 +431,7 @@ $('#editorForm').addEventListener('submit', async e => {
   try {
     chosen = await settledLogo();
   } catch (err) {
-    $('#editorStatus').textContent = `Couldn’t add the logo from Plex (${err.message}). Choose another logo.`;
+    $('#editorStatus').textContent = `Couldn’t add the title’s logo (${err.message}). Choose another logo.`;
     btn.disabled = false;
     return;
   }
@@ -474,7 +474,7 @@ $('#editorForm').addEventListener('submit', async e => {
     logo: chosen,
     sources,
   };
-  $('#editorStatus').textContent = 'Building the schedule from Plex…';
+  $('#editorStatus').textContent = 'Building the schedule…';
   try {
     const res = editing
       ? await api(`/api/channels/${editing.id}`, { method: 'PUT', body })

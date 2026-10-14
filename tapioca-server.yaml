@@ -26,17 +26,22 @@ services:
     # and read access to your media. (TrueNAS's built-in apps user is 568:568.)
     user: "1000:1000"                                # <- CHANGE if your media belongs to another user
     ports:
-      - "3310:3310"     # Plex and your home network. Never forward it or tunnel to it.
+      # Your home network: Plex, Jellyfin, Emby, Kodi and other apps,
+      # and tapiOca's page at home. Never forward it or tunnel to it.
+      - "3310:3310"
       # tapiOca's page and apps from the internet: point your reverse proxy
       # or Cloudflare Tunnel at this one (README: "Security and remote
-      # access"). Plex's addresses aren't on it, and signing in is always
-      # required. Remove this line and PUBLIC_PORT below if you don't need it.
+      # access"). The tuner's addresses aren't on it, and signing in is
+      # always required. Remove this line and PUBLIC_PORT below if you don't
+      # need it.
       - "3311:3311"
     environment:
       TAPIOCA_INSTALL: "truenas"                     # how the page says to update (README: Updating)
-      PLEX_URL: "http://192.168.1.10:32400"          # <- CHANGE to your Plex server's address
-      PLEX_TOKEN: "paste-your-plex-token-here"       # <- CHANGE (README: "Finding your Plex token")
-      # (No Plex? Delete the two lines above, and add Media folders of your own on tapiOca's page.)
+      # Using Plex? Put its address and token here (README: "Finding your Plex
+      # token"). No Plex? Leave these two lines as they are, or delete them,
+      # and add Media folders of your own on tapiOca's page.
+      PLEX_URL: "http://192.168.1.10:32400"          # <- CHANGE if you use Plex
+      PLEX_TOKEN: "paste-your-plex-token-here"       # <- CHANGE if you use Plex
       TZ: "America/Chicago"                          # <- CHANGE to your time zone
       PORT: "3310"
       PUBLIC_PORT: "3311"
@@ -47,8 +52,8 @@ services:
     volumes:
       # Stations, settings, logos, the Broken files list and backups
       - /mnt/tank/apps/stationplay/data:/data        # <- CHANGE to your data folder
-      # Your media folder, read-only. tapiOca matches the paths Plex
-      # reports to this folder automatically.
+      # Your media folder, read-only. Your own Media folders are read from
+      # here; with Plex, tapiOca matches the paths Plex reports to it.
       - /mnt/tank/media:/media:ro                    # <- CHANGE to your media folder
 
     # --- GPU: Intel or AMD (such as Quick Sync) --------------------------

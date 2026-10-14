@@ -74,6 +74,13 @@ function seeingNotice(got) {
     h('span', { class: 'icon down', 'aria-hidden': 'true' }, reachIcon('down')),
     h('p', { class: 'what' }, said)) : null;
 }
+// What other apps use instead: for every choice, naming the apps chosen.
+function trustedOthers() {
+  const named = appsNamed();
+  if (!named) return 'Plex, Jellyfin and other apps use Tuner access.';
+  if (named.none) return 'Apps other than tapiOca’s use Tuner access.';
+  return `${upFirst(named.text)} ${named.one ? 'uses' : 'use'} Tuner access.`;
+}
 function renderTrusted() {
   const got = trustedLists;
   const entries = got.entries;
@@ -135,7 +142,7 @@ function renderTrusted() {
       h('dd', {}, 'Each person picks themselves, and kids get their own limits. Anyone with a PIN is asked for it, and an Admin always is. It lists people shown on Every device at home.'),
       h('dt', {}, 'Signed in as a person'),
       h('dd', {}, 'The device is signed in as that person. For an Admin, only one device’s address.')),
-    h('p', { class: 'hint', style: 'margin:0' }, 'Anyone can still sign in as someone else. Works in tapiOca’s apps (1.36.0 and later) and on this page. Plex, Jellyfin and other apps use Tuner access.'),
+    h('p', { class: 'hint', style: 'margin:0' }, 'Anyone can still sign in as someone else. Works in tapiOca’s apps (1.36.0 and later) and on this page. ', trustedOthers()),
     !me.required ? h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' ', 'Trusted networks work once signing in is on. Add a user above to turn it on.') : null,
     seeingNotice(got),
     you,

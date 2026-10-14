@@ -9,8 +9,8 @@ document "tapiOca: the full plan."
 
 "Library" here is the code's name for this layer and for its libraries.
 What people read says **Media** for the titles shared with tapiOca's apps,
-**Media folders** for Plex's libraries, and **Media folders of your own**
-for tapiOca's.
+**Media folders** for every library, Plex's and tapiOca's own, and
+**Media folders of your own** for tapiOca's.
 
 ## Goals
 

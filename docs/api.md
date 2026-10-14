@@ -53,7 +53,7 @@ spot if it's pasted where it shouldn't be.
 | Scope | What it may do |
 |---|---|
 | **Viewer** | Read: the server, its stations, their guide, and its status |
-| **Admin** | Also what's marked Admin below, such as updating a station from Plex |
+| **Admin** | Also what's marked Admin below, such as updating a station now |
 
 A token never does more than the Admin who made it may do now. If they
 become a User, their Admin tokens can only read. A token works only under
@@ -179,7 +179,7 @@ How tapiOca is doing.
 | Field | Type | What it is |
 |---|---|---|
 | `version` | string | tapiOca's version |
-| `plexConnected` | boolean | Whether Plex answers |
+| `plexConnected` | boolean | Whether Plex answers. False when tapiOca doesn't use Plex |
 | `tuners` | number | How many stations can play at once |
 | `playing` | list | The stations playing now, to Plex, tapiOca's apps or other players |
 | `playing[].number` | number | The station's number |
@@ -187,16 +187,16 @@ How tapiOca is doing.
 
 ## POST /api/v1/stations/{number}/update
 
-Admin. Updates a station from Plex now, as **Update now** does on the
-station's card: new and removed programs, with any held update applied.
-Answers 404 for a station that doesn't exist, 502 when Plex can't be read,
-and 429 while too many requests to Plex are already waiting (try again in a
-moment).
+Admin. Updates a station now, as **Update now** does on the station's
+card: new and removed programs in its Media folders, with any held update
+applied. Answers 404 for a station that doesn't exist, 502 when its Media
+folders can't be read, and 429 while too many such requests are already
+waiting (try again in a moment).
 
 | Field | Type | What it is |
 |---|---|---|
 | `number` | number | The station's number |
-| `changed` | boolean | Whether Plex had anything new for it |
+| `changed` | boolean | Whether its Media folders had anything new for it |
 
 ## POST /api/v1/stations/{number}/check
 

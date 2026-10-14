@@ -66,7 +66,7 @@ function titlePicker(label, chosen) {
   // is marked: choose it again.)
   const gone = t => everyTitle && !everyTitle.some(e => e.ratingKey === t.key);
   const paint = () => chips.replaceChildren(...chosen.map(t => h('span', { class: 'sel' }, h('span', {}, t.title || 'A title'),
-    gone(t) ? h('span', { class: 'hint' }, ' — not in Plex now: find it again') : null,
+    gone(t) ? h('span', { class: 'hint' }, ' — gone now: find it again') : null,
     h('button', { type: 'button', 'aria-label': `Remove ${t.title}`, onclick: () => { chosen.splice(chosen.indexOf(t), 1); paint(); } }, '×'))));
   if (chosen.length) loadEveryTitle().then(paint, () => {});
   let timer = null;
@@ -77,7 +77,7 @@ function titlePicker(label, chosen) {
       if (q.length < 2) { finds.replaceChildren(); return; }
       let titles;
       try { titles = await loadEveryTitle(); }
-      catch { finds.replaceChildren(h('span', { class: 'hint' }, 'Plex can’t be reached right now. Try again in a moment.')); return; }
+      catch { finds.replaceChildren(h('span', { class: 'hint' }, 'Searching didn’t work just now. Try again in a moment.')); return; }
       if (input.value.trim().toLowerCase() !== q) return;
       const hits = titles.filter(t => t.title.toLowerCase().includes(q) && !chosen.some(c => c.key === t.ratingKey)).slice(0, 8);
       finds.replaceChildren(...(hits.length ? hits.map(t => h('button', { type: 'button', class: 'chipbtn', 'aria-label': `Add ${t.title}${t.year ? ` (${t.year})` : ''}`, onclick: () => {
@@ -99,6 +99,22 @@ function levelSelect(value, attrs = {}) {
   return select;
 }
 let plexLibraries = null;  // (for choosing a level's libraries)
+// What other apps show, whatever a level hides: the fact for every choice,
+// naming the apps chosen; Block stations for some Plex users where it can
+// work (1.36.0's words while nothing is chosen). [label, sentence]
+function othersNote() {
+  const named = appsNamed();
+  const block = ' To keep stations from some people in Plex, use Block stations for some Plex users, below.';
+  if (!named) return ['Plex and other apps. ', `Plex, Jellyfin and other apps don’t say who’s watching, so they show every station.${block}`];
+  const said = named.none ? 'Apps other than tapiOca’s don’t say who’s watching, so they show every station.'
+    : named.one ? `${named.text} doesn’t say who’s watching, so it shows every station.`
+      : `${upFirst(named.text)} don’t say who’s watching, so they show every station.`;
+  return ['Other apps. ', said + (status?.plex?.configured && watches('plex') ? block : '')];
+}
+// What Plex calls tags, where tapiOca uses Plex ('' where it doesn't).
+function labelsNote() {
+  return plexUsed() ? 'Plex calls these labels' : '';
+}
 function renderViewing() {
   const panel = $('#viewingPanel');
   panel.hidden = !me.required || !viewing;
@@ -146,7 +162,7 @@ function renderViewing() {
       h('ul', {},
         h('li', {}, h('strong', {}, 'Stations are all or nothing. '), 'Everyone watching a station sees the same stream, so a station is shown only if everything it plays is within the level. Choose What they see beside someone’s name to allow or block one for them anyway.'),
         h('li', {}, h('strong', {}, 'Watching only. '), 'People on a level with limits, or with anything hidden for them, watch what they can see, but can’t make stations.'),
-        h('li', {}, h('strong', {}, 'Plex and other apps. '), 'Plex, Jellyfin and other apps don’t say who’s watching, so they show every station. To keep stations from some people in Plex, use Block stations for some Plex users, below.'))),
+        h('li', {}, h('strong', {}, othersNote()[0]), othersNote()[1]))),
     table,
     h('div', {}, h('button', { class: 'btn', type: 'button', onclick: () => editLevel(null) }, 'Add a level')),
     ...[clipRatingsBox()].filter(Boolean));
@@ -241,11 +257,11 @@ async function editLevel(lv) {
     row('Name', name),
     row('Movies up to', movies),
     row('TV up to', tv, 'An episode counts as its show’s rating, or its own if that’s stricter.'),
-    row('Unrated titles', unrated, 'Titles with no rating in Plex.'),
+    row('Unrated titles', unrated, 'Titles with no rating.'),
     row('Media folders', h('div', {}, h('label', {}, every, ' Every Media folder'), ' ', h('label', {}, some, ' Only these:'), pick)),
     h('p', { class: 'hint', style: 'margin:0' }, 'Also hide any show or movie with one of these, whatever its rating. A station that plays one is hidden too. Capital letters don’t matter.'),
     ...TAG_KINDS.map(([kind, label, noun]) => row(label, namePicker(`${label} ${lv ? lv.name : 'this level'} hides`, noun, hidden[kind], offered[kind] || []),
-      kind === 'labels' ? 'Plex calls these labels.' : null)),
+      kind === 'labels' && labelsNote() ? `${labelsNote()}.` : null)),
     h('div', { class: 'scan-set' },
       h('button', { class: 'btn primary', type: 'button', onclick: save }, lv ? 'Save' : 'Add'),
       h('button', { class: 'btn', type: 'button', onclick: done }, 'Cancel'),
@@ -288,7 +304,7 @@ async function openUserStations(u) {
         }))) : h('p', { class: 'muted', style: 'margin:0' }, 'There are no stations yet.')),
     part(`Also hidden for ${u.name}`,
       h('p', { class: 'hint', style: 'margin:0' }, `Hidden for ${u.name} whatever ${got.level} shows: in Media, and any station that plays one (unless you allow that station above).`),
-      ...TAG_KINDS.map(([kind, label, noun]) => h('div', { class: 'field' }, h('label', {}, label, kind === 'labels' ? h('span', { class: 'hint' }, ' — Plex calls these labels') : null),
+      ...TAG_KINDS.map(([kind, label, noun]) => h('div', { class: 'field' }, h('label', {}, label, kind === 'labels' && labelsNote() ? h('span', { class: 'hint' }, ` — ${labelsNote()}`) : null),
         namePicker(`${label} hidden for ${u.name}`, noun, stationsFor.hidden[kind], offered[kind] || []))),
       h('div', { class: 'field' }, h('label', {}, 'Shows and movies'), titlePicker(`Shows and movies hidden for ${u.name}`, stationsFor.hidden.titles))),
     part(`Allowed for ${u.name} in Media`,

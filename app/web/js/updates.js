@@ -110,7 +110,7 @@ async function loadInfoStation() {
   if (!panel || !isAdmin()) return;
   let got;
   try { got = await api('/api/info-station'); } catch { return; }
-  const about = h('p', { class: 'hint', style: 'margin:0' }, 'Station 99, INFO, shows the date and time, what’s new in this version of tapiOca and in its apps, how many stations you have and what’s in the Media folders shared with tapiOca’s apps (counts only, never titles), and tips for tapiOca’s apps, over a film of pearls flying through tapiOca’s ring. Everyone who can watch your stations sees it, in Plex too, so it never shows your server’s addresses or how it’s doing. It plays even without Plex, so Plex always has a station to find when you add tapiOca to it.');
+  const about = h('p', { class: 'hint', style: 'margin:0' }, 'Station 99, INFO, shows the date and time, what’s new in this version of tapiOca and in its apps, how many stations you have and what’s in the Media folders shared with tapiOca’s apps (counts only, never titles), and tips for tapiOca’s apps, over a film of pearls flying through tapiOca’s ring. Everyone who can watch your stations sees it, in every app, so it never shows your server’s addresses or how it’s doing. It plays even without any Media folders, so every app has a station to find when you add tapiOca to it.');
   if (got.station !== null) {
     panel.replaceChildren(about, h('p', { style: 'margin:0' }, `INFO is station 99${got.name !== 'INFO' ? `, called ${got.name}` : ''}. To remove it, delete it on the Stations tab. You can add it back here any time.`));
     return;

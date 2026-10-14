@@ -60,8 +60,8 @@
       <h2>Your stations</h2>
       <div class="spacer"></div>
       <span class="hint" id="roomHint" hidden></span>
-      <button class="btn" id="smartStations" title="Make stations from what’s in your Plex: one station, or one for each decade, genre, studio, and more"><span>Smart stations</span></button>
-      <button class="btn" id="fromCollections" title="Make a station from each Plex collection you pick, named after the collection"><span>From Plex collections</span></button>
+      <button class="btn" id="smartStations" title="Make stations from your shows and movies: one station, or one for each decade, genre, studio and more"><span>Smart stations</span></button>
+      <button class="btn" id="fromCollections" title="Make a station from each collection you pick, named after the collection"><span>From collections</span></button>
       <button class="btn primary" id="newChannel">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v10M3 8h10"/></svg>
         <span>New station</span>
@@ -75,7 +75,7 @@
     <div class="section-head">
       <h2>Broken files</h2>
       <div class="spacer"></div>
-      <button class="btn" type="button" id="brokenAgain" title="Go through this list again now. Programs back in Plex, and programs the quick check took off the air, are checked again.">Check the list again</button>
+      <button class="btn" type="button" id="brokenAgain" title="Go through this list again now. Missing programs that are back, and programs the quick check took off the air, are checked again.">Check the list again</button>
       <a class="btn" href="/api/broken/download" download>Download list</a>
     </div>
     <div class="panel scan">
@@ -118,8 +118,8 @@
     </div>
     <p class="muted small">
       What’s on this list is off the air on every station, and other programs play in their place. In Media, in tapiOca’s apps, a broken file doesn’t play (another version of it does, if there is one) and a damaged one still does.
-      <strong>Missing</strong> files are gone from disk or from Plex while a station or Media still has them. <strong>Broken</strong> files won’t play. <strong>Damaged</strong> files play, but the picture or sound breaks up. <strong>Unsupported</strong> files play but can’t be shown correctly (Dolby Vision profile 5). Replace them with another version.
-      Fix or replace the file, then choose <strong>Retry</strong>. Or let the list clear itself: a program comes off the list when Plex has it again under a new ID (after a file is renamed, for example), or when it’s missing and neither a station nor Media has it anymore. (Removed it on purpose? Take it off the stations its entry lists.) A program with a new file, or one the quick check took off the air, comes off once it passes the quick check.
+      <strong>Missing</strong> files are gone from disk<span data-when="plex"> or from Plex</span> while a station or Media still has them. <strong>Broken</strong> files won’t play. <strong>Damaged</strong> files play, but the picture or sound breaks up. <strong>Unsupported</strong> files play but can’t be shown correctly (Dolby Vision profile 5). Replace them with another version.
+      Fix or replace the file, then choose <strong>Retry</strong>. Or let the list clear itself: a program comes off the list <span data-when="plex">when Plex has it again under a new ID (after a file is renamed, for example), or </span>when it’s missing and neither a station nor Media has it anymore. (Removed it on purpose? Take it off the stations its entry lists.) A program with a new file, or one the quick check took off the air, comes off once it passes the quick check.
       Problems found by the deep scan or during playback stay until the file changes. Retry also tells the checks to leave that file on the air.
     </p>
   </section>
@@ -187,7 +187,7 @@
       <div class="panel">
         <h3>Top people</h3>
         <div class="toplist" id="statPeople"></div>
-        <p class="muted small" style="margin:10px 0 0">Only Admins see this. tapiOca’s apps count for whoever is signed in on them, stations and Media alike. For Plex, tapiOca asks Plex every 30 seconds who’s watching which station, and counts the time for each Plex user. Viewing in other apps (through the M3U playlist) isn’t counted by person, and neither is time when two stations air the same program at once.</p>
+        <p class="muted small" style="margin:10px 0 0">Only Admins see this. tapiOca’s apps count for whoever is signed in on them, stations and Media alike.<span data-when="plex watch-plex"> For Plex, tapiOca asks Plex every 30 seconds who’s watching which station, and counts the time for each Plex user.</span> Viewing in other apps (through the M3U playlist) isn’t counted by person, and neither is time when two stations air the same program at once.</p>
       </div>
       <div class="panel"><h3>Top Media</h3><div class="toplist" id="statMedia"></div></div>
     </div>
@@ -195,7 +195,7 @@
       <div class="panel"><h3>Most watched shows &amp; movies</h3><div class="toplist" id="statPrograms"></div></div>
       <div class="panel"><h3>When people watch</h3><div id="statHours"></div></div>
     </div>
-    <p class="muted small">A viewing counts once it lasts a minute, so flipping past a station doesn’t count. tapiOca counts the streams Plex asks it for, so several people watching one station together in Plex (or Plex recording it) may count as one viewing; each of tapiOca’s apps counts on its own. Stats are kept for 400 days. Today means since midnight.</p>
+    <p class="muted small">A viewing counts once it lasts a minute, so flipping past a station doesn’t count. tapiOca counts streams, so several people watching one station together in another app (or an app recording it) may count as one viewing; each of tapiOca’s apps counts on its own. Stats are kept for 400 days. Today means since midnight.</p>
   </section>
 
   <section id="tab-access" hidden>
@@ -206,7 +206,7 @@
         <dt>Admin</dt>
         <dd>Can do everything: manage every station and use Stats, Setup (including backups), Broken files, Logs, and Access (who can sign in).</dd>
         <dt>User</dt>
-        <dd>Can watch the stations and Media their Viewing Level allows (Unrestricted, with no limits, to start), and see Stats. Can make new stations (as many as you allow below, 3 to start) and change or delete only the stations they made. Can add logos (uploaded, or a show’s logo from Plex) and Intro Bumper videos, but only Admins can delete them. On a Viewing Level with limits, they only watch. Can’t open Setup, Broken files, Logs, or Access.</dd>
+        <dd>Can watch the stations and Media their Viewing Level allows (Unrestricted, with no limits, to start), and see Stats. Can make new stations (as many as you allow below, 3 to start) and change or delete only the stations they made. Can add logos (uploaded, or a show’s or movie’s own) and Intro Bumper videos, but only Admins can delete them. On a Viewing Level with limits, they only watch. Can’t open Setup, Broken files, Logs, or Access.</dd>
       </dl>
     </div>
     <div class="panel" style="margin-top:16px" id="userPanel" hidden><table class="users" id="userTable"></table></div>
@@ -274,22 +274,30 @@
       <summary><strong>API tokens</strong><span class="muted" id="apiTokensSum"></span></summary>
       <div class="arr-body" id="apiTokensBody"></div>
     </details>
-    <p class="muted small">Plex, Jellyfin and other apps never sign in, so the tuner, guide, and stream addresses on the Setup tab are open to every device on your network, unless you choose Only these devices under Tuner access. Locked out? Create an empty file named <code>reset-access</code> in tapiOca’s data folder, then restart tapiOca. This removes every user and turns off sign-in, so anyone on your network can use tapiOca again.</p>
+    <p class="muted small" id="neverSignIn">Plex, Jellyfin and other apps never sign in, so the tuner, guide, and stream addresses on the Setup tab are open to every device on your network, unless you choose Only these devices under Tuner access. Locked out? Create an empty file named <code>reset-access</code> in tapiOca’s data folder, then restart tapiOca. This removes every user and turns off sign-in, so anyone on your network can use tapiOca again.</p>
   </section>
 
   <section id="tab-setup" hidden>
     <!-- (Named for what it does, for every app: once Add to Plex, the
          owner's choice, October 13.) -->
     <div class="section-head"><h2>Tuner integration</h2></div>
-    <p class="muted small">The addresses Plex, Jellyfin, Emby, Kodi and other apps use to watch your stations, and how to add them.</p>
+    <p class="muted small" id="tunerIntro">The addresses Plex, Jellyfin, Emby, Kodi and other apps use to watch your stations, and how to add them.</p>
+    <!-- (What you use, 1.37.0: the setup's two questions, with Save; see
+         addtoplex.js. Each place's section follows the choices, and the
+         panel below is 1.36.0's until they're saved.) -->
+    <details class="panel arr" id="usesPanel">
+      <summary><strong>What you use</strong><span class="muted" id="usesSum"></span></summary>
+      <div class="arr-body" id="usesBody"></div>
+    </details>
     <div class="panel setup">
-      <div class="copyrow"><span class="what">Tuner address</span><code id="tunerUrl">…</code><button class="btn" data-copy="tunerUrl">Copy</button></div>
-      <div class="copyrow"><span class="what">Guide (XMLTV) for Plex</span><code id="xmltvUrl">…</code><button class="btn" data-copy="xmltvUrl">Copy</button></div>
-      <div class="copyrow"><span class="what">Playlist (M3U) for other apps</span><code id="m3uUrl">…</code><button class="btn" data-copy="m3uUrl">Copy</button></div>
-      <div class="copyrow"><span class="what">Guide for other apps</span><code id="guideUrl">…</code><button class="btn" data-copy="guideUrl">Copy</button></div>
+      <div class="copyrow" id="tunerRow"><span class="what">Tuner address</span><code id="tunerUrl">…</code><button class="btn" data-copy="tunerUrl">Copy</button></div>
+      <div class="copyrow" id="xmltvRow"><span class="what">Guide (XMLTV) for Plex</span><code id="xmltvUrl">…</code><button class="btn" data-copy="xmltvUrl">Copy</button></div>
+      <div class="copyrow" id="m3uRow"><span class="what">Playlist (M3U) for other apps</span><code id="m3uUrl">…</code><button class="btn" data-copy="m3uUrl">Copy</button></div>
+      <div class="copyrow" id="guideRow"><span class="what">Guide for other apps</span><code id="guideUrl">…</code><button class="btn" data-copy="guideUrl">Copy</button></div>
       <div class="copyrow"><span class="what">Media files</span><span id="mediaAccess" class="small">…</span></div>
       <div class="copyrow"><span class="what">Video encoding</span><span id="encoding" class="small">…</span></div>
       <div class="copyrow"><span class="what">Guide updates</span><span id="guideState" class="small">…</span></div>
+      <div id="placesBefore" class="places-before">
       <div>
         <strong>Adding tapiOca to Plex</strong>
         <ol class="steps">
@@ -310,10 +318,19 @@
         </ul>
         <p class="hint">These apps refresh their guide on their own schedule (about once a day). After you change a station, refresh the guide in the app to see the change right away.</p>
       </div>
+      </div>
+      <div id="guideRowParked" hidden></div>
     </div>
-    <div class="section-head" style="margin-top:22px"><h2>Your own folders</h2><div class="spacer"></div><button type="button" class="btn primary" id="addFolderLibrary">Add a Media folder</button></div>
-    <p class="muted small">A Media folder of your own is one tapiOca reads itself: shows or movies from folders in its media folder, with or without Plex. It works as one of Plex’s Media folders does, for stations and for Media in tapiOca’s apps. tapiOca takes each title’s details from the NFO files beside it, the file itself and its name, and its pictures from beside it. It reads them again every 6 hours, when you choose Read again, and when Sonarr or Radarr brings a replacement tapiOca asked for.</p>
-    <div class="panel" id="foldersPanel"></div>
+    <div class="places" id="placesPanel" hidden></div>
+    <details class="panel arr" id="morePlaces" hidden>
+      <summary><strong>More ways to watch</strong></summary>
+      <div class="places" id="morePlacesBody"></div>
+    </details>
+    <div id="ownFolders">
+      <div class="section-head" style="margin-top:22px"><h2>Your own folders</h2><div class="spacer"></div><button type="button" class="btn primary" id="addFolderLibrary">Add a Media folder</button></div>
+      <p class="muted small">A Media folder of your own is one tapiOca reads itself: shows or movies from folders in its media folder, with or without Plex. It works as one of Plex’s Media folders does, for stations and for Media in tapiOca’s apps. tapiOca takes each title’s details from the NFO files beside it, the file itself and its name, and its pictures from beside it. It reads them again every 6 hours, when you choose Read again, and when Sonarr or Radarr brings a replacement tapiOca asked for.</p>
+      <div class="panel" id="foldersPanel"></div>
+    </div>
     <div class="section-head" style="margin-top:22px"><h2>Picture and tuners</h2><div class="spacer"></div><button type="button" class="btn" id="runSetup">Run setup again</button></div>
     <div class="panel setup" id="playbackPanel"></div>
     <div class="section-head" style="margin-top:22px">
@@ -323,7 +340,7 @@
       <button type="button" class="btn" data-choose-file="restoreFile">Restore a backup…</button>
       <input type="file" id="restoreFile" accept=".zip,application/zip" hidden>
     </div>
-    <p class="muted small">Every night, tapiOca backs up your stations, settings, the Broken files list, your logos (uploaded or from Plex), who can sign in, and the viewing stats. It keeps the last 7 backups in the <code>backups</code> folder inside its data folder. To keep backups small, Intro Bumper videos aren’t included; they stay in the <code>bumpers</code> folder. Restoring a backup replaces all of this with the backup’s copy, and tapiOca restarts to finish.</p>
+    <p class="muted small">Every night, tapiOca backs up your stations, settings, the Broken files list, your logos (uploaded, or a show’s or movie’s own), who can sign in, and the viewing stats. It keeps the last 7 backups in the <code>backups</code> folder inside its data folder. To keep backups small, Intro Bumper videos aren’t included; they stay in the <code>bumpers</code> folder. Restoring a backup replaces all of this with the backup’s copy, and tapiOca restarts to finish.</p>
     <div class="panel" id="backupList"></div>
     <div class="section-head" style="margin-top:22px"><h2>New versions</h2></div>
     <div class="panel setup" id="updatesPanel"></div>
@@ -428,7 +445,7 @@
             <span class="hint" id="logoName"></span>
             <button type="button" class="btn" id="chooseLogo"><span>Choose…</span></button>
             <button type="button" class="btn ghost" id="randomLogo"><span>Surprise me</span></button>
-            <button type="button" class="btn ghost plex-logo" id="plexLogo" hidden><img id="plexLogoImg" alt=""><span>Use the logo from Plex</span></button>
+            <button type="button" class="btn ghost plex-logo" id="plexLogo" hidden><img id="plexLogoImg" alt=""><span>Use the title’s logo</span></button>
           </div>
         </div>
       </div>
@@ -472,7 +489,7 @@
                 <span class="hint" id="fAddedHint"></span></div>
               <div class="field"><label for="fRating">Minimum audience rating</label>
                 <select id="fRating"><option value="0">Any</option><option>5</option><option>6</option><option>6.5</option><option>7</option><option>7.5</option><option>8</option><option>8.5</option><option>9</option></select>
-                <span class="hint">With a minimum set, programs without an audience rating in Plex are left out.</span></div>
+                <span class="hint">With a minimum set, programs without an audience rating are left out.</span></div>
             </div>
             <div class="field"><label for="fTitle">Title contains</label><input type="text" id="fTitle" placeholder="e.g., Christmas"></div>
           </div>
@@ -860,9 +877,9 @@
 </dialog>
 
 <dialog id="collections">
-  <div class="dlg-head"><h3>Stations from Plex collections</h3><div class="spacer"></div><button class="btn ghost" id="closeCollections" aria-label="Close">✕</button></div>
+  <div class="dlg-head"><h3>Stations from collections</h3><div class="spacer"></div><button class="btn ghost" id="closeCollections" aria-label="Close">✕</button></div>
   <div class="dlg-body">
-    <p class="hint">Each collection you pick becomes a shuffled station named after the collection, with the Collection logo. You can change any of this later. Each station stays in sync with its collection: anything added to the collection in Plex joins the station within an hour. Collections with the same name in different Media folders each get their own station, numbered like Sunshine1 and Sunshine2.</p>
+    <p class="hint">Each collection you pick becomes a shuffled station named after the collection, with the Collection logo. You can change any of this later. Each station stays in sync with its collection: anything added to the collection joins the station within an hour. Collections with the same name in different Media folders each get their own station, numbered like Sunshine1 and Sunshine2.</p>
     <input type="search" id="colSearch" placeholder="Search collections" aria-label="Search collections" autocomplete="off">
     <div class="picker"><div class="picker-list" id="colList"></div></div>
   </div>
@@ -898,7 +915,7 @@
 <dialog id="smart" aria-labelledby="smartTitle">
   <div class="dlg-head"><h3 id="smartTitle">Smart stations</h3><div class="spacer"></div><button class="btn ghost" type="button" id="closeSmart" aria-label="Close">✕</button></div>
   <div class="dlg-body">
-    <p class="hint" style="margin:0">Make stations from what’s in your Plex. Choose what they play, then make one station, or one for each decade, genre, studio, and more. Like any filter, each station stays in sync with Plex: new matches are added automatically.</p>
+    <p class="hint" style="margin:0">Make stations from your shows and movies. Choose what they play, then make one station, or one for each decade, genre, studio and more. Like any filter, each station stays up to date: new matches are added automatically.</p>
     <div id="smartFilter"></div>
     <div class="opt">
       <span class="opt-label">Make</span>

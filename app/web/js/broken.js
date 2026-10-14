@@ -201,6 +201,10 @@ function arrButton(r) {
     loadBroken();
   } }, 'I’ll handle it');
 }
+// Where a missing file went: Plex only where tapiOca uses Plex.
+function missingFileWhere() {
+  return `(gone from disk${plexUsed() ? ' or from Plex' : ''} while a station or Media still has it): the app first checks what’s on disk, then searches for it.`;
+}
 async function loadArr() {
   let got;
   try { got = await api('/api/arr'); } catch { return; }
@@ -225,7 +229,7 @@ async function loadArr() {
     h('p', { style: 'margin:0' }, 'Optional. tapiOca can ask Sonarr (for episodes) and Radarr (for movies) to replace files on this list that a station plays, or Media in tapiOca’s apps:'),
     h('ul', {},
       h('li', {}, h('strong', {}, 'A broken or damaged file: '), 'First, its release is added to the app’s blocklist so the same file isn’t downloaded again. Then the file is deleted (into Sonarr’s or Radarr’s recycle bin, if you’ve set one up), and the app searches for another. This happens only if the app’s file is the exact file found broken and the app downloaded it. A file you added by hand can’t be blocklisted, so it’s left for you to handle.'),
-      h('li', {}, h('strong', {}, 'A missing file '), '(gone from disk or from Plex while a station or Media still has it): the app first checks what’s on disk, then searches for it.')),
+      h('li', {}, h('strong', {}, 'A missing file '), missingFileWhere())),
     h('div', { class: 'scan-set' }, h('strong', {}, 'Files to replace'),
       h('div', { class: 'seg', role: 'group', 'aria-label': 'Files to replace' }, pick('broken'), pick('missing'), pick('both'))),
     h('div', { class: 'scan-set' }, h('strong', {}, 'When to replace'),
@@ -234,7 +238,7 @@ async function loadArr() {
       ? 'Automatically: each entry is replaced without asking you. Want to deal with one yourself? Choose I’ll handle it on its entry.'
       : 'Only when I ask: nothing is replaced until you choose Replace with Sonarr (or Radarr) on its entry. After that, the app keeps working on it by itself.'),
     h('p', { style: 'margin:0' }, 'Only what Sonarr and Radarr are monitoring gets replaced (in Sonarr, both the show and the episode). Unmonitor something there, and tapiOca leaves it alone too. Removed a show or movie on purpose? Unmonitor or delete it there (or choose Broken or damaged here), and remove it from its stations. Each entry on this list shows which stations have it, and whether it’s in Media. They also replace what people report, when you choose Replace on a report.'),
-    h('p', { style: 'margin:0' }, 'Each entry gets up to 3 searches over about a day. If none finds a file that plays, the entry stays on this list and says so. A new file is checked like any other, and the program goes back on the air once it passes. If the new file has the same problem in the same places as the old one, the problem may be part of the program itself (such as an old movie’s effects), not a bad file. The entry then says Needs your review: choose Retry to put it back on the air, or Try another file. tapiOca itself only needs Plex; this just uses apps you already have. You’ll find each app’s API key under Settings → General.'),
+    h('p', { style: 'margin:0' }, 'Each entry gets up to 3 searches over about a day. If none finds a file that plays, the entry stays on this list and says so. A new file is checked like any other, and the program goes back on the air once it passes. If the new file has the same problem in the same places as the old one, the problem may be part of the program itself (such as an old movie’s effects), not a bad file. The entry then says Needs your review: choose Retry to put it back on the air, or Try another file. tapiOca itself doesn’t need Sonarr or Radarr; this just uses apps you already have. You’ll find each app’s API key under Settings → General.'),
     ...['sonarr', 'radarr'].map(app => arrRow(app, got.apps[app], got.status[app])));
 }
 function arrRow(app, a, st) {
@@ -268,6 +272,14 @@ function arrRow(app, a, st) {
 // People's reports from tapiOca's apps (see reports.py) ---------------------------
 // What they do, and who may send them: the same setting, for each person,
 // as Can report problems on the Access tab.
+// Where to fix a title's details: Plex, your own Media folders' NFO files,
+// or both once an Admin has chosen both (1.36.0's words before then).
+function wrongTitleFix() {
+  if (!plexUsed()) return 'fix its NFO file or name, then dismiss it.';
+  return status?.uses?.saved && status.uses.sources?.includes('folders')
+    ? 'fix it in Plex, or in the NFO file beside it for your own Media folders, then dismiss it.'
+    : 'fix it in Plex, then dismiss it.';
+}
 async function loadReportSettings() {
   let users = [];
   if (me.required) { try { users = await api('/api/access/users'); } catch { users = []; } }
@@ -287,7 +299,7 @@ async function loadReportSettings() {
     h('ul', {},
       h('li', {}, h('strong', {}, 'What tapiOca can check '), '(no picture, the picture breaking up, no sound, the sound cutting out, stopping early, not playing): its file is checked at once, where it happened first. If tapiOca finds the problem, the file goes on this list, and is replaced as you have that set. If not, the report says so, for you to dismiss.'),
       h('li', {}, h('strong', {}, 'What only a person can judge '), '(the sound out of sync, the wrong language, the wrong episode or movie, poor picture quality, subtitles): it waits for you, with what tapiOca can tell beside it. Choose Replace (Sonarr or Radarr adds its release to the blocklist and fetches another), Find a better copy (they search for an upgrade, keeping the file until they find one), or Dismiss.'),
-      h('li', {}, h('strong', {}, 'Wrong title, details or artwork: '), 'fix it in Plex, then dismiss it.')),
+      h('li', {}, h('strong', {}, 'Wrong title, details or artwork: '), wrongTitleFix())),
     h('p', { style: 'margin:0' }, 'A report never takes anything off the air, or out of Media, by itself. Each person can send one report a day about each program, and ten a day in all. Admins are told through their alerts, at most once an hour.'),
     !me.required
       ? h('p', { class: 'muted', style: 'margin:0' }, 'While signing in is off, anyone at home can report problems. Turn signing in on to choose who can.')

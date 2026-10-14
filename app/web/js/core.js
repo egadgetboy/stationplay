@@ -109,14 +109,39 @@ function notice(title, ...body) {
   if (!$('#notice').open) $('#notice').showModal();
   $('#noticeOk').focus();
 }
+// A sentence that starts with an app's name ("Other apps show...").
+const upFirst = s => s.charAt(0).toUpperCase() + s.slice(1);
+// As appsNamed, but without Plex: the other apps chosen, for a sentence
+// beside Plex's own (null while nothing is chosen; text '' for none).
+function appsBesidesPlex(join = 'and') {
+  const chosen = watchedIn();
+  if (!chosen) return null;
+  const names = Object.keys(PLACE_APPS).filter(p => p !== 'plex' && chosen.includes(p)).map(p => PLACE_APPS[p]);
+  const text = names.length < 2 ? (names[0] || '') : `${names.slice(0, -1).join(', ')} ${join} ${names[names.length - 1]}`;
+  return { text, one: names.length === 1 && !chosen.includes('other') };
+}
+// What madeNotice says of the apps people watch in: 1.36.0's words while
+// nothing is chosen; else only the apps chosen, and the Setup tab's steps
+// for an Admin. Nothing with tapiOca's apps alone (they show new stations
+// by themselves).
+function madeAppsSaid(one, admin) {
+  const named = appsNamed();
+  const plex = () => [`Watching in Plex? To add ${one ? 'it' : 'them'}, go to `, h('em', {}, 'Settings → Live TV & DVR → your tuner → Scan for channels'), ' in Plex (Plex calls stations “channels”).'];
+  if (!named) return [...plex(), ' Other apps show new stations once they refresh their guide. Tuner integration, on the Setup tab, shows how to add tapiOca to each.'];
+  const said = watches('plex') ? plex() : [];
+  const others = appsBesidesPlex();
+  if (others.text) said.push(`${said.length ? ' ' : ''}${upFirst(others.text)} ${others.one ? 'shows new stations once it refreshes its guide.' : 'show new stations once they refresh their guide.'}`);
+  if (admin && !named.none) said.push(`${said.length ? ' ' : ''}Tuner integration, on the Setup tab, shows how to add tapiOca to ${named.one ? named.text : 'each'}.`);
+  return said;
+}
 // After making stations: which, how to add them to Plex (where they're
-// called channels), and what couldn't be made.
+// called channels) and the other apps chosen, and what couldn't be made.
 function madeNotice(made, problems = []) {
   const one = made.length === 1;
+  const said = madeAppsSaid(one, isAdmin());
   notice(one ? `Station ${made[0].number} is on the air` : `${made.length} new stations are on the air`,
     h('ul', { class: 'steps' }, ...made.map(s => h('li', {}, h('strong', {}, String(s.number)), ` ${s.name}`))),
-    h('p', { style: 'margin:0' }, `Watching in Plex? To add ${one ? 'it' : 'them'}, go to `, h('em', {}, 'Settings → Live TV & DVR → your tuner → Scan for channels'),
-      ' in Plex (Plex calls stations “channels”). Other apps show new stations once they refresh their guide. Tuner integration, on the Setup tab, shows how to add tapiOca to each.'),
+    said.length ? h('p', { style: 'margin:0' }, ...said) : null,
     problems.length ? h('div', { class: 'notice-bad' }, h('strong', {}, 'Couldn’t make these'),
       h('ul', { class: 'steps' }, ...problems.map(p => h('li', {}, p)))) : null);
 }

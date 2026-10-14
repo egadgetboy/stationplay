@@ -22,9 +22,10 @@ apps show only what the server sends.
    allowed that station for them.
 4. **Plain rules, in order.** The first rule that applies decides, so an
    Admin can always tell why something is hidden.
-5. **Lean.** Plex stays the catalog. tapiOca keeps a title's rating and
-   Media folder only where its stations need them, and asks Plex for
-   genres and tags only while some level or person hides by them.
+5. **Lean.** The library stays the catalog (Plex's, or Media folders of
+   tapiOca's own). tapiOca keeps a title's rating and Media folder only
+   where its stations need them, and asks Plex for genres and tags only
+   while some level or person hides by them.
 
 ## Phases
 
@@ -82,12 +83,12 @@ or remove them, like any level they add. A change applies at once to
 everyone on that level. An Admin can add as many levels as they need, such
 as "Adults" (no R-rated movies, no unrated titles) or "Grandparents."
 
-A level also sets which **Media folders** (Plex's libraries) its people can see: all of them, or
+A level also sets which **Media folders** (Plex's libraries, and tapiOca's own) its people can see: all of them, or
 the ones chosen. So a show that's in both "TV Parents" and "TV Teens" is
 seen only through a Media folder the person may see.
 
 From 1.33.0, a level can also hide titles by **genre**, **tag** (Plex calls
-these labels), **collection** and **studio**, whatever their rating. Names
+these labels; in an NFO file, `<tag>`), **collection** and **studio**, whatever their rating. Names
 are matched whatever their capitals. An episode counts as its show: its
 show's genres, tags, collections and studio. A title with no genre isn't
 caught by a genre. A level's ratings stay the level's: to give one person

@@ -1,10 +1,20 @@
 // On the Access tab: Tuner access, stations kept from Plex users, the apps away from home, how many can watch at once, and Media in the apps.
 // Stations kept from some Plex users (Access tab; see limits.py) ---------------------
 let limitsShown = null;
+// Block stations for some Plex users shows where it can work (Plex set up,
+// and watched in), or while it's on (to turn it off); everywhere while
+// nothing is chosen, as in 1.36.0. It works the same either way.
+function limitsPanelShown(on) {
+  return !appsNamed() || on === true || Boolean(status?.plex?.configured && watches('plex'));
+}
 async function loadLimits() {
   let got;
   try { got = await api('/api/plex-limits'); }
-  catch (e) { $('#limitsSum').textContent = ''; $('#limitsBody').replaceChildren(h('p', { class: 'muted', style: 'margin:0' }, e.message)); return; }
+  catch (e) {
+    $('#limitsPanel').hidden = !limitsPanelShown(false);
+    $('#limitsSum').textContent = ''; $('#limitsBody').replaceChildren(h('p', { class: 'muted', style: 'margin:0' }, e.message)); return;
+  }
+  $('#limitsPanel').hidden = !limitsPanelShown(got.on);
   limitsShown = got;
   const kept = got.users.filter(u => u.kept.length);
   $('#limitsSum').textContent = !got.on ? 'Off'
@@ -69,6 +79,15 @@ function renderLimits(got) {
     ...(stops.length ? [h('div', {}, h('strong', {}, 'Recently stopped'), h('ul', {}, ...stops))] : []));
 }
 // Tuner access (Access tab; see tuner.py) ----------------------------------------------
+// What uses the tuner, and that it can't sign in: for every choice, naming
+// the apps chosen ("apps other than tapiOca's" with none).
+function tunerIntro() {
+  const named = appsNamed();
+  const what = ': the tuner itself, the guide, the list of stations and the stations’ streams.';
+  if (!named) return `The tuner is what Plex, Jellyfin and other apps use${what} These apps can’t sign in.`;
+  if (named.none) return `The tuner is what apps other than tapiOca’s use${what} These apps can’t sign in.`;
+  return named.one ? `The tuner is what ${named.text} uses${what} ${named.text} can’t sign in.` : `The tuner is what ${named.text} use${what} These apps can’t sign in.`;
+}
 // Which devices may use the tuner (what Plex, Jellyfin and other apps use), and
 // who did lately. Each change sends the whole of it, and what tapiOca
 // answers is shown. Only these devices with none listed would shut everything
@@ -188,7 +207,7 @@ function renderTuner(got, said = '') {
         : h('button', { class: 'btn', type: 'button', onclick: () => allow(r) }, 'Allow'))))))
     : h('p', { class: 'muted small', style: 'margin:0' }, 'No device has used the tuner in the last 7 days.');
   $('#tunerBody').replaceChildren(
-    h('p', { style: 'margin:0' }, 'The tuner is what Plex, Jellyfin and other apps use: the tuner itself, the guide, the list of stations and the stations’ streams. These apps can’t sign in.'),
+    h('p', { style: 'margin:0' }, tunerIntro()),
     h('div', { class: 'checks-col', style: 'margin:0', role: 'radiogroup', 'aria-label': 'Who can use the tuner' },
       choice('any', 'Any device on my home network', ''),
       choice('only', 'Only these devices', 'tapiOca’s own apps, signed in, never need listing.')),
@@ -207,6 +226,13 @@ function renderTuner(got, said = '') {
 // Watching away from home: its settings, in its panel on the Access tab and
 // in the setup (`id`: the address box's, for its label). `note` shows (or
 // clears) what's wrong with the saved address: a port it can't have.
+// The other apps stay home: for every choice, naming the apps chosen.
+function awayOthers() {
+  const named = appsNamed();
+  if (!named) return 'Plex, Jellyfin and other apps don’t change: they use tapiOca on your home network only.';
+  if (named.none) return 'Apps other than tapiOca’s don’t change: they use tapiOca on your home network only.';
+  return named.one ? `${named.text} doesn’t change: it uses tapiOca on your home network only.` : `${upFirst(named.text)} don’t change: they use tapiOca on your home network only.`;
+}
 function awayFields(got, onEdit, id) {
   const on = h('input', { type: 'checkbox', checked: got.on, oninput: onEdit });
   const address = h('input', { type: 'url', id, value: got.address, placeholder: 'https://tv.example.com (no port)', maxlength: 200, autocomplete: 'off', 'aria-describedby': `${id}Hint`, oninput: onEdit, style: 'width:min(100%,360px)' });
@@ -222,7 +248,7 @@ function awayFields(got, onEdit, id) {
   if (!me.required) warnings.push('Sign-in is off. Through the public port, apps must sign in, so add a user on the Access tab first.');
   return {
     nodes: [
-      h('p', { style: 'margin:0' }, 'With this on, tapiOca’s own apps can watch your stations away from home, and Media if you share it, as they do at home. Plex, Jellyfin and other apps don’t change: they use tapiOca on your home network only.'),
+      h('p', { style: 'margin:0' }, 'With this on, tapiOca’s own apps can watch your stations away from home, and Media if you share it, as they do at home. ', awayOthers()),
       h('div', { class: 'limit-note' }, h('strong', {}, 'What it takes'),
         h('ul', {},
           h('li', {}, h('strong', {}, 'A way in from outside. '), 'Either a VPN such as Tailscale or WireGuard on the phone or tablet (then the address below is your server’s VPN address, such as http://nas.your-tailnet.ts.net:3310), or the public port (PUBLIC_PORT) behind a reverse proxy with HTTPS. Not a Cloudflare Tunnel: Cloudflare’s free plan isn’t meant for video. The README’s “Reaching tapiOca from outside your home” explains each.'),
@@ -325,6 +351,13 @@ const siteOf = url => { try { return new URL(url).host; } catch { return url; } 
 const notifyLast = sent => sent
   ? `Last sent ${ago(sent.at)}${sent.test ? ' (a test)' : ''}: ${sent.ok ? sent.status : `it didn’t go through (${sent.status})`}.`
   : 'Nothing sent yet.';
+// What alerts say: the Plex and clock alerts only where tapiOca uses Plex
+// (the clock is checked against Plex's).
+function alertsIntro() {
+  return plexUsed()
+    ? 'tapiOca says when something needs a look: Plex can’t be reached, the data folder is nearly full or can’t be written to, a station keeps failing to start, backups fail, the clock is badly off, or tapiOca’s apps can’t reach it from outside.'
+    : 'tapiOca says when something needs a look: the data folder is nearly full or can’t be written to, a station keeps failing to start, backups fail, or tapiOca’s apps can’t reach it from outside.';
+}
 async function loadNotify() {
   let got;
   try { got = await api('/api/notify'); }
@@ -409,7 +442,7 @@ async function loadNotify() {
     loadNotify();
   } }, 'Save');
   body.replaceChildren(
-    h('p', { style: 'margin:0' }, 'tapiOca says when something needs a look: Plex can’t be reached, the data folder is nearly full or can’t be written to, a station keeps failing to start, backups fail, the clock is badly off, or tapiOca’s apps can’t reach it from outside. Each alert shows in the header and in the log below, once when it starts and again when it’s fixed. With this on, tapiOca also sends each one to up to 3 web addresses of yours, such as an ntfy topic on your phone, Gotify, a Home Assistant webhook, or a Discord or Slack webhook.'),
+    h('p', { style: 'margin:0' }, alertsIntro(), ' Each alert shows in the header and in the log below, once when it starts and again when it’s fixed. With this on, tapiOca also sends each one to up to 3 web addresses of yours, such as an ntfy topic on your phone, Gotify, a Home Assistant webhook, or a Discord or Slack webhook.'),
     h('label', {}, on, ' Send each alert to the addresses below when it starts and when it’s fixed'),
     list,
     add,
@@ -545,6 +578,13 @@ function mediaAwayFields(got, onEdit) {
 // How many can watch at once in tapiOca's apps (see capacity.py) ---------------
 const CONNECTION_TEST_MB = 20;  // (as the apps' test: capacity.TEST_MB)
 const shortDate = ms => new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric' });
+// What these limits don't cover, for every choice, naming the apps chosen.
+function appLimitsOthers() {
+  const named = appsNamed();
+  if (!named) return 'Plex, Jellyfin and other apps aren’t counted here: they have limits of their own, and the tuners cover them.';
+  if (named.none) return 'Apps other than tapiOca’s aren’t counted here: they have limits of their own, and the tuners cover them.';
+  return named.one ? `${named.text} isn’t counted here: it has limits of its own, and the tuners cover it.` : `${upFirst(named.text)} aren’t counted here: they have limits of their own, and the tuners cover them.`;
+}
 async function loadAppLimits() {
   let got;
   try { got = await api('/api/app-limits'); }
@@ -615,7 +655,7 @@ async function loadAppLimits() {
     ...got.tests.map(t => h('tr', {}, h('td', {}, new Date(t.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })),
       h('td', {}, t.where === 'away' ? 'Away from home' : 'At home'), h('td', {}, t.device + (t.user ? ` (${t.user})` : '')), h('td', {}, `${t.mbps} Mbps`)))) : null;
   body.replaceChildren(
-    h('p', { style: 'margin:0' }, 'Each device watching in tapiOca’s apps gets its own copy of the station: at home over your network, and away from home over your internet connection’s upload. A station still uses one tuner no matter how many people watch it, so these limits are about your network, not your server’s processor. Programs played from Media in the apps count too. Plex, Jellyfin and other apps aren’t counted here: they have limits of their own, and the tuners cover them.'),
+    h('p', { style: 'margin:0' }, 'Each device watching in tapiOca’s apps gets its own copy of the station: at home over your network, and away from home over your internet connection’s upload. A station still uses one tuner no matter how many people watch it, so these limits are about your network, not your server’s processor. Programs played from Media in the apps count too. ', appLimitsOthers()),
     h('p', { class: 'muted small', style: 'margin:0' }, `Watching in tapiOca’s apps now: ${plural(got.watching.devices, 'device')}${got.watching.away ? ` (${got.watching.away} away from home)` : ''}.`),
     h('div', { class: 'scan-set' }, h('label', { for: 'appLimitDevices', style: 'min-width:220px' }, 'Devices watching at once'), devices),
     h('div', { class: 'scan-set' }, h('label', { for: 'appLimitAway', style: 'min-width:220px' }, 'Away from home, at most'), away),
@@ -632,6 +672,14 @@ async function loadAppLimits() {
   paint();
 }
 // Media in tapiOca's apps (see ondemand.py) --------------------------------------
+// Sharing Media changes nothing else: for every choice, naming the apps
+// chosen.
+function othersUnchanged() {
+  const named = appsNamed('or');
+  if (!named) return 'Stations don’t change, and neither do Plex, Jellyfin or other apps.';
+  if (named.none) return 'Stations don’t change, and neither do apps other than tapiOca’s.';
+  return `Stations don’t change, and neither ${named.one ? 'does' : 'do'} ${named.text}.`;
+}
 // Media in tapiOca's apps: its settings, in its panel on the
 // Access tab and in the setup. `changed`: whether anything's been changed.
 function libraryFields(got, onEdit) {
@@ -662,10 +710,10 @@ function libraryFields(got, onEdit) {
   return {
     nodes: [
       h('p', { style: 'margin:0' }, got.everything
-        ? 'People can browse and watch every Media folder on demand in tapiOca’s apps, beside your stations, and Media folders added later too. Untick any you’d rather keep out, then save. Stations don’t change, and neither do Plex, Jellyfin or other apps.'
+        ? `People can browse and watch every Media folder on demand in tapiOca’s apps, beside your stations, and Media folders added later too. Untick any you’d rather keep out, then save. ${othersUnchanged()}`
         : got.waiting
-          ? 'No Media folders are shared in tapiOca’s apps yet. Every one is ticked to start: untick any you’d rather keep out. People can browse and watch the ones you share on demand, beside your stations. Stations don’t change, and neither do Plex, Jellyfin or other apps.'
-          : 'The Media folders people can browse and watch on demand in tapiOca’s apps, beside your stations. Stations don’t change, and neither do Plex, Jellyfin or other apps.'),
+          ? `No Media folders are shared in tapiOca’s apps yet. Every one is ticked to start: untick any you’d rather keep out. People can browse and watch the ones you share on demand, beside your stations. ${othersUnchanged()}`
+          : `The Media folders people can browse and watch on demand in tapiOca’s apps, beside your stations. ${othersUnchanged()}`),
       h('div', { class: 'limit-note' }, h('strong', {}, 'How it works'),
         h('ul', {},
           h('li', {}, h('strong', {}, 'The best picture and sound. '), 'A file plays as it is whenever the device can play it, including 4K and HDR. If it can’t, tapiOca makes a copy as it plays: repackaged, with the picture kept as it is (this costs next to nothing), or converted, with the picture made again (this takes a share of the server’s processor, so at most 3 at once; on a GPU it’s light on the processor, so up to 6). Converted copies are 1080p at most, and HDR is made ordinary.'),
@@ -715,6 +763,12 @@ async function loadAppLibraries() {
 }
 // API tokens, for tapiOca's API (see api.py) ----------------------------------------
 const API_TOKEN_DAYS = [[30, 'In 30 days'], [90, 'In 90 days'], [365, 'In a year'], [0, 'Never']];
+// What API tokens can do; refreshing Plex's guide where Plex is set up and
+// watched (or nothing is chosen, as in 1.36.0).
+function tokensIntro() {
+  const plex = !appsNamed() || Boolean(status?.plex?.configured && watches('plex'));
+  return `API tokens let your own scripts, home automation (such as Home Assistant) and other players use tapiOca’s API: its stations, guide and streams, and how it’s doing. An Admin token can also update a station now, check a station’s files${plex ? ', refresh Plex’s guide' : ''} and make a backup. The README’s “tapiOca’s API” section explains how, and docs/api.md lists every address.`;
+}
 async function loadApiTokens() {
   let got;
   try { got = await api('/api/api-tokens'); }
@@ -725,7 +779,7 @@ async function loadApiTokens() {
   if (body.dataset.editing) return;  // (not while one is being made, or shown)
   const editing = () => { body.dataset.editing = '1'; };
   const when = ms => new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
-  const intro = h('p', { style: 'margin:0' }, 'API tokens let your own scripts, home automation (such as Home Assistant) and other players use tapiOca’s API: its stations, guide and streams, and how it’s doing. An Admin token can also update a station from Plex, check a station’s files, refresh Plex’s guide, and make a backup. The README’s “tapiOca’s API” section explains how, and docs/api.md lists every address.');
+  const intro = h('p', { style: 'margin:0' }, tokensIntro());
   if (!got.signIn) {
     body.replaceChildren(intro, h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' Sign-in is off, so the API needs no token on your network. API tokens come with sign-in: add a user above first.'));
     return;

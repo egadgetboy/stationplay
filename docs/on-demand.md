@@ -22,8 +22,9 @@ covers the server's side. The full product plan is in the document
    converting (1.24.0).
 4. **Each person's own place.** Where someone stopped, what they've watched
    and what's next are kept for each person.
-5. **Lean.** Plex stays the catalog (Phase 3 adds folders). tapiOca
-   keeps only who watched what, and copies nothing else from Plex.
+5. **Lean.** The library stays the catalog (Plex's, or Media folders of
+   tapiOca's own). tapiOca keeps only who watched what, and copies
+   nothing else from it.
 
 ## Releases
 

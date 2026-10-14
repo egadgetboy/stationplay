@@ -51,7 +51,7 @@ function renderListCheck(l, w) {
   const btn = $('#brokenAgain');
   btn.disabled = l.running;
   btn.textContent = l.running ? 'Checking the list…' : 'Check the list again';
-  const when = `every night at ${clock(w.start)} and whenever you choose Check the list again. Changes in Plex are checked every half hour.`;
+  const when = `every night at ${clock(w.start)} and whenever you choose Check the list again. It’s also checked against your Media folders every half hour.`;
   let text;
   if (l.running) {
     text = l.total ? `Checking it again now: ${l.done} of ${l.total}${l.cleared ? `, ${l.cleared} back on the air so far` : ''}…` : 'Checking it again now…';
