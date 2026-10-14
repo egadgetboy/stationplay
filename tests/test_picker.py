@@ -16,7 +16,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex import FakePlex
-from .helpers import through_proxy
+from .helpers import PAGE, through_proxy
 
 ADA = {"name": "Ada", "password": "correct horse"}
 TV = {"app": "tapiOca for Roku", "deviceName": "Living Room Roku", "picker": True}
@@ -331,7 +331,9 @@ def test_pins_cant_be_brute_forced_with_many_guesses_at_once(app):
 
         async def guesses() -> list[int]:
             transport = httpx.ASGITransport(app=app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://sp") as c:
+            async with httpx.AsyncClient(
+                headers=PAGE, transport=transport, base_url="http://sp"
+            ) as c:
 
                 async def guess(pin: str):
                     return await c.post(

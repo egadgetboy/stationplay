@@ -19,6 +19,7 @@ from app import cuts
 from app import markers as mk
 
 from .fakeplex import FakePlex
+from .helpers import PAGE
 from .test_e2e import _frame_yuv, assert_clean_stream, ff, record, start_server
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
@@ -86,7 +87,7 @@ def episodes(tmp_path, monkeypatch) -> FakePlex:
 
 
 async def make_station(base: str, skip: bool = True) -> dict:
-    async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+    async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
         made = await client.post(
             "/api/channels",
             json={
@@ -117,7 +118,7 @@ async def test_intros_and_credits_never_air_and_programs_follow_straight_on(
     try:
         station = await make_station(base)
         assert station["trimmedCount"] == 2
-        async with httpx.AsyncClient(base_url=base) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base) as client:
             guide = (await client.get(f"/api/channels/{station['id']}/guide?hours=1")).json()
         assert [g["end"] - g["start"] for g in guide[:3]] == [16 * S, 10 * S, 15 * S]
         data = await record(f"{base}/stream/9", 44)
@@ -208,7 +209,7 @@ async def test_turning_skipping_on_while_watching_starts_at_the_next_program(
     base, _app, _settings, srv, task = await start_server(tmp_path, episodes)
     try:
         station = await make_station(base, skip=False)
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
 
             async def turn_on() -> dict:
                 await asyncio.sleep(3)
@@ -255,7 +256,7 @@ async def test_a_corner_mark_at_the_start_shows_when_someone_tunes_in(
     monkeypatch.setattr(ff_mod, "WATERMARK_START_S", 5.0)  # 30 seconds, shortened
     base, _app, _settings, srv, task = await start_server(tmp_path, episodes)
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             made = await client.post(
                 "/api/channels",
                 json={
@@ -296,7 +297,7 @@ async def test_a_corner_mark_at_the_start_spans_the_skipped_intro(tmp_path, epis
     monkeypatch.setattr(ff_mod, "WATERMARK_START_S", 8.0)  # 30 seconds, shortened
     base, _app, _settings, srv, task = await start_server(tmp_path, episodes)
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             made = await client.post(
                 "/api/channels",
                 json={
@@ -361,7 +362,7 @@ async def test_an_intro_marked_by_its_theme_music_skips_where_the_picture_cuts(
     try:
         station = await make_station(base)
         assert station["trimmedCount"] == 1
-        async with httpx.AsyncClient(base_url=base) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base) as client:
             guide = (await client.get(f"/api/channels/{station['id']}/guide?hours=1")).json()
         # The cold open and the program. (Within 0.1 s: a file's own clock can start a
         # moment before its picture, as this one's sound does, by 21 ms.)
@@ -412,7 +413,7 @@ async def test_where_the_picture_cuts_reaches_a_station_made_before(tmp_path, mo
         [after] = update.items
         (a, b), (c, e) = after.segments
         assert a == 0 and abs(b - 7 * S) <= 60 and (c, e) == (13 * S, 33 * S)
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             made = await client.post(f"/api/channels/{station['id']}/update")
         assert made.status_code == 200 and made.json()["changed"] is True, made.text
         [latest] = ctx.db.latest_items(station["id"])

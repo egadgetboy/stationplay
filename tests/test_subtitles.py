@@ -20,6 +20,7 @@ from app.config import Settings
 from app.subtitles import Candidate, choose, language, sidecars
 
 from .fakeplex import FakePlex
+from .helpers import PAGE
 from .test_e2e import assert_clean_stream, record, start_server
 from .vobsub import write as write_vobsub
 
@@ -370,7 +371,7 @@ async def test_a_station_draws_subtitles_and_plays_on_if_it_cant(tmp_path, monke
     (d / "Bad.en.srt").write_bytes(b"\x00\xff\xfe not subtitles \x00" * 200)
     base, app, _settings, srv, task = await start_server(tmp_path, plex)
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             made = await client.post(
                 "/api/channels",
                 json={
@@ -416,7 +417,7 @@ async def test_a_slow_share_never_holds_a_program_up_for_its_subtitles(
     caplog.set_level(logging.INFO)
     base, app, _settings, srv, task = await start_server(tmp_path, plex, ffmpeg_path=str(slow))
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             made = await client.post(
                 "/api/channels",
                 json={

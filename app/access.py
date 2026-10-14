@@ -171,10 +171,21 @@ OWN_PASSWORD_OFF = (
 NO_PASSWORD = (
     "You don't have a password to change. An Admin can give you one, on tapiOca's Access tab."
 )
-NOT_HTTPS = (
-    "From outside your home, tapiOca's apps connect only over HTTPS. Use an https:// "
-    "address, through a reverse proxy with HTTPS (see tapiOca's README)."
+# (Said to someone watching in tapiOca's apps, never an Admin's steps: the
+# owner, October 14, 1.36.2. The Admin is told on the page and in the log.)
+NOT_HTTPS = "This address can't be used from outside your home. Check it, or try again later."
+NOT_HTTPS_LOGGED = (
+    "Turned an app away from outside: it didn't come over HTTPS through a trusted proxy. See "
+    "tapiOca's apps away from home, on the Access tab."
 )
+NOT_HTTPS_LOG_EVERY_S = 3600
+# What tapiOca's own page sends with every request (core.js's api): a page
+# on another site can't send it, a form can't, and fetch can't without
+# tapiOca's leave (it gives none). So what changes things on the page's own
+# addresses needs it, cookie or not (1.36.2). Apps and API tokens use their
+# own addresses, or their Authorization header, and never a cookie.
+PAGE_HEADER = b"x-tapioca-page"
+FROM_ITS_PAGE = "tapiOca can only be changed from its own page"
 # (Said to whoever reaches tapiOca from outside its home before signing in
 # is on, in its apps and on its page: someone watching, not an Admin, in the
 # owner's words, October 13.)
@@ -1224,6 +1235,7 @@ class Gate:
         self.trusted = trusted
         self.doors = doors
         self.relays = relays  # (never trusted; when they hide everyone, trust is off)
+        self._not_https_said = -float(NOT_HTTPS_LOG_EVERY_S)  # (when it was last logged)
 
     async def __call__(
         self, scope: dict, receive: Callable[[], Awaitable[Any]], send: Callable
@@ -1249,6 +1261,16 @@ class Gate:
             never_home=never_home,
             relays=self.relays.relays() if self.relays is not None else (),
         )
+        normal = posixpath.normpath(path)
+        page_or_api = not (is_tuner(normal) or normal.startswith(OPEN_UNDER) or normal in FOR_PLEX)
+        if verdict.proxy_device and not page_or_api and not port_public:
+            # (A trusted proxy's own computer, naming no one: Plex there keeps
+            # the tuner, guide and logos, at home. Anything else from it is
+            # still a proxy's, for the internet, as in 1.36.1: a proxy that
+            # sends no headers can't be told from its computer. 1.36.2.)
+            verdict = dataclasses.replace(
+                verdict, outside=False, why="", via_proxy=False, visitor=verdict.peer
+            )
         state = scope.setdefault("state", {})
         state["port"] = "public" if port_public else "home"
         state["outside"], state["why"], state["verdict"] = verdict.outside, verdict.why, verdict
@@ -1258,8 +1280,6 @@ class Gate:
         # own addresses. See relays.py.)
         relay = self.relays is not None and self.relays.is_relay(verdict.peer)
         state["relay"] = relay
-        normal = posixpath.normpath(path)
-        page_or_api = not (is_tuner(normal) or normal.startswith(OPEN_UNDER) or normal in FOR_PLEX)
         if self.relays is not None and not port_public and page_or_api:
             # (Only the page and the API: Plex or Jellyfin in Docker fetch
             # the tuner, icons and logos through the gateway. What a relay
@@ -1285,6 +1305,9 @@ class Gate:
             or verdict.outside
             or verdict.host != "home"
             or (verdict.untrusted_headers and not verdict.via_proxy)
+            # (A trusted proxy's own computer: never trusted, even for the
+            # tuner: anything it forwards naming no one would be too.)
+            or verdict.proxy_device
         ):
             return None
         # (Never through a relay, which carries others' connections, even
@@ -1325,9 +1348,15 @@ class Gate:
         ):
             await _refuse(send, 404, "Not Found")
         elif public and path.startswith(FOR_APPS_UNDER) and path != REACH and not over_https(scope):
+            now = time.monotonic()
+            if now - self._not_https_said >= NOT_HTTPS_LOG_EVERY_S:
+                self._not_https_said = now
+                log.warning(NOT_HTTPS_LOGGED)
             await _refuse(send, 403, NOT_HTTPS)
-        elif scope["method"] not in SAFE_METHODS and _from_another_site(scope):
-            await _refuse(send, 403, "tapiOca can only be changed from its own page")
+        elif scope["method"] not in SAFE_METHODS and (
+            _from_another_site(scope) or _not_from_its_page(scope, path)
+        ):
+            await _refuse(send, 403, FROM_ITS_PAGE)
         elif path not in UPLOADS and _length(scope) > BODY_MAX:
             await _refuse(send, 413, "That request is too big for tapiOca")
         elif refused := self._decide(scope):
@@ -1348,7 +1377,9 @@ class Gate:
                 return 403, NOT_SET_UP
             tuner = is_tuner(posixpath.normpath(path))
             if name_not_home(scope) and path not in PAGE and path != REACH and not tuner:
-                return 403, NAME_NOT_HOME
+                # (The Admin's steps on the page; someone watching in an app
+                # is told what anyone watching is: 1.36.2.)
+                return 403, NOT_SET_UP if path.startswith(FOR_APPS_UNDER) else NAME_NOT_HOME
             return None
         if path.startswith(PLAY_UNDER) and state["outside"] and not self._plays_outside(path):
             return 404, "Not Found"  # (made at home, ended, or never there)
@@ -1521,6 +1552,25 @@ def hop(scope: dict) -> dict[str, Any] | None:
         "sentHeaders": bool(sent or verdict.untrusted_headers or verdict.via_proxy),
         "saysHttps": says_https,
     }
+
+
+def _not_from_its_page(scope: dict, path: str) -> bool:
+    """Whether a change under /api/ comes without the header tapiOca's page
+    sends, and without an app's or a token's Authorization: a form on another
+    site, or another app on the same NAS, where browsers send no
+    Sec-Fetch-Site (plain http). See PAGE_HEADER.
+
+    The apps' and the API's addresses (/api/internal, /api/v1) are asked for
+    by apps and scripts, which send no Origin; there, only what a browser
+    sends (with an Origin) needs the header: with sign-in off, they need no
+    token at home, so a page elsewhere could otherwise ask for changes."""
+    if not path.startswith("/api/"):
+        return False
+    if bearer(scope) is not None:
+        return False
+    if path.startswith(FOR_APPS_UNDER) and not _header(scope, b"origin"):
+        return False
+    return _header(scope, PAGE_HEADER) != "1"
 
 
 def _from_another_site(scope: dict) -> bool:

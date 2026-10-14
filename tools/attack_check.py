@@ -94,6 +94,9 @@ from app.main import create_app
 from app.plex import PlexClient
 from tests.fakeplex_library import LibraryPlex
 
+# What tapiOca's page sends with each request (see app/access.py, PAGE_HEADER).
+PAGE = {"X-Tapioca-Page": "1"}
+
 ADMIN = {"name": "Ada", "password": "correct horse battery"}
 USER = {"name": "Sam", "password": "staple battery horse", "role": "user"}
 KID = {"name": "Kit", "password": "battery horse staple", "role": "user"}
@@ -249,7 +252,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
     # brute-force tests later don't spend the home address's password budget
     # on the setup calls.
     admin_h = sam_h = kit_h = {}
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         await c.post("/api/access/users", json=ADMIN)
         # (The reverse proxy, as the README says: see PROXY_PEER.)
         app.state.ctx.trusted.save(
@@ -301,7 +304,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
 
     # 1) The public port: no Plex, no home-only addresses, sign-in required.
     checks.section("From the internet, with no sign-in")
-    async with httpx.AsyncClient(base_url=net) as out:
+    async with httpx.AsyncClient(headers=PAGE, base_url=net) as out:
         for path in (
             "/discover.json", "/lineup.json", "/lineup_status.json", "/xmltv.xml", "/guide.xml",
             "/stations.m3u", "/channels.m3u", "/stream/3", "/auto/v3", "/art/201",
@@ -336,7 +339,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
 
     # 2) Forged visitor headers can't pose as another address or beat limits.
     checks.section("Forged headers")
-    async with httpx.AsyncClient(base_url=net) as out:
+    async with httpx.AsyncClient(headers=PAGE, base_url=net) as out:
         # A reverse proxy (NPMplus) sets X-Real-IP; a visitor's own
         # X-Forwarded-For / CF-Connecting-IP behind it must not override it.
         forged = {
@@ -363,7 +366,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
     # home port, so the session cookie rides plain HTTP as a browser's would;
     # the origin check is the same on both ports.)
     checks.section("CSRF from another origin")
-    async with httpx.AsyncClient(base_url=home) as pat:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as pat:
         signed = await pat.post("/api/access/sign-in", json=ADMIN)
         checks.ok(signed.status_code == 200, "the Admin can sign in on its own page",
                   f"got {signed.status_code}")  # fmt: skip
@@ -384,7 +387,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
 
     # 4) A User (and a Kid) may do only what their role allows.
     checks.section("A User and a Kid may do only what their role allows")
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         for method, path in (
             ("GET", "/api/logs"), ("POST", "/api/backups"), ("GET", "/api/broken"),
             ("PUT", "/api/scan"), ("GET", "/api/access/users"), ("PUT", "/api/app-libraries"),
@@ -408,7 +411,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
 
     # 5) A Kid never sees what their Viewing Level hides, anywhere.
     checks.section("A Kid never sees what their level hides")
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         numbers = {
             s["number"] for s in (await c.get("/api/v1/stations", headers=kit_h)).json()["stations"]
         }
@@ -436,7 +439,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
 
     # 6) Path traversal in file and key parameters.
     checks.section("Path traversal")
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         for path in (
             "/logos/..%2f..%2fetc%2fpasswd", "/logos/%2e%2e/secret.png",
             "/bumpers/..%2f..%2fstationplay.db.mp4", "/api/backups/..%2f..%2fstationplay.db",
@@ -461,7 +464,10 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
     # the extra alert addresses, and where people signed in from (the
     # 1.34.0 re-audit: the attack check hadn't grown with them).
     checks.section("1.34.0: page files, the update check, alert addresses")
-    async with httpx.AsyncClient(base_url=home) as anon, httpx.AsyncClient(base_url=net) as out:
+    async with (
+        httpx.AsyncClient(headers=PAGE, base_url=home) as anon,
+        httpx.AsyncClient(headers=PAGE, base_url=net) as out,
+    ):
         for client, where_ in ((anon, "at home"), (out, "from the internet")):
             for path in ("/favicon.svg", "/favicon.ico",
                          "/fonts/SpaceGrotesk/SpaceGrotesk-Regular.woff2"):  # fmt: skip
@@ -479,7 +485,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
                     and b"SQLite" not in r.content and b"import" not in r.content,
                     f"{path} gets nothing {where_}", f"got {r.status_code}",
                 )  # fmt: skip
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         for method, path, body in (
             ("GET", "/api/updates", None), ("PUT", "/api/updates", {"on": False}),
             ("POST", "/api/updates/check", None), ("GET", "/api/notify", None),
@@ -519,7 +525,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
         )
         checks.ok(forged.status_code == 200 and "<" not in sam_from and "img" not in sam_from,
                   "a forged X-Forwarded-For isn't kept as where someone signed in", sam_from)  # fmt: skip
-    async with httpx.AsyncClient(base_url=home) as pat:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as pat:
         await pat.post("/api/access/sign-in", json=ADMIN)
         for method, path, body in (("PUT", "/api/updates", {"on": False}),
                                    ("PUT", "/api/notify", {"on": False}),
@@ -533,7 +539,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
 
     # 7) Oversized and malformed bodies.
     checks.section("Oversized and malformed bodies")
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         huge = {"number": 14, "sources": [{"type": "show", "ratingKey": "100"}],
                 "name": "x" * (access.BODY_MAX + 10)}  # fmt: skip
         r = await c.post("/api/channels", json=huge, headers=sam_h)
@@ -545,7 +551,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
 
     # 8) Script in a station name is stored plain and shown as text.
     checks.section("Script in names")
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         made = await c.post(
             "/api/channels",
             json={"number": 15, "name": "<img src=x onerror=alert(1)>\u0000\n",
@@ -563,7 +569,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
 
     # 9) Guessing or reusing keys, play addresses and reach nonces.
     checks.section("Guessing keys, play addresses and reach nonces")
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         for guess in ("/hls/k/guessme/3/index.m3u8", "/play/guessme/file.mkv",
                       "/play/guessme/index.m3u8"):  # fmt: skip
             r = await c.get(guess)
@@ -579,7 +585,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
     # From the internet, behind a proxy that sets X-Real-IP (so the limit is
     # by that address). A dedicated address, so this doesn't spend any other.
     guesser = {"X-Real-IP": "203.0.113.40", "X-Forwarded-Proto": "https"}
-    async with httpx.AsyncClient(base_url=net) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=net) as c:
         for _ in range(access.TRIES):
             await c.post("/api/access/sign-in", json={**USER, "password": "nope nope"},
                          headers=guesser)  # fmt: skip
@@ -595,7 +601,7 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
     # the public port, even by a signed-in app over HTTPS.
     checks.section("Media stays on the home network while away from home is off")
     https = {**admin_h, "X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.50"}
-    async with httpx.AsyncClient(base_url=net) as out:
+    async with httpx.AsyncClient(headers=PAGE, base_url=net) as out:
         for path in ("/api/internal/libraries", "/api/internal/home", "/api/internal/items/300"):
             r = await out.get(path, headers=https)
             checks.ok(r.status_code in (403, 404), f"{path} is home-only from the internet",
@@ -674,6 +680,12 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
     # what a trusted network gives works only there.
     await _doors_and_trust(checks, app, home, net, admin_h, device_key)
 
+    # 26) From 1.36.2: changes only from tapiOca's own page (its header), at
+    # every address a browser could be sent to; and one box, a reverse
+    # proxy, Plex and tapiOca on one server, in each way it's laid out.
+    await _from_its_page(checks, home)
+    await _one_box(checks, app, home, net)
+
 
 async def _media_away(
     checks: Checks, app, home: str, net: str, admin_h: dict, sam_h: dict, kit_h: dict
@@ -685,7 +697,7 @@ async def _media_away(
     checks.section("Media through the public port")
     https = {"X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.60"}
     ctx = app.state.ctx
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         on = await c.put("/api/away", json={"on": True, "address": "https://tv.example.com"},
                          headers=admin_h)  # fmt: skip
         checks.ok(on.status_code == 200, "an Admin turns on watching away from home",
@@ -693,7 +705,7 @@ async def _media_away(
         at_home = (
             await c.post("/api/internal/play", json={"key": "300", "device": TV}, headers=sam_h)
         ).json()
-    async with httpx.AsyncClient(base_url=net) as out:
+    async with httpx.AsyncClient(headers=PAGE, base_url=net) as out:
         # An outsider: nothing, with no token or a made-up one.
         for method, path, body in (
             ("GET", "/api/internal/libraries", None), ("GET", "/api/internal/home", None),
@@ -778,10 +790,10 @@ async def _media_away(
         checks.ok(allowed.status_code == 200, "the PG movie plays for the Kid from outside",
                   f"got {allowed.status_code}")  # fmt: skip
     # Turning watching away from home off ends what plays there.
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         await c.put("/api/away", json={"on": False, "address": "https://tv.example.com"},
                     headers=admin_h)  # fmt: skip
-    async with httpx.AsyncClient(base_url=net) as out:
+    async with httpx.AsyncClient(headers=PAGE, base_url=net) as out:
         if allowed.status_code == 200:
             r = await out.get(allowed.json()["url"], headers=https)
             checks.ok(r.status_code == 404, "turning away from home off ends Media there",
@@ -803,7 +815,7 @@ async def _new_people_and_everyone(
     db = app.state.ctx.db
     key = {"StationPlay-Device": device_key}
     everyone = "/api/access/devices/everyone"
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         default = (await c.get("/api/access/devices", headers=admin_h)).json().get("default")
         picker = (await c.get("/api/internal/picker", headers=key)).json()
         listed = [p["name"] for p in picker["people"]]
@@ -841,12 +853,12 @@ async def _new_people_and_everyone(
             r = await c.post(everyone, json={"showOn": "home"}, headers=headers)
             checks.ok(r.status_code in (401, 403), f"{said} can't use Use for everyone",
                       f"got {r.status_code}")  # fmt: skip
-        async with httpx.AsyncClient(base_url=net) as out:
+        async with httpx.AsyncClient(headers=PAGE, base_url=net) as out:
             r = await out.post(everyone, json={"showOn": "home"},
                                headers={"X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.80"})  # fmt: skip
             checks.ok(r.status_code == 401, "nor can an outsider from the internet",
                       f"got {r.status_code}")  # fmt: skip
-        async with httpx.AsyncClient(base_url=home) as page:
+        async with httpx.AsyncClient(headers=PAGE, base_url=home) as page:
             await page.post("/api/access/sign-in", json=ADMIN)
             r = await page.post(everyone, json={"showOn": "home"},
                                 headers={"Sec-Fetch-Site": "cross-site"})  # fmt: skip
@@ -941,7 +953,7 @@ async def _own_pin_and_password(
     both = (("/api/internal/pin", {"pin": "1111"}), ("/api/internal/password", tries))
 
     # An outsider: no token, a made-up one, a device's key alone, plain HTTP.
-    async with httpx.AsyncClient(base_url=net) as out:
+    async with httpx.AsyncClient(headers=PAGE, base_url=net) as out:
         for path, body in both:
             for said, headers in (
                 ("no token", https), ("a made-up token", {**https, "Authorization": "Bearer made-up"}),
@@ -953,13 +965,13 @@ async def _own_pin_and_password(
             r = await out.post(path, json=body, headers={**kit_h, "X-Real-IP": "203.0.113.70"})
             checks.ok(r.status_code == 403, f"POST {path} needs HTTPS from the internet",
                       f"got {r.status_code}")  # fmt: skip
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         for path, body in both:
             r = await c.post(path, json=body)
             checks.ok(r.status_code == 401, f"POST {path} needs a sign-in at home too",
                       f"got {r.status_code}")  # fmt: skip
         # A browser's sign-in isn't an app's.
-        async with httpx.AsyncClient(base_url=home) as page:
+        async with httpx.AsyncClient(headers=PAGE, base_url=home) as page:
             await page.post("/api/access/sign-in", json=KID)
             r = await page.post("/api/internal/pin", json={"pin": "1111"})
             checks.ok(r.status_code == 403, "a browser's sign-in can't set a PIN",
@@ -1046,7 +1058,7 @@ async def _own_pin_and_password(
                   f"got {r.status_code}")  # fmt: skip
 
     kits_password = password_of(ids[KID["name"]])
-    async with httpx.AsyncClient(base_url=net) as out:
+    async with httpx.AsyncClient(headers=PAGE, base_url=net) as out:
         # Wrong current passwords count as wrong sign-ins (from that address).
         one = {**https, **kit_h, "X-Real-IP": "203.0.113.71"}
         for _ in range(access.TRIES):
@@ -1072,12 +1084,12 @@ async def _own_pin_and_password(
                   f"checked={codes.count(400)} changed={codes.count(200)}")  # fmt: skip
 
     # When an Admin turns it off, neither the app nor the page changes it.
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         off = await c.put(f"/api/access/users/{ids[KID['name']]}", headers=admin_h,
                           json={"canChangePassword": False})  # fmt: skip
         r = await c.post("/api/internal/password", headers=kit_h,
                          json={"current": KID["password"], "new": "a brand new password"})  # fmt: skip
-        async with httpx.AsyncClient(base_url=home) as page:
+        async with httpx.AsyncClient(headers=PAGE, base_url=home) as page:
             await page.post("/api/access/sign-in", json=KID)
             on_page = await page.post("/api/access/me/password",
                                       json={"current": KID["password"], "password": "a brand new one"})  # fmt: skip
@@ -1147,7 +1159,7 @@ async def _alerts_and_notify(
     hook = _Hook()
     await hook.start()
     try:
-        async with httpx.AsyncClient(base_url=net) as out:
+        async with httpx.AsyncClient(headers=PAGE, base_url=net) as out:
             for token in ({}, {"Authorization": "Bearer made-up"}):
                 for method, path in (("GET", "/api/internal/alerts"), ("GET", "/api/notify"),
                                      ("PUT", "/api/notify"), ("POST", "/api/notify/test")):  # fmt: skip
@@ -1163,7 +1175,7 @@ async def _alerts_and_notify(
                 r = await out.get("/api/internal/alerts", headers={**https, **headers})
                 checks.ok(r.status_code == 403, f"{who} can't read alerts from the internet",
                           f"got {r.status_code}")  # fmt: skip
-        async with httpx.AsyncClient(base_url=home) as c:
+        async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
             for who, headers in (("a User", sam_h), ("a Kid", kit_h)):
                 for method, path in (("GET", "/api/internal/alerts"), ("GET", "/api/notify"),
                                      ("PUT", "/api/notify"), ("POST", "/api/notify/test")):  # fmt: skip
@@ -1173,7 +1185,7 @@ async def _alerts_and_notify(
                               f"got {r.status_code}")  # fmt: skip
             checks.ok(not ctx.notify.on and not hook.asked,
                       "nothing was set or sent for them")  # fmt: skip
-            async with httpx.AsyncClient(base_url=home) as page:
+            async with httpx.AsyncClient(headers=PAGE, base_url=home) as page:
                 await page.post("/api/access/sign-in", json=USER)
                 status = (await page.get("/api/status")).json()
                 checks.ok("alerts" not in status, "a User's page isn't told the alerts")
@@ -1251,7 +1263,7 @@ async def _languages(
     only languages tapiOca knows; and only for what someone can see."""
     checks.section("Each person's languages")
     https = {"X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.90"}
-    async with httpx.AsyncClient(base_url=net) as out:
+    async with httpx.AsyncClient(headers=PAGE, base_url=net) as out:
         for method, path in (("PUT", "/api/internal/languages"),
                              ("PUT", "/api/internal/items/300/languages"),
                              ("DELETE", "/api/internal/items/300/languages")):  # fmt: skip
@@ -1265,7 +1277,7 @@ async def _languages(
         r = await out.put("/api/internal/languages", json={"audio": "jpn"}, headers=sam_h)
         checks.ok(r.status_code == 403, "languages aren't set over plain HTTP from the internet",
                   f"got {r.status_code}")  # fmt: skip
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
 
         async def mine(headers: dict) -> dict:
             return (await c.get("/api/internal/me", headers=headers)).json().get("languages", {})
@@ -1335,7 +1347,7 @@ async def _library(checks: Checks, app, home: str, admin_h: dict, kit_h: dict) -
             and "plex.test" not in body
         )
 
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         # Ada watches the grown-ups' show, and plays it.
         await c.post("/api/internal/progress", headers=admin_h,
                      json={"key": "211", "positionMs": 600_000})  # fmt: skip
@@ -1438,7 +1450,7 @@ async def _reports(
     ctx = app.state.ctx
     https = {"X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.90"}
     report = "/api/internal/report-problem"
-    async with httpx.AsyncClient(base_url=net) as out:
+    async with httpx.AsyncClient(headers=PAGE, base_url=net) as out:
         for token in ({}, {"Authorization": "Bearer made-up"}):
             for method, path in (("GET", "/api/internal/report-choices"), ("POST", report),
                                  ("GET", "/api/reports"), ("POST", "/api/reports/300/dismiss"),
@@ -1456,7 +1468,7 @@ async def _reports(
         checks.ok(r.status_code in (403, 404),
                   "with away from home off, nothing in Media is reported through the public port",
                   f"got {r.status_code}")  # fmt: skip
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         # Only an Admin sees reports, and acts on them.
         for who, headers in (("a User", sam_h), ("a Kid", kit_h)):
             for method, path in (("GET", "/api/reports"), ("POST", "/api/reports/300/dismiss"),
@@ -1558,7 +1570,7 @@ async def _broken_files(
     ctx = app.state.ctx
     problem = "/api/internal/problem"
     trouble = {"kind": "library-failed", "title": "Cartoon 6", "deviceName": "Attack"}
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         played = (await c.post("/api/internal/play", headers=sam_h,
                                json={"key": "3205", "device": TV})).json()  # fmt: skip
         session = played.get("session")
@@ -1669,7 +1681,7 @@ async def _converted_on_request(checks: Checks, app, home: str, admin_h: dict, k
     once, no more converted than the limit."""
     checks.section("Converted copies on request")
     phone = {**TV, "hls": ["ts"]}
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         gone = (await c.get("/api/internal/items/999999", headers=kit_h)).json()
         hidden = await c.post("/api/internal/play", headers=kit_h,
                               json={"key": "211", "device": phone, "convert": True})  # fmt: skip
@@ -1691,7 +1703,7 @@ async def _converted_on_request(checks: Checks, app, home: str, admin_h: dict, k
 
     # Five apps, each signed in on its own (a device is its sign-in), ask at
     # once: no more converted than the limit.
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         tokens = [
             (await c.post("/api/internal/sign-in", json={**ADMIN, "app": f"Phone {n}"})).json()["token"]
             for n in range(5)
@@ -1711,7 +1723,7 @@ async def _converted_on_request(checks: Checks, app, home: str, admin_h: dict, k
         "try again later",
         [r.status_code for r in answers],
     )  # fmt: skip
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         for r in made:
             await c.post(r.json()["leave"])
 
@@ -1721,7 +1733,7 @@ async def _no_file_names(checks: Checks, home: str, admin_h: dict) -> None:
     details, versions and tracks, play answers, alerts, refusals."""
     checks.section("No file names in the apps")
     phone = {**TV, "hls": ["ts"]}
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         answers = [
             await c.get("/api/internal/items/300", headers=admin_h),
             await c.get("/api/internal/items/201", headers=admin_h),
@@ -1762,7 +1774,7 @@ async def _several_files(
     and its entry on the Broken files list, Retry, only an Admin's."""
     checks.section("A movie in several files")
     phone = {**TV, "hls": ["ts"]}
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         gone = (await c.get("/api/internal/items/999999", headers=kit_h)).json()
         hidden = await c.post("/api/internal/play", headers=kit_h,
                               json={"key": "341", "device": phone})  # fmt: skip
@@ -1844,7 +1856,7 @@ async def _problems_sent_later(
     async with httpx.AsyncClient(base_url=net, headers={"X-Forwarded-Proto": "https"}) as out:
         r = await out.post("/api/internal/problem", json={"kind": "unreachable", "journal": script})
         checks.ok(r.status_code == 401, "an outsider can't send a problem", f"got {r.status_code}")
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         started = time.monotonic()
         big = "\n".join([script] * 40_000)  # (about 2 MB)
         r = await c.post("/api/internal/problem", headers=kit_h, json={
@@ -1906,7 +1918,7 @@ async def _copies_before_updates(checks: Checks, app, home: str, admin_h: dict) 
     folder.mkdir(parents=True, exist_ok=True)
     copy = folder / "before-1.29.1-20261009-120000.db"
     copy.write_bytes(b"SQLite format 3\x00 sign-ins")
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         listed = (await c.get("/api/backups", headers=admin_h)).text
         checks.ok(copy.name not in listed, "the page doesn't list them")
         for name in (copy.name, f"..%2fbackups%2f{copy.name}", "before-1.29.1-*.db"):
@@ -1998,7 +2010,7 @@ async def _no_license(checks: Checks, home: str, admin_h: dict, sam_h: dict) -> 
     checks.section("No license on the server")
     paths = (("GET", "/api/internal/license"), ("POST", "/api/internal/license"),
              ("GET", "/api/access/license"), ("PUT", "/api/access/license"))  # fmt: skip
-    async with httpx.AsyncClient(base_url=home, timeout=30) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home, timeout=30) as c:
         for who, h, allowed in (
             ("An Admin", admin_h, {404, 405}),
             ("A User", sam_h, {403, 404, 405}),
@@ -2036,7 +2048,7 @@ async def _tuner_access(checks: Checks, home: str, net: str, admin_h: dict, sam_
         "/hls/kk/3/index.m3u8", "/hls/./3/index.m3u8", "/hls/%6b/../3/index.m3u8",
         "/./discover.json", "/stream/%33",
     )  # fmt: skip
-    async with httpx.AsyncClient(base_url=home, timeout=30) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home, timeout=30) as c:
         r = await c.put("/api/tuner", json={"only": False, "devices": []}, headers=sam_h)
         checks.ok(r.status_code == 403, "A User can't change Tuner access", f"got {r.status_code}")
         r = await c.post("/api/tuner/allow", json={"address": "127.0.0.1"}, headers=sam_h)
@@ -2067,7 +2079,7 @@ async def _tuner_access(checks: Checks, home: str, net: str, admin_h: dict, sam_
             r = await out.get(path)
             checks.ok(r.status_code == 404, f"{path} still isn't on the public port",
                       f"got {r.status_code}")  # fmt: skip
-    async with httpx.AsyncClient(base_url=home, timeout=30) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home, timeout=30) as c:
         r = await c.post("/api/tuner/allow", json={"address": "127.0.0.1"}, headers=admin_h)
         checks.ok(r.status_code == 200, "An Admin allows this device", r.text[:200])
         r = await c.get("/discover.json")
@@ -2106,7 +2118,7 @@ async def _doors_and_trust(
                   f"{what}: the page says it's from the internet", r.text[:200])  # fmt: skip
 
     checks.section("Doors left open (1.36.0)")
-    async with httpx.AsyncClient(base_url=home, timeout=30) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home, timeout=30) as c:
         # Door 1: the home port forwarded on the router (IPv4, mapped, IPv6).
         for address in ("203.0.113.9", "::ffff:203.0.113.9", "2001:db8::9"):
             await internet_like(c, f"door 1 from {address}", peer(address))
@@ -2139,7 +2151,7 @@ async def _doors_and_trust(
                   "the alerts never give an address", str([a.sentence for a in now])[:200])  # fmt: skip
 
     checks.section("Trusted networks (1.36.0)")
-    async with httpx.AsyncClient(base_url=home, timeout=30) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home, timeout=30) as c:
         # Door 4: what can't be trusted.
         for bad in ("0.0.0.0/0", "::/0", "8.8.8.0/24", "2001:db8::/64", "127.0.0.0/8",
                     "fe80::1%eth0", "::ffff:192.168.1.0/120", "192.168.1.0/24 x"):  # fmt: skip
@@ -2258,7 +2270,7 @@ async def _doors_and_trust(
         ).json()
         checks.ok("trusted" not in me, "a proxy's headers that disagree: nothing", str(me)[:200])
         # On the public port: never trusted.
-        async with httpx.AsyncClient(base_url=net, timeout=30) as out:
+        async with httpx.AsyncClient(headers=PAGE, base_url=net, timeout=30) as out:
             me = (
                 await out.get("/api/access/me", headers={"X-Forwarded-For": "192.168.1.60"})
             ).json()
@@ -2283,7 +2295,7 @@ async def _doors_and_trust(
         ):
             r = await c.get("/api/channels", headers={**h, **ck})
             checks.ok(r.status_code == 401, f"it's no good {what}", f"got {r.status_code}")
-        async with httpx.AsyncClient(base_url=net, timeout=30) as out:
+        async with httpx.AsyncClient(headers=PAGE, base_url=net, timeout=30) as out:
             r = await out.get("/api/channels", headers={**ck, **_cf("192.168.1.70")})
             checks.ok(
                 r.status_code == 401, "it's no good on the public port", f"got {r.status_code}"
@@ -2324,7 +2336,7 @@ async def _doors_and_trust(
         checks.ok(codes[-1] == 429, "wrong PINs on a trusted picker are limited", str(codes))
 
     checks.section("Door 5: Docker hiding where connections come from (1.36.0)")
-    async with httpx.AsyncClient(base_url=home, timeout=30) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home, timeout=30) as c:
         # Docker's gateway listed as a trusted proxy (a proxy in another
         # container): what it names is never trusted, and wrong passwords
         # at home through it count as it.
@@ -2381,7 +2393,7 @@ async def _doors_and_trust(
         ctx.relays.reset()
 
     checks.section("Door 7: Tuner access by network (1.36.0)")
-    async with httpx.AsyncClient(base_url=home, timeout=30) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home, timeout=30) as c:
         r = await c.put("/api/tuner", json={"only": True, "devices": [],
                         "networks": [{"network": "192.168.1.0/24"}]}, headers=admin_h)  # fmt: skip
         checks.ok(r.status_code == 200, "an Admin lists a network for the tuner", r.text[:200])
@@ -2401,6 +2413,113 @@ async def _doors_and_trust(
 
 
 SECRET = b"root:x:0:0:the secret outside the media folder"
+
+
+async def _from_its_page(checks: Checks, home: str) -> None:
+    """A browser at home, over plain http (no Sec-Fetch-Site), sent by
+    another site's page: with the Admin's cookie, or with signing in off,
+    nothing changes without the header only tapiOca's page sends."""
+    checks.section("Changes only from tapiOca's own page (1.36.2)")
+    station = {"number": 41, "sources": [{"type": "show", "ratingKey": "100"}]}
+    async with httpx.AsyncClient(headers=PAGE, base_url=home, timeout=30) as page:
+        signed = await page.post("/api/access/sign-in", json=ADMIN)
+        checks.ok(
+            signed.status_code == 200, "the Admin signs in on the page", f"got {signed.status_code}"
+        )
+        async with httpx.AsyncClient(base_url=home, timeout=30, cookies=page.cookies) as other:
+            for what, method, path, kw in (
+                ("make a station", "POST", "/api/channels", {"json": station}),
+                ("by a form", "POST", "/api/channels", {"data": {"number": "41"}}),
+                ("add an Admin", "POST", "/api/access/users",
+                 {"json": {"name": "Eve", "password": "x" * 14, "role": "admin"}}),
+                ("turn away from home off", "PUT", "/api/away", {"json": {"on": False, "address": ""}}),
+                ("sign the Admin out", "POST", "/api/access/sign-out", {}),
+                ("make a backup through the API", "POST", "/api/v1/backups", {}),
+                ("sign an app in", "POST", "/api/internal/sign-in", {"json": {**ADMIN, "app": "x"}}),
+            ):  # fmt: skip
+                for origin in ("http://evil.example", None):
+                    if origin is None and path.startswith(("/api/v1/", "/api/internal/")):
+                        continue  # (apps and scripts send no Origin: see below)
+                    h = {"Origin": origin} if origin else {}
+                    r = await other.request(method, path, headers=h, **kw)
+                    checks.ok(r.status_code == 403, f"another site's page can't {what}"
+                              f"{'' if origin else ' (no Origin)'}", f"got {r.status_code}")  # fmt: skip
+        me = (await page.get("/api/access/me")).json()
+        checks.ok((me.get("user") or {}).get("name") == ADMIN["name"], "the Admin is still signed in",
+                  str(me.get("user")))  # fmt: skip
+        listed = [c["number"] for c in (await page.get("/api/channels")).json()]
+        checks.ok(41 not in listed, "no station was made", str(listed))
+    # Apps and scripts: no Origin, their own ways in, nothing changes.
+    async with httpx.AsyncClient(base_url=home, timeout=30) as app_:
+        r = await app_.post("/api/internal/sign-in", json={**ADMIN, "app": "tapiOca for Roku"})
+        checks.ok(r.status_code == 200, "an app signs in as before", f"got {r.status_code}")
+
+
+async def _one_box(checks: Checks, app, home: str, net: str) -> None:
+    """A reverse proxy, Plex and tapiOca on one server (the owner's
+    TrueNAS): Plex keeps the tuner however it's laid out, the proxy's
+    visitors are who it says, and nothing through it skips signing in."""
+    checks.section("One box: a proxy, Plex and tapiOca on one server (1.36.2)")
+    ctx = app.state.ctx
+    kept_proxies = [
+        {"network": x["network"], "label": x.get("label", "")} for x in ctx.trusted.proxies
+    ]
+    kept_entries = [
+        {k: e.get(k) for k in ("network", "label", "gives", "person")} for e in ctx.trusted.entries
+    ]
+    kept_tuner = (ctx.tuner.only, dict(ctx.tuner.devices), dict(ctx.tuner.networks))
+    ctx.tuner.save(False, [])
+    port = home.rsplit(":", 1)[1]
+    try:
+        for layout, proxy, plex in (
+            ("in containers, through Docker's gateway", GATEWAY, GATEWAY),
+            ("sharing the server's address", "192.168.1.30", "192.168.1.30"),
+            ("the proxy with an address of its own", "192.168.1.31", "192.168.1.30"),
+        ):
+            ctx.trusted.save({
+                "entries": [{"network": "192.168.1.0/24", "label": "Home", "gives": "picker"}],
+                "proxies": [{"network": PROXY_PEER}, {"network": proxy}],
+            }, by=None)  # fmt: skip
+            async with httpx.AsyncClient(base_url=home, timeout=30) as c:
+                for path in ("/discover.json", "/lineup_status.json", "/lineup.json", "/xmltv.xml"):
+                    r = await c.get(
+                        path, headers={"X-Attack-Peer": plex, "User-Agent": "PlexMediaServer"}
+                    )
+                    checks.ok(
+                        r.status_code == 200, f"{layout}: Plex gets {path}", f"got {r.status_code}"
+                    )
+                r = await c.post("/lineup.post?scan=start", headers={"X-Attack-Peer": plex})
+                checks.ok(r.status_code == 200, f"{layout}: Plex scans", f"got {r.status_code}")
+                # The proxy's own computer, naming nobody: home, never trusted.
+                me = (await c.get("/api/access/me", headers={"X-Attack-Peer": proxy})).json()
+                checks.ok("trusted" not in me, f"{layout}: the proxy's computer never skips signing in",
+                          str(me.get("trusted")))  # fmt: skip
+                # Pointed at the home port by mistake, naming the internet.
+                visitor = {"X-Attack-Peer": proxy, "X-Forwarded-For": "203.0.113.9",
+                           "X-Forwarded-Proto": "https"}  # fmt: skip
+                r = await c.get("/discover.json", headers=visitor)
+                checks.ok(r.status_code == 404, f"{layout}: the internet through the home port gets no tuner",
+                          f"got {r.status_code}")  # fmt: skip
+                # Naming a home address from outside: never trusted.
+                r = await c.get("/api/access/me", headers={**visitor, "X-Forwarded-For": "192.168.1.60",
+                                                            "Host": f"tv.example.com:{port}"})  # fmt: skip
+                checks.ok("trusted" not in r.json(), f"{layout}: a home address named from outside isn't trusted",
+                          r.text[:120])  # fmt: skip
+            async with httpx.AsyncClient(base_url=net, timeout=30) as out:
+                h = {"X-Attack-Peer": proxy, "X-Forwarded-For": "203.0.113.9", "X-Real-IP": "203.0.113.9",
+                     "X-Forwarded-Proto": "https"}  # fmt: skip
+                r = await out.post(
+                    "/api/internal/sign-in", json={**USER, "app": "tapiOca for Android"}, headers=h
+                )
+                checks.ok(r.status_code == 200, f"{layout}: an app signs in from outside through it",
+                          f"got {r.status_code}")  # fmt: skip
+                r = await out.get("/api/access/me", headers={**h, "X-Forwarded-For": "192.168.1.60",
+                                                              "X-Real-IP": "192.168.1.60"})  # fmt: skip
+                checks.ok("trusted" not in r.json() and r.json().get("outside") is True,
+                          f"{layout}: a home address named on the public port is the internet", r.text[:120])  # fmt: skip
+    finally:
+        ctx.trusted.save({"entries": kept_entries, "proxies": kept_proxies}, by=None)
+        ctx.tuner.save(kept_tuner[0], list(kept_tuner[1].items()), list(kept_tuner[2].items()))
 
 
 def build_folders(tmp: Path) -> Path:
@@ -2448,7 +2567,7 @@ async def _folders(
     # (Folders are read only while no one's watching: what the sections
     # above played is ended first.)
     ctx.plays.end_all()
-    async with httpx.AsyncClient(base_url=home, timeout=30) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home, timeout=30) as c:
         # Only from the media folder.
         for folder in ("/etc", "../outside", "TV/Linked", "TV/../../outside", "TV/\x00"):
             bad = await c.post("/api/folder-libraries", headers=admin_h,
@@ -2531,7 +2650,9 @@ async def _folders(
         checks.ok(any(x["key"] == key for x in ctx.folders.status()),
                   "no one but an Admin removed the Media folder")  # fmt: skip
         await c.put("/api/app-libraries", json={"libraries": ["1", "2"]}, headers=admin_h)
-    async with httpx.AsyncClient(base_url=net, timeout=30, headers=_cf("203.0.113.9")) as out:
+    async with httpx.AsyncClient(
+        base_url=net, timeout=30, headers={**PAGE, **_cf("203.0.113.9")}
+    ) as out:
         for method, path, body in addresses:
             r = await out.request(method, path, json=body)
             checks.ok(r.status_code == 401, f"from the internet, {method} {path} needs a sign-in",
@@ -2551,7 +2672,7 @@ async def _kept_alerts(checks: Checks, app, home: str, admin_h: dict) -> None:
     checks.ok(restored == [odd] and not told.said,
               "whatever a sentence holds, it's kept and given back as it was, unsent",
               f"{restored} {told.said}")  # fmt: skip
-    async with httpx.AsyncClient(base_url=home) as c:
+    async with httpx.AsyncClient(headers=PAGE, base_url=home) as c:
         r = await c.get("/api/internal/alerts", headers=admin_h)
         checks.ok(odd in [a["sentence"] for a in r.json().get("alerts", [])],
                   "and the apps are given it as it is (as text)")  # fmt: skip

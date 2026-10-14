@@ -182,9 +182,25 @@ function suggestedLogos() {
   // Genres first, then the rest in the library's order.
   return [...hits.filter(l => l.category === 'Genres'), ...hits.filter(l => l.category !== 'Genres')];
 }
+// Searching: a number said in words is its number ("one", "twenty-one"),
+// and a number or a single letter matches only as a whole word, so "1" finds
+// Number 1, not every logo with a 1 in it (the owner, October 14: "1" and
+// "one" found nothing).
+const ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve',
+  'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+const TENS = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
+function searchWords(text) {
+  const words = text.toLowerCase().replace(/\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[\s-]+(one|two|three|four|five|six|seven|eight|nine)\b/g,
+    (_, tens, one) => String(TENS[tens] + ONES.indexOf(one))).split(/\s+/).filter(Boolean);
+  // (Each word, with its number if it's one: "one" also finds a logo
+  // that says "one".)
+  return words.map(w => ONES.includes(w) ? [w, String(ONES.indexOf(w))] : w in TENS ? [w, String(TENS[w])] : [w]);
+}
 function logoMatches(l, words) {
   const hay = [l.name, l.category, ...(l.tags || [])].join(' ').toLowerCase();
-  return words.every(w => hay.includes(w));
+  const whole = new Set(hay.split(/[^a-z0-9]+/));
+  const found = w => /^(\d+|[a-z])$/.test(w) ? whole.has(w) : hay.includes(w);
+  return words.every(ways => ways.some(found));
 }
 function renderLogoPicker() {
   const suggested = suggestedLogos();
@@ -195,7 +211,7 @@ function renderLogoPicker() {
     onclick: () => { logoCategory = c; renderLogoPicker(); },
   }, c)));
   const taken = takenLogos();
-  const words = $('#logoSearch').value.toLowerCase().split(/\s+/).filter(Boolean);
+  const words = searchWords($('#logoSearch').value);
   const inCat = logoCategory === SUGGESTED ? suggested
     : logoCatalog.filter(l => logoCategory === 'All' || l.category === logoCategory);
   const shown = words.length ? inCat.filter(l => logoMatches(l, words)) : inCat;
@@ -211,7 +227,11 @@ function renderLogoPicker() {
     : tile(l)));
   $('#logoNone').hidden = shown.length > 0 || (logoCategory === 'All' && !words.length);
 }
-$('#logoSearch').addEventListener('input', () => renderLogoPicker());
+// (A search looks through every logo: All, whichever was chosen.)
+$('#logoSearch').addEventListener('input', () => {
+  if ($('#logoSearch').value.trim()) logoCategory = 'All';
+  renderLogoPicker();
+});
 async function refreshLogoCatalog() { logoCatalog = null; await loadLogoCatalog(); }
 $('#logoUpload').addEventListener('change', async e => {
   const file = e.target.files[0];

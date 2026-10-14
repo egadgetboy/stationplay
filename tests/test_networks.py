@@ -263,12 +263,25 @@ def test_a_trusted_proxys_headers_must_agree():
 def test_a_trusted_proxy_naming_nobody_is_the_internet():
     """A listed proxy is a proxy even when it sends no headers: on the home
     port, with no visitor named (or one that can't be read), who it's for
-    can't be told."""
+    can't be told. (1.36.2: naming no one at all, not asked for by an
+    internet name, it's marked `proxy_device`: the Gate lets the proxy's own
+    computer, Plex there, have the tuner and guide, and nothing else. See
+    test_one_box.py.)"""
     for said in ([], headers(("X-Forwarded-For", "garbage")), headers(("Forwarded", "for=_x"))):
         v = judge(peer="192.168.1.2", proxies=PROXY, headers=said)
         assert (v.outside, v.why) == (True, "proxy"), said
+        assert v.proxy_device == (said == []), said
     v = judge(peer="192.168.1.2", proxies=PROXY, headers=headers(("X-Real-IP", "203.0.113.5")))
-    assert (v.outside, v.why) == (True, "proxy")
+    assert (v.outside, v.why, v.proxy_device) == (True, "proxy", False)
+    # (Saying it came over HTTPS, or asked for by an internet name: a
+    # visitor passed on, never its computer.)
+    v = judge(peer="192.168.1.2", proxies=PROXY, headers=headers(("X-Forwarded-Proto", "https")))
+    assert (v.outside, v.proxy_device) == (True, False)
+    v = judge(peer="192.168.1.2", host="tv.example.com:3310", proxies=PROXY)
+    assert (v.outside, v.proxy_device) == (True, False)
+    # (Not listed: at home, as ever.)
+    v = judge(peer="192.168.1.2")
+    assert (v.outside, v.proxy_device) == (False, False)
 
 
 def test_loopback_listed_as_a_proxy_but_naming_nobody_is_this_machine():

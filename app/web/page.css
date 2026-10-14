@@ -43,6 +43,11 @@
   --radius-small: 6px;
   --pill: 999px;
   --ui: "Space Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* What's read (1.36.2): the device's own face, made for reading at small
+     sizes (San Francisco, Segoe UI, Roboto), nothing to download. Space
+     Grotesk stays for what's short: headings, tabs, buttons, labels. The
+     owner, October 14: "hard to read". */
+  --text: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: "Space Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --display: "Unbounded", system-ui, sans-serif;
   --bar: #00796b;  /* the Stats tab's bars: one hue, checked against the panel */
@@ -97,9 +102,16 @@
 * { box-sizing: border-box; }
 body {
   margin: 0; background: var(--bg); color: var(--ink);
-  font: 15px/1.45 var(--ui);
+  font: 15px/1.5 var(--text);
 }
 button, input, select { font: inherit; color: inherit; }
+/* The brand's face, for what's short. Headings step down in size, never
+   under the text they head: a tab's 20px, a dialog's 19px, a setup step's
+   18px, a panel's 16px, over 15px text (14px in a panel). */
+h1, h2, h3, h4, .wstep, summary > strong, .tab, .btn, .pill, .chip, .chipbtn, .seg button,
+.opt-label, th, .setup-nav button, .brand { font-family: var(--ui); }
+/* Reading text: lines no longer than the eye follows easily. */
+.arr-body p, .playback > p, .setup-page p, .limit-note, p.hint { max-width: 78ch; }
 a { color: var(--accent); }
 .wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px 64px; }
 
@@ -135,6 +147,7 @@ header.top {
 .pill.away .word::before { content: "·"; margin-right: 6px; color: var(--ink-3); font-weight: 400; }
 .pill.away .word.up { color: var(--good); }
 .pill.away .word.down { color: var(--bad); }
+.pill.away .word.next-step { color: var(--accent); }
 .pill.away .word.checking { color: var(--accent); }
 .pill.away .word.cant-check { color: var(--ink-2); }
 .pill.away .short { display: none; }
@@ -196,13 +209,13 @@ header.top {
 
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
 .section-head { display: flex; align-items: center; gap: 12px; margin: 0 0 12px; flex-wrap: wrap; }
-.section-head h2 { font-size: 17px; margin: 0; }
+.section-head h2 { font-size: 20px; margin: 0; }
 .muted { color: var(--ink-2); }
 .foot { margin: 36px 0 8px; text-align: center; font-size: 12px; color: var(--ink-3); }
 .foot a { color: inherit; }
 .foot .appearance { margin-top: 10px; display: inline-flex; align-items: center; gap: 8px; }
 .foot .appearance select { width: auto; padding: 3px 8px; border-radius: var(--radius); font-size: 12px; color: var(--ink-2); background: var(--panel); }
-.small { font-size: 13px; }
+.small { font-size: 13.5px; }
 
 .btn {
   display: inline-flex; align-items: center; gap: 6px; border-radius: var(--radius); cursor: pointer;
@@ -304,7 +317,7 @@ header.top {
    and the rest of what was found. */
 .files { margin-top: 16px; }
 .files-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 2px; flex-wrap: wrap; }
-.files-head h3 { margin: 0; font-size: 16px; }
+.files-head h3 { margin: 0; font-size: 17px; }
 .files-intro { margin: 2px 16px 10px; }
 .files .none { padding: 4px 16px 16px; margin: 0; }
 .files table { border-top: 1px solid var(--line); }
@@ -329,7 +342,7 @@ header.top {
 /* Setup */
 .setup { padding: 18px; display: grid; gap: 14px; }
 .playback { display: grid; gap: 14px; }
-.wstep { margin: 6px 0 0; font-size: 15px; }
+.wstep { margin: 6px 0 0; font-size: 18px; line-height: 1.3; }
 /* The setup: its steps down the side (above, on a phone or a short screen: just which step), and each step's page. */
 #setupDlg { width: min(940px, calc(100vw - 24px)); }
 .setup-grid { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 22px; align-items: start; }
@@ -399,7 +412,7 @@ dialog {
 dialog[open], dialog > form { display: flex; flex-direction: column; min-height: 0; }
 dialog::backdrop { background: rgba(10, 14, 18, .45); }
 .dlg-head { display: flex; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--line); }
-.dlg-head h3 { margin: 0; font-size: 17px; }
+.dlg-head h3 { margin: 0; font-size: 19px; }
 .dlg-body { padding: 18px; display: grid; grid-auto-rows: max-content; gap: 16px; overflow: auto; flex: 1 1 auto; min-height: 0; }
 .dlg-foot { display: flex; gap: 8px; justify-content: flex-end; padding: 14px 18px; border-top: 1px solid var(--line); }
 #notice { width: min(480px, calc(100vw - 24px)); }
@@ -519,7 +532,7 @@ input:focus, select:focus, .btn:focus-visible, .tab:focus-visible { outline: 2px
 }
 .sel { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--pill); font-size: 13px; }
 .sel button { border: 0; background: none; cursor: pointer; color: var(--ink-3); font-size: 16px; line-height: 1; padding: 0 4px; }
-.hint { font-size: 13px; color: var(--ink-2); }
+.hint { font-size: 13.5px; line-height: 1.5; color: var(--ink-2); }
 
 /* Guide */
 .guide-list { display: grid; }
@@ -626,12 +639,14 @@ table.stats .station img.shaped { padding: 2px; }
 .seg.corners { display: grid; grid-template-columns: 1fr 1fr; border-radius: var(--radius); }  /* (two rows: a rectangle, not a pill) */
 .mark-preview span { color: #fff; white-space: nowrap; text-shadow: 1px 1px 1px rgba(0,0,0,.6); line-height: 1; }
 .mark-preview span.clock { font-weight: 600; font-variant-numeric: tabular-nums; }
-.scan { display: grid; gap: 8px; padding: 12px 14px; margin-bottom: 12px; font-size: 13px; }
+.scan { display: grid; gap: 8px; padding: 12px 14px; margin-bottom: 12px; font-size: 14px; }
 .scan-set { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.arr { padding: 12px 14px; margin-bottom: 12px; font-size: 13px; }
+.arr { padding: 12px 14px; margin-bottom: 12px; font-size: 14px; }
 .arr > summary { cursor: pointer; list-style: none; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 .arr > summary::-webkit-details-marker { display: none; }
 /* (Before its name's first line, however the name wraps.) */
+/* (A panel's title: above its 14px text, below a step's or a tab's.) */
+.arr > summary > strong { font-size: 16px; }
 .arr > summary > strong::before { content: "\25B8"; color: var(--ink-3); font-weight: 400; margin-right: 8px; }
 .arr[open] > summary > strong::before { content: "\25BE"; }
 .arr-body { display: grid; gap: 12px; margin-top: 10px; }
@@ -651,12 +666,24 @@ table.stats .station img.shaped { padding: 2px; }
    is, when it was checked, and Check now (the Access tab, and the setup). */
 .reach { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 4px 10px; align-items: start; padding: 10px 12px; border-radius: var(--radius); background: var(--panel-2); border: 1px solid var(--line); }
 .reach.down { background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
+.reach.next-step { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
 .reach .icon { display: grid; padding-top: 2px; }
 .reach .icon svg { display: block; }
 .reach .icon.up { color: var(--good); }
 .reach .icon.down { color: var(--bad); }
 .reach .icon.checking { color: var(--accent); }
 .reach .icon.cant-check { color: var(--ink-3); }
+.reach .icon.next-step { color: var(--accent); }
+/* A step left to take (sign-in, for watching away from home): said as a
+   step, in the accent, never as a warning (1.36.2). */
+.step-note { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 4px 10px; align-items: start; padding: 10px 12px; border-radius: var(--radius); background: var(--accent-soft); }
+.step-note .icon { display: grid; padding-top: 2px; color: var(--accent); }
+.step-note p { margin: 0; font-size: 14px; }
+.step-note .btn { align-self: center; }
+@media (max-width: 480px) {
+  .step-note { grid-template-columns: 16px minmax(0, 1fr); }
+  .step-note .btn { grid-column: 2; justify-self: start; }
+}
 .reach .what { margin: 0; font-size: 14px; }
 .reach .when { margin: 3px 0 0; font-size: 12.5px; color: var(--ink-2); }
 .reach .btn { align-self: center; }
@@ -710,7 +737,7 @@ table.users .own-password:has(input:disabled) { cursor: default; }
 .name-pick input { max-width: 320px; min-width: 0; }
 .name-pick .chips:empty { display: none; }
 .sees-part { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
-.sees-part h4 { margin: 0; font-size: 15px; }
+.sees-part h4 { margin: 0; font-size: 16px; }
 .clip-ratings table { margin-top: 8px; }
 .clip-ratings .scan-set { margin-top: 8px; }
 /* As cards (as on a phone) until the Access tab's widest table fits. */
@@ -735,12 +762,12 @@ table.stats .station img, table.stats .station .logo-num { width: 32px; height: 
 .hbar { height: 10px; border-radius: 0 var(--radius-small) var(--radius-small) 0; background: var(--bar); }
 .stats-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin-top: 16px; }
 .stats-cols .panel { padding: 14px 16px; }
-.stats-cols h3 { font-size: 15px; margin: 0 0 10px; }
+.stats-cols h3 { font-size: 16px; margin: 0 0 10px; }
 .toplist { display: grid; gap: 8px; }
 .toprow { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 14px; }
 .toprow .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .who-panel { padding: 14px 16px; margin-top: 16px; }
-.who-panel h3 { font-size: 15px; margin: 0 0 10px; }
+.who-panel h3 { font-size: 16px; margin: 0 0 10px; }
 .who { display: grid; gap: 4px; }
 .who + .who { border-top: 1px solid var(--line); padding-top: 8px; }
 .who-detail { font-size: 13px; color: var(--ink-2); }
@@ -761,7 +788,7 @@ table.stats .station img, table.stats .station .logo-num { width: 32px; height: 
 /* Who's watching now (Admins). */
 .now-panel { margin-bottom: 18px; }
 .now-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 14px 16px 4px; }
-.now-head h3 { font-size: 15px; margin: 0; }
+.now-head h3 { font-size: 16px; margin: 0; }
 #statNow > .muted { padding: 4px 16px 14px; margin: 0; }
 table.now td { vertical-align: top; }
 table.now td .sub { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; overflow-wrap: anywhere; }
@@ -813,7 +840,7 @@ table.now tr:last-child td { border-bottom: 0; }
 }
 .problems { padding: 16px 18px; margin-bottom: 18px; }
 .problems-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.problems-head h3 { margin: 0; font-size: 16px; }
+.problems-head h3 { margin: 0; font-size: 17px; }
 .problem { border-top: 1px solid var(--line); padding: 10px 0; }
 .problem p { margin: 3px 0; }
 .problem-on { font-size: 14px; color: var(--ink-2); }

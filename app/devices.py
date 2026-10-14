@@ -82,8 +82,8 @@ OFF_ITS_NETWORK = (
 TRUSTED_DEVICES_MOST = 100
 UNUSED_DAYS = 30
 NETWORK_FULL = (
-    "This trusted network has linked as many devices as it can. An Admin can unlink some on "
-    "the Access tab."
+    "This network has as many devices as tapiOca can add. Ask an Admin to make room, or sign "
+    "in with your name and password."
 )
 ADMIN_PASSWORD = (
     "Enter your password: on a device others use too, an Admin needs a PIN or their password"
@@ -101,12 +101,9 @@ ADMIN_KEEPS_PIN = (
 )
 PIN_ONLY = (
     "Your PIN is how you sign in, as you don't have a password, so you can't remove it "
-    "here. An Admin can, on tapiOca's Access tab."
+    "here. Ask an Admin if it needs removing."
 )
-NO_SECRET = (
-    "You don't have a password or a PIN, so only an Admin can give you a PIN, on "
-    "tapiOca's Access tab."
-)
+NO_SECRET = "You don't have a password or a PIN, so only an Admin can give you a PIN."
 PICKED_UNLOCKED = "To set a PIN, sign in on this device with your password or an invite code first."
 
 

@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app import appapi
+from app import access, appapi
 from app.config import Settings
 from app.main import create_app
 from app.plex import PlexClient
@@ -646,10 +646,15 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         assert removed == {"ok": True}
         check.answer(tv.get("/api/internal/picker"), "GET /api/internal/picker", 401)
 
-        # From the internet, only over HTTPS.
+        # From the internet, only over HTTPS. (1.36.2, by design: the app
+        # says so to someone watching, never as an Admin's steps, the owner,
+        # October 14; the Admin finds why in the log, and on the Access tab.)
         plain_http = TestClient(app, base_url=f"http://testserver:{PUBLIC_PORT}")
         refused = plain_http.post("/api/internal/sign-in", json=PAT)
-        assert refused.status_code == 403 and "HTTPS" in refused.json()["detail"]
+        assert refused.status_code == 403 and refused.json()["detail"] == access.NOT_HTTPS
+        assert "HTTPS" not in access.NOT_HTTPS and "proxy" not in access.NOT_HTTPS
+        logged = home.get("/api/logs").json()["text"]
+        assert logged.count(access.NOT_HTTPS_LOGGED) == 1
         assert plain_http.get("/api/v1/server").status_code == 403
         # Over HTTPS, once signing in is on: signing in and the stations, but
         # not the streams (until watching away from home is on: test_hls.py).

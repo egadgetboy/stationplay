@@ -45,6 +45,7 @@ import json
 import logging
 import os
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -52,6 +53,7 @@ from typing import TYPE_CHECKING, Any
 from . import __version__
 from .catalog import Media, Track
 from .db import Item
+from .schedule import Slot
 
 if TYPE_CHECKING:
     from .db import Channel, Database
@@ -130,6 +132,17 @@ TIPS = (
 )
 
 
+# Programs tapiOca makes itself: never a file to check, or to list as
+# broken (the owner, October 14: "Broken Files process should not detect
+# broken files on Info, Weather or custom audio streaming stations"). INFO's
+# film now; a built-in station to come adds its own.
+MADE_HERE = frozenset({KEY})
+
+
+def made_here(rating_key: str) -> bool:
+    return rating_key in MADE_HERE
+
+
 def is_info_source(source: dict[str, Any]) -> bool:
     return source.get("type") == "info"
 
@@ -151,6 +164,64 @@ def program() -> Item:
         0, 0, LENGTH_MS, KEY, "movie", TITLE, summary=SUMMARY, year=2026,
         file_path=str(FILE), rating="G",
     )  # fmt: skip
+
+
+# In the guides (1.36.2, the owner, October 14: "the guide looks like
+# garbage", a listing every 2 minutes, the film's length, and "Unknown"
+# before the first): INFO airs in back-to-back blocks of this many hours,
+# from local midnight, each saying what it shows. What plays is unchanged.
+BLOCK_HOURS = 4
+
+
+def _block_start(at_ms: int) -> int:
+    """The start of the block `at_ms` is in, by this server's clock and
+    time zone (a day with a clock change has one block an hour longer or
+    shorter)."""
+    t = time.localtime(at_ms // 1000)
+    hour = t.tm_hour - t.tm_hour % BLOCK_HOURS
+    return int(time.mktime((t.tm_year, t.tm_mon, t.tm_mday, hour, 0, 0, 0, 0, -1)) * 1000)
+
+
+def _block_end(start_ms: int) -> int:
+    t = time.localtime(start_ms // 1000)
+    hour = t.tm_hour - t.tm_hour % BLOCK_HOURS + BLOCK_HOURS
+    end = int(time.mktime((t.tm_year, t.tm_mon, t.tm_mday, hour, 0, 0, 0, 0, -1)) * 1000)
+    return end if end > start_ms else start_ms + BLOCK_HOURS * 3600_000
+
+
+def listing_summary() -> str:
+    """What each block says it shows: this version's highlights too."""
+    new = highlights()
+    return SUMMARY + (f" New in tapiOca {__version__}: {'; '.join(new[:3])}." if new else "")
+
+
+class Listings:
+    """INFO as the guides show it: a schedule's between, locate, after and
+    special (see schedule.StationSchedule), in blocks (see BLOCK_HOURS)."""
+
+    def __init__(self) -> None:
+        self.summary = listing_summary()
+
+    def _slot(self, start_ms: int) -> Slot:
+        end_ms = _block_end(start_ms)
+        item = Item(0, 0, end_ms - start_ms, KEY, "movie", TITLE, summary=self.summary)
+        return Slot(item, 0, 0, start_ms, end_ms)
+
+    def locate(self, at_ms: int) -> Slot:
+        return self._slot(_block_start(at_ms))
+
+    def after(self, slot: Slot) -> Slot:
+        return self._slot(slot.end_ms)
+
+    def between(self, from_ms: int, to_ms: int) -> Iterator[Slot]:
+        """Every block overlapping [from_ms, to_ms), in order."""
+        slot = self.locate(from_ms)
+        while slot.start_ms < to_ms:
+            yield slot
+            slot = self.after(slot)
+
+    def special(self, slot: Slot) -> None:
+        return None
 
 
 def media() -> Media:

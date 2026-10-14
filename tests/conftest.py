@@ -18,8 +18,12 @@ def test_clients_at_home(monkeypatch):
 
     real = TestClient.__init__
 
-    def at_home(self, *args, client=("192.168.1.50", 50000), **kw):
-        real(self, *args, client=client, **kw)
+    def at_home(self, *args, client=("192.168.1.50", 50000), headers=None, **kw):
+        # (And as tapiOca's own page asks, with its header: see
+        # access.PAGE_HEADER, 1.36.2. Tests of what's refused without it
+        # send their own requests.)
+        headers = {"X-Tapioca-Page": "1", **(headers or {})}
+        real(self, *args, client=client, headers=headers, **kw)
 
     monkeypatch.setattr(TestClient, "__init__", at_home)
 

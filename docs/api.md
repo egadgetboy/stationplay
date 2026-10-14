@@ -32,6 +32,12 @@ part of this API, and they may change with any release.
 - **Times.** Times are milliseconds since 1970 (UTC).
 - **Errors.** An error is an HTTP status with `{"detail": "..."}`, a
   sentence you can show unchanged.
+- **From a web page.** A change (`POST`) sent by a browser, which says so
+  with an `Origin` header, needs a token, or the header
+  `X-Tapioca-Page: 1` that tapiOca's own page sends (403 otherwise, from
+  1.36.2). That keeps another site's page from making changes through a
+  browser at home while sign-in is off. Scripts send no `Origin`, so
+  nothing changes for them.
 
 ## Tokens
 
@@ -147,6 +153,10 @@ days after `from` (400 otherwise).
 | `stations[].number` | number | The station's number |
 | `stations[].programs` | list | Its programs that overlap `from` to `to`, in order |
 | `stations[].programs[]` | program | One program |
+
+The INFO station (99) is listed in 4-hour blocks from midnight, by the
+server's clock, each saying what it shows (from 1.36.2). It plays its
+2-minute film over and over all the same.
 
 ## Playing a station
 

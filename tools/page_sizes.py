@@ -69,6 +69,9 @@ from app.setup import META_ANSWERED as SETUP_ANSWERED  # noqa: E402
 from tests.fakeplex_library import LibraryPlex  # noqa: E402
 from tests.helpers import Proxy  # noqa: E402
 
+# What tapiOca's page sends with each request (see app/access.py, PAGE_HEADER).
+PAGE = {"X-Tapioca-Page": "1"}
+
 # Phones (and one on its side), tablets and computers.
 SIZES = {
     "phone": ["360x740", "390x844", "430x932", "844x390"],
@@ -358,7 +361,7 @@ def fill(sp: Running, data: Path) -> None:
     on, which sends an Admin's alert; and Tuner access, with two devices
     listed and four that used the tuner lately."""
     ctx = sp.ctx
-    with httpx.Client(base_url=sp.home, timeout=60) as home:
+    with httpx.Client(headers=PAGE, base_url=sp.home, timeout=60) as home:
 
         def ok(response: httpx.Response) -> Any:
             assert response.is_success, (response.request.url, response.status_code, response.text)
@@ -1631,7 +1634,9 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
         page.evaluate("""() => { awayNow.reach = {...awayNow.reach, state: 'checking',
           detail: 'https://tv.example.com reaches tapiOca through a reverse proxy at 172.17.0.1, which isn’t a trusted proxy yet. Until it is, tapiOca can’t tell that the request came over HTTPS, so it turns apps away there. Choose Trust this proxy to fix it. Checking again in a minute to be sure.',
           trustProxy: {address: '172.17.0.1', relay: true}}; paintAway(); }""")
-        page.evaluate("() => document.querySelector('#awayBody .reach').scrollIntoView({block: 'center'})")
+        page.evaluate(
+            "() => document.querySelector('#awayBody .reach').scrollIntoView({block: 'center'})"
+        )
         look.expect("Trust this proxy, in the away check", page.is_visible(
             "#awayBody .reach-trust button:has-text('Trust this proxy')"), True)  # fmt: skip
         look("access-away-trust")
@@ -1839,13 +1844,14 @@ def main() -> None:
                                 signed = context.request.post(
                                     f"{sp.home}/api/access/sign-in",
                                     data=ADMIN if person == "admin" else USER,
+                                    headers=PAGE,
                                 )
                                 assert signed.ok, signed.text()
                             if person == "signin-pin":
                                 # (Signed in with a password before, at home: the
                                 # browser's kept, its session isn't.)
                                 signed = context.request.post(
-                                    f"{sp.home}/api/access/sign-in", data=JO
+                                    f"{sp.home}/api/access/sign-in", data=JO, headers=PAGE
                                 )
                                 assert signed.ok, signed.text()
                                 context.clear_cookies(name=SESSION_COOKIE)

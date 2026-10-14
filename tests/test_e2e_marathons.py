@@ -13,6 +13,7 @@ import pytest
 from app import marathons
 
 from .fakeplex import FakePlex
+from .helpers import PAGE
 from .test_e2e import assert_clean_stream, ff, record, start_server
 from .test_e2e_skipping import UV, runs
 
@@ -56,7 +57,7 @@ async def test_a_marathon_airs_and_the_station_carries_on(tmp_path, monkeypatch)
     )
     base, app, _settings, srv, task = await start_server(tmp_path, plex)
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             made = (
                 await client.post(
                     "/api/channels",

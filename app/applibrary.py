@@ -70,10 +70,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 NONE_SHARED = "No Media folders are shared with tapiOca's apps"
-AWAY_OFF = (
-    "Media can be watched away from home once an Admin turns on tapiOca's apps "
-    "away from home, on the Access tab."
-)
+AWAY_OFF = "Media on this tapiOca server can only be watched at home right now."
 PLAY_ENDED = "That program's address has ended. Choose it again to play it."
 # Even sound for a show's episodes, as a copy's `why` says it (the apps show
 # it in their player).

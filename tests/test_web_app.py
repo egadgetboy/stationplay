@@ -21,6 +21,7 @@ from app.main import WEB_DIR, create_app
 from app.plex import PlexClient
 
 from .fakeplex import FakePlex
+from .helpers import PAGE as FROM_PAGE
 from .helpers import page_code
 from .test_security import PAT, both_ports
 
@@ -87,15 +88,15 @@ async def test_installing_needs_no_sign_in_at_home_or_from_the_internet(tmp_path
     async with both_ports(tmp_path) as (home, internet):
         wanted = ["/manifest.webmanifest", "/apple-touch-icon.png", *ICONS]
         # From the internet before there's a user, when only the sign-in page is shown.
-        async with httpx.AsyncClient(base_url=internet) as outside:
+        async with httpx.AsyncClient(headers=FROM_PAGE, base_url=internet) as outside:
             assert (await outside.get("/api/status")).status_code == 403
             for path in wanted:
                 assert (await outside.get(path)).status_code == 200, path
-        async with httpx.AsyncClient(base_url=home) as inside:
+        async with httpx.AsyncClient(headers=FROM_PAGE, base_url=home) as inside:
             assert (await inside.post("/api/access/users", json=PAT)).status_code == 201
         # And with signing in on, before signing in.
         for base in (home, internet):
-            async with httpx.AsyncClient(base_url=base) as visitor:
+            async with httpx.AsyncClient(headers=FROM_PAGE, base_url=base) as visitor:
                 assert (await visitor.get("/api/channels")).status_code == 401
                 for path in wanted:
                     got = await visitor.get(path)
@@ -108,16 +109,16 @@ async def test_the_pages_files_need_no_sign_in_at_home_or_from_the_internet(tmp_
     others = [f"/web/index.html?v={__version__}", f"/web/..%2fmain.py?v={__version__}"]
     async with both_ports(tmp_path) as (home, internet):
         # From the internet before there's a user, when only the sign-in page is shown.
-        async with httpx.AsyncClient(base_url=internet) as outside:
+        async with httpx.AsyncClient(headers=FROM_PAGE, base_url=internet) as outside:
             for path in wanted:
                 assert (await outside.get(path)).status_code == 200, path
             for path in others:
                 assert (await outside.get(path)).status_code == 403, path
-        async with httpx.AsyncClient(base_url=home) as inside:
+        async with httpx.AsyncClient(headers=FROM_PAGE, base_url=home) as inside:
             assert (await inside.post("/api/access/users", json=PAT)).status_code == 201
         # And with signing in on, before signing in.
         for base in (home, internet):
-            async with httpx.AsyncClient(base_url=base) as visitor:
+            async with httpx.AsyncClient(headers=FROM_PAGE, base_url=base) as visitor:
                 for path in wanted:
                     got = await visitor.get(path)
                     assert got.status_code == 200, (base, path)
@@ -487,15 +488,15 @@ async def test_the_brands_icons_and_fonts_need_no_sign_in_at_home_or_from_the_in
     wanted = [*FAVICONS, *FONTS]
     others = ["/fonts/SpaceGrotesk/OFL.txt", "/fonts/..%2findex.html", "/favicon.png"]
     async with both_ports(tmp_path) as (home, internet):
-        async with httpx.AsyncClient(base_url=internet) as outside:
+        async with httpx.AsyncClient(headers=FROM_PAGE, base_url=internet) as outside:
             for path in wanted:
                 assert (await outside.get(path)).status_code == 200, path
             for path in others:
                 assert (await outside.get(path)).status_code == 403, path
-        async with httpx.AsyncClient(base_url=home) as inside:
+        async with httpx.AsyncClient(headers=FROM_PAGE, base_url=home) as inside:
             assert (await inside.post("/api/access/users", json=PAT)).status_code == 201
         for base in (home, internet):
-            async with httpx.AsyncClient(base_url=base) as visitor:
+            async with httpx.AsyncClient(headers=FROM_PAGE, base_url=base) as visitor:
                 assert (await visitor.get("/api/channels")).status_code == 401
                 for path in wanted:
                     got = await visitor.get(path)

@@ -27,6 +27,7 @@ from app.plex import PlexClient
 from app.sources import ResolvedSource
 
 from .fakeplex_library import LibraryPlex
+from .helpers import PAGE
 from .test_e2e import make_channel, start_server
 from .test_hls import two_episode_show
 
@@ -506,8 +507,8 @@ async def test_an_apps_station_viewing_counts_for_whoever_is_signed_in(
     try:
         await make_channel(base)  # (station 7, Test TV)
         async with (
-            httpx.AsyncClient(base_url=base, timeout=60) as page,
-            httpx.AsyncClient(base_url=base, timeout=60) as tv,
+            httpx.AsyncClient(headers=PAGE, base_url=base, timeout=60) as page,
+            httpx.AsyncClient(headers=PAGE, base_url=base, timeout=60) as tv,
         ):
             assert (await page.post("/api/access/users", json=PAT)).status_code == 201
             signed = await tv.post("/api/internal/sign-in", json={**PAT, **DEN})

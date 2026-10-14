@@ -31,6 +31,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex_library import LibraryPlex
+from .helpers import PAGE
 
 needs_ffmpeg = pytest.mark.skipif(
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None, reason="needs ffmpeg"
@@ -982,7 +983,9 @@ def test_devices_asking_at_the_same_moment_cant_all_get_past_the_limit(app):
 
     async def ask(n: int) -> int:
         transport = httpx.ASGITransport(app=app, client=(f"10.0.2.{n}", 50000))
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as device:
+        async with httpx.AsyncClient(
+            headers=PAGE, transport=transport, base_url="http://testserver"
+        ) as device:
             asked = {"key": "400", "device": PHONE, "convert": True}
             return (await device.post("/api/internal/play", json=asked)).status_code
 

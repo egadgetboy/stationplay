@@ -15,6 +15,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex import FakePlex
+from .helpers import PAGE
 from .test_e2e import record, start_server
 from .test_intro import media as colours
 
@@ -112,7 +113,7 @@ async def test_watching_a_station_is_counted_when_you_stop(tmp_path, monkeypatch
         tmp_path, plex, media_dir=str(tmp_path / "media")
     )
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             made = await client.post(
                 "/api/channels",
                 json={"number": 5, "sources": [{"type": "show", "ratingKey": "100"}]},

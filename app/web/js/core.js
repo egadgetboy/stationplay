@@ -23,9 +23,11 @@ const plexUsed = () => (status?.plexUsed ?? status?.plex?.used) !== false;
 
 // opts.body is sent as JSON; opts.raw (a file) as it is. opts.blob: the answer is a file.
 async function api(path, opts = {}) {
+  // (X-Tapioca-Page: what the server asks of every change made from its
+  // page, which a page on another site can't send. See access.py.)
   const res = await fetch(path, {
-    headers: opts.body ? { 'Content-Type': 'application/json' } : {},
     ...opts,
+    headers: { 'X-Tapioca-Page': '1', ...(opts.body ? { 'Content-Type': 'application/json' } : {}), ...(opts.headers || {}) },
     body: opts.raw ?? (opts.body ? JSON.stringify(opts.body) : undefined),
   });
   if (!res.ok) {

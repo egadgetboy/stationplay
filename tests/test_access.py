@@ -20,6 +20,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex import FakePlex
+from .helpers import PAGE
 
 PAT = {"name": "Pat", "password": "correct horse"}
 SAM = {"name": "Sam", "password": "battery staple"}
@@ -335,7 +336,9 @@ def test_its_decided_again_once_the_body_has_arrived(app):
 
         async def held():
             transport = httpx.ASGITransport(app=app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://sp") as client:
+            async with httpx.AsyncClient(
+                headers=PAGE, transport=transport, base_url="http://sp"
+            ) as client:
                 return await client.post(
                     "/api/access/users",
                     content=slowly(),
@@ -598,7 +601,7 @@ def test_two_stations_at_once_cant_both_take_the_last_place(pat, app):
     async def both():
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
-            transport=transport, base_url="http://sp", cookies=dict(sam.cookies)
+            headers=PAGE, transport=transport, base_url="http://sp", cookies=dict(sam.cookies)
         ) as client:
             return await asyncio.gather(*(
                 client.post("/api/channels", json={"number": n, "sources": [{"type": "show", "ratingKey": "100"}]})

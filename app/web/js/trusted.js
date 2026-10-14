@@ -10,7 +10,7 @@ const DOOR_SEEN = {
   'home-port': d => `${d.address} reached the home port from the internet.`,
   proxy: d => `${d.address} sent internet visitors to the home port.`,
   name: d => `${d.address} asked for the home port by the name ${d.host || 'an internet name'}.`,
-  'proxy-unknown': d => `tapiOca ignored forwarding headers from ${d.address}: it isn’t a trusted proxy.`,
+  'proxy-unknown': d => `A proxy at ${d.address} isn’t trusted, so tapiOca ignored what it said about its visitors.`,
 };
 async function loadTrusted() {
   try {
@@ -162,17 +162,21 @@ function renderProxies() {
     h('div', { class: 'field' }, h('label', { for: 'proxyAddress' }, 'Proxy’s IP address'), address),
     h('div', { class: 'field' }, h('label', { for: 'proxyLabel' }, 'Name (optional)'), label),
     h('button', { type: 'submit', class: 'btn primary' }, 'Add'));
-  const seen = got.doors.slice().sort((a, b) => b.lastMs - a.lastMs);
+  // (Not a proxy that's listed since: the owner, October 14, saw "it isn't
+  // a trusted proxy" beside the proxy he'd just trusted.)
+  const listedNow = d => d.about === 'proxy-unknown' && proxies.some(p => [d.address, `${d.address}/32`, `${d.address}/128`].includes(p.network));
+  const seen = got.doors.filter(d => !listedNow(d)).sort((a, b) => b.lastMs - a.lastMs);
   $('#proxiesBody').replaceChildren(...[
-    h('p', { style: 'margin:0' }, 'Your reverse proxy or tunnel, by its address on your home network (127.0.0.1 for a tunnel in tapiOca’s own container). tapiOca believes the visitor’s address a proxy sends only from one listed here, never just because it sends one.'),
+    h('p', { style: 'margin:0' }, 'The reverse proxy that brings tapiOca’s apps in from the internet. tapiOca believes what a proxy says about its visitors only when it’s listed here. To add yours, choose Trust this proxy when tapiOca offers it, under tapiOca’s apps away from home, or enter its address below (127.0.0.1 for a tunnel in tapiOca’s own container).'),
     proxies.length ? h('table', { class: 'users trusted-list' },
       h('thead', {}, h('tr', {}, h('th', {}, 'Proxy'), h('th', {}, ''))),
       h('tbody', {}, ...proxies.map(p => h('tr', {},
         h('td', {}, h('strong', {}, p.label || p.network), p.label ? h('span', { class: 'hint' }, p.network) : null,
           // (Docker's gateway or this machine's own address: see relays.py.)
-          p.relay ? h('span', { class: 'hint' }, warnIcon(), ' This is Docker’s own address, or this computer’s, which carries other connections too. Nothing is trusted through it, and wrong passwords at home through it count as it. What comes from it with no forwarding headers, such as Plex or another container, is taken as from it, at home. List it only for a proxy in another container on this server.') : null),
+          // (Said plainly, the owner, October 14: "Also over my head a bit.")
+          p.relay ? h('span', { class: 'hint' }, 'Docker’s address on this server. Your proxy in another container uses it, and so do Plex and your other apps, which keep working.') : null),
         h('td', {}, h('button', { class: 'btn danger', type: 'button', onclick: () => {
-          if (!confirm(`Remove ${p.label || p.network}? Visitors through it then count as its own address.`)) return;
+          if (!confirm(`Remove ${p.label || p.network}? Apps coming in through it from outside are turned away until it’s trusted again.`)) return;
           save(proxies.filter(x => x.network !== p.network), `${p.label || p.network} is off the list`);
         } }, 'Remove'))))))
       : h('p', { class: 'muted small', style: 'margin:0' }, 'No proxies are listed.'),

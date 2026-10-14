@@ -13,6 +13,11 @@ from app.schedule import EraSchedule
 
 from .fakeplex import FakePlex
 
+# What tapiOca's page sends with each request (see access.PAGE_HEADER): the
+# tests' clients send it as the page would (and so do tests' TestClients:
+# see conftest.py).
+PAGE = {"X-Tapioca-Page": "1"}
+
 
 class LegacyChannel(NamedTuple):
     """A station as stored before eras: its schedule came from these."""

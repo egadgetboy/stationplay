@@ -281,11 +281,33 @@ async def test_a_check_waits_10_seconds_at_most(monkeypatch):
     assert status.state == "cant-check" and "within 0.2 seconds" in status.detail
 
 
-async def test_with_sign_in_off_apps_cant_get_in_through_the_public_port():
-    r = reach_at("https://tv.example.com", signed_in=False)
+async def test_with_sign_in_off_the_address_works_and_sign_in_is_the_next_step():
+    """(1.36.2, by design: until then, "reaches tapiOca, but sign-in is off,
+    so apps can't sign in through the public port", checked again each
+    minute and then Down, which read as tapiOca broken. The owner, October
+    14: "This seems to be process not error, but this comes across as an
+    error.") The address works; turning on sign-in is the step left, said
+    as one at once, never Down, and never an alert or a warning in the
+    log."""
+    clock = Clock()
+    r = reach_at("https://tv.example.com", signed_in=False, clock=clock)
     answering(r, ready(r))
     status = await r.check_now()
-    assert status.state == "checking" and "sign-in is off" in status.detail
+    assert (status.state, status.short) == ("next-step", "Needs sign-in")
+    assert status.detail == (
+        "Your address works: https://tv.example.com reaches tapiOca. One step left: turn on "
+        "sign-in. Apps sign in when they're away from home."
+    )
+    # Not a problem: checked again as usual, not in a minute, and never Down.
+    assert r._due == clock() + reach.EVERY_S
+    clock.now += reach.EVERY_S
+    assert (await r.check_now()).state == "next-step"
+    # Sign-in turned on: checked again at once (not minutes later), and Ready.
+    r.access.required = True
+    checking = r.status()
+    assert checking.state == "checking" and checking.detail.startswith("Sign-in is on. Checking")
+    assert r._due <= clock()
+    assert (await r.check_now()).state == "up"
     # Through a VPN, to the home port, they don't sign in at all.
     r = reach_at("http://nas.tailnet.ts.net:3310", signed_in=False)
     answering(r, stationplay(r, outside=False, https=False))
@@ -548,9 +570,11 @@ def test_stationplay_answers_its_own_check_on_both_ports(app):
         said = proxy.answers[-1]
         assert said.status_code == 200 and said.headers["stationplay-api"] == "1"
         assert said.json() == {"stationplay": True, "port": "public", "https": False}
-        # Over HTTPS, but with sign-in off: apps can't sign in there.
+        # Over HTTPS, but with sign-in off: the address works, and turning
+        # on sign-in is the step left.
         ctx.reach.transport = Proxy(app, PUBLIC_PORT).transport
-        assert "sign-in is off" in home.post("/api/away/check").json()["detail"]
+        step = home.post("/api/away/check").json()
+        assert step["state"] == "next-step" and step["detail"].startswith("Your address works")
         assert home.post("/api/access/users", json=PAT).status_code == 201
         proxy = Proxy(app, PUBLIC_PORT)
         ctx.reach.transport = proxy.transport
@@ -819,11 +843,18 @@ def test_a_listed_docker_gateway_leaves_plex_and_the_apps_at_home_alone(app):
         token = bearer(signed.json()["token"])
         assert gateway.get("/api/internal/me", headers=token).status_code == 200
         assert "trusted" not in gateway.get("/api/access/me").json()
-        # (A proxy that isn't a relay keeps 1.36.0's rule: naming nobody at
-        # home, it's taken as a proxy pointed at the home port.)
+        # (1.36.2, by design: a proxy that isn't a relay is itself too when
+        # it names nobody, as trusted proxies are everywhere, so Plex on its
+        # computer keeps the tuner. Until then it was the internet, which
+        # took the tuner and guide from the owner's Plex, October 14. What
+        # it names from the internet is still the internet.)
         ctx.trusted.save({"proxies": [{"network": "192.168.1.3"}]}, by=None)
         box = TestClient(app, client=("192.168.1.3", 5))
-        assert box.get("/discover.json").status_code == 404
+        for path in ("/discover.json", "/lineup.json", "/xmltv.xml"):
+            assert box.get(path).status_code == 200, path
+        assert "trusted" not in box.get("/api/access/me").json()
+        visitor = {"X-Forwarded-For": "203.0.113.9"}
+        assert box.get("/discover.json", headers=visitor).status_code == 404
 
 
 def test_what_cant_be_trusted_isnt_offered(app):
@@ -841,13 +872,17 @@ def test_what_cant_be_trusted_isnt_offered(app):
         found = home.post("/api/away/check").json()
         assert "trustProxy" not in found and "remove one on the Access tab" in found["detail"]
         ctx.trusted.save({"proxies": []}, by=None)
-        # Nor a computer that uses the tuner too (Plex on the proxy's
-        # computer): listed, Plex would lose the tuner.
+        # (1.36.2, by design: a computer that uses the tuner too, such as
+        # Plex on the proxy's computer, is offered like any other now.
+        # Listed, what it asks for itself, naming nobody, stays at home, so
+        # Plex keeps the tuner: see test_networks.py.)
         plex = TestClient(app, client=("192.168.1.3", 5), headers={"User-Agent": "PlexMediaServer"})
         assert plex.get("/discover.json").status_code == 200
         found = home.post("/api/away/check").json()
-        assert "trustProxy" not in found
-        assert "That address is Plex's too, or uses tapiOca's tuner" in found["detail"]
+        assert found["trustProxy"] == {"address": "192.168.1.3", "relay": False}
+        assert trust(home).json()["state"] == "up"
+        for path in ("/discover.json", "/lineup.json", "/xmltv.xml"):
+            assert plex.get(path).status_code == 200, path
 
 
 def test_only_the_newest_check_and_the_first_answer_count():
@@ -900,23 +935,31 @@ def test_the_page_says_what_trusting_the_proxy_does():
     )
     done = subprocess.run(["node", "-e", code], capture_output=True, text=True, timeout=30)
     plain, relay = json.loads(done.stdout)
+    # (1.36.2: what the computer asks for itself keeps working, so the
+    # words say that now, not that it's taken as the internet.)
     assert plain == (
         "This lists 192.168.1.3 under Trusted proxies, on the Access tab. tapiOca then believes "
-        "what it says about each visitor: who they are, and that they came over HTTPS. Anything "
-        "else from that computer with no forwarding headers, such as Plex, is then taken as from "
-        "the internet, so trust it only if it runs just your proxy."
+        "what it says about each visitor: who they are, and that they came over HTTPS. Plex, or "
+        "anything else on that computer, keeps working as before. Trust it only if it’s your "
+        "reverse proxy."
     )
-    assert relay.startswith("172.17.0.1 is Docker’s own address, or this computer’s, which "
-                            "carries other connections too.")  # fmt: skip
-    assert "Trust it only for a reverse proxy in another container on this server." in relay
+    # (1.36.2: said plainly, the owner, October 14: "Also over my head a bit.")
+    assert relay == (
+        "172.17.0.1 is Docker’s address on this server. Your reverse proxy in another container "
+        "reaches tapiOca through it, and so do Plex and your other apps, which keep working. "
+        "Trust it only if your proxy runs in a container on this server."
+    )
     # (The button sends the address it showed.)
     assert "body: { address: awayNow?.reach?.trustProxy?.address || '' }" in script
 
 
-def test_plexs_own_address_isnt_offered_before_plex_uses_the_tuner(tmp_path):
-    """The cold audit of 1.36.1, again: the setup asks about watching away
-    from home before Plex's step, and recent tuner use is kept in memory
-    only. PLEX_URL's own address is known all along."""
+def test_plexs_own_address_is_offered_and_plex_keeps_the_tuner(tmp_path):
+    """(1.36.2, by design.) In 1.36.1, PLEX_URL's own address wasn't
+    offered, since listed, Plex there would lose the tuner (its cold audit).
+    Now a listed proxy naming nobody is the device itself, at home, so Plex
+    on the proxy's computer keeps the tuner and guide: the owner's Plex DVR
+    setup, October 14, "There was a problem fetching channel mappings."
+    """
     fp = FakePlex()
     settings = Settings(
         plex_url="http://192.168.1.3:32400", plex_token="token", data_dir=tmp_path / "data",
@@ -929,8 +972,11 @@ def test_plexs_own_address_isnt_offered_before_plex_uses_the_tuner(tmp_path):
         away_on(home)
         app.state.ctx.reach.transport = UnlistedProxy(app).transport
         found = home.post("/api/away/check").json()
-        assert "trustProxy" not in found
-        assert "That address is Plex's too" in found["detail"]
+        assert found["trustProxy"] == {"address": "192.168.1.3", "relay": False}
+        assert trust(home).json()["state"] == "up"
+        plex = TestClient(app, client=("192.168.1.3", 5), headers={"User-Agent": "PlexMediaServer"})
+        for path in ("/discover.json", "/lineup.json", "/xmltv.xml"):
+            assert plex.get(path).status_code == 200, path
 
 
 def test_a_relay_saying_only_https_is_trusted_and_ready(app):

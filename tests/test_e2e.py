@@ -26,7 +26,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex import FakePlex
-from .helpers import like_plex
+from .helpers import PAGE, like_plex
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
 
@@ -177,7 +177,7 @@ async def server(tmp_path, media):
 
 
 async def make_channel(base: str, number: int = 7) -> dict:
-    async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+    async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
         created = await client.post(
             "/api/channels",
             json={
@@ -219,7 +219,10 @@ def media_seconds(path: Path) -> float:
 async def record(url: str, seconds: float) -> bytes:
     buf = bytearray()
     deadline = time.monotonic() + seconds
-    async with httpx.AsyncClient(timeout=30) as client, client.stream("GET", url) as resp:
+    async with (
+        httpx.AsyncClient(headers=PAGE, timeout=30) as client,
+        client.stream("GET", url) as resp,
+    ):
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "video/mp2t"
         async for chunk in resp.aiter_bytes():
@@ -262,7 +265,7 @@ def packet_times(path: Path, stream: str) -> list[tuple[float, float]]:
 
 async def test_channel_survives_bad_files_and_stays_on_schedule(server, tmp_path):
     base, app, _plex, settings = server
-    async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+    async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
         # Plex's side of the handshake
         discover = (await client.get("/discover.json")).json()
         # (Twice tapiOca's 4: see playback.announced.)
@@ -316,7 +319,9 @@ async def test_channel_survives_bad_files_and_stays_on_schedule(server, tmp_path
     engine = app.state.ctx.broadcasters.get(channel["id"])
     assert engine is not None and engine.now_playing is not None
     guide_now = (
-        await httpx.AsyncClient(base_url=base).get(f"/api/channels/{channel['id']}/guide?hours=1")
+        await httpx.AsyncClient(headers=PAGE, base_url=base).get(
+            f"/api/channels/{channel['id']}/guide?hours=1"
+        )
     ).json()[0]
     assert engine.now_playing.slot_start_ms <= guide_now["end"]
 
@@ -443,7 +448,7 @@ async def test_two_viewers_share_a_channel_and_it_restarts_on_schedule(server, t
     # Tuning back in picks up wherever the schedule is now.
     again = await record(f"{base}/stream/7", 4)
     assert len(again) > 50_000
-    async with httpx.AsyncClient(base_url=base) as client:
+    async with httpx.AsyncClient(headers=PAGE, base_url=base) as client:
         guide = (await client.get(f"/api/channels/{channel['id']}/guide?hours=1")).json()
     # The engine runs a few seconds ahead of the clock, so it may already be
     # on the next slot; either way it is playing a slot the guide shows now.
@@ -503,7 +508,7 @@ async def test_file_shorter_than_plex_says_is_not_broken(tmp_path, media):
         elapsed = time.time() - started
         engine = app.state.ctx.broadcasters[channel["id"]]
         playing_slot = engine.now_playing.slot_start_ms
-        async with httpx.AsyncClient(base_url=base) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base) as client:
             guide = (await client.get(f"/api/channels/{channel['id']}/guide?hours=1")).json()
     finally:
         srv.should_exit = True
@@ -653,7 +658,7 @@ async def test_the_broken_files_list_clears_itself(tmp_path, media):
         plex.down = False
 
         # From the Broken files tab.
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             started = (await client.post("/api/broken/check")).json()
             assert started["running"]
             again = (await client.post("/api/broken/check")).json()  # (one at a time)
@@ -743,7 +748,7 @@ async def test_gpu_failure_mid_program_continues_same_program_on_cpu(tmp_path, m
         started = time.time()
         data = await record(f"{base}/stream/7", 2.6 * CLIP_S)
         elapsed = time.time() - started
-        async with httpx.AsyncClient(base_url=base) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base) as client:
             status = (await client.get("/api/status")).json()
     finally:
         srv.should_exit = True
@@ -852,7 +857,7 @@ async def test_episodes_play_at_one_loudness_and_movies_keep_theirs(tmp_path, me
     plex.add_movie("300", "Loud Movie", str(media["loudmovie"]), CLIP_S * 1000, year=1999)
     base, _app, _settings, srv, task = await start_server(tmp_path, plex)
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             created = await client.post(
                 "/api/channels",
                 json={
@@ -981,7 +986,7 @@ async def test_picture_setting_applies_from_the_next_program(tmp_path):
             "aspectMode": "fit",
             "sources": [{"type": "show", "ratingKey": "100"}],
         }
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             station = (await client.post("/api/channels", json=body)).json()
 
             async def change_mid_program() -> float:
@@ -1027,7 +1032,7 @@ async def test_picture_setting_applies_from_the_next_program(tmp_path):
         # Nobody watching now. Switch back to black bars, then tune in: the
         # new setting is there from the first frame.
         await asyncio.sleep(3)
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             back = await client.put(f"/api/channels/{station['id']}", json=body)
             assert back.json()["builtAt"] == station["builtAt"]
         retuned = tmp_path / "retuned.ts"
@@ -1069,7 +1074,7 @@ async def test_zoom_fills_every_kind_of_4x3_file(tmp_path):
         plex.add_episode(str(200 + n), "100", 1, n, name, str(path), clip_s * 1000)
     base, _app, _settings, srv, task = await start_server(tmp_path, plex)
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             created = await client.post(
                 "/api/channels",
                 json={
@@ -1158,7 +1163,7 @@ async def test_an_update_takes_over_seamlessly_while_watching(tmp_path, monkeypa
         plex.add_episode(f"20{n}", "100", 1, n, colours[n - 1], str(d / f"{n}.mkv"), clip_s * 1000)
     base, _app, _settings, srv, task = await start_server(tmp_path, plex)
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             station = (
                 await client.post(
                     "/api/channels",

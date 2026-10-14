@@ -25,6 +25,7 @@ from app.scanner import quick_check
 
 from .dovi import add_dolby_vision
 from .fakeplex import FakePlex
+from .helpers import PAGE
 from .test_breaks import library
 from .test_e2e import assert_clean_stream, record, start_server
 
@@ -289,7 +290,7 @@ async def test_a_dolby_vision_5_program_is_replaced_as_it_comes_up(tmp_path, mon
     plex.add_episode("202", "100", 1, 2, "Fine", str(d / "fine.mkv"), 6000)
     base, app, _settings, srv, task = await start_server(tmp_path, plex)
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             made = await client.post(
                 "/api/channels",
                 json={
