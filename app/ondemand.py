@@ -1098,6 +1098,19 @@ def resume_at(row: tuple[int, bool] | None) -> int:
     return position if position >= STARTED_MS else 0
 
 
+# Resume starts a little before where someone stopped, so they pick up the
+# thread (the owner, October 14: "rewind 15 seconds and then play"; from
+# 1.36.3). Done here, so every app gets it, and every app already installed.
+RESUME_BACK_MS = 15_000
+
+
+def resume_from(row: tuple[int, bool] | None) -> int:
+    """Where playing starts again (a play answer's resumeMs): RESUME_BACK_MS
+    before where they stopped (resume_at), never before the start."""
+    at = resume_at(row)
+    return max(0, at - RESUME_BACK_MS) if at else 0
+
+
 def progressed(
     old: tuple[int, bool] | None, position_ms: int, entry: Entry, length_ms: int | None = None
 ) -> tuple[int, bool]:

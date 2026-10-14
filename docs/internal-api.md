@@ -1621,7 +1621,7 @@ is, and otherwise offer it. With none, say so plainly.
 | `chosen.subtitle` | string or null | The subtitle track to show: select it in the player (for a file of its own, add it from `subtitles[].url`), unless it's `drawnSubtitle`; null for none |
 | `chosen.subtitleWhy` | string | Why: "English subtitles, as you chose", "Forced English subtitles, for the parts in another language", "Subtitles are off" (from 1.29.1; "captions" before) |
 | `leave` | string | Where to `POST` when the player stops |
-| `resumeMs` | number | Where this person stopped last time (0: the start). Offer to resume there, or start over |
+| `resumeMs` | number | Where playing starts again: 15 seconds before where this person stopped (from 1.36.3; exactly there before), never before the start (0: the start). Offer to resume there, or start over |
 | `durationMs` | number or null | How long it is |
 | `bitrateKbps` | number or null | What the file (or a converted copy) needs, in kilobits a second: to tell, when playing keeps stopping to load, whether the connection is too slow for it (see `/api/internal/speed-test`) |
 | `version` | string or null | The version playing |

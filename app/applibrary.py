@@ -1447,7 +1447,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         session.copy = converting.Copy(settings.ffmpeg_path, source, plan, folder, first=task,
                                        gpu=ctx.gpu, name=describe(e))  # fmt: skip
         session.copy.trouble = lambda at_s, why: trouble(session, at_s, why)
-        resume = ondemand.resume_at(ctx.db.progress_of(user_id, [e.key]).get(e.key))
+        resume = ondemand.resume_from(ctx.db.progress_of(user_id, [e.key]).get(e.key))
         session.start_s = (body.startMs if body.startMs is not None else resume) / 1000
         cant = ondemand.unplayable(media, dev)
         if sound is not None and sound.codec and sound.codec not in dev.audio:
@@ -1682,7 +1682,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "drawnSubtitle": None,
             "chosen": chosen(picked, sound, shown_for(picked, None, shows, copy=False)),
             "leave": f"{here}/leave",
-            "resumeMs": ondemand.resume_at(ctx.db.progress_of(user_id, [e.key]).get(e.key)),
+            "resumeMs": ondemand.resume_from(ctx.db.progress_of(user_id, [e.key]).get(e.key)),
             "durationMs": media.duration_ms or e.duration_ms,
             "bitrateKbps": media.bitrate_kbps,
             "version": media.id or None,
