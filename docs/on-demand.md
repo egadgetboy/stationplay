@@ -154,6 +154,7 @@ browsing rarely asks Plex for them.
 | `GET /art/{key}?kind=&w=` | A picture: `poster` (2:3), `backdrop` (16:9) or `thumb` (an episode's still) |
 | `POST /play` | Starts playing a program, and answers how and where |
 | `POST /progress` | Where someone is in a program, or marks it watched or not |
+| `POST /watched` | A whole show, or one season, marked watched or not at once (from 1.36.3) |
 
 ## Lists
 
