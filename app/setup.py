@@ -49,6 +49,8 @@ META_ANSWERED = "setup_answered"  # {question: its version when answered} (JSON)
 
 # The questions, in the order they're asked, with their versions.
 QUESTIONS: dict[str, int] = {
+    "sources": 1,  # where your shows and movies come from (1.37.0, see uses.py)
+    "watchIn": 1,  # where you watch (1.37.0, see uses.py)
     "playback": 1,  # how stations play: the picture size and the tuners
     "newStation": 1,  # what new stations start with
     "signIn": 2,  # who can use tapiOca (2: trusted networks, 1.36.0)
@@ -56,7 +58,7 @@ QUESTIONS: dict[str, int] = {
     "away": 1,  # tapiOca's apps away from home
     "library": 2,  # Media in tapiOca's apps (2: on to start, 1.34.1)
     "fileChecks": 1,  # the overnight deep scan
-    "plex": 1,  # adding tapiOca to Plex
+    "plex": 2,  # connecting your apps (2: each place you watch, 1.37.0; Plex's before)
 }
 # The questions the welcome before this one asked (until 1.22.3): someone who
 # saw it answered them. Its version "3" added which corner, so with an
@@ -169,9 +171,18 @@ def _sentence(text: str) -> str:
     return text if text.endswith((".", "!", "?")) else text + "."
 
 
-def plex_check(plex_state: dict[str, Any], plex_pass: bool | None, folders: int = 0) -> Check:
+def plex_check(
+    plex_state: dict[str, Any],
+    plex_pass: bool | None,
+    folders: int = 0,
+    wanted: bool | None = None,
+    watch_plex: bool | None = None,
+) -> Check:
     """Whether Plex answers. Plex is optional (1.35.0): with Media folders
-    of your own (`folders`: how many), tapiOca without Plex is fine."""
+    of your own (`folders`: how many), tapiOca without Plex is fine, unless
+    an Admin chose Plex (`wanted`, 1.37.0: see uses.py; None while nothing
+    is chosen). Plex Pass matters only for watching in Plex (`watch_plex`:
+    False when an Admin chose places without it)."""
     title = "Plex"
     if not plex_state.get("configured"):
         to_connect: tuple[str, ...] = (
@@ -188,6 +199,8 @@ def plex_check(plex_state: dict[str, Any], plex_pass: bool | None, folders: int 
                 "README’s “Finding your Plex token” shows where it is), then restart tapiOca. "
                 "Without Plex, delete the two lines.",
             )
+        if folders and wanted:
+            return Check("plex", title, INFO, ["tapiOca isn’t connected to Plex yet.", *to_connect])
         if folders:
             return Check("plex", title, GOOD, [
                 "tapiOca isn’t using Plex: your own Media folders are where its stations "
@@ -212,7 +225,7 @@ def plex_check(plex_state: dict[str, Any], plex_pass: bool | None, folders: int 
         ])  # fmt: skip
     version = plex_state.get("version")
     lines = [f"tapiOca is connected to Plex{f' {version}' if version else ''}."]
-    if plex_pass is False:
+    if plex_pass is False and watch_plex is not False:
         lines.append(
             "The account that owns this Plex server doesn’t have Plex Pass, which Plex’s "
             "Live TV & DVR needs to show your stations in Plex. Jellyfin, Emby, Kodi and "
@@ -743,13 +756,28 @@ def not_used(check: Check) -> Check:
     return Check(check.id, check.title, INFO, ["Not used: tapiOca isn’t using Plex."])
 
 
-def dvr_check(plex_ok: bool, guide: dict[str, Any], now_ms: int) -> Check:
+def dvr_check(
+    plex_ok: bool,
+    guide: dict[str, Any],
+    now_ms: int,
+    plex_url: bool = True,
+    saved: bool = False,
+) -> Check:
     """Whether Plex has tapiOca as a DVR (it's found when tapiOca
-    looks, as the Setup tab does), and when Plex last downloaded its guide."""
+    looks, as the Setup tab does), and when Plex last downloaded its guide.
+    Without PLEX_URL (`plex_url` False: Plex chosen as a place to watch, not
+    connected), only when Plex last downloaded the guide. `saved`: whether
+    an Admin has chosen where they watch (1.37.0)."""
     title = "tapiOca in Plex"
+    downloaded = guide.get("plexDownloadedGuide")
+    if not plex_url:
+        return Check("dvr", title, INFO, [
+            "tapiOca can’t see Plex’s DVR without PLEX_URL and PLEX_TOKEN.",
+            f"Plex last downloaded tapiOca’s guide {ago((now_ms - downloaded) / 1000)}."
+            if downloaded else "Plex hasn’t downloaded tapiOca’s guide yet.",
+        ])  # fmt: skip
     if not plex_ok:
         return Check("dvr", title, WAIT, ["This is checked once tapiOca is connected to Plex."])
-    downloaded = guide.get("plexDownloadedGuide")
     if guide.get("canRefreshPlexGuide"):
         lines = ["Plex has tapiOca as a DVR, so your stations are in its Live TV guide."]
         if downloaded:
@@ -757,6 +785,11 @@ def dvr_check(plex_ok: bool, guide: dict[str, Any], now_ms: int) -> Check:
                 f"Plex last downloaded tapiOca’s guide {ago((now_ms - downloaded) / 1000)}."
             )
         return Check("dvr", title, GOOD, lines)
+    if saved:
+        return Check("dvr", title, INFO, [
+            "Plex doesn’t have tapiOca as a DVR yet. Adding it takes a few steps in Plex, "
+            "shown in this setup and on the Setup tab.",
+        ])  # fmt: skip
     return Check("dvr", title, INFO, [
         "Plex doesn’t have tapiOca as a DVR yet. Adding it takes a few steps in Plex, shown "
         "in this setup and on the Setup tab. (To watch only in Jellyfin, Emby, Kodi or "

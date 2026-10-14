@@ -1,8 +1,8 @@
 {
-  "version": "1.36.0",
+  "version": "1.37.0",
   "new": [
-    "Trusted networks: devices at home skip signing in",
-    "Safe when a door is left open by mistake",
-    "Trusted proxies, listed by an Admin"
+    "Tell tapiOca what you use, and where you watch",
+    "The steps for each app you watch in",
+    "Tag filters for your own Media folders"
   ]
 }

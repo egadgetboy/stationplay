@@ -489,9 +489,17 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
             # (1.34.1) The Plex step's checks, INFO, and the level new people start on.
             ("GET", "/api/setup/plex", None), ("GET", "/api/info-station", None),
             ("POST", "/api/info-station", None), ("PUT", "/api/access/new-level", {"level": 1}),
+            # (1.37.0) What tapiOca uses: an Admin's.
+            ("GET", "/api/setup/uses", None), ("PUT", "/api/setup/uses", {"watchIn": ["other"]}),
         ):  # fmt: skip
             r = await c.request(method, path, json=body, headers=sam_h)
             checks.ok(r.status_code == 403, f"a User can't {method} {path}", f"got {r.status_code}")
+        # (1.37.0) What an Admin sends is checked: never kept as sent.
+        for body in ({"watchIn": ["plex"] * 10_000}, {"watchIn": "plex"},
+                     {"sources": ["plex", "plex", "plex"]}, {"watchIn": ["<script>"]}):  # fmt: skip
+            r = await c.put("/api/setup/uses", json=body, headers=admin_h)
+            checks.ok(r.status_code in (400, 422), "what tapiOca uses takes only its choices",
+                      f"got {r.status_code} for {str(body)[:40]}")  # fmt: skip
         # (1.34.1) 99 is INFO's: no one takes it with a station of their own, or
         # gives another station INFO's film.
         for body in ({"number": 99, "name": "Mine", "sources": [{"type": "show", "ratingKey": "100"}]},

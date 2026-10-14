@@ -44,7 +44,11 @@ def test_a_new_stationplay_asks_everything_and_each_answer_once(tmp_path):
             "fresh": True,
         }
         left = c.put("/api/setup", json={"answered": ["playback", "newStation"]}).json()
-        assert left["pending"] == ["signIn", "viewing", "away", "library", "fileChecks", "plex"]
+        # (1.37.0 asks where your shows and movies come from, and where you
+        # watch, first: sources and watchIn.)
+        assert left["pending"] == [
+            "sources", "watchIn", "signIn", "viewing", "away", "library", "fileChecks", "plex"
+        ]  # fmt: skip
         assert not left["fresh"]
         assert c.put("/api/setup", json={"answered": ["nightMode"]}).status_code == 400
         c.put("/api/setup", json={"answered": left["pending"]})
@@ -70,15 +74,15 @@ def test_a_question_that_changes_is_asked_again(tmp_path, monkeypatch):
         # A new tapiOca: everything.
         ("", 0, False, False, False, list(setup.QUESTIONS)),
         # Set up with the last welcome: the apps' questions, new to the setup.
-        (playback.WELCOME, 3, False, False, False, ["away", "library"]),
+        (playback.WELCOME, 3, False, False, False, ["sources", "watchIn", "away", "library"]),
         # ...unless they're already on.
-        (playback.WELCOME, 3, True, True, False, []),
+        (playback.WELCOME, 3, True, True, False, ["sources", "watchIn"]),
         # An earlier welcome: what new stations start with, again.
-        ("2", 3, False, True, False, ["newStation", "away"]),
+        ("2", 3, False, True, False, ["sources", "watchIn", "newStation", "away"]),
         # Stations made without a welcome seen.
-        ("", 2, True, False, False, ["newStation", "library"]),
+        ("", 2, True, False, False, ["sources", "watchIn", "newStation", "library"]),
         # With Users (not Admins): who sees what, too.
-        (playback.WELCOME, 3, True, True, True, ["viewing"]),
+        (playback.WELCOME, 3, True, True, True, ["sources", "watchIn", "viewing"]),
     ],
 )
 def test_a_stationplay_set_up_before_is_asked_only_whats_new(

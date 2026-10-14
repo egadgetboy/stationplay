@@ -82,6 +82,7 @@ from . import (
     trustedapi,
     tuner,
     upnext,
+    uses,
     viewing,
 )
 from . import cuts as picture_cuts
@@ -115,7 +116,7 @@ from .ffmpeg import (
 from .gpu import GpuManager
 from .intro import DESCRIPTION_MAX, ID_LENGTHS
 from .intro import LENGTHS as INTRO_LENGTHS
-from .library import Library, LibraryError, is_folder_key, is_key
+from .library import Library, LibraryError, is_folder_key, is_key, source_name
 from .logos import (
     COLLECTION_LOGO,
     MAX_UPLOAD_BYTES,
@@ -464,6 +465,15 @@ class SetupIn(BaseModel):
     """Questions in the setup that have been answered (see setup.py)."""
 
     answered: list[str] = Field(default_factory=list, max_length=20)
+
+
+class UsesIn(BaseModel):
+    """What tapiOca uses (see uses.py): either part, or both."""
+
+    sources: list[Literal["plex", "folders"]] | None = Field(None, max_length=2)
+    watchIn: list[Literal["tapioca", "plex", "jellyfin", "emby", "kodi", "other"]] | None = Field(
+        None, max_length=6
+    )
 
 
 class ScanWindow(BaseModel):
@@ -1485,7 +1495,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     # A show's or movie's logo from Plex: looked up each time (it can change),
     # fetched and made ready once, a couple at a time.
     plex_logo_turns = Turns(
-        "Other logos are being fetched from Plex. Try again in a moment.",
+        "Other logos are being fetched. Try again in a moment.",
         at_once=2,
         most_waiting=8,
     )
@@ -1546,11 +1556,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         it there, if it was added before)."""
         found = await plex_logo(body.ratingKey)
         if found is None:
-            raise HTTPException(404, "Couldn't get a logo for that show or movie from Plex")
+            raise HTTPException(404, "Couldn't get a logo for that show or movie")
         title, url, png = found
         try:
             logo = ctx.logos.keep(
-                png, plain(title)[:NAME_MAX] or "Logo from Plex", plex_logo_id(url)
+                png, plain(title)[:NAME_MAX] or "A title's logo", plex_logo_id(url)
             )
         except LogoError as e:
             raise HTTPException(400, str(e)) from e
@@ -1812,10 +1822,23 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     media_check: dict[str, asyncio.Future] = {}
 
     def plex_used() -> bool:
-        """Whether tapiOca uses Plex: it's set up, or there's nothing else
+        """Whether tapiOca uses Plex: it's set up, or an Admin chose it
+        (1.37.0, see uses.py), or nothing is chosen and there's nothing else
         (without Plex, with a Media folder of its own, the page says nothing
         about Plex: 1.35.0)."""
-        return ctx.plex.configured or not ctx.folders.libraries
+        return uses.plex_used(
+            uses.load(ctx.db)[0], ctx.plex.configured, bool(ctx.folders.libraries)
+        )
+
+    def uses_now() -> dict:
+        """What tapiOca uses, for the page (the Admin's status)."""
+        sources, places = uses.load(ctx.db)
+        own = bool(ctx.folders.libraries)
+        return {
+            "sources": uses.sources_now(sources, ctx.plex.configured, own),
+            "watchIn": places,
+            "saved": sources is not None or places is not None,
+        }
 
     async def media_dir_present() -> bool:
         """Checked off the event loop, so a hung share can't hold up streams,
@@ -1857,6 +1880,13 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             # (Whether tapiOca uses Plex: see plex_used. A User's status has
             # it as plex.used: its own keys are only what the page needs.)
             "plexUsed": plex_used(),
+            # What an Admin chose tapiOca uses (see uses.py), and the Media
+            # folders of its own (how many, and how many can't be read).
+            "uses": uses_now(),
+            "folders": {
+                "count": len(ctx.folders.libraries),
+                "missing": sum(1 for lib in ctx.folders.libraries.values() if lib.missing),
+            },
             "tunerUrl": url,
             "xmltvUrl": f"{url}/xmltv.xml",
             "m3uUrl": f"{url}/stations.m3u",
@@ -2001,6 +2031,8 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             if changed
             else None,
             "pending": pending.as_dict() if pending else None,
+            # What a ready update waits for, and when it starts (1.37.0).
+            "pendingWaits": ctx.updater.waits_for() if pending and not pending.held else None,
             "brokenCount": len(latest.rating_keys & ctx.broken.keys()) if latest else 0,
             # Nothing on it could play (see Broadcaster.off_air), just now.
             "offAir": bool(playing and playing.running and playing.off_air),
@@ -2032,7 +2064,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         try:
             items = await ctx.updater.gather(sources, skip_intros, look_s)
         except LibraryError as e:
-            raise HTTPException(502, f"Couldn't read from Plex: {e}") from e
+            raise HTTPException(502, f"Couldn't read the Media folders: {e}") from e
         if not items:
             raise HTTPException(400, "Those selections contain no playable episodes or movies")
         return items
@@ -2157,7 +2189,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 return await ctx.updater.gather_set_programs(channel)
             return await ctx.updater.gather_sets(channel)
         except LibraryError as e:
-            raise HTTPException(502, f"Couldn't read from Plex: {e}") from e
+            raise HTTPException(502, f"Couldn't read the Media folders: {e}") from e
 
     def check_specials_play(
         channel: Channel, items: list[Item], sets: dict[str, list[Item]]
@@ -2343,7 +2375,8 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         for key in dict.fromkeys(body.ratingKeys):
             c = found.get(key)
             if c is None:
-                problems.append(f"Plex no longer has the collection {key!r}")
+                where = source_name(key)
+                problems.append(f"{where[:1].upper()}{where[1:]} no longer has the collection {key!r}")
                 continue
             source = {
                 "type": "collection", "ratingKey": c["ratingKey"], "title": c["title"],
@@ -2360,7 +2393,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 problems.append(f"{c['name']}: {e.detail}")
                 continue
             log.info(
-                "Made %s from the Plex collection %r",
+                "Made %s from the collection %r",
                 playing.station(number, channel.name, mid=True),
                 c["name"],
             )
@@ -2387,7 +2420,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         except smart.SplitProblem as e:
             raise HTTPException(400, str(e)) from e
         except LibraryError as e:
-            raise HTTPException(502, f"Couldn't read from Plex: {e}") from e
+            raise HTTPException(502, f"Couldn't read the Media folders: {e}") from e
         return {"groups": groups, "limited": limited, "most": smart.MAX_GROUPS}
 
     @app.post("/api/smart/stations", status_code=201, dependencies=[asking_plex])
@@ -3042,6 +3075,62 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     async def setup_get():
         return setup.state(ctx.db, infostation.others(ctx.db.list_channels()))
 
+    def uses_suggested() -> list[str]:
+        """The places tapiOca has seen used (for the setup's first ticks,
+        until an Admin saves them): only from what's kept, never guessed."""
+        seen: set[str] = set()
+        if ctx.updater.plex_download_ms or ctx.updater.dvr_known:
+            seen.add("plex")
+        seen.update(ctx.updater.downloads())
+        for s in ctx.tuner.lately():
+            if not s.refused:
+                kind = tuner.kind_of(s.name)
+                if kind:
+                    seen.add(kind)
+        if ctx.db.app_sessions(0) or ctx.db.linked_devices():
+            seen.add("tapioca")
+        return [p for p in uses.PLACES if p in seen]
+
+    def uses_json() -> dict:
+        sources, places = uses.load(ctx.db)
+        own = bool(ctx.folders.libraries)
+        return {
+            "sources": sources,
+            "watchIn": places,
+            "suggested": {
+                "sources": uses.reality(ctx.plex.configured, own),
+                "watchIn": uses_suggested(),
+            },
+            "locked": {"plex": ctx.plex.configured, "folders": own},
+        }
+
+    @app.get("/api/setup/uses")
+    async def setup_uses_get():
+        return uses_json()
+
+    @app.put("/api/setup/uses")
+    async def setup_uses_put(body: UsesIn, request: Request):
+        own = bool(ctx.folders.libraries)
+        before = uses.load(ctx.db)
+        try:
+            sources, places = uses.save(
+                ctx.db, body.sources, body.watchIn, plex_set_up=ctx.plex.configured, own_folders=own
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        answered = [q for q, given in (("sources", body.sources), ("watchIn", body.watchIn)) if given]
+        if answered:
+            setup.mark(ctx.db, answered)
+        if (sources, places) != before:
+            user = access.signed_in(request)
+            log.info(
+                "What tapiOca uses changed%s: %s; watched in %s",
+                f" (by {user.name})" if user else "",
+                uses.said(sources, uses.SOURCE_NAMES) or "nothing chosen",
+                uses.said(places, uses.PLACE_NAMES) or "nothing chosen",
+            )
+        return uses_json()
+
     @app.put("/api/setup")
     async def setup_put(body: SetupIn):
         try:
@@ -3158,14 +3247,32 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         has_pass, files = await asyncio.gather(
             plex_pass(), setup.media_check(ctx, plex_ok, present)
         )
+        sources, places = uses.load(ctx.db)
+        watch_plex = None if places is None else "plex" in places
+        configured = bool(plex_state.get("configured"))
         checks = [
-            setup.plex_check(plex_state, has_pass, len(ctx.folders.libraries)),
+            setup.plex_check(
+                plex_state,
+                has_pass,
+                len(ctx.folders.libraries),
+                wanted=None if sources is None else "plex" in sources,
+                watch_plex=watch_plex,
+            ),
             files,
-            setup.dvr_check(plex_ok, ctx.updater.as_dict(), now_ms()),
+            setup.dvr_check(
+                plex_ok,
+                ctx.updater.as_dict(),
+                now_ms(),
+                plex_url=configured or not watch_plex,
+                saved=places is not None,
+            ),
         ]
-        if not plex_state.get("configured") and ctx.folders.libraries:
-            # (Without Plex, by choice: its other checks have nothing to wait for.)
-            checks[1:] = [setup.not_used(c) for c in checks[1:]]
+        if not configured and ctx.folders.libraries:
+            # (Without Plex as a source, by choice: its files have nothing to
+            # wait for; nor has its DVR, unless Plex is a place to watch.)
+            checks[1] = setup.not_used(checks[1])
+            if not watch_plex:
+                checks[2] = setup.not_used(checks[2])
         url = base_url(request)
         return {
             "checks": [c.as_dict() for c in checks],
@@ -3314,7 +3421,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     async def broken_check_again():
         """Goes through the broken-files list again now (see jobs.py)."""
         if not ctx.library.configured:
-            raise HTTPException(400, "Plex isn't set up yet")
+            raise HTTPException(
+                400,
+                "Nothing is set up to play yet. Connect Plex, or add a Media folder of your own "
+                "on the Setup tab.",
+            )
         return jobs.start_looking_again(ctx).as_dict()
 
     def arr_entry(key: str) -> dict:

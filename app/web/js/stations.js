@@ -35,6 +35,17 @@ function renderRoom() {
   }
 }
 
+// When a ready update starts, by what tapiOca has seen (the server's
+// waitsFor, 1.37.0): when Plex next downloads the guide, or once the guide
+// other apps downloaded runs out.
+function updateStarts(p, now = Date.now()) {
+  if (p.waitsFor === 'plex') return 'Changes are ready. They start at the next program break after Plex downloads the guide, so the Plex guide always matches.';
+  if (p.after > now) {
+    const when = new Date(p.after).toLocaleString([], { weekday: 'long', hour: 'numeric', minute: '2-digit' });
+    return `Changes are ready. They start at the first program break after ${when}, when the guide other apps downloaded runs out, so their guides stay right.`;
+  }
+  return 'Changes are ready. They start at a program break within the hour.';
+}
 function renderChannels() {
   renderRoom();
   const box = $('#channels');
@@ -67,7 +78,7 @@ function renderChannels() {
             : 'Nothing on this station could play just now, so viewers see the off-air card. An Admin can see why on the Logs tab.' }, ch.offAirWhy === 'failing' ? 'Can’t start' : 'Off the air') : null,
           ch.brokenCount ? h('span', { class: 'chip bad', title: 'Programs on this station that are skipped because their files have problems' }, `${ch.brokenCount} broken`) : null,
           check?.running ? h('span', { class: 'chip accent' }, `Checking ${check.done} of ${check.total}`) : null,
-          p && !p.held ? h('span', { class: 'chip accent', title: plexUsed() ? 'Changes are ready. They start at the next program break after Plex downloads the guide, so the Plex guide always matches.' : 'Changes are ready. They start at a program break once any guide other apps downloaded has run out, so their guides stay right.' }, `Update ready: ${changeText(p)}`) : null,
+          p && !p.held ? h('span', { class: 'chip accent', title: updateStarts(ch.pendingWaits || {}) }, `Update ready: ${changeText(p)}`) : null,
           p && p.held ? h('span', { class: 'chip bad', title: p.removed
               ? 'Many of this station’s programs are gone. This usually means a Media folder is being rescanned or a drive is offline, so nothing changes until you choose Update now.'
               : p.lostSkips ? 'Plex no longer reports intros and credits for many of this station’s programs. This usually means Plex is detecting them again, so nothing changes until you choose Update now.'

@@ -134,6 +134,20 @@ def named(user_agent: str) -> str:
     return first.group(0).strip() if first else ""
 
 
+# Which place each name (see named) is, for What you use (uses.py, 1.37.0).
+# FFmpeg says nothing: many players, Plex's and Jellyfin's among them, use it.
+KINDS = {
+    "Plex": "plex", PLEX: "plex", "Jellyfin": "jellyfin", "Emby": "emby", "Kodi": "kodi",
+    "tapiOca": "tapioca", "VLC": "other", "Channels": "other",
+}  # fmt: skip
+
+
+def kind_of(name: str) -> str | None:
+    """Which place a device's name is (plex, jellyfin, emby, kodi, tapioca or
+    other), or None when the name doesn't say."""
+    return KINDS.get(name)
+
+
 def plex_address(plex_url: str) -> str | None:
     """Plex's address, when Plex's own address (PLEX_URL) is written as an
     IP address."""

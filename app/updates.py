@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import json
 import logging
 import time
 from collections import Counter
@@ -40,7 +41,7 @@ from collections.abc import Container
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from . import cliprules, specials
+from . import cliprules, specials, tuner
 from .breaks import COMMERCIALS, TRAILERS, id_card_ms, with_breaks
 from .catalog import Tags
 from .db import Channel, Era, Item
@@ -95,6 +96,10 @@ DVR_MISSING_RECHECK_MS = 5 * 60 * 1000
 
 META_PUBLISHED_UNTIL = "guide_published_until"
 META_PLEX_DOWNLOAD = "guide_plex_download"
+# When each other app last downloaded the guide, by what it calls itself
+# (1.37.0: for the Setup tab's chips): {"jellyfin": ms, ...} (JSON).
+META_DOWNLOADS = "guide_downloads"
+DOWNLOAD_NOTED_EVERY_MS = 10 * 60 * 1000
 
 
 def now_ms() -> int:
@@ -259,6 +264,7 @@ class Updater:
         self._dvr_checked_ms = 0
         self._dvr_said = ""
         self._agents_seen: set[str] = set()
+        self._download_said = False
         # Bumped whenever a station's schedule changes, so a check of Plex
         # that was already under way can tell its answer is out of date.
         self._versions: dict[int, int] = {}
@@ -752,9 +758,44 @@ class Updater:
                 "Plex downloaded the guide%s", f" (user agent {user_agent!r})" if first else ""
             )
             await self._apply_pending(now_ms)
-        elif first:
-            log.info("Guide downloaded by %r (not Plex)", user_agent)
+        else:
+            if first:
+                log.info("Guide downloaded by %r (not Plex)", user_agent)
+            self._note_download(user_agent, now)
         return by_plex
+
+    def _note_download(self, user_agent: str, now: int) -> None:
+        """Keeps when an app other than Plex downloaded the guide, by what it
+        calls itself (Plex's own are kept as META_PLEX_DOWNLOAD; tapiOca's
+        apps aren't kept). Never stops the guide."""
+        kind = tuner.kind_of(tuner.named(user_agent)) or "other"
+        if kind in ("plex", "tapioca"):
+            return
+        try:
+            kept = self.downloads()
+            if now - kept.get(kind, 0) < DOWNLOAD_NOTED_EVERY_MS:
+                return
+            kept[kind] = now
+            self.ctx.db.set_meta(META_DOWNLOADS, json.dumps(kept, sort_keys=True))
+        except Exception as e:
+            if not self._download_said:
+                self._download_said = True
+                log.warning("Couldn't keep when the guide was downloaded (%s)", e)
+
+    def downloads(self) -> dict[str, int]:
+        """When each app other than Plex last downloaded the guide."""
+        try:
+            got = json.loads(self.ctx.db.get_meta(META_DOWNLOADS) or "{}")
+        except ValueError:
+            return {}
+        if not isinstance(got, dict):
+            return {}
+        return {k: v for k, v in got.items() if isinstance(k, str) and type(v) is int}
+
+    @property
+    def dvr_known(self) -> bool:
+        """Whether Plex has tapiOca as a DVR, as last found."""
+        return self._dvr_key is not None
 
     def after_guide(self, until_ms: int, by_plex: bool) -> None:
         """Called once a guide covering up to `until_ms` has been handed out."""
@@ -789,6 +830,16 @@ class Updater:
     @property
     def plex_download_ms(self) -> int:
         return int(self.ctx.db.get_meta(META_PLEX_DOWNLOAD, "0") or 0)
+
+    def waits_for(self) -> dict[str, Any]:
+        """What a pending update waits for (1.37.0, for its card), by what
+        tapiOca has seen, never by what's chosen: Plex, while Plex downloads
+        the guide ("plex"); otherwise the guide other apps downloaded, to
+        run out ("guide", and `after`, when it does; see apply_overdue)."""
+        now = now_ms()
+        if now - self.plex_download_ms < GUIDE_EXPECTED_MS:
+            return {"waitsFor": "plex"}
+        return {"waitsFor": "guide", "after": max(self.published_until_ms, now)}
 
     async def apply_overdue(self) -> None:
         """Updates Plex hasn't come for: they start once the last guide
@@ -896,4 +947,5 @@ class Updater:
             "plexDownloadedGuide": self.plex_download_ms,
             "publishedUntil": self.published_until_ms,
             "canRefreshPlexGuide": self._dvr_key is not None,
+            "downloads": self.downloads(),
         }

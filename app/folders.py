@@ -1162,6 +1162,8 @@ class FolderSource:
             {"field": "contentRating", "title": "Content rating"},
             {"field": "director", "title": "Director"},
             {"field": "actor", "title": "Actor"},
+            # (An NFO file's <tag>, as Plex's labels: 1.37.0.)
+            {"field": "label", "title": "Tag"},
         ]
 
     async def choices(self, library: str, field_name: str, kind: str) -> list[dict[str, str]]:
@@ -1683,6 +1685,8 @@ def _values_of(t: Thing, field_name: str) -> list[str]:
         return _strings(t.get("directors"))
     if field_name == "actor":
         return [n for n, _ in _cast(t.get("cast"))]
+    if field_name == "label":
+        return _strings(t.get("labels"))
     return []
 
 

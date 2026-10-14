@@ -20,6 +20,42 @@ const plural = (n, word) => `${Number.isFinite(n) ? n.toLocaleString() : n} ${no
 // Whether tapiOca uses Plex (status.js's status: an Admin's plexUsed, a
 // User's plex.used). Without it, nothing's said about Plex (1.35.0).
 const plexUsed = () => (status?.plexUsed ?? status?.plex?.used) !== false;
+// What an Admin chose tapiOca uses (the status's `uses`, see uses.py,
+// 1.37.0). While where you watch isn't chosen, every place counts as
+// watched, Plex where tapiOca uses Plex, and the page says what 1.36.0 said.
+const PLACE_APPS = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby', kodi: 'Kodi', other: 'other apps' };
+const watchedIn = () => (status?.uses?.saved && Array.isArray(status.uses.watchIn) ? status.uses.watchIn : null);
+function watches(place) {
+  const chosen = watchedIn();
+  return chosen ? chosen.includes(place) : place === 'plex' ? plexUsed() : true;
+}
+// The other apps chosen, named for a sentence ("Plex, Jellyfin and Kodi";
+// `join` 'or' for "Plex or Jellyfin"); null while nothing is chosen, so the
+// sentence stays as it was. `one`: a single app (for "signs in" or "sign
+// in"); `none`: only tapiOca's apps.
+function appsNamed(join = 'and') {
+  const chosen = watchedIn();
+  if (!chosen) return null;
+  const names = Object.keys(PLACE_APPS).filter(p => chosen.includes(p)).map(p => PLACE_APPS[p]);
+  const text = names.length < 2 ? (names[0] || '') : `${names.slice(0, -1).join(', ')} ${join} ${names[names.length - 1]}`;
+  return { text, one: names.length === 1 && !chosen.includes('other'), none: !names.length };
+}
+// Static parts of the page shown only for some choices: data-when holds
+// space-separated tokens, which must all hold ("plex": tapiOca uses Plex;
+// "folders": Media folders of its own; "watch-plex": watched in Plex;
+// "watch-others": in Jellyfin, Emby, Kodi or other apps). Only on elements
+// nothing else shows or hides.
+const CHOICE_HOLDS = {
+  plex: () => plexUsed(),
+  folders: () => (status?.uses?.sources ?? (plexUsed() ? [] : ['folders'])).includes('folders'),
+  'watch-plex': () => watches('plex'),
+  'watch-others': () => ['jellyfin', 'emby', 'kodi', 'other'].some(watches),
+};
+function showForChoices(root = document) {
+  for (const el of root.querySelectorAll('[data-when]')) {
+    el.hidden = !el.dataset.when.split(/\s+/).filter(Boolean).every(token => CHOICE_HOLDS[token]?.() ?? true);
+  }
+}
 
 // opts.body is sent as JSON; opts.raw (a file) as it is. opts.blob: the answer is a file.
 async function api(path, opts = {}) {

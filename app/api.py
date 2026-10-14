@@ -214,7 +214,8 @@ def routes(app: FastAPI, ctx: AppContext, actions: Actions) -> None:
         response_model=Status,
         operation_id="getStatus",
         summary="How tapiOca is doing",
-        description="Whether Plex answers, how many tuners there are, and what's playing.",
+        description="Whether Plex answers (false when tapiOca doesn't use Plex), how many tuners "
+        "there are, and what's playing.",
     )
     async def status():
         return await actions.status()
@@ -225,9 +226,9 @@ def routes(app: FastAPI, ctx: AppContext, actions: Actions) -> None:
         operation_id="updateStation",
         dependencies=actions.asking_plex,
         tags=[ADMIN_TAG],
-        summary="Update a station from Plex now",
-        description="Follows Plex straight away (as Update now does on the page): new and "
-        "removed programs, with a held update applied. Admin.",
+        summary="Update a station now",
+        description="Follows its Media folders straight away (as Update now does on the page): "
+        "new and removed programs, with a held update applied. Admin.",
     )
     async def update_station(number: int, request: Request):
         changed = await actions.update_station(station_id(number), request)

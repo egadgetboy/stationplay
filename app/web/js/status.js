@@ -1,6 +1,24 @@
 // tapiOca's status, and the picture and tuners.
 // Status ---------------------------------------------------------------------
 let status = null;
+// The header's pill: where shows and movies come from, and how that's
+// going (1.37.0: your own Media folders too). [dot, words]; no words, no
+// pill. A User's status says only how Plex is, where tapiOca uses it.
+function pillFor(st) {
+  const plex = st.plex || {};
+  const usesPlex = (st.plexUsed ?? plex.used) !== false;
+  const plexWords = () => {
+    if (plex.ok) return ['ok', 'Plex connected'];
+    const error = plex.error || 'not connected';
+    return ['bad', /^Plex\b/.test(error) ? error : `Plex: ${error}`];
+  };
+  if (!st.uses) return usesPlex ? (plex.configured === false ? ['bad', 'Nothing to play yet'] : plexWords()) : ['', ''];
+  const folders = st.folders || { count: 0, missing: 0 };
+  if (folders.missing) return ['bad', 'A Media folder can’t be read'];
+  if (plex.configured) return plexWords();
+  if (st.uses.sources.includes('plex')) return folders.count ? ['warn', 'Plex isn’t set up yet'] : ['bad', 'Nothing to play yet'];
+  return folders.count ? ['ok', 'Media folders ready'] : ['bad', 'Nothing to play yet'];
+}
 let pageVersion = null;  // (tapiOca's version when this page was loaded)
 async function loadStatus() {
   try {
@@ -11,18 +29,14 @@ async function loadStatus() {
   pageVersion ??= status.version;
   if (status.version !== pageVersion && !document.querySelector('dialog[open]')) { location.reload(); return; }
   $('#appVersion').textContent = status.version ? `tapiOca: Stations & Media ${status.version} · ` : '';
-  const pill = $('#plexPill');
   // (Without Plex, with Media folders of tapiOca's own, there's nothing to
   // say about Plex: 1.35.0.)
   const plexUsed = (status.plexUsed ?? status.plex.used) !== false;
-  pill.hidden = !plexUsed;
-  const noPlex = status.plex.configured === false;
-  pill.firstElementChild.className = 'dot ' + (status.plex.ok ? 'ok' : 'bad');
-  const plexError = status.plex.error || 'not connected';
-  pill.lastElementChild.textContent = status.plex.ok
-    ? 'Plex connected'
-    : noPlex ? 'Nothing to play yet'
-      : /^Plex\b/.test(plexError) ? plexError : `Plex: ${plexError}`;
+  const pill = $('#plexPill');
+  const [dot, said] = pillFor(status);
+  pill.hidden = !said;
+  pill.firstElementChild.className = `dot ${dot}`;
+  pill.lastElementChild.textContent = said;
   // Stations someone is receiving right now (a station keeps running a few
   // seconds after its last viewer leaves, so flipping back is instant; those
   // don't count). Plex may carry several people on one connection.
@@ -53,6 +67,7 @@ async function loadStatus() {
       maybeSetup();
     }
   }
+  showForChoices();
   renderLive();
 }
 

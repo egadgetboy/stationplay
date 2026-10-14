@@ -834,7 +834,12 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         shared_here(request)
         q = request.query_params
         season_text = q.get("season")
-        season = _whole(season_text, -1, "season", 0, 100_000) if season_text else None
+        # ("none": the episodes with no season, the seasons list's "Episodes"
+        # row, whose season is null: 1.37.0.)
+        loose = season_text == "none"
+        season = (
+            _whole(season_text, -1, "season", 0, 100_000) if season_text and not loose else None
+        )
         start = _whole(q.get("start"), 0, "start", 0, 1_000_000)
         size = _whole(q.get("size"), ondemand.EPISODES_MOST, "size", 1, ondemand.EPISODES_MOST)
         user_id, _ = person(request)
@@ -845,10 +850,14 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             if e.kind != catalog.SHOW:
                 raise HTTPException(400, "That isn't a show")
             found = await seen_only(cat, viewer, await cat.episodes(key))
-        chosen = [x for x in found if season is None or x.season == season]
+        chosen = [
+            x
+            for x in found
+            if (x.season is None if loose else season is None or x.season == season)
+        ]
         return {
             "show": key,
-            "season": season,
+            "season": "none" if loose else season,
             "total": len(chosen),
             "start": start,
             "episodes": cards(user_id, chosen[start : start + size]),
