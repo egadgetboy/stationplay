@@ -912,10 +912,13 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
                       "asked for by a name that isn't home's, only the page (DNS rebinding)",
                       (rebound.status_code, me))  # fmt: skip
             pending = page.get("/api/setup").json().get("pending", [])
-            # (Asked again only when the update crosses 1.36.0, which changed it.)
-            again = ["signIn"] if version_of(before) < (1, 36, 0) else []
-            checks.ok(pending == again, "the setup asks Who can use tapiOca again, and only "
-                      "that" if again else "nothing new is asked", pending)  # fmt: skip
+            # (Asked again only when the update crosses the version that changed it:
+            # Who can use tapiOca, 1.36.0; the Tuner step's question, 1.36.3.)
+            again = (["signIn"] if version_of(before) < (1, 36, 0) else []) + (
+                ["plex"] if version_of(before) < (1, 36, 3) else []
+            )
+            checks.ok(pending == again, f"the setup asks again only what changed since: {again}"
+                      if again else "nothing new is asked", pending)  # fmt: skip
 
             def open_alert() -> bool:
                 got = (

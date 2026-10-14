@@ -121,7 +121,9 @@ IDLED_KEPT = 1000  # browsers signed out that way that are told why, at most (th
 PICKED_MS = 24 * 3600_000  # a sign-in from a linked device's picker lasts this long unused
 # (1.36.2, the owner, October 14: "Password strength needs to be industry
 # standard.") As NIST's digital identity guidelines (SP 800-63B) and OWASP
-# say: length, not rules about symbols; no common passwords (a list kept in
+# advise: length, not rules about symbols (NIST asks for 15 characters where a
+# password is the only way to sign in; 12 is tapiOca's for now, the owner's
+# call, open since October 14); no common passwords (a list kept in
 # tapiOca: nothing is sent anywhere to check one); nothing built from the
 # person's name or tapiOca's; any characters, spaces too.
 PASSWORD_MIN, PASSWORD_MAX = 12, 200
