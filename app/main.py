@@ -467,6 +467,13 @@ class SetupIn(BaseModel):
     answered: list[str] = Field(default_factory=list, max_length=20)
 
 
+class WatchInIn(BaseModel):
+    """Where an Admin will watch (the setup's Tuner step, see setup.py):
+    unknown choices are left out."""
+
+    watchIn: list[Annotated[str, Field(max_length=40)]] = Field(max_length=20)
+
+
 class TrustProxyIn(BaseModel):
     """Trust this proxy: the address the page showed (1.36.1)."""
 
@@ -3065,6 +3072,36 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
         return setup.state(ctx.db, infostation.others(ctx.db.list_channels()))
+
+    def watch_in_json() -> dict:
+        guide = ctx.updater.as_dict()
+        plex_seen = bool(guide["plexDownloadedGuide"] or guide["canRefreshPlexGuide"])
+        return {
+            "watchIn": setup.watch_in(ctx.db),
+            "suggested": setup.suggested_watch_in(ctx.plex.configured, plex_seen),
+        }
+
+    @app.get("/api/setup/watch-in")
+    async def setup_watch_in_get():
+        """Where an Admin will watch (the Tuner step): null until saved,
+        with what the step ticks until then."""
+        return watch_in_json()
+
+    @app.put("/api/setup/watch-in")
+    async def setup_watch_in_put(body: WatchInIn, request: Request):
+        before = setup.watch_in(ctx.db)
+        try:
+            places = setup.save_watch_in(ctx.db, body.watchIn)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        if places != before:
+            user = access.signed_in(request)
+            log.info(
+                "Where you watch changed%s: %s",
+                f" (by {user.name})" if user else "",
+                setup.said_watch_in(places),
+            )
+        return watch_in_json()
 
     # Looking at the media folders: off the event loop, with a time limit,
     # and one look at a folder at a time (a stuck share can't use up the

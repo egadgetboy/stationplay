@@ -74,7 +74,7 @@ function renderMediaAccess(m, plex = true) {
   } else if (m.direct && !m.viaPlex) {
     text = `Read directly from disk${maps ? ` (${maps})` : ''}.`; cls = 'chip good';
   } else if (m.viaPlex) {
-    text = `${m.viaPlex} of ${m.direct + m.viaPlex} files were streamed from Plex because tapiOca couldn’t find them. That works, but reading them from disk is faster and puts less load on Plex. Run setup again: its Plex step says what to change.`;
+    text = `${m.viaPlex} of ${m.direct + m.viaPlex} files were streamed from Plex because tapiOca couldn’t find them. That works, but reading them from disk is faster and puts less load on Plex. Run setup again: its Tuner step says what to change.`;
     cls = 'chip bad';
   } else if (!m.mediaDirPresent) {
     text = `Nothing is at ${m.mediaDir} inside tapiOca, so files are read from the folders PATH_MAPPINGS names.`;
