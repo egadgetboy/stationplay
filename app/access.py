@@ -333,6 +333,7 @@ FOR_USERS = {
         "/api/internal/play", "/api/internal/progress", "/api/internal/report",
         "/api/internal/problem", "/api/internal/picker/remove", "/api/access/active",
         "/api/internal/pin", "/api/internal/password", "/api/internal/report-problem",
+        "/api/internal/watched",
     ),
     # (Their own languages in the apps, and for a show, an episode or a movie.)
     "PUT": ("/api/channels/", "/api/internal/languages", "/api/internal/items/"),
@@ -355,7 +356,7 @@ FOR_WATCHERS = {
         "/api/access/link", "/api/internal/play", "/api/internal/progress",
         "/api/internal/report", "/api/internal/problem", "/api/internal/picker/remove",
         "/api/access/active", "/api/internal/pin", "/api/internal/password",
-        "/api/internal/report-problem",
+        "/api/internal/report-problem", "/api/internal/watched",
     ),
     "PUT": ("/api/internal/languages", "/api/internal/items/"),
     "DELETE": ("/api/internal/items/",),

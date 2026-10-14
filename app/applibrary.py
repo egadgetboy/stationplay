@@ -172,6 +172,21 @@ class ProgressReport(BaseModel):
     sequence: int | None = Field(default=None, ge=1, le=2**31)
 
 
+class ShowMarked(BaseModel):
+    """A whole show, or one of its seasons, marked watched or not from a
+    menu (from 1.36.3: POST /api/internal/watched)."""
+
+    show: str = Field(max_length=20)
+    season: int | None = Field(default=None, ge=0, le=10_000)
+    watched: bool
+
+
+# The most episodes marked at once. Half of what's kept for each person
+# (db.PROGRESS_KEPT), so marking never pushes out what it marked.
+MARK_MOST = 2500
+TOO_MANY_TO_MARK = "That's too many episodes to mark at once. Mark one season at a time."
+
+
 class WhenSlow(BaseModel):
     home: str | None = Field(default=None, max_length=10)
     away: str | None = Field(default=None, max_length=10)
@@ -1741,6 +1756,36 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             ctx.db.save_progress(user_id, x.key, x.show_key, position, e.duration_ms or 0,
                                  watched, now)  # fmt: skip
         return {"positionMs": ondemand.resume_at((position, watched)), "watched": watched}
+
+    @app.post("/api/internal/watched")
+    async def watched(body: ShowMarked, request: Request):
+        """A whole show, or one season of it, marked watched or not from a
+        menu, at once (from 1.36.3; see docs/internal-api.md): the episodes
+        this person may see, all of them or none. Each starts from the
+        beginning next time, as when one is marked. Nothing goes to Plex."""
+        shared_here(request)
+        user_id, _ = person(request)
+        viewer = viewer_of(request)
+        async with asking(request):
+            e = await cat.entry(body.show)
+            if not cat.shared_library(e):
+                raise NotShared(e.key)
+            await must_see(cat, viewer, e)
+            if e.kind != catalog.SHOW:
+                raise HTTPException(400, "That isn't a show")
+            found = await seen_only(cat, viewer, await cat.episodes(e.key))
+        chosen = {x.key: x for x in found if body.season is None or x.season == body.season}
+        # (An episode in one file with others, "S01E01-E02": they go with it.)
+        files = {x.file for x in chosen.values() if x.file}
+        chosen.update({x.key: x for x in found if x.file and x.file in files})
+        if len(chosen) > MARK_MOST:
+            raise HTTPException(400, TOO_MANY_TO_MARK)
+        ctx.db.save_progress_many(
+            user_id,
+            [(x.key, x.show_key, 0, x.duration_ms or 0, body.watched) for x in chosen.values()],
+            int(time.time() * 1000),
+        )
+        return {"watched": body.watched, "marked": len(chosen)}
 
     # The play sessions' own addresses (a player can't sign in) ---------------
 

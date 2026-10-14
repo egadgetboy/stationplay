@@ -1866,14 +1866,25 @@ class Database:
         watched: bool,
         now: int,
     ) -> None:
+        self.save_progress_many(
+            user_id, [(rating_key, show_key, position_ms, duration_ms, watched)], now
+        )
+
+    def save_progress_many(
+        self, user_id: int, programs: list[tuple[str, str | None, int, int, bool]], now: int
+    ) -> None:
+        """Each of `programs` (its key, its show's key, where it is, its
+        length and whether it's watched) saved for `user_id` in one
+        transaction: all of them, or none (a show or a season marked from a
+        menu at once, from 1.36.3)."""
         with self._lock, self._conn:
-            self._conn.execute(
+            self._conn.executemany(
                 "INSERT INTO progress (user_id, rating_key, show_key, position_ms, duration_ms, "
                 "watched, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(user_id, rating_key) DO UPDATE SET show_key = excluded.show_key, "
                 "position_ms = excluded.position_ms, duration_ms = excluded.duration_ms, "
                 "watched = excluded.watched, updated_ms = excluded.updated_ms",
-                (user_id, rating_key, show_key, position_ms, duration_ms, int(watched), now),
+                [(user_id, k, s, p, d, int(w), now) for k, s, p, d, w in programs],
             )
             # (The newest PROGRESS_KEPT of each person's are kept.)
             self._conn.execute(

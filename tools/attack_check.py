@@ -1375,6 +1375,8 @@ async def _library(checks: Checks, app, home: str, admin_h: dict, kit_h: dict) -
                  "reporting a place in it"),
                 ("POST", "/api/internal/progress", {"key": key, "watched": True},
                  "marking it watched"),
+                ("POST", "/api/internal/watched", {"show": key, "watched": True},
+                 "marking all of it watched"),
                 ("POST", "/api/internal/progress",
                  {"key": key, "positionMs": 60_000, "session": played.get("session", "")},
                  "reporting a place in an Admin's playing of it"),
