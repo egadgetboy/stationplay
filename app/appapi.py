@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
     from .db import Channel, Item, SignedIn, User
     from .main import AppContext
-    from .schedule import Slot, StationSchedule
+    from .schedule import Airs, Slot
 
 VERSION = 1
 PREFIX = "/api/v1/"
@@ -256,7 +256,7 @@ def program(item: Item, start_ms: int, end_ms: int, special: str) -> dict[str, A
     }
 
 
-def slot_program(station: StationSchedule, slot: Slot | None) -> dict[str, Any] | None:
+def slot_program(station: Airs, slot: Slot | None) -> dict[str, Any] | None:
     """A station's program, as the API describes one (None for none)."""
     if slot is None:
         return None
@@ -433,6 +433,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "role": user.role,
             "pin": user.has_pin,
             "canChangePassword": ctx.access.own_password_refusal(user) is None,
+            "canChangePin": ctx.access.may_change_own_pin(user),
             "canReport": ctx.access.may_report(user),
         }
         if request.scope.get("state", {}).get("by_network"):
@@ -809,7 +810,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         def on_now() -> list[tuple[dict | None, dict | None]]:  # (a big shuffle takes a moment)
             out = []
             for channel in channels:
-                station = ctx.station(channel.id)
+                station = ctx.guide(channel)
                 slot = station.locate(now)
                 out.append(
                     (
@@ -1009,7 +1010,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         def listing() -> list[dict]:  # (on a worker thread, as on_now)
             out = []
             for channel in channels:
-                station = ctx.station(channel.id)
+                station = ctx.guide(channel)
                 programs = [slot_program(station, slot) for slot in station.between(from_ms, to_ms)]
                 out.append({"number": channel.number, "programs": programs})
             return out

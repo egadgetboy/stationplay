@@ -21,6 +21,7 @@ from app.plex import PlexClient
 
 from .fakeplex import FakePlex
 from .fakeplex_library import LibraryPlex
+from .helpers import PAGE
 from .test_e2e import record, start_server
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
@@ -166,7 +167,7 @@ async def test_a_stations_stream_never_names_its_files(tmp_path):
     plex.add_episode("201", "100", 1, 1, "Pilot", str(film), 8_000)
     base, _app, _settings, srv, task = await start_server(tmp_path, plex)
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             made = await client.post("/api/channels", json={
                 "number": 7, "name": "Test TV", "sources": [{"type": "show", "ratingKey": "100"}]})  # fmt: skip
             assert made.status_code == 201, made.text

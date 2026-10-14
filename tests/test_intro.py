@@ -25,6 +25,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex import FakePlex
+from .helpers import PAGE
 from .test_e2e import assert_clean_stream, record, start_server
 from .test_e2e_breaks import colour_of, frames, make_station, solid
 
@@ -370,7 +371,7 @@ async def test_tuning_in_starts_with_the_intro_bumper(tmp_path, caplog):
             base, introSeconds=5, description="Colours, all day.", logo="night-reel"
         )
         assert (station["introSeconds"], station["description"]) == (5, "Colours, all day.")
-        async with httpx.AsyncClient(base_url=base) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base) as client:
             guide = (await client.get(f"/api/channels/{station['id']}/guide?hours=1")).json()
         tuned = time.time() * 1000
         data = await record(f"{base}/stream/5", 16)

@@ -101,6 +101,10 @@ APPS_S = 15 * 60.0  # an app that came in this recently shows apps get in
 
 # The status.
 OFF, CHECKING, UP, DOWN, CANT = "off", "checking", "up", "down", "cant-check"
+# (1.36.2) The address works, and one setting here is left to do: sign-in,
+# which apps need through the public port. A step, never a problem (the
+# owner, October 14: "This seems to be process not error").
+NEXT_STEP = "next-step"
 # What a check finds.
 READY = "ready"
 WRONG_PORT, NOT_HTTPS, SIGN_IN_OFF = "wrong-port", "not-https", "sign-in-off"
@@ -152,7 +156,7 @@ class Status:
     """Whether tapiOca's apps can reach it from outside, as the page
     shows it (and Admin alerts go by)."""
 
-    state: str  # OFF, CHECKING, UP, DOWN or CANT
+    state: str  # OFF, CHECKING, UP, DOWN, CANT or NEXT_STEP
     detail: str  # what it is, in a sentence or two
     short: str  # in a few words, for a summary: "Ready", "Wrong port"
     checked_ms: int | None  # when it was last checked (None: not yet)
@@ -306,7 +310,9 @@ class Reach:
         now = self.clock()
         # What may be the router counts only once a check from here has
         # reached tapiOca: the router lets checks from here through, then.
-        problem = finding.kind not in (READY, NO_LOOKUP) and (finding.sure or self._reached)
+        problem = finding.kind not in (READY, NO_LOOKUP, SIGN_IN_OFF) and (
+            finding.sure or self._reached
+        )
         self._reached = self._reached or finding.reached
         if problem and not self._failures:
             self._failing_since = now
@@ -358,6 +364,13 @@ class Reach:
         if self._address != (self.away.address if self.away.on else ""):
             self._forget()
             self._said_cant = False
+        # (Sign-in turned on since a check found it off: checked again now,
+        # rather than at the next check, minutes away.)
+        latest = self._latest
+        signed_in_since = latest is not None and latest.kind == SIGN_IN_OFF and self.access.required
+        if signed_in_since and self._due > self.clock():
+            self._due = self.clock()
+            self._wake_up()
         state = self._state_now()
         if state == self._state:
             return
@@ -382,6 +395,8 @@ class Reach:
             return CHECKING
         if latest.kind == READY:
             return UP
+        if latest.kind == SIGN_IN_OFF:
+            return CHECKING if self.access.required else NEXT_STEP
         if not latest.sure and self._app_lately():
             return UP
         if self._confirmed():
@@ -400,6 +415,10 @@ class Reach:
             return "Watching away from home is off.", "Off"
         if latest is None:
             return f"Checking that apps can reach tapiOca at {address}…", "Checking"
+        if state == NEXT_STEP:
+            return latest.detail, latest.short
+        if latest.kind == SIGN_IN_OFF:  # (sign-in is on now: checked again)
+            return f"Sign-in is on. Checking that apps can reach tapiOca at {address}…", "Checking"
         if state == CHECKING:
             return f"{latest.detail} Checking again in a minute to be sure.", "Checking"
         if state == UP and latest.kind == READY:
@@ -520,14 +539,6 @@ class Reach:
                 if hop.get("saysHttps")
                 else " Also set the proxy to send X-Forwarded-Proto: https."
             )
-            if hop.get("tuner"):
-                detail = (
-                    f"{address} reaches tapiOca through a reverse proxy at {proxy}, which isn't "
-                    "a trusted proxy yet, so tapiOca turns apps away there. That address is Plex's "
-                    "too, or uses tapiOca's tuner, so it shouldn't be a trusted proxy: give the "
-                    "proxy an address of its own, then trust it." + header
-                )
-                return Finding(NOT_HTTPS, detail, "Proxy not trusted yet", reached=True, sure=True)
             unlisted = hop.get("unlisted", "")
             detail = (
                 f"{address} reaches tapiOca through a reverse proxy at {proxy}, which isn't a "
@@ -558,11 +569,12 @@ class Reach:
             )
             return Finding(NOT_HTTPS, detail, "Not over HTTPS", reached=True, sure=True)
         if outside and not self.access.required:
+            # (Said as the step it is: the owner, October 14.)
             detail = (
-                f"{address} reaches tapiOca, but sign-in is off, so apps can't sign in "
-                "through the public port. Add a user on the Access tab."
+                f"Your address works: {address} reaches tapiOca. One step left: turn on "
+                "sign-in. Apps sign in when they're away from home."
             )
-            return Finding(SIGN_IN_OFF, detail, "Sign-in is off", reached=True, sure=True)
+            return Finding(SIGN_IN_OFF, detail, "Needs sign-in", reached=True, sure=True)
         detail = f"Ready. Apps away from home reach tapiOca at {address}" + (
             ", for your stations and Media." if self.media and self.media() else "."
         )

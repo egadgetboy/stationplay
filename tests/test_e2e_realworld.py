@@ -19,6 +19,7 @@ import pytest
 from app import jobs
 
 from .fakeplex import FakePlex
+from .helpers import PAGE
 from .test_e2e import assert_clean_stream, media_seconds, record, start_server
 
 pytestmark = pytest.mark.skipif(
@@ -133,7 +134,7 @@ async def test_real_world_files_on_a_station_with_everything_on(tmp_path, monkey
     caplog.set_level(logging.INFO)
     base, app, settings, srv, task = await start_server(tmp_path, plex)
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=60) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=60) as client:
             made = await client.post(
                 "/api/channels",
                 json={

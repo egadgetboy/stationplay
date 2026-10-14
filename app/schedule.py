@@ -34,6 +34,7 @@ import threading
 from collections import Counter, OrderedDict
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
+from typing import Protocol
 
 from .db import Era, Item, show_key
 
@@ -464,6 +465,19 @@ class EraSchedule:
         while slot is not None and slot.start_ms < to_ms:
             yield slot
             slot = self.after(slot)
+
+
+class Airs(Protocol):
+    """What the guides ask of a station: a StationSchedule, or the INFO
+    station's listings (see infostation.Listings, 1.36.2)."""
+
+    def locate(self, at_ms: int) -> Slot | None: ...
+
+    def after(self, slot: Slot) -> Slot | None: ...
+
+    def between(self, from_ms: int, to_ms: int) -> Iterator[Slot]: ...
+
+    def special(self, slot: Slot) -> dict | None: ...
 
 
 class StationSchedule:

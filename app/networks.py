@@ -245,6 +245,11 @@ class Verdict:
     via_proxy: bool = False
     untrusted_headers: bool = False
     door3: bool = False
+    # (1.36.2) A trusted proxy that isn't a relay, naming no one at all, not
+    # asked for by an internet name: the proxy's own computer, perhaps (Plex
+    # there). Still a proxy's, for the internet, but the Gate lets Plex's
+    # tuner, guide and logos be asked for this way; never trusted.
+    proxy_device: bool = False
 
 
 def _in(ip: IP | None, networks: Collection[Network]) -> bool:
@@ -328,6 +333,7 @@ def judge(
         and (peer_ip.is_loopback or peer_ip in relays)
     )
     listed = _in(peer_ip, proxies) and not itself
+    proxy_device = listed and said is None and not proto and kind != "public-name"
     untrusted = said is not None and not listed
     visitor: IP | None = peer_ip
     if listed and said is not None:
@@ -339,7 +345,9 @@ def judge(
             untrusted = False
 
     def verdict(outside: bool, why: str = "", door3: bool = False) -> Verdict:
-        return Verdict(outside, why, peer_ip, through, kind, visitor, listed, untrusted, door3)
+        return Verdict(
+            outside, why, peer_ip, through, kind, visitor, listed, untrusted, door3, proxy_device
+        )
 
     if public_port:
         # (A trusted proxy naming nobody, or not clearly: who it's for can't

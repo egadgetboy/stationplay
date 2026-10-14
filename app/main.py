@@ -138,7 +138,7 @@ from .plex import (
     trouble,
 )
 from .scanner import Scanner
-from .schedule import ORDER_MODES, StationSchedule, forget_eras, prepare
+from .schedule import ORDER_MODES, Airs, StationSchedule, forget_eras, prepare
 from .sources import MediaAccess, ResolvedSource, ShareCheck, locate, readable, resolve_source
 from .text import plain
 from .tuner import TunerAccess
@@ -660,6 +660,11 @@ class AppContext:
         """What plays when on a station, across its eras."""
         return self.updater.station(channel_id)
 
+    def guide(self, channel: Channel) -> Airs:
+        """What a station airs, as the guides show it: INFO in blocks (see
+        infostation.Listings), every other station as it plays."""
+        return infostation.Listings() if infostation.is_info(channel) else self.station(channel.id)
+
     def stations_for(self, user: User | None) -> list[Channel]:
         """The stations `user` can see (all of them for an Admin, or while
         signing in is off: see viewing.py)."""
@@ -1047,7 +1052,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             request.headers.get("user-agent", ""), plex_address=for_plex
         )
         now = now_ms()
-        stations = [(c, ctx.station(c.id)) for c in ctx.db.list_channels()]
+        stations = [(c, ctx.guide(c)) for c in ctx.db.list_channels()]
         body = await asyncio.to_thread(
             hdhr.xmltv, stations, base_url(request), now - GUIDE_PAST_MS, now + GUIDE_FUTURE_MS
         )
@@ -1979,7 +1984,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             kind = special.get("kind")
             if kind and kind not in coming and e.start_ms is not None and e.start_ms > now:
                 coming[kind] = {"title": special.get("title") or "", "at": e.start_ms}
-        station = ctx.station(channel.id)
+        station = ctx.guide(channel)  # (INFO: its block, as in the guides)
         slot = station.locate(now)
         check = ctx.checks.get(channel.id)
         playing = ctx.broadcasters.get(channel.id)
@@ -2711,7 +2716,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     async def channel_guide(
         channel_id: int, request: Request, hours: float = STATION_GUIDE_MAX_HOURS
     ):
-        channel_or_404(channel_id)
+        channel = channel_or_404(channel_id)
         if not ctx.sees_station(access.signed_in(request), channel_id):
             raise HTTPException(404)  # (as one that doesn't exist)
         broken = ctx.broken.keys()
@@ -2719,7 +2724,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         until = now + int(max(0.5, min(hours, STATION_GUIDE_MAX_HOURS)) * 3600 * 1000)
 
         def listing() -> list[dict]:  # on a worker thread: a big shuffle takes a moment
-            station = ctx.station(channel_id)
+            station = ctx.guide(channel)
             return [
                 {
                     **_item_json(slot.item),
@@ -3748,6 +3753,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 ) from None
             except trusted.Refused as e:
                 raise HTTPException(400, str(e)) from None
+            ctx.doors.forget_listed(ctx.trusted.is_proxy)
             ctx.access.record(
                 logging.INFO,
                 f"{user.name if user else 'Someone'} trusted the reverse proxy at {proxy} "
@@ -3773,29 +3779,12 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             # one here, as on the Access tab: a tunnel in tapiOca's own
             # container. See relays.py.)
             hop["relay"] = ctx.relays.is_relay(peer) and not peer.is_loopback
-            # (Offered only if it can be listed, and isn't also a device that
-            # uses the tuner, such as Plex on the proxy's computer: listed,
-            # what it asks for naming nobody would be taken as from the
-            # internet, and Plex would lose the tuner. A relay or loopback
-            # naming nobody is itself, so they're fine: see networks.judge.
-            # The cold audit of 1.36.1.)
+            # (Offered only if it can be listed: a home address, with room.)
             try:
                 trusted.network_of(hop["address"], loopback=True)
                 hop["unlisted"] = "full" if len(ctx.trusted.proxies) >= trusted.PROXIES_MOST else ""
             except trusted.Refused:
                 hop["unlisted"] = "internet"
-            # (Plex's address is known before Plex uses the tuner: PLEX_URL's,
-            # or where Plex was let in lately. Recent tuner use is kept in
-            # memory only. The cold audit of 1.36.1, again.)
-            plex = {*ctx.tuner.plex_addresses(), tuner.plex_address(settings.plex_url or "")}
-            hop["tuner"] = (
-                not ctx.relays.is_relay(peer)
-                and not peer.is_loopback
-                and (
-                    hop["address"] in plex
-                    or any(s.address == hop["address"] for s in ctx.tuner.lately())
-                )
-            )
         if not ctx.reach.answer(request.query_params.get("n", ""), outside, https, hop):
             raise HTTPException(404, "Not Found")
         return {"stationplay": True, "port": "public" if outside else "home", "https": https}

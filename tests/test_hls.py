@@ -23,6 +23,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex import FakePlex
+from .helpers import PAGE
 from .test_e2e import (
     CLIP_S,
     assert_clean_stream,
@@ -90,7 +91,7 @@ async def test_an_app_watches_a_station_as_hls(tmp_path, media, monkeypatch):
     try:
         channel = await make_channel(base)
         ctx = app.state.ctx
-        async with httpx.AsyncClient(base_url=base, timeout=60) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=60) as client:
             first = await client.get("/hls/7/index.m3u8")
             assert first.status_code == 200, first.text
             assert first.headers["content-type"].startswith("application/vnd.apple.mpegurl")
@@ -169,7 +170,7 @@ async def test_apps_share_tuners_with_everyone_else(tmp_path, media):
     try:
         await make_channel(base, 7)
         await make_channel(base, 8)
-        async with httpx.AsyncClient(base_url=base, timeout=60) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=60) as client:
             assert (await client.put("/api/playback", json={"tuners": 1})).status_code == 200
 
             async def apps() -> tuple[httpx.Response, httpx.Response]:
@@ -205,8 +206,10 @@ async def test_an_app_that_tunes_away_frees_its_tuner(tmp_path, media):
         await make_channel(base, 8)
         elsewhere = httpx.AsyncHTTPTransport(local_address="127.0.0.2")
         async with (
-            httpx.AsyncClient(base_url=base, timeout=60) as client,
-            httpx.AsyncClient(base_url=base, timeout=60, transport=elsewhere) as other_device,
+            httpx.AsyncClient(headers=PAGE, base_url=base, timeout=60) as client,
+            httpx.AsyncClient(
+                headers=PAGE, base_url=base, timeout=60, transport=elsewhere
+            ) as other_device,
         ):
             assert (await client.put("/api/playback", json={"tuners": 1})).status_code == 200
             assert (await client.get("/hls/7/index.m3u8")).status_code == 200
@@ -256,8 +259,10 @@ async def test_night_mode_sound_is_made_beside_the_station(tmp_path, media, monk
         ctx = app.state.ctx
         elsewhere = httpx.AsyncHTTPTransport(local_address="127.0.0.2")
         async with (
-            httpx.AsyncClient(base_url=base, timeout=60) as client,
-            httpx.AsyncClient(base_url=base, timeout=60, transport=elsewhere) as usual_app,
+            httpx.AsyncClient(headers=PAGE, base_url=base, timeout=60) as client,
+            httpx.AsyncClient(
+                headers=PAGE, base_url=base, timeout=60, transport=elsewhere
+            ) as usual_app,
         ):
             assert (await client.put("/api/playback", json={"tuners": 1})).status_code == 200
             stations = (await client.get("/api/v1/stations")).json()["stations"]
@@ -379,11 +384,11 @@ async def test_an_app_away_from_home_watches_through_the_public_port(
     try:
         await make_channel(home, 7)
         async with (
-            httpx.AsyncClient(base_url=home, timeout=60) as inside,
+            httpx.AsyncClient(headers=PAGE, base_url=home, timeout=60) as inside,
             httpx.AsyncClient(
                 base_url=internet,
                 timeout=60,
-                headers={"CF-Connecting-IP": "203.0.113.7", "X-Forwarded-Proto": "https"},
+                headers={**PAGE, "CF-Connecting-IP": "203.0.113.7", "X-Forwarded-Proto": "https"},
                 transport=httpx.AsyncHTTPTransport(local_address="127.0.0.2"),
             ) as phone,
         ):

@@ -110,7 +110,9 @@ def test_a_relay_is_never_trusted_and_hidden_turns_trust_off(tmp_path):
     ctx = app.state.ctx
     ctx.relays.found = lambda: {ip("172.17.0.1")}
     with TestClient(app, base_url="http://192.168.1.20:3310") as pat:
-        assert pat.post("/api/access/users", json={"name": "Pat", "password": "x" * 12}).is_success
+        assert pat.post(
+            "/api/access/users", json={"name": "Pat", "password": "a plenty long password"}
+        ).is_success
         ctx.trusted.save({"entries": [{"network": "172.16.0.0/12", "gives": "picker"},
                                       {"network": "192.168.1.0/24", "gives": "picker"}],
                           "confirmWide": True}, by=None)  # fmt: skip
@@ -187,7 +189,9 @@ def test_the_access_tab_never_offers_a_relays_network_and_marks_a_relay_proxy(tm
     ctx = app.state.ctx
     ctx.relays.found = lambda: {ip("172.17.0.1")}
     with TestClient(app, base_url="http://192.168.1.20:3310", client=("192.168.1.50", 5)) as pat:
-        assert pat.post("/api/access/users", json={"name": "Pat", "password": "x" * 12}).is_success
+        assert pat.post(
+            "/api/access/users", json={"name": "Pat", "password": "a plenty long password"}
+        ).is_success
         got = pat.get("/api/access/trusted").json()
         assert got["you"]["offer"] == "192.168.1.0/24" and got["seeing"] == "seen"
         gateway = TestClient(app, base_url="http://192.168.1.20:3310", client=("172.17.0.1", 5))

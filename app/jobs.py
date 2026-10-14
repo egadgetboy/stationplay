@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from . import replacing
+from . import infostation, replacing
 from .broken import CHECK, STAYS, entry_part, file_key, found_by, of_part
 from .catalog import Media
 from .db import Item
@@ -97,7 +97,11 @@ async def run_check(ctx: AppContext, channel_id: int, status: CheckStatus) -> No
     seen: set[str] = set()
     items = []
     for item in ctx.db.all_programs(channel_id):
-        if item.rating_key in seen or ctx.broken.is_broken(item.rating_key):
+        if (
+            item.rating_key in seen
+            or ctx.broken.is_broken(item.rating_key)
+            or infostation.made_here(item.rating_key)  # (INFO's film: 1.36.2)
+        ):
             continue
         seen.add(item.rating_key)
         items.append(item)

@@ -18,6 +18,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .folderlib import Clips, radarr_movies, sonarr_tv
+from .helpers import PAGE
 from .test_e2e import assert_clean_stream, free_port, record
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
@@ -64,7 +65,7 @@ async def test_stations_run_from_folders_alone(tmp_path, clips):
         await asyncio.sleep(0.05)
     base = f"http://127.0.0.1:{port}"
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             tv = await scanned(client, "TV", "show", "TV")
             movies = await scanned(client, "Movies", "movie", "Movies")
             # Nothing guessed: every episode placed and every movie named by

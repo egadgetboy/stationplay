@@ -17,6 +17,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex import FakePlex
+from .helpers import PAGE
 from .test_e2e import assert_clean_stream, record, start_server
 from .test_e2e_breaks import colour_of, frames
 from .test_intro import media
@@ -163,7 +164,7 @@ async def test_tuning_in_plays_your_own_video(tmp_path, caplog):
     )
     data_dir = tmp_path / "data"
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=60) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=60) as client:
             ids = []
             for n in range(3):
                 made = await client.post(

@@ -559,6 +559,7 @@ sign-in has ended.
 | `user.role` | string | `admin` or `user` |
 | `user.pin` | boolean | Whether they have a PIN (from 1.28.0) |
 | `user.canChangePassword` | boolean | Whether they may change their password in the app (from 1.28.0): false for someone without a password, and for someone an Admin turned that off for. Offer Change password only when it's true |
+| `user.canChangePin` | boolean | Whether they may change their own PIN in the app (from 1.36.2): false for someone an Admin turned that off for (never an Admin). Offer changing the PIN only when it's true |
 | `user.canReport` | boolean | Whether they may report a problem (from 1.30.0: see Reporting a problem): false for someone an Admin turned that off for. Offer Report a problem only when it's true (and while signing in is off, always) |
 | `user.byNetwork` | boolean | (From 1.36.0; only when true) A trusted network signed them in (with a PIN, or nothing): the sign-in is for watching. An Admin is a User then (`user.role` says `user`), with no Admin alerts; for Admin tasks they sign in with their password |
 | `languages` | object | Their own languages, for Options (from 1.29.0: see Languages); while signing in is off, everyone's |
@@ -652,7 +653,7 @@ the new one:
 {"current": "...", "new": "..."}
 ```
 
-A new password has at least 8 characters (and at most 200). As on
+A new password has at least 12 characters (and at most 200; from 1.36.2: 8 before), isn't one of the most common, and isn't built from the person's name or tapiOca's (see the README's Passwords). As on
 tapiOca's page, every other sign-in of theirs ends (other apps,
 browsers and pickers). The app's own token ends too. The app carries on
 with `token`, which it keeps in place of the old one. The access log shows

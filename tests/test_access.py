@@ -20,6 +20,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex import FakePlex
+from .helpers import PAGE
 
 PAT = {"name": "Pat", "password": "correct horse"}
 SAM = {"name": "Sam", "password": "battery staple"}
@@ -145,7 +146,10 @@ def test_a_user_changes_only_their_own_stations(pat, app):
     assert sam.post("/api/logos/plex", json={"ratingKey": "100"}).status_code == 404
     assert browser(app).get("/plex-logo/100.png").status_code == 401  # but not signed out
     assert (
-        sam.post("/api/access/users", json={"name": "Eve", "password": "x" * 12}).status_code == 403
+        sam.post(
+            "/api/access/users", json={"name": "Eve", "password": "a plenty long password"}
+        ).status_code
+        == 403
     )
     # An Admin can change anyone's.
     assert pat.delete(f"/api/channels/{sams.json()['id']}").status_code == 204
@@ -158,8 +162,8 @@ def test_there_is_always_an_admin(pat, app):
     assert pat.delete(f"/api/access/users/{me['id']}").status_code == 400
     assert pat.put(f"/api/access/users/{sam['id']}", json={"role": "admin"}).status_code == 200
     assert pat.put(f"/api/access/users/{me['id']}", json={"role": "user"}).status_code == 200
-    for bad in ({"name": "", "password": "long enough"}, {"name": "Al", "password": "short"},
-                {"name": "<script>", "password": "long enough"}, {**SAM, "name": "sam"}):  # fmt: skip
+    for bad in ({"name": "", "password": "long enough now"}, {"name": "Al", "password": "short"},
+                {"name": "<script>", "password": "long enough now"}, {**SAM, "name": "sam"}):  # fmt: skip
         assert pat.post("/api/access/users", json=bad).status_code in (400, 403), bad
 
 
@@ -181,13 +185,17 @@ def test_a_new_password_signs_out_everywhere_else(pat, app):
     other = browser(app)
     assert other.post("/api/access/sign-in", json=PAT).status_code == 200
     changed = pat.post(
-        "/api/access/me/password", json={"current": PAT["password"], "password": "a new one!"}
+        "/api/access/me/password",
+        json={"current": PAT["password"], "password": "a new one, longer!"},
     )
     assert changed.status_code == 200
     assert pat.get("/api/channels").status_code == 200  # still signed in here
     assert other.get("/api/channels").status_code == 401  # but not there
     assert (
-        other.post("/api/access/sign-in", json={**PAT, "password": "a new one!"}).status_code == 200
+        other.post(
+            "/api/access/sign-in", json={**PAT, "password": "a new one, longer!"}
+        ).status_code
+        == 200
     )
     wrong = pat.post("/api/access/me/password", json={"current": "guess", "password": "whatever!"})
     assert wrong.status_code == 400
@@ -207,16 +215,18 @@ def test_changing_your_password_in_an_app(pat, app):
 
     # As on the page: the current one, and a new one long enough.
     wrong = app_.post(
-        "/api/internal/password", json={"current": "guess", "new": "a new one!"}, headers=sams
+        "/api/internal/password",
+        json={"current": "guess", "new": "a new one, longer!"},
+        headers=sams,
     )
     assert wrong.status_code == 400
     assert wrong.json()["detail"] == "Your current password isn't right"
     short = app_.post(
         "/api/internal/password", json={"current": SAM["password"], "new": "short"}, headers=sams
     )
-    assert short.status_code == 400 and "8 characters" in short.json()["detail"]
+    assert short.status_code == 400 and "12 characters" in short.json()["detail"]  # (1.36.2: 12)
     changed = app_.post(
-        "/api/internal/password", json={"current": SAM["password"], "new": "a new one!"},
+        "/api/internal/password", json={"current": SAM["password"], "new": "a new one, longer!"},
         headers=sams,
     )  # fmt: skip
     assert changed.status_code == 200, changed.text
@@ -227,7 +237,7 @@ def test_changing_your_password_in_an_app(pat, app):
     other = {"Authorization": f"Bearer {tablet.json()['token']}"}
     assert app_.get("/api/internal/me", headers=other).status_code == 401
     assert page.get("/api/channels").status_code == 401
-    new_one = {**SAM, "password": "a new one!"}
+    new_one = {**SAM, "password": "a new one, longer!"}
     assert browser(app).post("/api/access/sign-in", json=new_one).is_success
     apps = [a["app"] for a in pat.get("/api/access/apps").json() if a["user"] == "Sam"]
     assert apps == ["tapiOca for Android on Sam’s phone"]
@@ -240,14 +250,15 @@ def test_changing_your_password_in_an_app(pat, app):
     assert off.status_code == 200 and off.json()["canChangePassword"] is False
     assert app_.get("/api/internal/me", headers=now).json()["user"]["canChangePassword"] is False
     refused = app_.post(
-        "/api/internal/password", json={"current": "a new one!", "new": "another one"},
+        "/api/internal/password", json={"current": "a new one, longer!", "new": "another one, longer"},
         headers=now,
     )  # fmt: skip
     assert refused.status_code == 403 and refused.json()["detail"] == access.OWN_PASSWORD_OFF
     on_page = browser(app)
     on_page.post("/api/access/sign-in", json=new_one)
     refused = on_page.post(
-        "/api/access/me/password", json={"current": "a new one!", "password": "another one"}
+        "/api/access/me/password",
+        json={"current": "a new one, longer!", "password": "another one, longer"},
     )
     assert refused.status_code == 403 and refused.json()["detail"] == access.OWN_PASSWORD_OFF
     assert browser(app).post("/api/access/sign-in", json=new_one).is_success
@@ -263,7 +274,8 @@ def test_changing_your_password_in_an_app(pat, app):
     pat_id = pat.get("/api/access/me").json()["user"]["id"]
     assert pat.put(f"/api/access/users/{pat_id}", json={"canChangePassword": False}).is_success
     mine = pat.post(
-        "/api/access/me/password", json={"current": PAT["password"], "password": "pat's new one"}
+        "/api/access/me/password",
+        json={"current": PAT["password"], "password": "pat's brand new one"},
     )
     assert mine.status_code == 200
 
@@ -285,22 +297,24 @@ def test_no_password_to_change_and_the_limit_on_wrong_ones(pat, app):
     as_kids = {"Authorization": f"Bearer {picked.json()['token']}"}
     assert tv.get("/api/internal/me", headers=as_kids).json()["user"]["canChangePassword"] is False
     refused = tv.post(
-        "/api/internal/password", json={"current": "", "new": "a new one!"}, headers=as_kids
+        "/api/internal/password", json={"current": "", "new": "a new one, longer!"}, headers=as_kids
     )
     assert refused.status_code == 403 and refused.json()["detail"] == access.NO_PASSWORD
     # Only from an app: not a browser's sign-in.
-    from_page = {"current": PAT["password"], "new": "a new one!"}
+    from_page = {"current": PAT["password"], "new": "a new one, longer!"}
     assert pat.post("/api/internal/password", json=from_page).status_code == 403
     # Wrong current passwords count as wrong sign-ins do.
     signed = tv.post("/api/internal/sign-in", json=SAM).json()
     sams = {"Authorization": f"Bearer {signed['token']}"}
     for _ in range(access.TRIES):
         wrong = tv.post(
-            "/api/internal/password", json={"current": "guess", "new": "a new one!"}, headers=sams
+            "/api/internal/password",
+            json={"current": "guess", "new": "a new one, longer!"},
+            headers=sams,
         )
         assert wrong.status_code == 400
     waits = tv.post(
-        "/api/internal/password", json={"current": SAM["password"], "new": "a new one!"},
+        "/api/internal/password", json={"current": SAM["password"], "new": "a new one, longer!"},
         headers=sams,
     )  # fmt: skip
     assert waits.status_code == 429
@@ -329,13 +343,15 @@ def test_its_decided_again_once_the_body_has_arrived(app):
         ctx = app.state.ctx
 
         async def slowly():
-            yield b'{"name": "Eve", "password": "long enough", '
+            yield b'{"name": "Eve", "password": "long enough now", '
             await ctx.access.add_user(PAT["name"], PAT["password"], "admin", None)  # meanwhile
             yield b'"role": "admin"}'
 
         async def held():
             transport = httpx.ASGITransport(app=app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://sp") as client:
+            async with httpx.AsyncClient(
+                headers=PAGE, transport=transport, base_url="http://sp"
+            ) as client:
                 return await client.post(
                     "/api/access/users",
                     content=slowly(),
@@ -576,7 +592,7 @@ def test_a_user_makes_only_as_many_stations_as_they_may(pat, app):
         refused.json()["detail"] == "You can watch stations, but an Admin hasn't let you make any"
     )
     pat.put(f"/api/access/users/{sid}", json={"maxStations": None})
-    choosy = {"name": "Al", "password": "long enough", "maxStations": 7}
+    choosy = {"name": "Al", "password": "long enough now", "maxStations": 7}
     assert pat.post("/api/access/users", json=choosy).status_code == 400
     assert sam.put(f"/api/access/users/{sid}", json={"maxStations": 25}).status_code == 403
     # Admins make any number.
@@ -598,7 +614,7 @@ def test_two_stations_at_once_cant_both_take_the_last_place(pat, app):
     async def both():
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
-            transport=transport, base_url="http://sp", cookies=dict(sam.cookies)
+            headers=PAGE, transport=transport, base_url="http://sp", cookies=dict(sam.cookies)
         ) as client:
             return await asyncio.gather(*(
                 client.post("/api/channels", json={"number": n, "sources": [{"type": "show", "ratingKey": "100"}]})
@@ -759,3 +775,51 @@ def test_browsers_signed_in_before_count_as_used_when_last_seen(tmp_path):
     found = upgraded.session_user("browser", 0)
     upgraded.close()
     assert found is not None and found.active_ms == 5000
+
+
+def test_passwords_as_the_guidelines_say(pat):
+    """(1.36.2) The owner, October 14: "Password strength needs to be
+    industry standard." As NIST SP 800-63B and OWASP say: at least 12
+    characters, no rules about symbols, never a common password, nothing
+    built from the person's name or tapiOca's; a passphrase is welcome."""
+    refused = {
+        "eleven char": "at least 12 characters",
+        "zzzzzzzzzzzzzz": "repeats itself",
+        "abcdefghijklmnop": "repeats itself",
+        "passwordpassword": "most common passwords",
+        "123456789012": "most common passwords",
+        "Robin-Tapioca-1": "your name or tapiOca's",
+    }
+    for password, why in refused.items():
+        made = pat.post("/api/access/users", json={"name": "Robin", "password": password})
+        assert made.status_code == 400 and why in made.json()["detail"], password
+    for name, password in (("Robin", "purple elephant dance"), ("Lee", "Xk7-pR2!qL9#")):
+        made = pat.post("/api/access/users", json={"name": name, "password": password})
+        assert made.status_code == 201, (password, made.text)
+    # The same when someone changes their own.
+    mine = pat.post(
+        "/api/access/me/password", json={"current": PAT["password"], "password": "pat1234567"}
+    )
+    assert mine.status_code == 400 and "12 characters" in mine.json()["detail"]
+
+
+def test_changing_your_own_pin_is_an_admins_choice_too(pat, app):
+    """(1.36.2) The owner, October 14: "user should be able to change
+    password or PIN - not just password. Maybe granular." Each is its own
+    choice; an Admin always may."""
+    sam_id = pat.post("/api/access/users", json={**SAM, "role": "user"}).json()["id"]
+    phone = TestClient(app)
+    token = phone.post("/api/internal/sign-in", json={**SAM, "app": "tapiOca for Android"}).json()[
+        "token"
+    ]
+    sam = {"Authorization": f"Bearer {token}"}
+    assert phone.get("/api/internal/me", headers=sam).json()["user"]["canChangePin"] is True
+    assert phone.post("/api/internal/pin", json={"pin": "2468"}, headers=sam).status_code == 200
+    assert pat.put(f"/api/access/users/{sam_id}", json={"canChangePin": False}).is_success
+    listed = {u["name"]: u for u in pat.get("/api/access/users").json()}
+    assert listed["Sam"]["canChangePin"] is False and listed["Sam"]["canChangePassword"] is True
+    assert phone.get("/api/internal/me", headers=sam).json()["user"]["canChangePin"] is False
+    off = phone.post("/api/internal/pin", json={"pin": "1357"}, headers=sam)
+    assert off.status_code == 403 and "changing your own PIN" in off.json()["detail"]
+    log = pat.get("/api/logs?access_log=true").json()["text"]
+    assert "stopped Sam from changing their own PIN" in log

@@ -272,6 +272,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(409, str(e)) from None
         except trusted.Refused as e:
             raise HTTPException(400, str(e)) from None
+        if ctx.doors is not None:
+            ctx.doors.forget_listed(ctx.trusted.is_proxy)
         who = u.name if (u := access.signed_in(request)) else "Someone"
         ctx.access.record(
             logging.INFO, f"{who} changed the trusted networks, proxies or names for home"

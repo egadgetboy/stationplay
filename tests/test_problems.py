@@ -105,12 +105,13 @@ def test_only_admins_see_them(app):
     with TestClient(app) as admin:
         admin.post("/api/access/users", json=ADA)
         admin.post(
-            "/api/access/users", json={"name": "Bo", "password": "bo password", "role": "user"}
+            "/api/access/users",
+            json={"name": "Bo", "password": "bo's long password", "role": "user"},
         )
         bo = TestClient(app)
         assert (
             bo.post(
-                "/api/access/sign-in", json={"name": "Bo", "password": "bo password"}
+                "/api/access/sign-in", json={"name": "Bo", "password": "bo's long password"}
             ).status_code
             == 200
         )

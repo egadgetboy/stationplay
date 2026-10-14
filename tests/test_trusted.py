@@ -480,7 +480,11 @@ def test_a_sign_in_made_without_a_secret_mints_nothing_that_leaves_its_network(h
         ("PUT", f"/api/access/users/{pat}", {"password": "a brand new one"}),
         ("PUT", f"/api/access/users/{kid}", {"password": "a brand new one"}),
         ("PUT", f"/api/access/users/{kid}/picker", {"pin": "0000"}),
-        ("POST", "/api/access/users", {"name": "Eve", "password": "x" * 12, "role": "admin"}),
+        (
+            "POST",
+            "/api/access/users",
+            {"name": "Eve", "password": "a plenty long password", "role": "admin"},
+        ),
         ("POST", f"/api/access/users/{kid}/invite", None),
         ("POST", "/api/api-tokens", {"name": "Mine", "scope": "admin"}),
     ):
@@ -772,7 +776,10 @@ def test_an_admin_by_network_is_a_user_and_their_own_devices_are_as_before(home)
     # Jo, an Admin with no PIN, picked with nothing on her own linked phone
     # (1.35.0's way, where only she is on it: an unlocked sign-in, not a
     # network's): an Admin as before.
-    jo = pc.post("/api/access/users", json={"name": "Jo", "password": "x" * 12, "role": "admin"})
+    jo = pc.post(
+        "/api/access/users",
+        json={"name": "Jo", "password": "a plenty long password", "role": "admin"},
+    )
     ctx = home.state.ctx
     picked = ctx.access.start_session(ctx.db.user(jo.json()["id"]), "Phone", unlocked=True)
     mine = device_at(home, "192.168.20.7", authorization=f"Bearer {picked}")
@@ -791,8 +798,21 @@ def test_an_admin_by_network_is_a_user_and_their_own_devices_are_as_before(home)
     # Jo with her password on the same TV: an ordinary sign-in, an Admin's.
     assert pc.put(f"/api/access/users/{jo.json()['id']}/picker", json={"showOn": "home"}).is_success
     by_password = tv.post(
-        "/api/internal/picker/choose", json={"id": jo.json()["id"], "password": "x" * 12}
+        "/api/internal/picker/choose",
+        json={"id": jo.json()["id"], "password": "a plenty long password"},
     )
     assert by_password.status_code == 200, by_password.text
     hers = device_at(home, "192.168.20.7", authorization=f"Bearer {by_password.json()['token']}")
     assert hers.get("/api/internal/alerts").status_code == 200  # (anywhere: not the network's)
+
+
+def test_a_proxy_trusted_since_is_no_longer_a_door(home):
+    """(1.36.2) The owner, October 14: the Access tab still said "isn't a
+    trusted proxy" beside the proxy he'd just trusted, and its alert stayed.
+    Listing it ends both."""
+    ctx = home.state.ctx
+    device_at(home, "192.168.1.2", x_forwarded_for="192.168.1.60").get("/api/access/me")
+    assert [d["about"] for d in ctx.doors.listed()] == ["proxy-unknown"]
+    pat = admin_at_home(home)
+    assert pat.put("/api/access/trusted", json={"proxies": [{"network": "192.168.1.2"}]}).is_success
+    assert ctx.doors.listed() == []

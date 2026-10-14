@@ -137,7 +137,9 @@ async function showSetup(st, why) {
     paintNav();
     body.replaceChildren(h('p', { class: 'muted' }, 'Loading…'));
     try {
-      page = await SETUP_PAGES[s]({ checks, loadChecks, plexInfo, loadPlex, why, st, shownQuestions, saved, notYet });
+      // (`goTo`: a way to another step of this setup, if it has that step.)
+      const goTo = to => steps.includes(to) ? () => go(steps.indexOf(to)) : null;
+      page = await SETUP_PAGES[s]({ checks, loadChecks, plexInfo, loadPlex, why, st, shownQuestions, saved, notYet, goTo });
     } catch (e) {
       page = { node: h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' ', e.message) };
     }
@@ -338,7 +340,7 @@ const SETUP_PAGES = {
     const admin = () => [
       h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'Your name'), h('div', { class: 'opt-ctl' }, adminName)),
       h('div', { class: 'opt' }, h('span', { class: 'opt-label' }, 'Password'), h('div', { class: 'opt-ctl' }, adminPassword,
-        h('span', { class: 'hint' }, `At least ${ACCESS.passwordMin} characters.`))),
+        h('span', { class: 'hint' }, `At least ${ACCESS.passwordMin} characters. A few words together work well, such as three or four that mean something to you. tapiOca turns away the most common passwords, and ones built from your name.`))),
     ];
     const neither = h('span', { class: 'hint' }, 'Signing in doesn’t change who can watch in Plex, Jellyfin, Emby or Kodi: each app decides that itself.');
     function paint() {
@@ -443,11 +445,12 @@ const SETUP_PAGES = {
     } };
   },
 
-  async away() {
+  async away({ goTo }) {
     let got = await api('/api/away');
     setAway(got);
     let warned = null;  // (the address it said to leave the port out of, once)
-    const fields = awayFields(got, () => box.paint(), 'setupAway');
+    // (Sign-in off: Turn on sign-in goes back to Who can use tapiOca.)
+    const fields = awayFields(got, () => box.paint(), 'setupAway', { turnOn: goTo('signIn') || ' Add the first user on the Access tab to turn it on.' });
     // Saves what's changed: on leaving the step, and for Check now (a
     // sentence if that didn't work).
     const put = async () => {

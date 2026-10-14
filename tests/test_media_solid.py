@@ -702,7 +702,7 @@ def limited(app, plex) -> tuple[TestClient, dict[str, str], dict[str, str]]:
     shared(admin)
     admin.post("/api/access/users", json=ADA)
     kit = admin.post("/api/access/users", json={**KIT, "role": "user"}).json()
-    lee = admin.post("/api/access/users", json={"name": "Lee", "password": "a long one",
+    lee = admin.post("/api/access/users", json={"name": "Lee", "password": "a long one, really",
                                                  "role": "user"}).json()  # fmt: skip
     levels = admin.get("/api/access/viewing").json()["levels"]
     kid = next(lv["id"] for lv in levels if lv["builtin"] == "kid")
@@ -714,7 +714,7 @@ def limited(app, plex) -> tuple[TestClient, dict[str, str], dict[str, str]]:
         signed = TestClient(app).post("/api/internal/sign-in", json=who)
         return {"Authorization": f"Bearer {signed.json()['token']}"}
 
-    return admin, token(KIT), token({"name": "Lee", "password": "a long one"})
+    return admin, token(KIT), token({"name": "Lee", "password": "a long one, really"})
 
 
 def test_every_address_refuses_what_someone_may_not_see_the_same_way(app, plex):

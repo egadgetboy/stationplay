@@ -108,6 +108,9 @@ from app.broken import CHECK, DEEP_SCAN, BrokenFiles  # noqa: E402
 from app.db import Item, changes_needed  # noqa: E402
 from tests.fakeplex import FakePlex  # noqa: E402
 
+# What tapiOca's page sends with each request (see app/access.py, PAGE_HEADER:
+# 1.36.2). Releases before it ignore it.
+PAGE = {"X-Tapioca-Page": "1"}
 ADMIN = {"name": "Ada", "password": "correct horse battery"}
 USER = {"name": "Sam", "password": "staple battery horse", "role": "user"}
 KIDS = {"name": "Kids", "role": "user"}  # (no password, no PIN)
@@ -332,7 +335,7 @@ def give_data(checks: Checks, url: str) -> dict:
     """An Admin, a User with a PIN and a Viewing Level, Kids, an app
     signed in on a linked device, settings, a station and a problem; what
     was made."""
-    page = httpx.Client(base_url=url, timeout=30)
+    page = httpx.Client(headers=PAGE, base_url=url, timeout=30)
     app = httpx.Client(base_url=url, timeout=30)
     checks.ok(
         page.post("/api/access/users", json=ADMIN).status_code == 201, "the first Admin is made"
@@ -379,7 +382,7 @@ def shown_on(page: httpx.Client) -> dict[str, str]:
 
 def has_data(checks: Checks, url: str, made: dict, version: str, where: str) -> None:
     """Everything give_data made is there, everyone still signed in."""
-    page = httpx.Client(base_url=url, timeout=30, cookies=made["cookies"])
+    page = httpx.Client(headers=PAGE, base_url=url, timeout=30, cookies=made["cookies"])
     server = httpx.get(f"{url}/api/v1/server", timeout=10).json()
     checks.ok(server["version"] == version, f"{where}: it's {version}", server["version"])
     me = page.get("/api/access/me").json().get("user") or {}
@@ -402,8 +405,12 @@ def has_data(checks: Checks, url: str, made: dict, version: str, where: str) -> 
               f"{where}: the settings are kept", playback)  # fmt: skip
     stations = sorted((c["number"], c["name"]) for c in page.get("/api/channels").json())
     checks.ok(
-        stations == [(STATION["number"], STATION["name"]), *([OWN_STATION] if made.get("own") else []),
-                     *([INFO] if made.get("info") else [])],
+        stations
+        == [
+            (STATION["number"], STATION["name"]),
+            *([OWN_STATION] if made.get("own") else []),
+            *([INFO] if made.get("info") else []),
+        ],
         f"{where}: the station is kept",
         stations,
     )
@@ -477,7 +484,7 @@ def new_people(checks: Checks, url: str, made: dict) -> dict:
     that way, but Kids, kept as they were; and the User, signed in on the
     linked device, is on its list. What the release before should find, if
     nothing is put back."""
-    page = httpx.Client(base_url=url, timeout=30, cookies=made["cookies"])
+    page = httpx.Client(headers=PAGE, base_url=url, timeout=30, cookies=made["cookies"])
     default = page.get("/api/access/devices").json()["default"]
     checks.ok(default == "signed-in", "new people show only on devices they sign in on, as the "
               "Admin never chose otherwise", default)  # fmt: skip
@@ -632,7 +639,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         if version_of(__version__) >= (1, 36, 0):
             # (Its setup answered, as a real install's is: so the update asks
             # again only what changed since.)
-            page = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
+            page = httpx.Client(headers=PAGE, base_url=sp.url, timeout=30, cookies=made["cookies"])
             asked = page.get("/api/setup").json().get("questions", [])
             checks.ok(page.put("/api/setup", json={"answered": asked}).status_code == 200,
                       "its setup is answered")  # fmt: skip
@@ -645,7 +652,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         sp = start(ROOT, data, f"{__version__}-updated")
         if sp is None:
             return
-        page = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
+        page = httpx.Client(headers=PAGE, base_url=sp.url, timeout=30, cookies=made["cookies"])
         notify = {"on": True, "url": f"{plex.url}/notify", "format": "json"}
         checks.ok(page.put("/api/notify", json=notify).status_code == 200,
                   "alerts are sent to a web address")  # fmt: skip
@@ -735,7 +742,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         now = alerts_of(sp.url, bearer)
         checks.ok({k: a["id"] for k, a in now.items() if a["fixed"] is None} == live,
                   "both are there at once, with the same IDs", now)  # fmt: skip
-        page = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
+        page = httpx.Client(headers=PAGE, base_url=sp.url, timeout=30, cookies=made["cookies"])
         logs = page.get("/api/logs").json()["text"]
         checks.ok(logs.count("Alert still going: ") == 2, "the Logs tab says they're still going",
                   logs[-2000:])  # fmt: skip
@@ -787,7 +794,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         sp = start(old_code, as_is, f"{before}-as-is")
         if sp is None:
             return
-        page = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
+        page = httpx.Client(headers=PAGE, base_url=sp.url, timeout=30, cookies=made["cookies"])
         server = page.get("/api/v1/server").json()
         me = page.get("/api/access/me").json().get("user") or {}
         stations = sorted((c["number"], c["name"]) for c in page.get("/api/channels").json())
@@ -828,7 +835,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
             sp = start(ROOT, as_is, f"{__version__}-as-is-again")
             if sp is None:
                 return
-            trusted_kept(checks, httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"]),
+            trusted_kept(checks, httpx.Client(headers=PAGE, base_url=sp.url, timeout=30, cookies=made["cookies"]),
                          "updated again with no copy put back")  # fmt: skip
             stopped(checks, sp, __version__)
         shutil.rmtree(as_is)
@@ -842,7 +849,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         if sp is None:
             return
         has_data(checks, sp.url, made if copies else since, before, "rolled back")
-        page = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
+        page = httpx.Client(headers=PAGE, base_url=sp.url, timeout=30, cookies=made["cookies"])
         said = [p["details"] for p in page.get("/api/problems").json()["problems"]]
         if copies:
             checks.ok(said == [["before the update"]], "the database is as it was before the update",
@@ -875,7 +882,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         sp = start(ROOT, data, f"{__version__}-again")
         if sp is None:
             return
-        page = httpx.Client(base_url=sp.url, timeout=30, cookies=made["cookies"])
+        page = httpx.Client(headers=PAGE, base_url=sp.url, timeout=30, cookies=made["cookies"])
         default = page.get("/api/access/devices").json()["default"]
         checks.ok(default == "home", "the Admin's choice stays: new people show on every device "
                   "at home", default)  # fmt: skip
@@ -887,14 +894,14 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
             sp = start(old_code, open_, f"{before}-open")
             if sp is None:
                 return
-            page = httpx.Client(base_url=sp.url, timeout=30)
+            page = httpx.Client(headers=PAGE, base_url=sp.url, timeout=30)
             asked = page.get("/api/setup").json().get("questions", [])
             page.put("/api/setup", json={"answered": asked})
             stopped(checks, sp, before)
             sp = start(ROOT, open_, f"{__version__}-open")
             if sp is None:
                 return
-            page = httpx.Client(base_url=sp.url, timeout=30)
+            page = httpx.Client(headers=PAGE, base_url=sp.url, timeout=30)
             status = page.get("/api/status").status_code
             tuner = page.get("/discover.json").status_code
             checks.ok((status, tuner) == (200, 200), "it keeps working at home, with no signing "
@@ -925,7 +932,7 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         sp = start(ROOT, fresh, f"{__version__}-fresh")
         if sp is None:
             return
-        page = httpx.Client(base_url=sp.url, timeout=30)
+        page = httpx.Client(headers=PAGE, base_url=sp.url, timeout=30)
         server = page.get("/api/v1/server").json()
         checks.ok(server["version"] == __version__, f"it's {__version__}", server["version"])
         checks.ok(

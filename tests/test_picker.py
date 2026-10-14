@@ -16,7 +16,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex import FakePlex
-from .helpers import through_proxy
+from .helpers import PAGE, through_proxy
 
 ADA = {"name": "Ada", "password": "correct horse"}
 TV = {"app": "tapiOca for Roku", "deviceName": "Living Room Roku", "picker": True}
@@ -245,7 +245,8 @@ def test_who_can_be_shown_where(app):
         key = tv.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]
         assert people(tv, key) == ["Ada"]
         bo = admin.post(
-            "/api/access/users", json={"name": "Bo", "password": "bo password", "role": "user"}
+            "/api/access/users",
+            json={"name": "Bo", "password": "bo's long password", "role": "user"},
         )
         assert bo.json()["showOn"] == "signed-in"
         # ...and someone who can't sign in by name, as Kids and Cy, on only
@@ -331,7 +332,9 @@ def test_pins_cant_be_brute_forced_with_many_guesses_at_once(app):
 
         async def guesses() -> list[int]:
             transport = httpx.ASGITransport(app=app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://sp") as c:
+            async with httpx.AsyncClient(
+                headers=PAGE, transport=transport, base_url="http://sp"
+            ) as c:
 
                 async def guess(pin: str):
                     return await c.post(
@@ -392,7 +395,7 @@ def test_devices_at_home_list_the_household_and_away_only_their_own(tmp_path):
             name: admin.post("/api/access/users", json={"name": name, "role": "user", **more}).json()
             for name, more in (
                 ("Kids", {}), ("Tia", {"password": "teen password"}),
-                ("Bo", {"password": "bo password"}),
+                ("Bo", {"password": "bo's long password"}),
             )
         }  # fmt: skip
         assert {u["showOn"] for u in admin.get("/api/access/users").json()} == {"home"}
@@ -458,8 +461,8 @@ def test_everyone_on_all_devices_moves_to_devices_at_home_once(tmp_path):
         admin.post("/api/access/users", json=ADA)
         for name, more in (
             ("Kids", {}), ("Tia", {"password": "teen password", "showOn": "signed-in"}),
-            ("Lu", {"password": "lu password", "showOn": "selected"}),
-            ("Bo", {"password": "bo password"}),
+            ("Lu", {"password": "lu's long password", "showOn": "selected"}),
+            ("Bo", {"password": "bo's long password"}),
         ):  # fmt: skip
             assert admin.post(
                 "/api/access/users", json={"name": name, "role": "user", **more}
@@ -505,7 +508,7 @@ def test_new_people_show_only_on_devices_they_sign_in_on(tmp_path):
         made = {
             name: admin.post("/api/access/users", json={"name": name, "role": "user", **more}).json()
             for name, more in (
-                ("Bo", {"password": "bo password"}), ("Lu", {"pin": "1111"}), ("Kids", {}),
+                ("Bo", {"password": "bo's long password"}), ("Lu", {"pin": "1111"}), ("Kids", {}),
             )
         }  # fmt: skip
         users = {u["name"]: u["showOn"] for u in admin.get("/api/access/users").json()}
@@ -519,7 +522,7 @@ def test_new_people_show_only_on_devices_they_sign_in_on(tmp_path):
         tv = home.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]
         phone = home.post(
             "/api/internal/sign-in",
-            json={"name": "Bo", "password": "bo password", "app": "tapiOca for Android",
+            json={"name": "Bo", "password": "bo's long password", "app": "tapiOca for Android",
                   "deviceName": "Bo's Pixel", "picker": True},
         ).json()["deviceKey"]  # fmt: skip
         assert (people(home, tv), people(away, tv)) == (["Ada"], ["Ada"])
@@ -530,7 +533,7 @@ def test_new_people_show_only_on_devices_they_sign_in_on(tmp_path):
         # Once Bo signs in on the TV, he's on its list, at home and away.
         signed = away.post(
             "/api/internal/picker/sign-in",
-            json={"name": "Bo", "password": "bo password"},
+            json={"name": "Bo", "password": "bo's long password"},
             headers=device(tv),
         )
         assert signed.status_code == 200, signed.text
@@ -558,7 +561,7 @@ def test_use_for_everyone(tmp_path):
         made = {
             name: admin.post("/api/access/users", json={"name": name, "role": "user", **more}).json()
             for name, more in (
-                ("Bo", {"password": "bo password"}), ("Lu", {"pin": "1111"}), ("Kids", {}),
+                ("Bo", {"password": "bo's long password"}), ("Lu", {"pin": "1111"}), ("Kids", {}),
                 ("Rae", {}),
             )
         }  # fmt: skip
@@ -579,7 +582,7 @@ def test_use_for_everyone(tmp_path):
             refused = admin.post("/api/access/devices/everyone", json=bad)
             assert refused.status_code in (400, 422), bad
         bo = TestClient(app)
-        bo.post("/api/access/sign-in", json={"name": "Bo", "password": "bo password"})
+        bo.post("/api/access/sign-in", json={"name": "Bo", "password": "bo's long password"})
         everyone = {"showOn": "signed-in"}
         assert bo.post("/api/access/devices/everyone", json=everyone).status_code == 403
         cross = admin.post("/api/access/devices/everyone", json=everyone,
@@ -601,7 +604,7 @@ def test_use_for_everyone(tmp_path):
             "Kids and Rae kept as they were (no password or PIN)"
         ) in log
         # And anyone added from now on.
-        cy = admin.post("/api/access/users", json={"name": "Cy", "password": "cy password",
+        cy = admin.post("/api/access/users", json={"name": "Cy", "password": "cy's long password",
                                                    "role": "user"})  # fmt: skip
         assert cy.json()["showOn"] == "signed-in"
         again = admin.post("/api/access/devices/everyone", json=everyone).json()
@@ -628,7 +631,7 @@ def test_an_admins_earlier_choice_stays_on_updating(tmp_path):
     otherwise, only on devices they sign in on. Nobody already added moves."""
     with TestClient(two_ports(tmp_path)) as admin:
         admin.post("/api/access/users", json=ADA)
-        admin.post("/api/access/users", json={"name": "Bo", "password": "bo password",
+        admin.post("/api/access/users", json={"name": "Bo", "password": "bo's long password",
                                               "role": "user", "showOn": "home"})  # fmt: skip
 
     def started_with(chosen: str | None) -> tuple[str, dict[str, str]]:
@@ -766,7 +769,8 @@ def test_an_admin_keeps_their_passcode_and_kids_get_one_from_an_admin(app):
             "/api/access/users", json={"name": "Lu", "role": "user", "pin": "1111"}
         ).json()
         admin.post(
-            "/api/access/users", json={"name": "Cy", "password": "cy password", "role": "admin"}
+            "/api/access/users",
+            json={"name": "Cy", "password": "cy's long password", "role": "admin"},
         )
         tv = TestClient(app)
         signed = tv.post("/api/internal/sign-in", json={**ADA, **TV}).json()
@@ -781,14 +785,14 @@ def test_an_admin_keeps_their_passcode_and_kids_get_one_from_an_admin(app):
         assert tv.post("/api/internal/pin", json={"pin": "8642"}, headers=ada).status_code == 200
         # An Admin without one may choose none: they give their password on a
         # device others use too, as before.
-        cy = tv.post("/api/internal/sign-in", json={"name": "Cy", "password": "cy password"})
+        cy = tv.post("/api/internal/sign-in", json={"name": "Cy", "password": "cy's long password"})
         assert cy.json()["askPin"] is True
         cy_none = tv.post(
             "/api/internal/pin", json={"pin": None}, headers=bearer(cy.json()["token"])
         )
         assert cy_none.status_code == 200
         assert (
-            tv.post("/api/internal/sign-in", json={"name": "Cy", "password": "cy password"})
+            tv.post("/api/internal/sign-in", json={"name": "Cy", "password": "cy's long password"})
             .json()["askPin"] is False
         )  # fmt: skip
 
@@ -951,7 +955,8 @@ def test_taken_off_a_device_ends_their_sign_in_there(app):
         admin.post("/api/access/users", json=ADA)
         household(admin)
         bo = admin.post(
-            "/api/access/users", json={"name": "Bo", "password": "bo password", "role": "user"}
+            "/api/access/users",
+            json={"name": "Bo", "password": "bo's long password", "role": "user"},
         ).json()
         tv = TestClient(app)
         key = tv.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]

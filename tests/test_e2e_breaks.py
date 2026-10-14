@@ -17,6 +17,7 @@ import httpx
 import pytest
 
 from .fakeplex import FakePlex
+from .helpers import PAGE
 from .test_e2e import assert_clean_stream, ff, record, start_server
 from .test_e2e_skipping import UV, assert_runs
 
@@ -93,7 +94,7 @@ def media(tmp_path: Path, commercials: dict[str, tuple[str, float]]) -> FakePlex
 
 
 async def make_station(base: str, **settings) -> dict:
-    async with httpx.AsyncClient(base_url=base, timeout=60) as client:
+    async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=60) as client:
         made = await client.post(
             "/api/channels",
             json={
@@ -112,7 +113,7 @@ async def watch_status(base: str, seconds: float) -> set[str]:
     """What the status said was on between programs, while watching."""
     seen: set[str] = set()
     deadline = time.monotonic() + seconds
-    async with httpx.AsyncClient(base_url=base, timeout=10) as client:
+    async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=10) as client:
         while time.monotonic() < deadline:
             for stream in (await client.get("/api/status")).json()["streams"]:
                 if stream["between"]:
@@ -130,7 +131,7 @@ async def test_commercials_and_the_station_id_card_follow_each_program(tmp_path,
     try:
         # (The commercials are found in the background as tapiOca starts:
         # a station made before then has none until its next update.)
-        async with httpx.AsyncClient(base_url=base) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base) as client:
             for _ in range(100):
                 found = (await client.get("/api/status")).json()["fillers"]["commercials"]
                 if found == 2:
@@ -145,7 +146,7 @@ async def test_commercials_and_the_station_id_card_follow_each_program(tmp_path,
             watermarkPosition="bottom-right",  # (where it's looked for below)
         )
         assert (station["breaks"], station["stationId"], station["watermark"]) == (2, True, "logo")
-        async with httpx.AsyncClient(base_url=base) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base) as client:
             status = (await client.get("/api/status")).json()
             guide = (await client.get(f"/api/channels/{station['id']}/guide?hours=1")).json()
         assert status["fillers"]["commercials"] == 2
@@ -209,11 +210,11 @@ async def test_a_commercial_that_stops_short_is_covered_and_left_out(tmp_path, c
     )
     try:
         station = await make_station(base, breaks=1, logo="")
-        async with httpx.AsyncClient(base_url=base) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base) as client:
             status = (await client.get("/api/status")).json()
         assert status["fillers"]["commercials"] == 2  # it opens fine, so it's used
         data = await record(f"{base}/stream/5", 44)
-        async with httpx.AsyncClient(base_url=base) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base) as client:
             status = (await client.get("/api/status")).json()
     finally:
         srv.should_exit = True

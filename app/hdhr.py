@@ -16,7 +16,7 @@ from xml.sax.saxutils import escape, quoteattr
 from . import specials
 from .db import Channel, Item
 from .logos import LIBRARY_VERSION
-from .schedule import StationSchedule
+from .schedule import Airs
 
 # The tuner's maker, as Plex and other programs discover it: kept as it was
 # before the rename to tapiOca (docs/notes/names-kept.md).
@@ -163,7 +163,7 @@ def _programme(
 
 
 def xmltv(
-    channels: list[tuple[Channel, StationSchedule]],
+    channels: list[tuple[Channel, Airs]],
     base_url: str,
     from_ms: int,
     to_ms: int,

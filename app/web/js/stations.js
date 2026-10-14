@@ -311,7 +311,7 @@ async function reallyDelete(ch) {
 window.addEventListener('pagehide', () => {
   for (const [id, timer] of deleting) {
     clearTimeout(timer);
-    fetch(`/api/channels/${id}`, { method: 'DELETE', keepalive: true }).catch(() => {});
+    fetch(`/api/channels/${id}`, { method: 'DELETE', keepalive: true, headers: { 'X-Tapioca-Page': '1' } }).catch(() => {});
   }
   deleting.clear();
 });

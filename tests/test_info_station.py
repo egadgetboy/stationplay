@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import subprocess
 import time
 
@@ -72,6 +73,105 @@ def test_a_new_tapioca_starts_with_info_on_99(tmp_path, caplog):
             "taken": None,
         }
     assert "Made the INFO station, station 99" in caplog.text
+
+
+def test_info_airs_in_four_hour_blocks_in_every_guide(tmp_path, monkeypatch):
+    """(1.36.2) The owner, October 14, of Plex's guide: "guide looks like
+    garbage. 'Unknown' station name and tons of tiny guide start/end
+    times", one listing for each pass of the 2-minute film, and nothing
+    before the first. "You can create back-to-back 4-hour listings with a
+    summary statement." In every guide (Plex's, other apps', tapiOca's apps'
+    and the page's), INFO airs in blocks from local midnight, starting
+    before the guide does; what it plays is unchanged."""
+    was = os.environ.get("TZ")
+    monkeypatch.setenv("TZ", "America/Chicago")
+    time.tzset()
+    try:
+        four = 4 * 3600_000
+        # A clock change (November 1, 2026): that day's 0:00 to 4:00 is 5 hours.
+        fall = int(time.mktime((2026, 11, 1, 0, 0, 0, 0, 0, -1)) * 1000)
+        starts = [s.start_ms for s in infostation.Listings().between(fall, fall + 26 * 3600_000)]
+        assert [time.localtime(s / 1000).tm_hour for s in starts] == [0, 4, 8, 12, 16, 20, 0]
+        assert starts[1] - starts[0] == four + 3600_000 and starts[2] - starts[1] == four
+        with make(tmp_path) as c:
+            now = int(time.time() * 1000)
+            guide = c.get("/xmltv.xml").text
+            info = [p for p in guide.split("<programme ")[1:] if 'channel="99"' in p]
+            assert 12 <= len(info) <= 15  # (2 hours back, 48 ahead, 4 hours each)
+            first = infostation.Listings().locate(now - 2 * 3600_000)
+            assert (
+                f'start="{time.strftime("%Y%m%d%H%M%S", time.gmtime(first.start_ms / 1000))} +0000"'
+                in info[0]
+            )
+            assert first.start_ms <= now - 2 * 3600_000 < first.end_ms
+            starts_at = [p.split('"')[1] for p in info]
+            assert len(set(starts_at)) == len(starts_at) == len(sorted(starts_at))
+            for p in info:
+                assert '<title lang="en">tapiOca INFO</title>' in p
+                assert infostation.SUMMARY in p and "<date>" not in p
+            # The apps' guide, and what's on now and next.
+            [station] = c.get("/api/channels").json()
+            listed = c.get(f"/api/channels/{station['id']}/guide?hours=12").json()
+            assert len(listed) in (3, 4) and all(
+                e["end"] - e["start"] >= 3 * 3600_000 for e in listed[1:-1]
+            )
+            got = c.get("/api/v1/guide").json()
+            [programs] = [s["programs"] for s in got["stations"] if s["number"] == 99]
+            assert programs[0]["start"] <= now < programs[0]["end"]
+            assert programs[0]["end"] - programs[0]["start"] >= 3 * 3600_000
+            # What plays: the film, its own length, as ever.
+            assert (
+                c.app.state.ctx.station(station["id"]).locate(now).item.duration_ms
+                == infostation.LENGTH_MS
+            )
+        # A clock that falls back at midnight (Azores, October 25, 2026):
+        # 0:00 to 1:00 comes twice, and each minute of it is in a block that
+        # began by then.
+        monkeypatch.setenv("TZ", "Atlantic/Azores")
+        time.tzset()
+        twice = int(time.mktime((2026, 10, 25, 0, 30, 0, 0, 0, 0)) * 1000)  # (the first 0:30)
+        for minute in range(-90, 150):
+            at = twice + minute * 60_000
+            block = infostation.Listings().locate(at)
+            assert block.start_ms <= at < block.end_ms, minute
+    finally:
+        # (Back as it was, and the clock told: 1.36.2's audit.)
+        if was is None:
+            monkeypatch.delenv("TZ", raising=False)
+        else:
+            monkeypatch.setenv("TZ", was)
+        time.tzset()
+
+
+def test_infos_film_is_never_a_broken_file(tmp_path):
+    """(1.36.2) The owner, October 14: "Broken Files process should not
+    detect broken files on Info, Weather or custom audio streaming
+    stations" (INFO showed "1 broken", off the air). What tapiOca makes
+    itself is never checked, never listed, and one listed before is gone."""
+    from app import jobs
+    from app.broken import BrokenFiles
+
+    film = infostation.program()
+    # Listed before 1.36.2: not any more.
+    path = tmp_path / "broken.json"
+    path.write_text(json.dumps({"files": [
+        {"ratingKey": infostation.KEY, "title": infostation.TITLE, "reason": "Check: x"},
+        {"ratingKey": "201", "title": "Ep 1", "reason": "Check: y"},
+    ]}))  # fmt: skip
+    store = BrokenFiles(path)
+    assert store.keys() == {"201"} and not store.is_broken(infostation.KEY)
+    # Never listed now, whoever finds a problem (a check, playing it).
+    store.record(film, "Check: the picture breaks up", 99, problem="damaged")
+    assert store.keys() == {"201"}
+    with make(tmp_path) as c:
+        ctx = c.app.state.ctx
+        [info] = c.get("/api/channels").json()
+        # The file checks never take it, nor Check files on INFO.
+        assert infostation.KEY not in [p.item.rating_key for p in ctx.scanner.programs()]
+        status = jobs.CheckStatus(running=True, started_at=time.time())
+        asyncio.run(jobs.run_check(ctx, info["id"], status))
+        assert status.total == 0 and status.newly_broken == 0
+        assert ctx.broken.keys() == set()
 
 
 def test_info_is_always_99_and_nothing_else_can_be(tmp_path):

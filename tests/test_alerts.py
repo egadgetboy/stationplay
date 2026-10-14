@@ -258,6 +258,25 @@ async def test_the_outside_check_goes_by_its_own(tmp_path, db):
     )
 
 
+async def test_sign_in_left_to_turn_on_is_never_an_alert(tmp_path, db):
+    """(1.36.2) The address working with sign-in off is a step on the page
+    (see reach.NEXT_STEP), never an alert; it ends one that was down."""
+    told = Told()
+    found = Alerts(told, db)  # type: ignore[arg-type]
+    for _ in range(3):
+        await found.look(checks(tmp_path, outside=reach.NEXT_STEP))
+    assert found.now() == [] and told.said == []
+    await found.look(checks(tmp_path, outside=reach.DOWN))
+    assert len(found.now()) == 1
+    await found.look(checks(tmp_path, outside=reach.NEXT_STEP))
+    assert found.now() == [] and told.said[-1] == (
+        "tapiOca's address for apps away from home works again, at https://tv.example.com. "
+        "Turn on sign-in so apps can sign in there.",
+        "outside",
+        "fixed",
+    )
+
+
 def test_a_station_failing_to_start_and_backups_failing(db):
     told = Told()
     now = [0.0]

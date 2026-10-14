@@ -16,6 +16,7 @@ import time
 import httpx
 import pytest
 
+from .helpers import PAGE
 from .test_e2e import assert_clean_stream, record, start_server
 from .test_e2e_skipping import assert_runs, episodes, runs  # noqa: F401 (a fixture)
 from .test_intro import band_level
@@ -24,7 +25,7 @@ pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ff
 
 
 async def make_station(base: str, **settings) -> dict:
-    async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+    async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
         made = await client.post(
             "/api/channels",
             json={

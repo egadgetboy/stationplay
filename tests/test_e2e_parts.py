@@ -25,6 +25,7 @@ from app.plex import PlexClient
 
 from .fakeplex import FakePlex
 from .fakeplex_library import LibraryPlex
+from .helpers import PAGE
 from .test_e2e import assert_clean_stream, ff, media_seconds, packet_times, record, start_server
 from .test_parts import stack
 
@@ -93,7 +94,7 @@ async def test_a_station_plays_a_movie_in_two_files_across_the_join(tmp_path, pa
     stack(plex, "300", (str(parts["cd1"]), PART_S * 1000), (str(parts["cd2"]), PART_S * 1000))
     base, _app, settings, srv, task = await start_server(tmp_path, plex)
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             made = await client.post(
                 "/api/channels",
                 json={"number": 8, "name": "Movie TV", "orderMode": "rotate",
@@ -136,7 +137,7 @@ async def test_a_station_tuned_in_during_the_second_file_starts_there(tmp_path, 
     stack(plex, "300", (str(parts["cd1"]), PART_S * 1000), (str(parts["cd2"]), PART_S * 1000))
     base, app, _settings, srv, task = await start_server(tmp_path, plex)
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             made = await client.post(
                 "/api/channels",
                 json={"number": 8, "name": "Movie TV", "orderMode": "rotate",
@@ -176,7 +177,7 @@ async def test_a_missing_part_is_a_broken_file_and_a_stand_in_plays_the_rest(
     plex.add_movie("301", "Stand In", str(parts["other"]), 3 * PART_S * 1000, section="2")
     base, _app, settings, srv, task = await start_server(tmp_path, plex)
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             made = await client.post(
                 "/api/channels",
                 json={"number": 8, "name": "Movie TV", "orderMode": "rotate", "introSeconds": 0,
@@ -217,7 +218,7 @@ async def test_with_plex_unreachable_a_stand_in_plays_after_the_first_file(
     plex.add_movie("301", "Stand In", str(parts["other"]), 3 * PART_S * 1000, section="2")
     base, _app, settings, srv, task = await start_server(tmp_path, plex)
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             made = await client.post(
                 "/api/channels",
                 json={"number": 8, "name": "Movie TV", "orderMode": "rotate", "introSeconds": 0,

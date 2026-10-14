@@ -5,7 +5,13 @@ stations using them keep them."""
 
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
 
 from app.logos import LIBRARY_VERSION, LogoLibrary
 
@@ -100,3 +106,30 @@ def test_number_and_letter_badges_are_never_shields():
     }
     assert set(found) == {"SHAPES", "BOX"}
     assert "shield" not in found["SHAPES"] and "shield" not in found["BOX"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_searching_logos_finds_numbers_and_letters_from_any_chip():
+    """(1.36.2) The owner, October 14: searching "1" or "one" found no logo,
+    with Suggested chosen, though there are number logos. A search looks
+    through every logo; a number in words is its number too; a number or a
+    single letter matches as a whole word (so "1" isn't every logo with a 1
+    in it)."""
+    script = (Path(__file__).resolve().parents[1] / "app/web/js/logos.js").read_text()
+    start, end = script.index("const ONES"), script.index("function renderLogoPicker")
+    catalog = [logo for logo in LogoLibrary().catalog() if logo["category"] != "Your logos"]
+    code = (
+        script[start:end].replace("\nconst ", "\nvar ").replace("const ONES", "var ONES", 1)
+        + f"const cat = {json.dumps(catalog)};"
+        + "const find = q => cat.filter(l => logoMatches(l, searchWords(q))).map(l => l.name);"
+        + "console.log(JSON.stringify(['1', 'one', 'twenty-one', 'a', '50'].map(find)));"
+    )
+    done = subprocess.run(["node", "-e", code], capture_output=True, text=True, timeout=30)
+    one, said, twenty_one, a, fifty = json.loads(done.stdout)
+    assert {"Number 1", "Number 1 · retro"} <= set(one) and "Number 10" not in one
+    assert {"Number 1", "Number 1 · retro"} <= set(said)
+    assert {"Number 21", "Number 21 · retro"} <= set(twenty_one)
+    assert {"Letter A", "Letter A · retro"} <= set(a) and "Letter B" not in a
+    assert {"Number 50", "Number 50 · retro"} <= set(fifty)
+    # (Whichever chip was chosen: a search is of All.)
+    assert "if ($('#logoSearch').value.trim()) logoCategory = 'All';" in script

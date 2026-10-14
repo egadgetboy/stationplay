@@ -54,9 +54,11 @@ import asyncio
 import base64
 import contextlib
 import dataclasses
+import functools
 import hashlib
 import hmac
 import ipaddress
+import itertools
 import json
 import logging
 import posixpath
@@ -67,6 +69,7 @@ import time
 from collections import deque
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -116,7 +119,14 @@ ACTIVE_EVERY_MS = 10_000  # how often a browser's last use is saved, at most
 IDLE_SIGNED_OUT = "You were signed out after an hour without activity."
 IDLED_KEPT = 1000  # browsers signed out that way that are told why, at most (the newest)
 PICKED_MS = 24 * 3600_000  # a sign-in from a linked device's picker lasts this long unused
-PASSWORD_MIN, PASSWORD_MAX = 8, 200
+# (1.36.2, the owner, October 14: "Password strength needs to be industry
+# standard.") As NIST's digital identity guidelines (SP 800-63B) and OWASP
+# say: length, not rules about symbols; no common passwords (a list kept in
+# tapiOca: nothing is sent anywhere to check one); nothing built from the
+# person's name or tapiOca's; any characters, spaces too.
+PASSWORD_MIN, PASSWORD_MAX = 12, 200
+COMMON_PASSWORDS = Path(__file__).parent / "assets" / "passwords" / "common.txt"
+PASSWORD_ADVICE = "A few words together work well."
 NAME = re.compile(r"[\w .@-]{1,40}")
 RESET_FILE = "reset-access"
 LOG_KEEP = 2000
@@ -168,13 +178,23 @@ ADMINS_ONLY = "Only an Admin can do that"
 OWN_PASSWORD_OFF = (
     "An Admin has turned off changing your own password. Ask an Admin if it needs changing."
 )
-NO_PASSWORD = (
-    "You don't have a password to change. An Admin can give you one, on tapiOca's Access tab."
+NO_PASSWORD = "You don't have a password to change. Ask an Admin if you need one."
+# (Said to someone watching in tapiOca's apps, never an Admin's steps: the
+# owner, October 14, 1.36.2. The Admin is told on the page and in the log.)
+NOT_HTTPS = "This address can't be used from outside your home. Check it, or try again later."
+NOT_HTTPS_LOGGED = (
+    "Turned an app away from outside: it didn't come over HTTPS through a trusted proxy. See "
+    "tapiOca's apps away from home, on the Access tab."
 )
-NOT_HTTPS = (
-    "From outside your home, tapiOca's apps connect only over HTTPS. Use an https:// "
-    "address, through a reverse proxy with HTTPS (see tapiOca's README)."
-)
+NOT_HTTPS_LOG_EVERY_S = 3600
+# What tapiOca's own page sends with every request (core.js's api): a page
+# on another site can't send it, a form can't, and fetch can't without
+# tapiOca's leave (it gives none). So what changes things on the page's own
+# addresses needs it, cookie or not (1.36.2). Apps and API tokens use their
+# own addresses, or their Authorization header, and never a cookie.
+PAGE_HEADER = b"x-tapioca-page"
+# (A page left open from before 1.36.2 sends no header: reloading it does.)
+FROM_ITS_PAGE = "tapiOca can only be changed from its own page. Reload it, then try again."
 # (Said to whoever reaches tapiOca from outside its home before signing in
 # is on, in its apps and on its page: someone watching, not an Admin, in the
 # owner's words, October 13.)
@@ -635,7 +655,7 @@ class Access:
         if password or role == ADMIN or not self._users_exist:
             if not password:
                 raise ValueError("An Admin needs a password")
-            _check_password(password)
+            _check_password(password, name)
         _check_limit(max_stations)
         hashed = await asyncio.to_thread(hash_password, password) if password else ""
         if self._users_exist and not self.is_admin(by):
@@ -727,7 +747,7 @@ class Access:
             name = plain(name)
             _check_name(name)
         if password is not None:
-            _check_password(password)
+            _check_password(password, name if name is not None else user.name)
         if role is not None and role not in ROLES:
             raise ValueError("The role must be Admin or User")
         hashed = await asyncio.to_thread(hash_password, password) if password is not None else None
@@ -781,6 +801,18 @@ class Access:
         if not self.is_admin(by):
             raise NotAllowed
         self.db.set_own_password(user.id, on)
+
+    def set_own_pin(self, user: User, by: User | None, on: bool) -> None:
+        """Whether someone may change their own PIN, if `by` is an Admin.
+        NotAllowed."""
+        if not self.is_admin(by):
+            raise NotAllowed
+        self.db.set_own_pin(user.id, on)
+
+    def may_change_own_pin(self, user: User) -> bool:
+        """Whether someone may change their own PIN (never refused an Admin)."""
+        now = self.db.user(user.id) or user
+        return now.role == ADMIN or now.own_pin
 
     def may_report(self, user: User) -> bool:
         """Whether someone may report problems from the apps (see
@@ -1121,11 +1153,34 @@ def _check_name(name: str) -> None:
         )
 
 
-def _check_password(password: str) -> None:
+@functools.cache
+def _common() -> frozenset[str]:
+    try:
+        lines = COMMON_PASSWORDS.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return frozenset()
+    return frozenset(line for line in lines if line and not line.startswith("#"))
+
+
+def _check_password(password: str, name: str = "") -> None:
+    """ValueError, saying why, for a password that won't do (see
+    PASSWORD_MIN)."""
     if len(password) < PASSWORD_MIN:
-        raise ValueError(f"A password needs at least {PASSWORD_MIN} characters")
+        raise ValueError(f"A password needs at least {PASSWORD_MIN} characters. {PASSWORD_ADVICE}")
     if len(password) > PASSWORD_MAX:
         raise ValueError("That password is too long")
+    low = password.casefold()
+    steps = {ord(b) - ord(a) for a, b in itertools.pairwise(low)}
+    if len(set(low)) < 4 or steps <= {-1, 0, 1}:
+        raise ValueError(f"That password repeats itself too much. {PASSWORD_ADVICE}")
+    if low in _common() or low.strip() in _common():
+        raise ValueError(f"That's one of the most common passwords. {PASSWORD_ADVICE}")
+    rest = low
+    for word in (name.casefold().strip(), "tapioca", "stationplay"):
+        if len(word) >= 3:
+            rest = rest.replace(word, "")
+    if sum(c.isalnum() for c in rest) < 8:
+        raise ValueError("Choose a password that isn't built from your name or tapiOca's.")
 
 
 def _now() -> int:
@@ -1224,6 +1279,7 @@ class Gate:
         self.trusted = trusted
         self.doors = doors
         self.relays = relays  # (never trusted; when they hide everyone, trust is off)
+        self._not_https_said: float = -float(NOT_HTTPS_LOG_EVERY_S)  # (when last logged)
 
     async def __call__(
         self, scope: dict, receive: Callable[[], Awaitable[Any]], send: Callable
@@ -1249,6 +1305,16 @@ class Gate:
             never_home=never_home,
             relays=self.relays.relays() if self.relays is not None else (),
         )
+        normal = posixpath.normpath(path)
+        page_or_api = not (is_tuner(normal) or normal.startswith(OPEN_UNDER) or normal in FOR_PLEX)
+        if verdict.proxy_device and not page_or_api and not port_public:
+            # (A trusted proxy's own computer, naming no one: Plex there keeps
+            # the tuner, guide and logos, at home. Anything else from it is
+            # still a proxy's, for the internet, as in 1.36.1: a proxy that
+            # sends no headers can't be told from its computer. 1.36.2.)
+            verdict = dataclasses.replace(
+                verdict, outside=False, why="", via_proxy=False, visitor=verdict.peer
+            )
         state = scope.setdefault("state", {})
         state["port"] = "public" if port_public else "home"
         state["outside"], state["why"], state["verdict"] = verdict.outside, verdict.why, verdict
@@ -1258,8 +1324,6 @@ class Gate:
         # own addresses. See relays.py.)
         relay = self.relays is not None and self.relays.is_relay(verdict.peer)
         state["relay"] = relay
-        normal = posixpath.normpath(path)
-        page_or_api = not (is_tuner(normal) or normal.startswith(OPEN_UNDER) or normal in FOR_PLEX)
         if self.relays is not None and not port_public and page_or_api:
             # (Only the page and the API: Plex or Jellyfin in Docker fetch
             # the tuner, icons and logos through the gateway. What a relay
@@ -1285,6 +1349,9 @@ class Gate:
             or verdict.outside
             or verdict.host != "home"
             or (verdict.untrusted_headers and not verdict.via_proxy)
+            # (A trusted proxy's own computer: never trusted, even for the
+            # tuner: anything it forwards naming no one would be too.)
+            or verdict.proxy_device
         ):
             return None
         # (Never through a relay, which carries others' connections, even
@@ -1325,9 +1392,15 @@ class Gate:
         ):
             await _refuse(send, 404, "Not Found")
         elif public and path.startswith(FOR_APPS_UNDER) and path != REACH and not over_https(scope):
+            now = time.monotonic()
+            if now - self._not_https_said >= NOT_HTTPS_LOG_EVERY_S:
+                self._not_https_said = now
+                log.warning(NOT_HTTPS_LOGGED)
             await _refuse(send, 403, NOT_HTTPS)
-        elif scope["method"] not in SAFE_METHODS and _from_another_site(scope):
-            await _refuse(send, 403, "tapiOca can only be changed from its own page")
+        elif scope["method"] not in SAFE_METHODS and (
+            _from_another_site(scope) or _not_from_its_page(scope, path)
+        ):
+            await _refuse(send, 403, FROM_ITS_PAGE)
         elif path not in UPLOADS and _length(scope) > BODY_MAX:
             await _refuse(send, 413, "That request is too big for tapiOca")
         elif refused := self._decide(scope):
@@ -1348,7 +1421,9 @@ class Gate:
                 return 403, NOT_SET_UP
             tuner = is_tuner(posixpath.normpath(path))
             if name_not_home(scope) and path not in PAGE and path != REACH and not tuner:
-                return 403, NAME_NOT_HOME
+                # (The Admin's steps on the page; someone watching in an app
+                # is told what anyone watching is: 1.36.2.)
+                return 403, NOT_SET_UP if path.startswith(FOR_APPS_UNDER) else NAME_NOT_HOME
             return None
         if path.startswith(PLAY_UNDER) and state["outside"] and not self._plays_outside(path):
             return 404, "Not Found"  # (made at home, ended, or never there)
@@ -1523,6 +1598,25 @@ def hop(scope: dict) -> dict[str, Any] | None:
     }
 
 
+def _not_from_its_page(scope: dict, path: str) -> bool:
+    """Whether a change under /api/ comes without the header tapiOca's page
+    sends, and without an app's or a token's Authorization: a form on another
+    site, or another app on the same NAS, where browsers send no
+    Sec-Fetch-Site (plain http). See PAGE_HEADER.
+
+    The apps' and the API's addresses (/api/internal, /api/v1) are asked for
+    by apps and scripts, which send no Origin; there, only what a browser
+    sends (with an Origin) needs the header: with sign-in off, they need no
+    token at home, so a page elsewhere could otherwise ask for changes."""
+    if not path.startswith("/api/"):
+        return False
+    if bearer(scope) is not None:
+        return False
+    if path.startswith(FOR_APPS_UNDER) and not _header(scope, b"origin"):
+        return False
+    return _header(scope, PAGE_HEADER) != "1"
+
+
 def _from_another_site(scope: dict) -> bool:
     """Whether a browser says another site's page made the request (another
     web site, or another app on the same NAS)."""
@@ -1606,6 +1700,7 @@ class UserChange(BaseModel):
     maxStations: int | None = None
     name: str | None = Field(default=None, max_length=100)
     canChangePassword: bool | None = None  # (their own: an Admin always may)
+    canChangePin: bool | None = None  # (their own PIN: 1.36.2)
     canReport: bool | None = None  # (problems, from the apps: see reports.py)
 
 
@@ -1620,7 +1715,8 @@ def _user_json(user: User, made: dict[int, int]) -> dict:
         "id": user.id, "name": user.name, "role": user.role, "signedInMs": user.signed_in_ms,
         "maxStations": user.max_stations, "stationsMade": made.get(user.id, 0),
         "hasPassword": user.has_password, "pin": user.has_pin, "showOn": user.show_on or "home",
-        "canChangePassword": user.own_password, "canReport": user.can_report,
+        "canChangePassword": user.own_password, "canChangePin": user.own_pin,
+        "canReport": user.can_report,
     }  # fmt: skip
 
 
@@ -1916,6 +2012,8 @@ def routes(app: FastAPI, access: Access) -> None:
                 access.set_max_stations(user, by, body.maxStations)
             if body.canChangePassword is not None:
                 access.set_own_password(user, by, body.canChangePassword)
+            if body.canChangePin is not None:
+                access.set_own_pin(user, by, body.canChangePin)
             if body.canReport is not None:
                 access.set_can_report(user, by, body.canReport)
         if by is not None and by.id == user.id and body.password is not None:
@@ -1936,6 +2034,12 @@ def routes(app: FastAPI, access: Access) -> None:
                 f"let {named} change their own password"
                 if body.canChangePassword
                 else f"stopped {named} from changing their own password"
+            )
+        if body.canChangePin is not None and body.canChangePin != user.own_pin:
+            what.append(
+                f"let {named} change their own PIN"
+                if body.canChangePin
+                else f"stopped {named} from changing their own PIN"
             )
         if body.canReport is not None and body.canReport != user.can_report:
             what.append(

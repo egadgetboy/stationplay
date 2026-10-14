@@ -207,7 +207,9 @@ function renderTuner(got, said = '') {
 // Watching away from home: its settings, in its panel on the Access tab and
 // in the setup (`id`: the address box's, for its label). `note` shows (or
 // clears) what's wrong with the saved address: a port it can't have.
-function awayFields(got, onEdit, id) {
+// `turnOn`: with sign-in off, how to turn it on: a sentence, or (in the
+// setup) what its button does.
+function awayFields(got, onEdit, id, { turnOn = ' Add the first user, above, to turn it on.' } = {}) {
   const on = h('input', { type: 'checkbox', checked: got.on, oninput: onEdit });
   const address = h('input', { type: 'url', id, value: got.address, placeholder: 'https://tv.example.com (no port)', maxlength: 200, autocomplete: 'off', 'aria-describedby': `${id}Hint`, oninput: onEdit, style: 'width:min(100%,360px)' });
   const portNote = h('p', { class: 'small', style: 'margin:0' });
@@ -217,9 +219,17 @@ function awayFields(got, onEdit, id) {
   };
   note(got.on && got.portProblem);
   address.addEventListener('input', () => note(''));  // (it's about the address saved)
-  const warnings = [];
-  if (!got.publicPort) warnings.push('PUBLIC_PORT isn’t set, so apps can reach tapiOca from outside only through a VPN.');
-  if (!me.required) warnings.push('Sign-in is off. Through the public port, apps must sign in, so add a user on the Access tab first.');
+  const notes = [];
+  if (!got.publicPort) notes.push(h('p', { class: 'small', style: 'margin:0' }, 'PUBLIC_PORT isn’t set, so apps can reach tapiOca from outside only through a VPN.'));
+  // (Sign-in off: the step left to take, said as one, never as a warning.
+  // The owner, October 14: "This seems to be process not error.")
+  if (!me.required) {
+    const button = typeof turnOn === 'function' ? h('button', { type: 'button', class: 'btn', onclick: turnOn }, 'Turn on sign-in') : null;
+    notes.push(h('div', { class: 'step-note' },
+      h('span', { class: 'icon', 'aria-hidden': 'true' }, reachIcon('next-step')),
+      h('p', {}, h('strong', {}, 'Next step: turn on sign-in. '), 'Apps sign in when they’re away from home.', button ? '' : turnOn),
+      button));
+  }
   return {
     nodes: [
       h('p', { style: 'margin:0' }, 'With this on, tapiOca’s own apps can watch your stations away from home, and Media if you share it, as they do at home. Plex, Jellyfin and other apps don’t change: they use tapiOca on your home network only.'),
@@ -228,7 +238,7 @@ function awayFields(got, onEdit, id) {
           h('li', {}, h('strong', {}, 'A way in from outside. '), 'Either a VPN such as Tailscale or WireGuard on the phone or tablet (then the address below is your server’s VPN address, such as http://nas.your-tailnet.ts.net:3310), or the public port (PUBLIC_PORT) behind a reverse proxy with HTTPS. Not a Cloudflare Tunnel: Cloudflare’s free plan isn’t meant for video. The README’s “Reaching tapiOca from outside your home” explains each.'),
           h('li', {}, h('strong', {}, 'Signing in, through the public port. '), 'Each app that signs in gets a private address for its stations, and one for each title it plays from Media. They stop working as soon as that person signs out or is removed.'),
           h('li', {}, h('strong', {}, 'Upload speed. '), 'Each station watched away from home is sent over your home internet connection, at the picture size set under Picture and tuners on the Setup tab, and so is Media, at the quality you choose on the Access tab.'))),
-      ...warnings.map(w => h('p', { class: 'small', style: 'margin:0' }, warnIcon(), ' ', w)),
+      ...notes,
       h('label', {}, on, ' Let tapiOca’s apps watch away from home'),
       h('div', { class: 'field' }, h('label', { for: id }, 'The address apps reach tapiOca at from outside'), address,
         h('span', { class: 'hint', id: `${id}Hint` }, 'With a reverse proxy, its https:// address alone, with no port. With a VPN, the server’s VPN address with its port, such as http://nas.your-tailnet.ts.net:3310.'),
@@ -244,7 +254,7 @@ function awayFields(got, onEdit, id) {
 // setup. Painted again whenever it's said anew: with the page's status
 // (every 10 seconds), from the Access tab, and by Check now.
 let awayNow = null;  // {on, address, reach} as last said ({on: false}: off)
-const REACH_WORDS = { up: 'Up', down: 'Down', checking: 'Checking', 'cant-check': 'Can’t check' };
+const REACH_WORDS = { up: 'Up', down: 'Down', checking: 'Checking', 'cant-check': 'Can’t check', 'next-step': 'One step left' };
 const lowerFirst = text => text.charAt(0).toLowerCase() + text.slice(1);
 // `got`: /api/away's answer, or the status's `away` (null or missing: off,
 // or not for this person).
@@ -261,7 +271,7 @@ function paintAway() {
   pill.hidden = !reach;
   if (reach) {
     const word = REACH_WORDS[reach.state] || REACH_WORDS.checking;
-    pill.querySelector('.dot').className = `dot ${{ up: 'ok', down: 'bad', checking: 'accent' }[reach.state] || ''}`;
+    pill.querySelector('.dot').className = `dot ${{ up: 'ok', down: 'bad', checking: 'accent', 'next-step': 'accent' }[reach.state] || ''}`;
     pill.querySelector('.word').className = `word ${reach.state}`;
     pill.querySelector('.word').textContent = word;
     pill.setAttribute('aria-label', `Away from home: ${word}`);
@@ -427,14 +437,16 @@ function reachIcon(state) {
     down: '<path d="M8 1.2L15.3 14.6H.7z" fill="currentColor"/><path d="M8 6v4" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="12.3" r=".9" fill="#fff"/>',
     checking: '<circle cx="8" cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="28 12.2" stroke-linecap="round"/>',
     'cant-check': '<circle cx="8" cy="8" r="6.9" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.1 6.3a1.95 1.95 0 1 1 2.7 1.8c-.5.2-.8.6-.8 1.1v.3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.7" r=".9" fill="currentColor"/>',
+    // (A step left to take: an arrow on, never a warning.)
+    'next-step': '<circle cx="8" cy="8" r="7.5" fill="currentColor"/><path d="M4.6 8h6.2M8.4 5.2L11.2 8l-2.8 2.8" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
   }[state] || '';
   return svg;
 }
 // What Trust this proxy does, under its button (1.36.1).
 function trustProxyWords(offer) {
   return offer.relay
-    ? `${offer.address} is Docker’s own address, or this computer’s, which carries other connections too. Trust it only for a reverse proxy in another container on this server. tapiOca then believes what the proxy says about its visitors, but never lets anyone through this address skip signing in.`
-    : `This lists ${offer.address} under Trusted proxies, on the Access tab. tapiOca then believes what it says about each visitor: who they are, and that they came over HTTPS. Anything else from that computer with no forwarding headers, such as Plex, is then taken as from the internet, so trust it only if it runs just your proxy.`;
+    ? `${offer.address} is Docker’s address on this server. Your reverse proxy in another container reaches tapiOca through it, and so do Plex and your other apps, which keep working. Trust it only if your proxy runs in a container on this server.`
+    : `This lists ${offer.address} under Trusted proxies, on the Access tab. tapiOca then believes what it says about each visitor: who they are, and that they came over HTTPS. Plex, or anything else on that computer, keeps working as before. Trust it only if it’s your reverse proxy.`;
 }
 // The status: an icon and what it is, when it was checked (and when an app
 // last came in from outside, for an https:// address), and Check now.

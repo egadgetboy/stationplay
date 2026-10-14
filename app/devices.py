@@ -82,31 +82,31 @@ OFF_ITS_NETWORK = (
 TRUSTED_DEVICES_MOST = 100
 UNUSED_DAYS = 30
 NETWORK_FULL = (
-    "This trusted network has linked as many devices as it can. An Admin can unlink some on "
-    "the Access tab."
+    "This network has as many devices as tapiOca can add. Ask an Admin to make room, or sign "
+    "in with your name and password."
 )
 ADMIN_PASSWORD = (
     "Enter your password: on a device others use too, an Admin needs a PIN or their password"
 )
 # (The same whether or not there's anyone by that name: it isn't said who
-# has a sign-in, or had one.)
+# has a sign-in, or had one. 1.36.2: a PIN tried on a new device is said
+# plainly, for anyone: InsertDisc, October 14.)
 WRONG_SIGN_IN = (
-    "That name, code or password isn't right. If you should have access here, ask an Admin."
+    "That name, code or password isn't right. A PIN works only on a device that's already "
+    "signed in. If you should have access here, ask an Admin."
 )
 # Someone's own PIN, in an app: see set_own_pin.
 PIN_DIGITS = "A PIN is 4 digits"
+OWN_PIN_OFF = "An Admin has turned off changing your own PIN. Ask an Admin if it needs changing."
 ADMIN_KEEPS_PIN = (
     "An Admin needs a PIN, or their password on a device others use too, so an Admin "
     "can't remove their PIN here. Choose a new one instead."
 )
 PIN_ONLY = (
     "Your PIN is how you sign in, as you don't have a password, so you can't remove it "
-    "here. An Admin can, on tapiOca's Access tab."
+    "here. Ask an Admin if it needs removing."
 )
-NO_SECRET = (
-    "You don't have a password or a PIN, so only an Admin can give you a PIN, on "
-    "tapiOca's Access tab."
-)
+NO_SECRET = "You don't have a password or a PIN, so only an Admin can give you a PIN."
 PICKED_UNLOCKED = "To set a PIN, sign in on this device with your password or an invite code first."
 
 
@@ -581,6 +581,8 @@ class Devices:
     def _may_set_own_pin(self, user: User, pin: str | None, unlocked: bool) -> None:
         now = self.db.user(user.id) or user
         password = bool(self.db.password_hash(user.id))
+        if now.role != ADMIN and not now.own_pin:
+            raise Refused(OWN_PIN_OFF)
         if not password and not now.has_pin:
             raise Refused(NO_SECRET)
         if unlocked:

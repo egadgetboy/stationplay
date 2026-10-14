@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from . import infostation
 from .catalog import part_words
 from .db import Item
 from .ffmpeg import redact
@@ -178,7 +179,16 @@ class BrokenFiles:
         version_key); `library`, the library it's in, if that's known (what's
         in a library shared with the apps is in Media); `part`, for a version
         in several files, which of them it's about ((n, of): see of_part):
-        the version is off the air for it."""
+        the version is off the air for it. Never a program tapiOca makes
+        itself (see infostation.MADE_HERE)."""
+        if infostation.made_here(item.rating_key):
+            log.info(
+                "%s isn't a file to check: not listed as %s (%s)",
+                item.label,
+                problem,
+                redact(reason),
+            )
+            return
         key = version_key(item.rating_key, version)
         reason = of_part(reason, part)
         self._load(force=True)
@@ -330,7 +340,10 @@ class BrokenFiles:
                     for files in lists
                     if isinstance(files, list)
                     for f in files
-                    if isinstance(f, dict) and f.get("ratingKey") is not None
+                    if isinstance(f, dict)
+                    and f.get("ratingKey") is not None
+                    # (Listed before 1.36.2: INFO's film, say. Never one.)
+                    and not infostation.made_here(str(f["ratingKey"]))
                 }
             except (OSError, ValueError) as e:
                 # A typo while hand-editing shouldn't un-skip everything.

@@ -157,7 +157,7 @@ $('#userPill').addEventListener('click', () => {
     ? 'An Admin has turned off changing your own password. Ask an Admin if it needs changing.'
     : me.user.byNetwork
       ? `This network signed you in without your password, for watching.${me.user.role === 'admin' ? ' For Admin tasks, sign out, then choose Sign in with a password.' : ''}`
-      : `At least ${ACCESS.passwordMin} characters. Changing your password signs you out of other browsers and apps.`;
+      : `At least ${ACCESS.passwordMin} characters: a few words together work well. Changing your password signs you out of other browsers and apps.`;
   $('#account').showModal();
 });
 $('#closeAccount').addEventListener('click', () => $('#account').close());
@@ -277,6 +277,10 @@ const showNewUserStations = () => {
   // A User may have no password: they use only the apps' Who's tuning in?
   $('#newUserPassword').required = !user || !me.required;
   $('#newUserPassword').placeholder = user && me.required ? 'Optional for a User' : '';
+  // (What a password asks, and what having none means: the owner, October
+  // 14, made a User with neither and found they couldn't sign in.)
+  $('#addUserHint').textContent = `A password needs at least ${ACCESS.passwordMin} characters. A few words together work well.`
+    + (user && me.required ? ' A User with no password can only be picked on Who’s tuning in? at home, or signed in on a new device with an invite code. Their PIN, if they have one, is asked when they pick themselves.' : '');
   $('#newUserPinField').hidden = !me.required;
   $('#newUserLevelField').hidden = !user || !me.required || !viewing;
 };
@@ -348,6 +352,14 @@ async function loadAccess() {
           catch (err) { toast(err.message, true); }
           loadAccess();
         } }), 'Can change their own password');
+      // (And their own PIN, on its own: the owner, October 14, 1.36.2.)
+      const ownPin = h('label', { class: 'own-password', title: admin ? 'An Admin can always change their own' : null },
+        h('input', { type: 'checkbox', checked: admin || u.canChangePin !== false, disabled: admin, onchange: async e => {
+          const on = e.target.checked;
+          try { await api(`/api/access/users/${u.id}`, { method: 'PUT', body: { canChangePin: on } }); toast(on ? `${u.name} can change their own PIN` : `${u.name} can’t change their own PIN now`); }
+          catch (err) { toast(err.message, true); }
+          loadAccess();
+        } }), 'Can change their own PIN');
       // (Problems with what they watch, from tapiOca's apps: see reports.py.)
       const canReport = h('label', { class: 'own-password', title: admin ? 'An Admin can always report problems' : 'From tapiOca’s apps, about what they watch. Reports go to the Broken files tab.' },
         h('input', { type: 'checkbox', checked: admin || u.canReport, disabled: admin, onchange: async e => {
@@ -363,7 +375,7 @@ async function loadAccess() {
         h('button', { class: 'btn', type: 'button', onclick: () => newPassword(u, actions) }, u.hasPassword ? 'New password' : 'Add a password'), ' ',
         h('button', { class: 'btn', type: 'button', onclick: () => editPin(u, actions) }, u.pin ? 'Change PIN' : 'Set PIN'), ' ',
         h('button', { class: 'btn danger', type: 'button', onclick: () => removeUser(u) }, 'Remove'),
-        ownPassword, canReport);
+        ownPassword, ownPin, canReport);
       return h('tr', {},
         named,
         h('td', { 'data-label': 'Role' }, role),

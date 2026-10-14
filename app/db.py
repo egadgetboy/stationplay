@@ -591,6 +591,7 @@ class User:
     own_password: bool = True  # they may change their own password (an Admin always may)
     can_report: bool = True  # they may report problems from the apps (see reports.py)
     signed_in_from: str = ""  # where they last signed in from (see access.where); "": never
+    own_pin: bool = True  # they may change their own PIN (1.36.2; an Admin always may)
 
 
 @dataclass(frozen=True)
@@ -819,6 +820,10 @@ _ADDED_COLUMNS = (
     # Added in 1.30: whether they may report problems from the apps (see
     # reports.py): an Admin's choice for each person, yes to start with.
     ("users", "can_report", "INTEGER NOT NULL DEFAULT 1"),
+    # Added in 1.36.2: whether they may change their own PIN (see devices.py):
+    # an Admin's choice for each person, beside their own password's (the
+    # owner, October 14: "password or PIN only, or both"); yes to start with.
+    ("users", "own_pin", "INTEGER NOT NULL DEFAULT 1"),
     # Added in 1.28.1: whether a sign-in was made by picking someone with no
     # PIN on a device's list (see devices.py), which proves nothing about
     # who's there, so it can't change their PIN.
@@ -1826,6 +1831,11 @@ class Database:
         """Whether someone may change their own password."""
         with self._lock, self._conn:
             self._conn.execute("UPDATE users SET own_password = ? WHERE id = ?", (on, user_id))
+
+    def set_own_pin(self, user_id: int, on: bool) -> None:
+        """Whether someone may change their own PIN."""
+        with self._lock, self._conn:
+            self._conn.execute("UPDATE users SET own_pin = ? WHERE id = ?", (on, user_id))
 
     def set_can_report(self, user_id: int, on: bool) -> None:
         """Whether someone may report problems from the apps."""
@@ -2856,7 +2866,7 @@ def _user(row: sqlite3.Row) -> User:
         row["id"], row["name"], row["role"], row["created_ms"], row["signed_in_ms"],
         row["max_stations"], row["level_id"], bool(row["pin"]), row["show_on"],
         bool(row["password"]), bool(row["no_pin"]), bool(row["own_password"]),
-        bool(row["can_report"]), row["signed_in_from"],
+        bool(row["can_report"]), row["signed_in_from"], bool(row["own_pin"]),
     )  # fmt: skip
 
 

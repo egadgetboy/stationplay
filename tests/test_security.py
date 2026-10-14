@@ -28,6 +28,7 @@ from app.plex import PlexClient, PlexError
 from app.text import name_from_file
 
 from .fakeplex import FakePlex
+from .helpers import PAGE
 
 SHOW = {"type": "show", "ratingKey": "100"}
 PAT = {"name": "Pat", "password": "correct horse"}
@@ -127,7 +128,7 @@ def test_a_request_cant_send_more_than_stationplay_takes(client):
                 yield b"x" * 65536
 
         transport = httpx.ASGITransport(app=client.app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://sp") as c:
+        async with httpx.AsyncClient(headers=PAGE, transport=transport, base_url="http://sp") as c:
             return await c.post("/api/channels", content=body())
 
     # (Without saying how much is coming, too.)
@@ -278,7 +279,7 @@ TUNNEL = "127.0.0.2"  # (a Cloudflare Tunnel on this same machine)
 def through_tunnel(base_url: str, headers: dict[str, str]) -> httpx.AsyncClient:
     """A visitor, as the tunnel passes them on to tapiOca."""
     return httpx.AsyncClient(
-        base_url=base_url, headers=headers,
+        base_url=base_url, headers={**PAGE, **headers},
         transport=httpx.AsyncHTTPTransport(local_address=TUNNEL),
     )  # fmt: skip
 
@@ -313,7 +314,7 @@ async def both_ports(tmp_path, tunnel: bool = False):
 
 async def test_from_the_internet_theres_nothing_until_signing_in_is_set_up(tmp_path):
     async with both_ports(tmp_path) as (home, internet):
-        async with httpx.AsyncClient(base_url=internet) as outside:
+        async with httpx.AsyncClient(headers=PAGE, base_url=internet) as outside:
             assert (await outside.get("/")).status_code == 200
             me = (await outside.get("/api/access/me")).json()
             assert me["required"] and me["user"] is None
@@ -331,7 +332,7 @@ async def test_from_the_internet_theres_nothing_until_signing_in_is_set_up(tmp_p
             for path in ("/discover.json", "/lineup.json", "/xmltv.xml", "/stations.m3u",
                          "/stream/1", "/auto/v1", "/art/100", "/hls/1/index.m3u8"):  # fmt: skip
                 assert (await outside.get(path)).status_code == 404, path
-        async with httpx.AsyncClient(base_url=home) as inside:
+        async with httpx.AsyncClient(headers=PAGE, base_url=home) as inside:
             # At home it's open, as it was, and Plex's addresses are there.
             assert (await inside.get("/api/access/me")).json()["required"] is False
             assert (await inside.get("/discover.json")).status_code == 200
@@ -341,7 +342,7 @@ async def test_from_the_internet_theres_nothing_until_signing_in_is_set_up(tmp_p
 async def test_signing_in_from_the_internet(tmp_path, monkeypatch):
     monkeypatch.setattr(access, "PUBLIC_TRIES", 3)
     async with both_ports(tmp_path, tunnel=True) as (home, internet):
-        async with httpx.AsyncClient(base_url=home) as inside:
+        async with httpx.AsyncClient(headers=PAGE, base_url=home) as inside:
             await inside.post("/api/access/users", json=PAT)
             assert (await inside.get("/logos/x.png")).status_code == 404  # (open at home)
 
@@ -373,7 +374,7 @@ async def test_signing_in_from_the_internet(tmp_path, monkeypatch):
                 assert busy.status_code == 429 and "internet" in busy.json()["detail"]
             # But strangers' wrong passwords don't keep Pat out on a browser he's used.
             assert (await pats.post("/api/access/sign-in", json=PAT)).status_code == 200
-        async with httpx.AsyncClient(base_url=home) as inside:
+        async with httpx.AsyncClient(headers=PAGE, base_url=home) as inside:
             assert (await inside.post("/api/access/sign-in", json=PAT)).status_code == 200
             log = (await inside.get("/api/logs?access_log=true")).json()["text"]
     assert "Pat (Admin) signed in from 203.0.113.5 (over the internet)" in log
@@ -393,7 +394,7 @@ def test_a_user_sees_only_what_the_stations_tab_needs(client):
 
 async def test_cookies_are_only_sent_over_https_when_its_used(tmp_path):
     async with both_ports(tmp_path, tunnel=True) as (home, internet):
-        async with httpx.AsyncClient(base_url=home) as inside:
+        async with httpx.AsyncClient(headers=PAGE, base_url=home) as inside:
             await inside.post("/api/access/users", json=PAT)
         tunnel = {"CF-Connecting-IP": "203.0.113.5", "CF-Visitor": '{"scheme":"https"}'}
         async with through_tunnel(internet, tunnel) as outside:

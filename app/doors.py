@@ -25,7 +25,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from .networks import Verdict
+from .networks import IP, Verdict, parse_peer
 from .text import plain
 
 HOME_PORT, PROXY, NAME, PROXY_UNKNOWN = "home-port", "proxy", "name", "proxy-unknown"
@@ -76,6 +76,16 @@ class Doors:
     def recent(self, door: str, within_s: float = RECENT_S) -> bool:
         seen = self._seen.get(door)
         return seen is not None and time.time() - seen[0] < within_s
+
+    def forget_listed(self, is_proxy: Callable[[IP], bool]) -> None:
+        """(1.36.2) A device that's a trusted proxy now: the headers it sent
+        before aren't a door any more, and its alert ends at the next look
+        (the owner, October 14, saw "isn't a trusted proxy" beside the proxy
+        he'd just trusted)."""
+        seen = self._seen.get(PROXY_UNKNOWN)
+        ip = parse_peer(seen[1]) if seen is not None else None
+        if ip is not None and is_proxy(ip):
+            del self._seen[PROXY_UNKNOWN]
 
     def listed(self) -> list[dict[str, Any]]:
         """For Admins (the Access tab): each door's latest address, and when."""

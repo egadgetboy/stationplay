@@ -682,11 +682,16 @@ class Alerts:
                 f"({status.short.lower()}). See tapiOca's apps away from home, on the "
                 "Access tab.",
             )
-        elif status.state in (reach.UP, reach.OFF):
+        elif status.state in (reach.UP, reach.OFF, reach.NEXT_STEP):
+            # (NEXT_STEP: the address works again, and sign-in is left to
+            # turn on: a step the page shows, never an alert.)
             self.fix(
                 OUTSIDE,
                 f"tapiOca's apps can reach it from outside again, at {address}."
                 if status.state == reach.UP
+                else f"tapiOca's address for apps away from home works again, at {address}. "
+                "Turn on sign-in so apps can sign in there."
+                if status.state == reach.NEXT_STEP
                 else "Watching away from home was turned off, so tapiOca's apps no longer "
                 "need to reach it from outside.",
             )

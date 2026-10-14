@@ -23,6 +23,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex import FakePlex
+from .helpers import PAGE
 from .test_e2e import assert_clean_stream, start_server
 from .test_e2e import ff as make
 
@@ -202,7 +203,10 @@ async def read_for(url: str, seconds: float) -> bytes:
     """What a stream sends in `seconds` (from when it starts sending)."""
     data = bytearray()
     loop = asyncio.get_running_loop()
-    async with httpx.AsyncClient(timeout=30) as client, client.stream("GET", url) as response:
+    async with (
+        httpx.AsyncClient(headers=PAGE, timeout=30) as client,
+        client.stream("GET", url) as response,
+    ):
         assert response.status_code == 200
         started = None
         async for chunk in response.aiter_bytes():
@@ -228,7 +232,7 @@ async def test_when_every_tuner_is_in_use_a_card_says_so(tmp_path, monkeypatch, 
     plex.add_episode("201", "100", 1, 1, "One", str(d / "a.mkv"), 20_000)
     base, app, _settings, srv, task = await start_server(tmp_path, plex)
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             assert (await client.put("/api/playback", json={"tuners": 1})).status_code == 200
             for number, picture in ((1, "480p"), (2, "720p")):
                 made = await client.post(

@@ -16,6 +16,7 @@ import pytest
 from app import marathons, specials
 
 from .fakeplex import FakePlex
+from .helpers import PAGE
 from .test_e2e import assert_clean_stream, ff, media_seconds, record, start_server
 from .test_e2e_skipping import runs
 
@@ -68,7 +69,7 @@ async def test_a_feature_presentation_airs_and_the_station_carries_on(
     caplog.set_level(logging.INFO)
     base, app, _settings, srv, task = await start_server(tmp_path, plex)
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             made = await client.post(
                 "/api/channels",
                 json={
@@ -148,7 +149,7 @@ async def test_a_block_airs_and_the_station_carries_on(tmp_path, monkeypatch):
     )
     base, app, _settings, srv, task = await start_server(tmp_path, plex)
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=30) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=30) as client:
             made = await client.post(
                 "/api/channels",
                 json={
@@ -262,7 +263,7 @@ async def test_soak_with_everything_on(tmp_path, monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     base, app, _settings, srv, task = await start_server(tmp_path, plex, media_dir=str(root))
     try:
-        async with httpx.AsyncClient(base_url=base, timeout=60) as client:
+        async with httpx.AsyncClient(headers=PAGE, base_url=base, timeout=60) as client:
             one = await client.post("/api/channels", json={
                 "number": 1, "name": "Everything", "orderMode": "rotate",
                 "sources": [{"type": "show", "ratingKey": str(s * 100)} for s in range(1, 7)],

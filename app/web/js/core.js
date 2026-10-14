@@ -22,10 +22,36 @@ const plural = (n, word) => `${Number.isFinite(n) ? n.toLocaleString() : n} ${no
 const plexUsed = () => (status?.plexUsed ?? status?.plex?.used) !== false;
 
 // opts.body is sent as JSON; opts.raw (a file) as it is. opts.blob: the answer is a file.
+// Show and Hide beside every password box (1.36.2, the owner, October 14:
+// "Admin should be able to unhide password when typing"), wherever one is
+// drawn, now or later.
+function revealable(input) {
+  if (input.dataset.reveal) return;
+  input.dataset.reveal = '1';
+  const wrap = h('span', { class: 'reveal' });
+  const button = h('button', { type: 'button', class: 'reveal-btn', 'aria-pressed': 'false', 'aria-label': 'Show password' }, 'Show');
+  button.addEventListener('click', () => {
+    const shown = input.type === 'password';
+    input.type = shown ? 'text' : 'password';
+    button.textContent = shown ? 'Hide' : 'Show';
+    button.setAttribute('aria-pressed', String(shown));
+    button.setAttribute('aria-label', shown ? 'Hide password' : 'Show password');
+    input.focus();
+  });
+  input.replaceWith(wrap);
+  wrap.append(input, button);
+  // (Hidden again whenever its form is sent or reset.)
+  input.form?.addEventListener('reset', () => { input.type = 'password'; button.textContent = 'Show'; button.setAttribute('aria-pressed', 'false'); });
+}
+new MutationObserver(() => document.querySelectorAll('input[type=password]:not([data-reveal])').forEach(revealable))
+  .observe(document.documentElement, { childList: true, subtree: true });
+document.querySelectorAll('input[type=password]').forEach(revealable);
 async function api(path, opts = {}) {
+  // (X-Tapioca-Page: what the server asks of every change made from its
+  // page, which a page on another site can't send. See access.py.)
   const res = await fetch(path, {
-    headers: opts.body ? { 'Content-Type': 'application/json' } : {},
     ...opts,
+    headers: { 'X-Tapioca-Page': '1', ...(opts.body ? { 'Content-Type': 'application/json' } : {}), ...(opts.headers || {}) },
     body: opts.raw ?? (opts.body ? JSON.stringify(opts.body) : undefined),
   });
   if (!res.ok) {

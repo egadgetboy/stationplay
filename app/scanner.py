@@ -89,7 +89,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field, fields, replace
 from typing import TYPE_CHECKING
 
-from . import catalog, ondemand
+from . import catalog, infostation, ondemand
 from . import ffmpeg as ff
 from .broadcaster import fmt_offset, played_whole
 from .broken import (
@@ -1572,14 +1572,17 @@ class Scanner:
                 else []
             )
             for item in coming:
-                arriving.setdefault(item.rating_key, Program(item, channel.number))
+                if not infostation.made_here(item.rating_key):
+                    arriving.setdefault(item.rating_key, Program(item, channel.number))
             for slot in self.ctx.station(channel.id).between(now, now + 24 * 3600 * 1000):
                 key = slot.item.rating_key
                 if slot.start_ms < airs.get(key, 1 << 62):
                     airs[key] = slot.start_ms
-            # (With what its specials draw on: see specials.py.)
+            # (With what its specials draw on: see specials.py. Never what
+            # tapiOca makes itself: see infostation.MADE_HERE.)
             for item in db.all_programs(channel.id):
-                rest.setdefault(item.rating_key, Program(item, channel.number))
+                if not infostation.made_here(item.rating_key):
+                    rest.setdefault(item.rating_key, Program(item, channel.number))
         ordered = sorted(rest, key=lambda k: (airs.get(k, 1 << 62), k))
         self.soon = set(arriving) | {k for k, at in airs.items() if at < now + SOON_S * 1000}
         return [*arriving.values(), *(rest[k] for k in ordered if k not in arriving)]
@@ -2494,7 +2497,12 @@ class Scanner:
 
     def as_dict(self) -> dict:
         db = self.ctx.db
-        programs = {i.rating_key for c in db.list_channels() for i in db.all_programs(c.id)}
+        programs = {
+            i.rating_key
+            for c in db.list_channels()
+            for i in db.all_programs(c.id)
+            if not infostation.made_here(i.rating_key)  # (never checked: 1.36.2)
+        }
         scans = db.scans()
         now = time.time() * 1000
         fresh = (RECHECK_S + 86_400) * 1000
