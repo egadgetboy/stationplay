@@ -799,7 +799,9 @@ def test_media_away_from_home_waits_until_its_turned_on(app):
                         "/api/internal/art/300"):  # fmt: skip
             refused = phone.get(address, headers=auth)
             assert refused.status_code == 403, address
-            assert "Admin turns on tapiOca's apps away from home" in refused.json()["detail"]
+            # (1.36.2, by design: said to someone watching, never an Admin's
+            # steps, the owner, October 14.)
+            assert refused.json()["detail"] == applibrary.AWAY_OFF
         assert play(phone, "300", **auth).status_code == 403
         progress = {"key": "300", "positionMs": 600_000}
         assert phone.post("/api/internal/progress", json=progress, headers=auth).status_code == 403
