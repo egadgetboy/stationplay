@@ -16,7 +16,7 @@ const SETUP_TITLES = {
   away: 'Watching away from home',
   library: 'Media in tapiOca’s apps',
   fileChecks: 'Checking files',
-  plex: 'Plex',
+  plex: 'Tuner',  // (where you watch, and how to add tapiOca there: 1.36.2)
   done: 'All set',
 };
 // What each check's state is called beside it (the dot's color says it too).
@@ -49,9 +49,9 @@ async function setupChecks() {
     return (await api(`/api/setup/checks?offset=${-new Date().getTimezoneOffset()}&zone=${encodeURIComponent(zone)}`)).checks;
   } catch { return null; }
 }
-// The Plex step's: whether Plex answers, whether tapiOca finds the files
-// Plex lists, and whether Plex has tapiOca as a DVR; with the addresses to
-// give Plex.
+// The Tuner step's Plex checks: whether Plex answers, whether tapiOca finds
+// the files Plex lists, and whether Plex has tapiOca as a DVR; with the
+// addresses to give Plex.
 async function setupPlex() {
   try { return await api('/api/setup/plex'); } catch { return null; }
 }
@@ -70,11 +70,94 @@ const PERSONAL_USE = () => h('div', { class: 'limit-note' }, h('strong', {}, 'Pl
   'Plex’s terms license Plex Media Server for personal use, on hardware and storage you own. Use tapiOca with your Plex server as those terms allow. ',
   h('a', { href: 'https://www.plex.tv/about/privacy-legal/plex-terms-of-service/', target: '_blank', rel: 'noopener noreferrer' }, 'Plex’s terms'), ' · ',
   h('a', { href: '/privacy', target: '_blank', rel: 'noopener noreferrer' }, 'tapiOca’s privacy notice'));
+// Where you watch (1.36.2, see setup.py): the Tuner step's question, which
+// apps you'll watch your stations in, each with its own steps below it.
+// Kept as saved (GET /api/setup/watch-in), so All set can say it. It only
+// changes what the step shows: every app can still use the tuner.
+// `watchDraft`: what's ticked and not yet saved, kept while the step is
+// painted again (as when Plex's checks arrive).
+let setupWatch = null, watchDraft = null;
+const WATCH_CHOICES = [
+  ['plex', 'Plex'],
+  ['jellyfin', 'Jellyfin'],
+  ['emby', 'Emby'],
+  ['kodi', 'Kodi'],
+  ['other', 'Another app', 'an M3U playlist and XMLTV guide'],
+  ['tapioca', 'Only tapiOca’s own apps'],
+];
+const NO_WATCH_IN = 'Choose at least one app, or Only tapiOca’s own apps.';
+// The choices after ticking or unticking `value`, in the order listed.
+// Only tapiOca's own apps goes on its own: ticking it clears the others,
+// and ticking another clears it.
+function watchToggled(chosen, value, on) {
+  if (!on) return chosen.filter(v => v !== value);
+  const kept = value === 'tapioca' ? [] : chosen.filter(v => v !== 'tapioca');
+  return WATCH_CHOICES.map(([v]) => v).filter(v => v === value || kept.includes(v));
+}
+// What's chosen, in a few words: "Plex and Jellyfin", "Only tapiOca’s own
+// apps"; empty while nothing is.
+function watchInWords(watchIn) {
+  const names = { plex: 'Plex', jellyfin: 'Jellyfin', emby: 'Emby', kodi: 'Kodi', other: 'another app', tapioca: 'only tapiOca’s own apps' };
+  const said = WATCH_CHOICES.map(([v]) => v).filter(v => (watchIn || []).includes(v)).map(v => names[v]);
+  const text = said.length < 2 ? (said[0] || '') : `${said.slice(0, -1).join(', ')} and ${said[said.length - 1]}`;
+  return text && text[0].toUpperCase() + text.slice(1);
+}
+// How to add tapiOca to an app other than Plex, with the addresses it
+// uses (`urls`: m3u and guide), as the README's Watch your stations says.
+function watchSection(place, urls) {
+  const em = text => h('em', {}, text);
+  const hint = (...kids) => h('p', { class: 'hint', style: 'margin:0' }, ...kids);
+  const copyRow = (what, value) => value ? h('div', { class: 'copyrow' }, h('span', { class: 'what' }, what), h('code', {}, value), copyButton(value)) : null;
+  if (place === 'tapioca') {
+    return h('div', { class: 'playback watch-app', 'data-watch': place },
+      hint('Nothing else is needed. tapiOca’s own apps get your stations straight from tapiOca.'));
+  }
+  const name = { jellyfin: 'Jellyfin', emby: 'Emby', kodi: 'Kodi' }[place];
+  const steps = {
+    jellyfin: [
+      h('li', {}, 'In Jellyfin’s dashboard, open ', em('Live TV'), ' and choose ', em('+'), ' next to ', em('Tuner Devices'), '.'),
+      h('li', {}, 'Choose ', em('M3U Tuner'), ' and enter the playlist address above. Save.'),
+      h('li', {}, 'Choose ', em('+'), ' next to ', em('TV Guide Data Providers'), ', choose ', em('XMLTV'), ' and enter the guide address above. Save.'),
+    ],
+    emby: [
+      h('li', {}, 'In Emby’s settings, open ', em('Live TV'), ' and add a TV source. Choose ', em('M3U Tuner'), ' and enter the playlist address above.'),
+      h('li', {}, 'Add a guide data provider. Choose ', em('XMLTV'), ' and enter the guide address above.'),
+    ],
+    kodi: [
+      h('li', {}, 'Install Kodi’s PVR Simple Client add-on (', em('Add-ons → Install from repository → PVR clients'), ').'),
+      h('li', {}, 'In its settings, set the playlist location to remote and set ', em('M3U play list URL'), ' to the playlist address above. The playlist includes the guide’s address, so ', em('XMLTV URL'), ' can stay empty. You can also enter the guide address there.'),
+      h('li', {}, 'Restart Kodi, or turn the add-on off and on. Your stations appear under ', em('TV'), '.'),
+    ],
+    other: [
+      h('li', {}, 'Give the app the playlist address above. Channels DVR and VLC accept it, and it tells them where to find the guide.'),
+      h('li', {}, 'If the app asks for a guide (XMLTV) too, enter the guide address above.'),
+    ],
+  }[place];
+  const notes = {
+    jellyfin: [
+      hint('Leave Jellyfin’s limit on simultaneous streams at its default (no limit). tapiOca enforces its own.'),
+      hint('Jellyfin downloads the guide on its own schedule, about once a day. After you change a station, refresh it in Jellyfin: ', em('Dashboard → Scheduled Tasks → Refresh Guide'), '.'),
+    ],
+    emby: [
+      hint('Emby downloads the guide on its own schedule, about once a day. After you change a station, refresh the guide in Emby to see it right away.'),
+      hint('Emby’s Live TV needs Emby Premiere.'),
+    ],
+    kodi: [hint('Kodi downloads the guide on its own schedule, about once a day. After you change a station, refresh the guide in Kodi to see it right away.')],
+    other: [hint('Other apps download the guide on their own schedule, about once a day. After you change a station, refresh the guide in the app to see it right away.')],
+  }[place];
+  return h('div', { class: 'playback watch-app', 'data-watch': place },
+    h('strong', { class: 'small' }, name ? `Adding tapiOca to ${name}` : 'Adding tapiOca to another app'),
+    copyRow(name ? `Playlist (M3U) for ${name}` : 'Playlist (M3U)', urls.m3u),
+    copyRow(name ? `Guide (XMLTV) for ${name}` : 'Guide (XMLTV)', urls.guide),
+    h(place === 'other' ? 'ul' : 'ol', { class: 'steps' }, ...steps),
+    ...notes);
+}
 const SETUP_AGAIN = 'You can run setup again any time from the Setup tab, or the Setup link at the foot of the page.';
 // `why`: "new" (a new tapiOca), "updated" (an update has new questions),
 // or "again" (run again).
 async function showSetup(st, why) {
   const dlg = $('#setupDlg');
+  setupWatch = watchDraft = null;  // (where you watch: read afresh each time)
   // Checks run first after an update: they decide whether that step is shown.
   let checks = why === 'updated' ? await setupChecks() : null;
   const steps = why === 'updated'
@@ -248,7 +331,7 @@ const SETUP_PAGES = {
     }
     paint(checks);
     return { node: h('div', { class: 'playback' },
-      h('p', { class: 'hint', style: 'margin:0' }, 'tapiOca checks the server itself: that it can read your media folder, how it encodes video, its clock, and its backups. Plex has a step of its own, near the end. Anything marked Needs a look or Not working says what to do. After changing tapiOca’s app settings, restart it, then choose Check again.'),
+      h('p', { class: 'hint', style: 'margin:0' }, 'tapiOca checks the server itself: that it can read your media folder, how it encodes video, its clock, and its backups. Plex is checked in the Tuner step, near the end. Anything marked Needs a look or Not working says what to do. After changing tapiOca’s app settings, restart it, then choose Check again.'),
       list,
       h('div', { class: 'row-btns' }, again)) };
   },
@@ -501,49 +584,106 @@ const SETUP_PAGES = {
     } };
   },
 
+  // The Tuner step (1.36.2, the owner: "I think maybe calling the step
+  // Tuner is better"): where you'll watch, then for each app ticked, how to
+  // add tapiOca to it. Plex's checks show with Plex ticked; and without it,
+  // while tapiOca gets your shows and movies from Plex, or they need a look.
   async plex({ plexInfo, loadPlex }) {
+    if (!setupWatch) {
+      try { setupWatch = await api('/api/setup/watch-in'); } catch { setupWatch = null; }
+    }
+    // (Saved, or before it is, what the server suggests: Plex, if it's set up or has used the tuner.)
+    let chosen = watchDraft || [...(setupWatch?.watchIn || setupWatch?.suggested || [])];
+    let plexGot = plexInfo;
+    const em = text => h('em', {}, text);
+    const hint = (...kids) => h('p', { class: 'hint', style: 'margin:0' }, ...kids);
     const list = h('div', { class: 'setup-checks' });
     const again = h('button', { type: 'button', class: 'btn', onclick: async () => {
       again.disabled = true;
       again.textContent = 'Checking…';
-      paint(await loadPlex());
+      plexGot = await loadPlex();
+      paintChecks();
       again.disabled = false;
       again.textContent = 'Check again';
     } }, 'Check again');
     const copyRow = (what, value) => h('div', { class: 'copyrow' }, h('span', { class: 'what' }, what), h('code', {}, value), copyButton(value));
-    const addresses = h('div', { class: 'playback' });
-    function paint(got) {
-      list.replaceChildren(...(got ? got.checks.map(checkRow)
-        : [h('p', { class: 'muted', style: 'margin:0' }, 'Checking Plex… (this takes a few seconds)')]));
-      const tuner = got?.tunerUrl || status?.tunerUrl, guide = got?.xmltvUrl || status?.xmltvUrl;
-      addresses.replaceChildren(...[tuner ? copyRow('Tuner address', tuner) : null, guide ? copyRow('Guide (XMLTV) for Plex', guide) : null].filter(Boolean));
-    }
-    paint(plexInfo);
-    return { node: h('div', { class: 'playback' },
-      h('p', { class: 'hint', style: 'margin:0' }, 'tapiOca works with your own Plex Media Server. This step checks that tapiOca can reach Plex and read the files Plex lists, and shows how to add tapiOca to Plex, to watch your stations in Plex too.'),
+    const plexAddresses = h('div', { class: 'playback' });
+    const boxes = WATCH_CHOICES.map(([value, name, more]) => {
+      const input = h('input', { type: 'checkbox', onchange: e => {
+        chosen = watchToggled(chosen, value, e.target.checked);
+        paint();
+      } });
+      return [value, input, h('label', { class: 'choice' }, input,
+        h('span', {}, h('strong', {}, name), more ? h('span', { class: 'hint' }, ` (${more})`) : null))];
+    });
+    const none = h('p', { class: 'hint', role: 'status', style: 'margin:0' }, NO_WATCH_IN);
+    const question = h('div', { class: 'playback watch-in', role: 'group', 'aria-labelledby': 'watchInAsk' },
+      h('strong', { id: 'watchInAsk' }, 'Will you watch your stations in other apps?'),
+      hint('Choose each app you’ll use, one or more. tapiOca shows the steps for each below. This only changes what this step shows: every app can still use tapiOca’s tuner.'),
+      h('div', { class: 'checks-col' }, ...boxes.map(([, , label]) => label)),
+      none);
+    const plexChecks = h('div', { class: 'playback' },
+      hint('tapiOca works with your own Plex Media Server. These checks say whether tapiOca can reach Plex and read the files Plex lists, and whether Plex has added tapiOca.'),
       list,
-      h('div', { class: 'row-btns' }, again),
+      h('div', { class: 'row-btns' }, again));
+    const plexSteps = h('div', { class: 'playback' },
       h('strong', { class: 'small' }, 'Adding tapiOca to Plex'),
       h('ol', { class: 'steps' },
-        h('li', {}, 'In Plex, open ', h('em', {}, 'Settings → Live TV & DVR → Set Up Plex DVR'), '.'),
-        h('li', {}, 'Choose ', h('em', {}, 'Don’t see your HDHomeRun device? Enter its network address manually'), ' (Plex can’t find tapiOca on its own) and enter the tuner address below.'),
-        h('li', {}, 'When Plex asks for guide data, choose ', h('em', {}, 'Have an XMLTV guide on your server? Click here to use it'), ' and enter the guide address below.'),
-        h('li', {}, 'Plex matches your stations automatically (it calls them channels). Each time you make a new station, choose ', h('em', {}, 'Scan for channels'), ' in Plex’s Live TV & DVR settings so Plex adds it.'),
+        h('li', {}, 'In Plex, open ', em('Settings → Live TV & DVR → Set Up Plex DVR'), '.'),
+        h('li', {}, 'Choose ', em('Don’t see your HDHomeRun device? Enter its network address manually'), ' (Plex can’t find tapiOca on its own) and enter the tuner address below.'),
+        h('li', {}, 'When Plex asks for guide data, choose ', em('Have an XMLTV guide on your server? Click here to use it'), ' and enter the guide address below.'),
+        h('li', {}, 'Plex matches your stations automatically (it calls them channels). Each time you make a new station, choose ', em('Scan for channels'), ' in Plex’s Live TV & DVR settings so Plex adds it.'),
         h('li', {}, 'Then choose Check again here.')),
-      h('p', { class: 'hint', style: 'margin:0' }, 'Plex needs at least one station to add tapiOca, so a new tapiOca starts with INFO on station 99: the date and time, what’s new in tapiOca and tips for watching. It plays even before Plex is connected.'),
-      addresses,
-      h('p', { class: 'hint', style: 'margin:0' }, 'Watching in Plex needs Plex Pass on the account that owns your Plex server. Jellyfin, Emby, Kodi and tapiOca’s own apps don’t need it. You’ll find these addresses, plus the ones for Jellyfin, Emby, Kodi and other apps, on the Setup tab.'),
-      PERSONAL_USE()) };
+      hint('If Plex says “There was a problem fetching channel mappings,” reload Plex’s page and start again. Plex renames the tuner partway through setup, so it may still know tapiOca’s tuner from before.'),
+      hint('Plex needs at least one station to add tapiOca, so a new tapiOca starts with INFO on station 99: the date and time, what’s new in tapiOca and tips for watching. It plays even before Plex is connected.'),
+      plexAddresses,
+      hint('Watching in Plex needs Plex Pass on the account that owns your Plex server. You’ll find these addresses on the Setup tab too, under Tuner integration.'),
+      PERSONAL_USE());
+    // (Plex unticked: its checks, with a word on why they're here.)
+    const plexOnly = hint('tapiOca gets your shows and movies from Plex, so Plex is checked here too.');
+    const apps = h('div', { class: 'playback' });
+    function paintChecks() {
+      list.replaceChildren(...(plexGot ? plexGot.checks.map(checkRow)
+        : [h('p', { class: 'muted', style: 'margin:0' }, 'Checking Plex… (this takes a few seconds)')]));
+      const tuner = plexGot?.tunerUrl || status?.tunerUrl, guide = plexGot?.xmltvUrl || status?.xmltvUrl;
+      plexAddresses.replaceChildren(...[tuner ? copyRow('Tuner address', tuner) : null, guide ? copyRow('Guide (XMLTV) for Plex', guide) : null].filter(Boolean));
+      paintApps();
+    }
+    function paintApps() {
+      const tuner = plexGot?.tunerUrl || status?.tunerUrl || '';
+      const urls = { m3u: status?.m3uUrl || (tuner && `${tuner}/stations.m3u`), guide: status?.guideUrl || (tuner && `${tuner}/guide.xml`) };
+      const plex = chosen.includes('plex');
+      const checksAnyway = !plex && (status?.plex?.configured || plexGot?.checks.some(needsLook));
+      apps.replaceChildren(...[
+        plex ? h('div', { class: 'playback watch-app', 'data-watch': 'plex' }, plexChecks, plexSteps) : null,
+        checksAnyway ? h('div', { class: 'playback watch-app', 'data-watch': 'plex-checks' }, h('strong', { class: 'small' }, 'Plex'), status?.plex?.configured ? plexOnly : null, plexChecks) : null,
+        ...chosen.filter(p => p !== 'plex').map(p => watchSection(p, urls)),
+      ].filter(Boolean));
+    }
+    function paint() {
+      watchDraft = chosen;
+      for (const [value, input] of boxes) input.checked = chosen.includes(value);
+      none.hidden = chosen.length > 0;
+      paintApps();
+    }
+    paint();
+    paintChecks();
+    return { node: h('div', { class: 'playback' }, question, apps), save: async () => {
+      if (!chosen.length) return NO_WATCH_IN;
+      try { setupWatch = await api('/api/setup/watch-in', { method: 'PUT', body: { watchIn: chosen } }); }
+      catch (e) { return e.message; }
+    } };
   },
 
   async done({ checks, plexInfo, why }) {
     const all = [...(checks || []), ...(plexInfo?.checks || [])];
     const look = all.filter(needsLook);
     // What's set now, in a few words each.
-    const [pb, away, libs, scan, view, upd] = await Promise.all([
+    const [pb, away, libs, scan, view, upd, watching] = await Promise.all([
       api('/api/playback'), api('/api/away'), api('/api/app-libraries').catch(() => null), api('/api/scan'),
       me.required ? api('/api/access/viewing').catch(() => null) : null,
       api('/api/updates').catch(() => null),
+      setupWatch || api('/api/setup/watch-in').catch(() => null),
     ]);
     if (upd) updates = upd;
     setAway(away);
@@ -558,6 +698,8 @@ const SETUP_PAGES = {
       ['away', h('span', { 'data-away-sum': 'Ready for apps away from home' }, awaySummary(away, 'Ready for apps away from home'))],
       ['library', sharing],
       ['fileChecks', w.on ? `Deep scan every night from ${clock(w.start)} to ${clock(w.end)}` : 'Quick checks only (the deep scan is off)'],
+      // (Where you watch, once it's saved: "Plex and Jellyfin".)
+      ...(watchInWords(watching?.watchIn) ? [['plex', watchInWords(watching.watchIn)]] : []),
     ];
     // The update check (see updates.js), asked here: never ticked until an
     // Admin ticks it. Left unticked when setup's finished, that's No.

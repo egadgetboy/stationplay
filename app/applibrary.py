@@ -1926,7 +1926,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if not ctx.library.configured:
             problem = (
                 "There are no Media folders to share yet. Add one of your own on the Add to "
-                "Plex tab, under Your own folders, or connect Plex (the Plex step of the setup "
+                "Plex tab, under Your own folders, or connect Plex (the Tuner step of the setup "
                 "says how)."
             )
         else:
