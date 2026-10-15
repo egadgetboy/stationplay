@@ -1041,7 +1041,7 @@ async def _own_pin_and_password(
         # Someone with a password but no PIN, picked by whoever is at the
         # device, isn't locked out by them.
         made = await c.post("/api/access/users", headers=admin_h,
-                            json={"name": "Lee", "password": "lee password", "role": "user"})  # fmt: skip
+                            json={"name": "Lee", "password": "harbor violet quill", "role": "user"})  # fmt: skip
         picked = await c.post("/api/internal/picker/choose", json={"id": made.json()["id"]},
                               headers={"StationPlay-Device": device_key})  # fmt: skip
         lee_h = {"Authorization": f"Bearer {picked.json().get('token', '')}"}
