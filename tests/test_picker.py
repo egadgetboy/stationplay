@@ -892,7 +892,7 @@ def test_someone_new_is_never_on_a_list_before_their_pin_is_set(app, monkeypatch
         household(admin)
         made = admin.post(
             "/api/access/users",
-            json={"name": "Den", "password": "den password", "role": "user", "pin": "4321"},
+            json={"name": "Den", "password": "den harbor quill", "role": "user", "pin": "4321"},
         )
         assert made.status_code == 201, made.text
         assert made.json()["pin"] and made.json()["showOn"] == "home"
