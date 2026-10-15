@@ -1,14 +1,19 @@
 // The Logs tab, and problems sent from the apps.
 // Logs ---------------------------------------------------------------------------
 let logText = '';
+// (Each ask is numbered: only the newest's answer shows, so a slow one never
+// covers a newer search's. The cold audit, 1.37.0.)
+let logAsked = 0;
 async function loadLogs(scrollToEnd = false) {
+  const mine = ++logAsked;
   const levels = [$('#logWarn').checked && 'WARNING', $('#logErr').checked && 'ERROR'].filter(Boolean);
   const accessLog = $('#logAccess').checked;
   // (The search, 1.37.0: every word, in any case, through all that's kept.)
   const q = $('#logFind').value.trim();
   let data;
   try { data = await api(`/api/logs?limit=200&levels=${levels.join(',')}&access_log=${accessLog}&q=${encodeURIComponent(q)}`); }
-  catch (e) { $('#logList').replaceChildren(h('p', { class: 'muted', style: 'padding:14px;margin:0' }, e.message)); return; }
+  catch (e) { if (mine === logAsked) $('#logList').replaceChildren(h('p', { class: 'muted', style: 'padding:14px;margin:0' }, e.message)); return; }
+  if (mine !== logAsked) return;
   logText = data.text;
   const list = $('#logList');
   const atEnd = scrollToEnd || list.scrollTop + list.clientHeight >= list.scrollHeight - 40;
@@ -17,7 +22,7 @@ async function loadLogs(scrollToEnd = false) {
         h('span', { class: 'when' }, new Date(e.time * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' })),
         h('span', { class: 'lvl' }, e.level),
         h('span', { class: 'msg' }, e.message)))
-    : [h('p', { class: 'muted', style: 'padding:14px;margin:0' }, q ? `Nothing in the log has “${q}”.` : levels.length || accessLog ? 'No matching entries.' : 'Nothing logged yet.')]));
+    : [h('p', { class: 'muted', style: 'padding:14px;margin:0' }, q ? (levels.length || accessLog ? `No lines with these choices have “${q}”.` : `Nothing in the log has “${q}”.`) : levels.length || accessLog ? 'No matching entries.' : 'Nothing logged yet.')]));
   if (atEnd) list.scrollTop = list.scrollHeight;
 }
 $('#logWarn').addEventListener('change', () => loadLogs(true));

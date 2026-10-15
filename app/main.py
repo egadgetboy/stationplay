@@ -27,7 +27,7 @@ from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -2856,13 +2856,15 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         levels: str = "",
         access_log: bool = False,
         limit: int = 200,
-        q: str = Query("", max_length=LOG_SEARCH_MOST),
+        q: str = "",
     ):
         """The newest log entries: all of them; or those at `levels` (e.g.
         "WARNING,ERROR"), and with `access_log`, the access log's (which is
         kept between restarts). With `q` (1.37.0, the owner: "There is no
         SEARCH field in Logs - needs one"), only those with every one of its
         words, in any case, searched through all that's kept."""
+        if len(q) > LOG_SEARCH_MOST:
+            raise HTTPException(400, f"Search for {LOG_SEARCH_MOST} characters or fewer.")
         limit = max(1, min(limit, logbuffer.KEEP))
         wanted = {v.strip().upper() for v in levels.split(",") if v.strip()}
         words = logbuffer.search_words(q)

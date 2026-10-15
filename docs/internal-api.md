@@ -1170,7 +1170,7 @@ nothing.
 What makes a group, for each sort (each group is in one piece, and no `kind` and `value` repeats):
 - **`title`:** the letter each title is listed under, so exactly `letters`' groups.
 - **`added`** (newest first): `week`, added in the 7 days before the request (or later than now); then `month`, the rest of this calendar year by month; then `year`, earlier years; then `undated`. Months and years are in the server's own time zone, as INFO's blocks and the guides' hours are.
-- **`released`** (newest first): `decade`, from the year that starts its release date, or its year; then `undated`. A release date that doesn't start with a four-digit year (an NFO's free text, say) sorts and counts as undated, last (from 1.37.0; before, "Unknown" sorted first).
+- **`released`** (newest first): `decade`, from the year that starts its release date, or its year; then `undated`. A release date that doesn't start with a four-digit year in the digits 0 to 9 (an NFO's free text, say) sorts and counts as though it had no date: in its year's decade when it has a year, else undated, last (from 1.37.0; before, "Unknown" sorted first).
 
 They're counted from the same list as `total` and `items`: after Viewing Levels, the genre and Unwatched, so a title someone can't see is never counted.
 
