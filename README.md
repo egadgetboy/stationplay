@@ -1368,7 +1368,7 @@ Picture sizes and the number of tuners are set on the page. Versions before 1.14
 
 ## Troubleshooting
 
-Start with the **Logs** tab, which shows the newest 200 entries. Check **Warnings** or **Errors** to filter, and use **Copy** to paste them into a message. `docker logs stationplay` (or the app's logs in TrueNAS) has everything.
+Start with the **Logs** tab, which shows the newest 200 entries. Type in **Search the log** to find entries with those words, in any case, through everything tapiOca keeps (from 1.37.0). Check **Warnings** or **Errors** to filter, and use **Copy** to paste them into a message. `docker logs stationplay` (or the app's logs in TrueNAS) has everything.
 
 **What's playing.** The log names each station by its number and name ("station 2, Cartoon Classics") and describes what plays as it starts:
 

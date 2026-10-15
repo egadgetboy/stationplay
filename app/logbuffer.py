@@ -37,14 +37,30 @@ class RecentLogs(logging.Handler):
         with self._lock_entries:
             self._entries.append(entry)
 
-    def entries(self, levels: set[str] | None = None, limit: int = 200) -> list[dict[str, Any]]:
+    def entries(
+        self, levels: set[str] | None = None, limit: int = 200, words: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         """The newest `limit` entries (oldest first), optionally only those
-        at the given levels."""
+        at the given levels, and with every one of `words` (casefolded) in
+        them (1.37.0: the Logs tab's search, through all that's kept)."""
         with self._lock_entries:
             entries = list(self._entries)
         if levels:
             entries = [e for e in entries if e["level"] in levels]
+        if words:
+            entries = [e for e in entries if has_words(e["message"], words)]
         return entries[-limit:]
+
+
+def search_words(q: str) -> list[str]:
+    """The words a search asks for, casefolded."""
+    return q.casefold().split()
+
+
+def has_words(text: str, words: list[str]) -> bool:
+    """Whether every one of `words` is somewhere in `text`, in any case."""
+    folded = text.casefold()
+    return all(w in folded for w in words)
 
 
 def install() -> RecentLogs:
