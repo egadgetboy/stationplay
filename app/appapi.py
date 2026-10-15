@@ -316,6 +316,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 # (Copies of what a device can't play as it is: see converting.py.
                 # And from 1.29.1, a converted copy when an app asks for one.)
                 *(["convert", "convert-asked"] if media else []),
+                # (From 1.37.0: Shuffle on a show's page, and a Media folder's
+                # marks for the apps' dial: see applibrary.py.)
+                *(["shuffle", "marks"] if media else []),
                 # (Even sound for a show's episodes, while it's on: see applibrary.py.)
                 *(["even-sound"] if media and ctx.shared.even_sound else []),
             ],
