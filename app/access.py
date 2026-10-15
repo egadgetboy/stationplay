@@ -570,7 +570,7 @@ class Access:
     # Someone removed, or their role changed (see trustedapi.py, 1.36.0).
     on_people_changed: Callable[[], None] | None = field(init=False, default=None)
     # What the page is told on a trusted network (see trustedapi.py, 1.36.0).
-    trusted_info: Callable[[dict[str, Any]], dict[str, Any]] | None = field(
+    trusted_info: Callable[[dict[str, Any], User | None], dict[str, Any]] | None = field(
         init=False, default=None
     )
     # When a signed-in app last came in through the public port over HTTPS
@@ -1847,8 +1847,10 @@ def routes(app: FastAPI, access: Access) -> None:
             # On a trusted network: who may pick themselves, or who it signs
             # in as (see trustedapi.py, 1.36.0).
             entry = request.scope.get("state", {}).get("trusted")
+            # (With this browser's own person, `found`, whose PIN will do
+            # here: 1.37.0, the owner, October 15.)
             if entry is not None and access.trusted_info is not None:
-                said["trusted"] = access.trusted_info(entry)
+                said["trusted"] = access.trusted_info(entry, found)
         return said
 
     @app.post("/api/access/active")

@@ -85,6 +85,10 @@ USER = {"name": "Sam", "password": "battery staple", "role": "user", "maxStation
 KID = {"name": "Robin", "password": "", "role": "user", "pin": "2468"}
 JO = {"name": "Jo", "password": "lighthouse keeper", "role": "user"}
 JO_PIN = "1357"  # (Jo signs in on the page with it: see the sign-in screen's PIN form)
+# (1.37.0) Shown only on devices she's signed in on, with a PIN: on a trusted
+# network, the page lists her where she signed in with her password.
+ARI = {"name": "Ari", "password": "harbor violet quill", "role": "user", "showOn": "signed-in"}
+ARI_PIN = "8642"
 # Tuner access: the devices listed, and who used the tuner lately (address,
 # what it called itself, what it asked for, how many minutes ago, refused):
 # Plex in Docker, at the Docker network's address (not listed: the warning),
@@ -371,6 +375,7 @@ def fill(sp: Running, data: Path) -> None:
         ok(home.post("/api/access/users", json={**ADMIN, "role": "admin", "maxStations": None}))
         ok(home.post("/api/access/users", json=USER))
         ok(home.post("/api/access/users", json={**JO, "pin": JO_PIN}))
+        ok(home.post("/api/access/users", json={**ARI, "pin": ARI_PIN}))
         robin = ok(home.post("/api/access/users", json=KID))
         levels = {lv["name"]: lv["id"] for lv in ok(home.get("/api/access/viewing"))["levels"]}
         ok(home.put(f"/api/access/users/{robin['id']}/viewing", json={"level": levels["Kid"]}))
@@ -1393,15 +1398,18 @@ def media_folder_switches(page: Page, look: Look, sp: Running) -> None:
 
 
 def signin_trusted(browser: Any, base: str, context_of: Callable[..., Any], look: Look) -> None:
-    """The sign-in screen on a trusted network (1.36.0): Who's tuning in?,
-    with Jo's PIN asked when Jo is picked; and on Sam's laptop, Continue as
+    """The sign-in screen on a trusted network (1.36.0): Who's signing in?
+    (from 1.37.0: "Who's tuning in?" is the apps' question, the owner,
+    October 15), with Jo's PIN asked when Jo is picked; Ari, listed on a
+    browser she signed in on with her password, once an hour without
+    activity has signed her out (1.37.0); and on Sam's laptop, Continue as
     Sam (shown, not pressed: as after signing out on purpose)."""
     context = context_of({"X-Page-Peer": TRUSTED_DEVICE})
     page = context.new_page()
     page.goto(base + "/")
     if not until(page, "() => !document.querySelector('#signinTrusted').hidden"):
         look.expect(
-            "Who's tuning in? shows on a trusted network",
+            "Who's signing in? shows on a trusted network",
             page.evaluate("() => JSON.stringify(me)"),
             True,
         )
@@ -1409,12 +1417,44 @@ def signin_trusted(browser: Any, base: str, context_of: Callable[..., Any], look
         return
     look.page = page
     look("signin-trusted")
+    look.expect("the page's question", page.inner_text("#signinTrustedTitle"), "Who’s signing in?")
     names = page.locator("#signinPeople .who-name").all_inner_texts()
-    look.expect("Who's tuning in? lists Jo", JO["name"] in names, True)
+    look.expect("Who's signing in? lists Jo", JO["name"] in names, True)
+    look.expect(
+        "Ari isn't listed on a browser she hasn't signed in on", ARI["name"] in names, False
+    )
     page.locator("#signinPeople .who", has_text=JO["name"]).click()
     until(page, "() => !document.querySelector('#signinByPin').hidden")
     look.expect("Jo's PIN asked", page.inner_text("#signinPinLabel"), f"PIN for {JO['name']}")
     look("signin-trusted-pin")
+    context.close()
+    # Ari signs in with her password on this browser; an hour without
+    # activity signs her out (her sign-in's cookie gone, the browser's kept).
+    context = context_of({"X-Page-Peer": TRUSTED_DEVICE})
+    signed = context.request.post(
+        f"{base}/api/access/sign-in",
+        data={"name": ARI["name"], "password": ARI["password"]},
+        headers=PAGE,
+    )  # fmt: skip
+    look.expect("Ari signs in with her password", signed.ok, True)
+    kept = [c for c in context.cookies() if c["name"] != SESSION_COOKIE]
+    context.clear_cookies()
+    context.add_cookies(kept)
+    page = context.new_page()
+    page.goto(base + "/")
+    until(page, "() => !document.querySelector('#signinTrusted').hidden")
+    look.page = page
+    names = page.locator("#signinPeople .who-name").all_inner_texts()
+    look.expect("Ari is listed where she signed in", ARI["name"] in names, True)
+    if ARI["name"] in names:
+        page.locator("#signinPeople .who", has_text=ARI["name"]).click()
+        until(page, "() => !document.querySelector('#signinByPin').hidden")
+        look.expect("Ari's PIN asked", page.inner_text("#signinPinLabel"), f"PIN for {ARI['name']}")
+        look("signin-trusted-own")
+        page.fill("#signinPin", ARI_PIN)
+        page.click("#signinGo")
+        signed_in = until(page, "() => !!(me && me.user)")
+        look.expect("Ari's PIN signs her in", signed_in, True)
     context.close()
     context = context_of({"X-Page-Peer": SAMS_LAPTOP})
     context.add_init_script("try { sessionStorage.setItem('tapioca.signedOut', '1'); } catch {}")
