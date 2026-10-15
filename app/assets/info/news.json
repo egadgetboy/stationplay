@@ -1,8 +1,8 @@
 {
-  "version": "1.36.4",
+  "version": "1.37.0",
   "new": [
-    "INFO plays again",
-    "Night mode cuts deep rumble",
-    "Resume starts 15 seconds back"
+    "Shuffle a show's episodes",
+    "Jump through Media by letter or date",
+    "Search the Logs"
   ]
 }
