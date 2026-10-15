@@ -57,6 +57,7 @@ from .sources import ResolvedSource
 from .tsstitch import PTS_HZ, TsStitcher
 
 if TYPE_CHECKING:
+    from .gpu import GpuManager
     from .main import AppContext
 
 log = logging.getLogger(__name__)
@@ -612,6 +613,20 @@ class Broadcaster:
 
     def _burst(self) -> float:
         return self._burst_at(self._ts)
+
+    def _rescued_on_cpu(self, key: str, gpu: GpuManager) -> None:
+        """A program that failed on the GPU played on the CPU: a strike against
+        the GPU (unless it stalled: the disk's as likely), and the GPU again
+        for it next time. Never for a program tapiOca makes itself (INFO's
+        film), which stays on the CPU for the rest of this viewing: its short
+        programs alone could otherwise turn the GPU off for every station
+        (1.37.1, the owner's handoff)."""
+        made_here = infostation.made_here(key)
+        if key not in self._stalled_on_gpu and not made_here:
+            gpu.cpu_rescued()
+        if not made_here:
+            self._cpu_only.discard(key)
+        self._stalled_on_gpu.discard(key)
 
     def _burst_at(self, ts: float) -> float:
         """How much faster than real time to start reading, to get the
@@ -1822,10 +1837,7 @@ class Broadcaster:
         if played and gpu and encoder.is_gpu:
             gpu.gpu_succeeded()
         elif played and gpu and item.rating_key in self._cpu_only:
-            if item.rating_key not in self._stalled_on_gpu:
-                gpu.cpu_rescued()
-            self._cpu_only.discard(item.rating_key)
-            self._stalled_on_gpu.discard(item.rating_key)
+            self._rescued_on_cpu(item.rating_key, gpu)
         short_s = remaining_s - total.produced_s
         if not resolved.known and short_s >= MORE_FILES_S:
             # Its file ended long before its time, and Plex couldn't say then

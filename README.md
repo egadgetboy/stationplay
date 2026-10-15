@@ -630,7 +630,7 @@ Install it from the address you sign in at, such as your reverse proxy's `https:
 
 ### The INFO station
 
-A new tapiOca starts with station 99, **INFO**, with tapiOca's logo. Plex's Live TV & DVR won't add a tuner whose guide has no stations, so INFO lets you add tapiOca to Plex before you've made a station of your own. Once you have one, INFO is for tapiOca's apps only: Plex's tuner, its guide and the playlist other apps use leave it out (from 1.36.4). It stays useful in tapiOca's apps:
+A new tapiOca starts with station 99, **INFO**, with tapiOca's logo. Plex's Live TV & DVR won't add a tuner whose guide has no stations, so INFO lets you add tapiOca to Plex before you've made a station of your own. Once you have one, INFO is for tapiOca's apps only: Plex's tuner, its guide and the playlist other apps use leave it out (from 1.36.4), and the tuner won't play it to an app that listed it before (from 1.37.1). It stays useful in tapiOca's apps:
 
 - **What it shows.** A film of teal pearls flying through tapiOca's ring, to a light tune, with the time and date in the top right corner, tapiOca's web address in the bottom right, and a panel in the bottom left that changes every 15 seconds: **What's new in tapiOca** (this version's highlights), **tapiOca's apps, in beta** (their newest versions and what's new in them), **By the numbers** (your stations, and the movies, shows and episodes in the Media folders shared with tapiOca's apps, with how many were added this week) and **A tip for tapiOca's apps**, a new one each hour.
 - **For everyone.** Everyone who can watch your stations in tapiOca's apps sees INFO, whatever their Viewing Level (and in Plex too, while it's your only station). So it shows counts, never titles, and never your server's addresses or how it's doing.
@@ -1027,7 +1027,7 @@ The checks wait in one line, in this order:
 4. **Weekly.** Every program on a station is quick-checked again once a week. This also catches files that went missing or were replaced. Media's files are checked when they arrive, and when someone has trouble with one.
 5. **Overnight deep scan.** Between 1 AM and 6 AM, files are decoded in full. To change the time or turn it off, use **Deep scan every night from** on the **Broken files** tab. The stations' programs go first, soonest to air first. Then come Media's files: what's in someone's Resume row, the next episode of a show someone is watching, then the rest, most recently added first. A file that hasn't had its quick check gets one first. The scan stops the moment anyone starts watching and continues later. Each file is deep-scanned once, and again only if it changes. A 45-minute episode usually takes a few minutes.
 
-**Check files** on a station card quick-checks all of its programs right away. A new station gets this automatically.
+**Check files** on a station card quick-checks all of its programs right away. A new station's first day is checked as soon as it's made. The rest are checked as the scanner reaches them, before they air when possible.
 
 **A movie in several files** has each of its files checked in order, by both the quick check and the deep scan. A problem in any of them takes the movie off the air, and its entry names the file.
 
@@ -1393,7 +1393,7 @@ Problems are kept for 30 days. **Clear** removes them, and the log keeps its own
 
 - **Plex.** Plex can't be reached, or won't accept tapiOca's token. The alert says what happened and what to check (see **Plex isn't connected** under **Plex**, below).
 - **The data folder.** It has less than 2 GB free, or can't be written to.
-- **A failing station.** A station keeps failing to start (3 times in 10 minutes).
+- **A failing station.** A station keeps failing to start (3 times in 10 minutes). The alert says when it began. One kept from before an update ends with the update, and comes back if the station fails again.
 - **Backups.** Backups fail twice in a row.
 - **The clock.** tapiOca's clock is more than 2 minutes off from Plex's. This uses the time in Plex's answers; without it, the clock isn't checked.
 - **Away from home.** tapiOca's apps can't reach it from outside.

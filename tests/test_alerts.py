@@ -290,7 +290,9 @@ def test_a_station_failing_to_start_and_backups_failing(db):
     found.station_failed(7, 5, "Cartoon Classics")
     [alert] = found.now()
     assert alert.sentence.startswith(
-        "Station 5, Cartoon Classics, keeps failing to start: 3 times in the last 10 minutes."
+        # (1.37.1, the owner's handoff: when it began, not "in the last 10
+        # minutes", true only when it was said. See test_alerts_update.)
+        "Station 5, Cartoon Classics, keeps failing to start: 3 times in 10 minutes, from "
     )
     found.station_failed(7, 5, "Cartoon Classics")  # (still the one alert)
     assert len(found.now()) == 1 and len(told.said) == 1

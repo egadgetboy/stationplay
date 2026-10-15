@@ -38,9 +38,13 @@ CHECK_CONCURRENCY = 2
 # honoured by ZFS and most NAS disks, and fewer reads at once is what keeps
 # the streams' reads quick.
 WATCHING_REST_S = 5.0
-# A new station's files are checked as soon as it's made. (Tests that aren't
-# about checking files turn it off, so they don't wait for ffmpeg.)
+# A new station's files are checked as soon as it's made: those it airs in
+# this long, soonest first; the scanner checks the rest as new programs, before
+# they air when it can (1.37.1, the owner, October 15: a smart station of
+# 40,000 episodes was checked all at once). (Tests that aren't about checking
+# files turn it off, so they don't wait for ffmpeg.)
 CHECK_NEW_STATIONS = True
+NEW_STATION_MS = 24 * 3600 * 1000
 CLEAR_INTERVAL_S = 30 * 60
 
 
@@ -90,9 +94,12 @@ async def check_turn(ctx: AppContext):
             await asyncio.sleep(WATCHING_REST_S)
 
 
-async def run_check(ctx: AppContext, channel_id: int, status: CheckStatus) -> None:
+async def run_check(
+    ctx: AppContext, channel_id: int, status: CheckStatus, within_ms: int | None = None
+) -> None:
     channel = ctx.db.get_channel(channel_id)
     if channel is None:
+        status.running = False
         return
     seen: set[str] = set()
     items = []
@@ -105,23 +112,32 @@ async def run_check(ctx: AppContext, channel_id: int, status: CheckStatus) -> No
             continue
         seen.add(item.rating_key)
         items.append(item)
+    if within_ms is not None:
+        # (Worked out off the event loop: a big shuffled station's pass may
+        # be worked out here first.)
+        airs = await asyncio.to_thread(airing_soon, ctx, channel_id, within_ms)
+        items = sorted((i for i in items if i.rating_key in airs), key=lambda i: airs[i.rating_key])
     status.total = len(items)
+    # A few workers take the programs in turn, never a task for each one
+    # (40,000 for a big station).
+    turns = iter(items)
 
-    async def one(item) -> None:
-        async with check_turn(ctx):
-            try:
-                result = await check_item(ctx, item, channel.number)
-            except Exception:
-                log.exception("Quick check of Plex item %s failed", item.rating_key)
-                result = "skipped"
-            status.done += 1
-            if result == "broken":
-                status.newly_broken += 1
-            elif result == "skipped":
-                status.skipped += 1
+    async def worker() -> None:
+        for item in turns:
+            async with check_turn(ctx):
+                try:
+                    result = await check_item(ctx, item, channel.number)
+                except Exception:
+                    log.exception("Quick check of Plex item %s failed", item.rating_key)
+                    result = "skipped"
+                status.done += 1
+                if result == "broken":
+                    status.newly_broken += 1
+                elif result == "skipped":
+                    status.skipped += 1
 
     try:
-        await asyncio.gather(*(one(i) for i in items))
+        await asyncio.gather(*(worker() for _ in range(min(CHECK_CONCURRENCY, len(items)))))
     finally:
         status.running = False
         status.finished_at = time.time()
@@ -134,14 +150,26 @@ async def run_check(ctx: AppContext, channel_id: int, status: CheckStatus) -> No
         )
 
 
-def start_check(ctx: AppContext, channel_id: int) -> CheckStatus:
+def start_check(ctx: AppContext, channel_id: int, within_ms: int | None = None) -> CheckStatus:
+    """Checks a station's files (Check files: all of them), or only what it
+    airs in the next `within_ms` (a new station's: see NEW_STATION_MS)."""
     status = ctx.checks.get(channel_id)
     if status and status.running:
         return status
     status = CheckStatus(running=True, started_at=time.time())
     ctx.checks[channel_id] = status
-    status._task = asyncio.create_task(run_check(ctx, channel_id, status))
+    status._task = asyncio.create_task(run_check(ctx, channel_id, status, within_ms))
     return status
+
+
+def airing_soon(ctx: AppContext, channel_id: int, within_ms: int) -> dict[str, int]:
+    """What a station airs from now to `within_ms` on, by key: when each
+    first airs."""
+    now = int(time.time() * 1000)
+    airs: dict[str, int] = {}
+    for slot in ctx.station(channel_id).between(now, now + within_ms):
+        airs.setdefault(slot.item.rating_key, slot.start_ms)
+    return airs
 
 
 # Going through the broken-files list again --------------------------------

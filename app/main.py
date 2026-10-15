@@ -1018,12 +1018,13 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     def base_url(request: Request) -> str:
         """The address Plex reaches tapiOca at: as the request was made,
-        unless BASE_URL says. (From the internet, where it can't be told, the
-        Setup tab shows where to put your NAS's address in.)"""
+        unless BASE_URL says. From the internet, where it can't be told: the
+        address Plex's Live TV & DVR has for its tuner (1.37.1); without one,
+        the Setup tab shows where to put your NAS's address in."""
         if settings.base_url:
             return settings.base_url
         if access.outside(request.scope):
-            return f"http://<your NAS>:{settings.port}"
+            return ctx.updater.tuner_address or f"http://<your NAS>:{settings.port}"
         host = request.headers.get("host") or f"localhost:{settings.port}"
         return f"{request.url.scheme}://{host}"
 
@@ -1091,6 +1092,14 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         channel = ctx.db.get_channel_by_number(number)
         if channel is None:
             raise HTTPException(404, f"There's no station {number}")
+        if infostation.is_info(channel) and channel not in infostation.for_other_apps(
+            ctx.db.list_channels()
+        ):
+            # INFO is for tapiOca's apps (which play it through /hls): never to a Plex,
+            # Emby or Jellyfin that listed it before 1.36.4 left it out of the lineup.
+            # While it's the only station, the lineup has it, and so does this.
+            # (1.37.1, the owner, October 15: "INFO is an app not a streaming station".)
+            raise HTTPException(404, "INFO is for tapiOca's apps.")
         b = ctx.broadcaster(channel.id)
         client = request.client.host if request.client else "?"
         on_now = playback.all_in_use(ctx, b)
@@ -2311,10 +2320,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             channel.order_mode,
             await ctx.updater.sets_as_aired(channel, sets, main=items),
         )
-        # Its files are checked straight away (the station's card shows how
-        # that's going), and the scanner looks out for new programs.
+        # What it airs in its first day is checked straight away (the station's
+        # card shows how that's going); the scanner checks the rest as new
+        # programs, and looks out for more.
         if jobs.CHECK_NEW_STATIONS:
-            jobs.start_check(ctx, channel.id)
+            jobs.start_check(ctx, channel.id, jobs.NEW_STATION_MS)
         ctx.scanner.wake()
         ctx.icon_cache.pop(body.number, None)
         return channel_or_404(channel.id)

@@ -35,6 +35,7 @@ import asyncio
 import itertools
 import logging
 import time
+from urllib.parse import urlsplit
 from collections import Counter
 from collections.abc import Container
 from dataclasses import dataclass
@@ -95,6 +96,35 @@ DVR_MISSING_RECHECK_MS = 5 * 60 * 1000
 
 META_PUBLISHED_UNTIL = "guide_published_until"
 META_PLEX_DOWNLOAD = "guide_plex_download"
+# The address Plex's Live TV & DVR reaches tapiOca's tuner at, as it last
+# said: what Setup shows from the internet, where the request can't tell
+# (1.37.1, the owner, October 15: "Setup missing actual personal IPs").
+META_TUNER_ADDRESS = "plex_tuner_address"
+
+
+def tuner_address(uri: object) -> str:
+    """An address Plex lists a tuner at, as "http://192.168.50.2:3310": only
+    an http or https address of a machine (with its port), nothing else in
+    it; "" for anything else."""
+    if not isinstance(uri, str) or len(uri) > 300:
+        return ""
+    try:
+        parts = urlsplit(uri.strip())
+        port = parts.port
+    except ValueError:
+        return ""
+    if (
+        parts.scheme not in ("http", "https")
+        or not parts.hostname
+        or parts.username is not None
+        or parts.password is not None
+        or parts.path not in ("", "/")
+        or parts.query
+        or parts.fragment
+    ):
+        return ""
+    host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
+    return f"{parts.scheme}://{host}" + (f":{port}" if port else "")
 
 
 def now_ms() -> int:
@@ -838,6 +868,10 @@ class Updater:
         mine = [(dvr, d) for dvr, d in devices if dvr.get("key") and self._is_mine(d)]
         self._dvr_key = str(mine[0][0]["key"]) if mine else None
         self._dvr_checked_ms = now_ms()
+        if mine:
+            address = tuner_address(mine[0][1].get("uri"))
+            if address and address != self.tuner_address:
+                self.ctx.db.set_meta(META_TUNER_ADDRESS, address)
         if mine and mine[0][1].get("status", "alive") == "alive":
             self._say_once(
                 "Found tapiOca's tuner in Plex's Live TV & DVR, so tapiOca will ask Plex "
@@ -856,6 +890,12 @@ class Updater:
                 "you change a station"
             )
         return self._dvr_key
+
+    @property
+    def tuner_address(self) -> str:
+        """Where Plex's Live TV & DVR last said it reaches tapiOca's tuner
+        ("" if it hasn't): see META_TUNER_ADDRESS."""
+        return self.ctx.db.get_meta(META_TUNER_ADDRESS, "") or ""
 
     def _is_mine(self, device: dict[str, Any]) -> bool:
         """Whether a tuner in Plex's Live TV & DVR is this tapiOca. Plex

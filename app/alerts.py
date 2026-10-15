@@ -82,9 +82,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
+from . import __version__, infostation, playing, reach, setup
 from . import doors as door_module
-from . import playing, reach, setup
 from .notify import FIXED, STARTED
+from .releases import VERSION_META
 from .plex import PlexError, trouble
 
 if TYPE_CHECKING:
@@ -169,6 +170,12 @@ class _Streak:
             self.wrong, self.right = 0, self.right + 1
 
 
+
+def clock_said(wall_s: float) -> str:
+    """A time of day as an alert says it: "8:52 PM", by this machine's clock."""
+    t = time.localtime(wall_s)
+    return f"{t.tm_hour % 12 or 12}:{t.tm_min:02d} {'AM' if t.tm_hour < 12 else 'PM'}"
+
 class Alerts:
     """The alerts now and lately, and what's found (see the module's notes)."""
 
@@ -204,8 +211,12 @@ class Alerts:
         module's notes)."""
         try:
             rows = self.db.kept_alerts()
-            stations = {str(c.id) for c in self.db.list_channels()}
+            channels = {str(c.id): c for c in self.db.list_channels()}
+            stations = set(channels)
             alive = int(self.db.get_meta(ALIVE_META) or 0)
+            # (The version that started last, before this one: see releases.note_version,
+            # which runs after this.)
+            before = self.db.get_meta(VERSION_META, "")
         except sqlite3.Error as e:
             log.warning("Couldn't read the alerts kept from before (%s)", e)
             return
@@ -233,6 +244,22 @@ class Alerts:
             elif alert.kind == STATION and alert.about not in stations:
                 # (Deleted, and said so then, though it couldn't be kept.)
                 self._keep(self.db.forget_alert, alert.kind, alert.about, alert.since_ms)
+            elif alert.kind == STATION and before and before != __version__:
+                # Kept from before an update: what failed was another version's,
+                # so it ends, said once; a real failure raises it again (1.37.1,
+                # the owner, October 15: INFO's from 1.36.3, still said on 1.37.0).
+                channel = channels[alert.about]
+                named = playing.cap(playing.station(channel.number, channel.name))
+                it = channel.name or "it"
+                alert.fixed_ms = _now_ms()
+                alert.fixed_sentence = (
+                    f"{named}: its alert from before the update to {__version__} was cleared. "
+                    f"It comes back if {it} fails again."
+                )
+                self._fixed.append(alert)
+                self._keep(self._write, alert)
+                log.info("Alert fixed: %s", alert.fixed_sentence)
+                self._retell.append((alert, FIXED))
             else:
                 self._now[(alert.kind, alert.about)] = alert
                 log.warning("Alert still going: %s", alert.sentence)
@@ -370,11 +397,24 @@ class Alerts:
             fails.popleft()
         if len(fails) >= STATION_FAILS:
             named = playing.cap(playing.station(number, name, mid=True))
+            # (When the first of them was, by the wall clock: "in the last 10
+            # minutes" was true only when it was said. 1.37.1.)
+            began = clock_said(time.time() - (now - fails[0]))
+            channel = self.db.get_channel(channel_id)
+            if channel is not None and infostation.is_info(channel):
+                why = (
+                    "INFO's film is part of tapiOca, so Plex and your files aren't the cause. "
+                    "The Logs tab says why."
+                )
+            else:
+                why = (
+                    "The Logs tab says why each time; check that Plex and the station's files "
+                    "can be reached."
+                )
             self.start(
                 STATION,
-                f"{named} keeps failing to start: {len(fails)} times in the last "
-                f"{STATION_WINDOW_S / 60:.0f} minutes. The Logs tab says why each time; check "
-                "that Plex and the station's files can be reached.",
+                f"{named} keeps failing to start: {len(fails)} times in "
+                f"{STATION_WINDOW_S / 60:.0f} minutes, from {began}. {why}",
                 str(channel_id),
             )
 

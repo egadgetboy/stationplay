@@ -1,8 +1,8 @@
 {
-  "version": "1.37.0",
+  "version": "1.37.1",
   "new": [
-    "Search the Logs",
-    "Sign back in with your PIN at home",
-    "Long names fit when signing in"
+    "Big smart stations without the hang",
+    "Setup shows your tuner's address",
+    "INFO plays only in tapiOca's apps"
   ]
 }
