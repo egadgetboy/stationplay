@@ -193,3 +193,18 @@ def test_from_the_internet_before_signing_in_theres_no_form():
         "if (me.notSetUp) for (const id of ['#signinByPassword', '#signinByPin', '#signinGo']) "
         "$(id).hidden = true;"
     ) in access
+
+
+def test_setup_offers_even_sound_where_media_in_the_apps_is_chosen():
+    """The owner, October 14 (1.36.4): "Even Sound should be on by default,
+    but I don't see where Admin can turn it off". It was only on the Access
+    tab, in a panel folded shut. Setup's Media in tapiOca's apps step has it
+    too, the same switch, saved with the step; and both say stations always
+    have even sound, since the switch is for Media only (the owner: "even
+    audio should always be on with Stations")."""
+    setup = (JS.parent / "setup.js").read_text(encoding="utf-8")
+    apps = (JS.parent / "apps.js").read_text(encoding="utf-8")
+    step = setup.split("async library(", 1)[1].split("\n  async ", 1)[0]
+    assert "evenSoundField(got" in step and "evenSound: even.input.checked" in step
+    assert apps.count("= evenSoundField(got") == 1  # (the Access tab panel, the one other)
+    assert "Stations always have even sound." in apps

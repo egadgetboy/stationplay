@@ -131,3 +131,28 @@ def test_rumble_under_50_hz_is_cut(hz, down):
 def test_bass_from_100_hz_stays(hz):
     before, after = measured(pitch(hz, -40), False), measured(pitch(hz, -40), True)
     assert abs(after - before) <= 0.8, (hz, before, after)
+
+
+def voice_band(source: str, night: bool) -> float:
+    """As measured, but only above 150 Hz, where the voice is (the rumble
+    left out of the measuring, not out of what night mode heard)."""
+    chain = f"{hls.NIGHT_SOUND}," if night else ""
+    band = "highpass=f=150:poles=2,highpass=f=150:poles=2,"
+    done = subprocess.run(
+        [FFMPEG, "-hide_banner", "-nostdin", "-f", "lavfi", "-i", source, "-t", str(SECONDS),
+         "-af", f"{chain}{band}atrim=start={SECONDS / 2},volumedetect", "-f", "null", "-"],
+        capture_output=True, text=True, timeout=60, check=True,
+    )  # fmt: skip
+    found = re.search(r"mean_volume: (-?[\d.]+) dB", done.stderr)
+    assert found, done.stderr[-500:]
+    return float(found.group(1))
+
+
+def test_rumble_no_longer_pulls_the_voices_down():
+    # (1.36.4's audit: the voice at -30 dB RMS under loud rumble, 30 Hz at -6 dB. Before
+    # the cut, night mode turned everything down for the rumble, the voice 15 dB with it.)
+    k, a = 10 ** (-30 / 20) / 0.442, 10 ** (-6 / 20)
+    both = f"{k:.6f}*{VOICE}+{a:.6f}*sin(2*PI*30*t)"
+    alone = voice_band(voice(-30), True)
+    under = voice_band(f"aevalsrc={both}|{both}:s=48000", True)
+    assert under >= alone - 3, (alone, under)

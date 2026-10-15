@@ -558,14 +558,23 @@ const SETUP_PAGES = {
   async library({ notYet }) {
     const got = await api('/api/app-libraries');
     const fields = libraryFields(got, () => {});
+    // (Even sound, here too from 1.36.4: the owner couldn't find it on the Access tab.)
+    const even = evenSoundField(got, () => {});
     // (Waiting for a choice, from before 1.34.1: going on is the choice,
     // once the Media folders can be listed. Until then nothing's shared, and
     // setup asks again next time, however it's left: 1.34.1's audit.)
     const cant = got.waiting && !('libraries' in fields.values());
     if (cant) notYet.add('library'); else notYet.delete('library');
-    return { node: h('div', { class: 'playback' }, ...fields.nodes), save: async () => {
-      if (cant || (!fields.changed() && !got.waiting)) return;
-      try { await api('/api/app-libraries', { method: 'PUT', body: fields.values() }); } catch (e) { return e.message; }
+    return { node: h('div', { class: 'playback' }, ...fields.nodes, even.node), save: async () => {
+      const evenChanged = even.input.checked !== got.evenSound;
+      // (Even sound is saved whatever the Media folders' state: it's its own choice.)
+      if (cant) {
+        if (!evenChanged) return;
+        try { await api('/api/app-libraries', { method: 'PUT', body: { evenSound: even.input.checked } }); } catch (e) { return e.message; }
+        return;
+      }
+      if (!fields.changed() && !got.waiting && !evenChanged) return;
+      try { await api('/api/app-libraries', { method: 'PUT', body: { ...fields.values(), evenSound: even.input.checked } }); } catch (e) { return e.message; }
     } };
   },
 

@@ -263,6 +263,36 @@ def test_media_playing_says_who_what_and_how(app, caplog):
         )
 
 
+def test_the_log_says_why_subtitles_were_drawn_in():
+    """The owner, October 14 (1.36.4): an episode was "converted ... with
+    subtitles drawn in and even sound", the next one only repackaged, and the
+    log didn't say why. Now it says which subtitles, and why they were drawn:
+    chosen in the app while a copy played (a copy can't carry them), or in a
+    format the device can't show."""
+    from app.catalog import Track
+
+    english = Track("4005", "srt", language="English")
+    tv = frozenset({"srt", "ass", "vtt", "pgs"})
+    assert applibrary.drawn_words(english, True, tv) == (
+        "English SRT, chosen in the app: a copy can't carry them"
+    )
+    assert applibrary.drawn_words(english, False, tv) == "English SRT: a copy can't carry them"
+    pictures = Track("4006", "pgs", language="French")
+    assert applibrary.drawn_words(pictures, False, frozenset({"srt"})) == (
+        "French PGS, which this device can't show"
+    )
+    plan = SimpleNamespace(
+        copies_picture=False, parts=(), height=1080, kbps=8000, drawn="4005", even=True,
+        night=False, audio_codec="aac", audio_channels=2,
+    )  # fmt: skip
+    assert applibrary.how_copied(
+        plan, [], False, CPU, drawn=applibrary.drawn_words(english, True, tv)
+    ) == (
+        "converted to 1080p H.264 at 8 Mbps on the CPU, with subtitles drawn in (English SRT, "
+        "chosen in the app: a copy can't carry them) and even sound"
+    )
+
+
 def test_a_step_down_in_quality_and_stopping(app, caplog):
     caplog.set_level(logging.INFO)
     with TestClient(app) as home:
@@ -316,6 +346,58 @@ def test_a_step_down_in_quality_and_stopping(app, caplog):
             0,
         )
         assert pat["programs"] == [{"title": "Jaws", "kind": "movie", "hours": 0.75}]
+
+
+def test_the_log_says_finished_when_it_played_to_its_end(app, caplog):
+    """The owner, October 14 (1.36.4): the log said he stopped an episode that
+    had played to its end, as Up next went on to the next one. Into its
+    credits, or 90% of the way (where it counts as watched), it's finished;
+    before that, stopped."""
+    caplog.set_level(logging.INFO)
+    with TestClient(app) as home:
+        assert home.post("/api/access/users", json=PAT).status_code == 201
+        home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
+        den = app_signed_in(home, PAT, DEN)
+        ctx = app.state.ctx
+
+        def played_to(key: str, at_ms: int, minutes: int) -> str:
+            got = home.post("/api/internal/play", json={"key": key, "device": TV}, headers=den)
+            assert got.status_code == 200, got.text
+            session = got.json()["session"]
+            home.post(
+                "/api/internal/progress",
+                json={"key": key, "positionMs": at_ms, "session": session},
+                headers=den,
+            )
+            ctx.plays.get(session).watched_s = minutes * 60
+            return session
+
+        length = ctx.plays.get(played_to("300", 0, 0)).entry.duration_ms
+        near_end = length - 30_000
+        jaws = played_to("300", near_end, 20)
+        caplog.clear()
+        assert home.post(f"/play/{jaws}/leave").status_code == 204
+        assert lines(caplog) == [
+            f"Pat finished Jaws (1975) at {playing.clock(near_end / 1000)} (watched 20 min)"
+        ]
+        # (Stopped partway, it's still stopped.)
+        partway = played_to("300", 600_000, 10)
+        caplog.clear()
+        assert home.post(f"/play/{partway}/leave").status_code == 204
+        assert lines(caplog) == ["Pat stopped Jaws (1975) at 10:00 (watched 10 min)"]
+        # (An episode played to its end as the next program starts on the same device, as
+        # Up next does: finished, then started.)
+        played_to("204", 50 * 60_000 - 5_000, 21)
+        caplog.clear()
+        assert (
+            home.post(
+                "/api/internal/play", json={"key": "300", "device": TV}, headers=den
+            ).status_code
+            == 200
+        )
+        said = lines(caplog)
+        assert said[0].startswith("Pat finished ") and "(watched 21 min)" in said[0], said
+        assert any(" started " in line for line in said[1:]), said
 
 
 def test_media_counts_as_its_watched_and_flicking_past_doesnt(app):

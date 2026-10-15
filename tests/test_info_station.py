@@ -374,17 +374,29 @@ def test_what_info_draws_is_a_graph_ffmpeg_takes(tmp_path):
     assert out.stat().st_size > 10_000
 
 
-async def test_info_plays_without_plex(tmp_path, caplog):
+async def test_info_plays_without_plex(tmp_path, caplog, monkeypatch):
     """Plex knows nothing (a new tapiOca, before it's connected): INFO plays
     anyway, drawn on, a clean stream."""
+    from app.broadcaster import Broadcaster
+
+    cards = []
+    play_slate = Broadcaster._play_slate
+
+    async def slate(self, *args, **kwargs):
+        cards.append(args[-1])  # (its message: "We'll be right back", or None)
+        return await play_slate(self, *args, **kwargs)
+
+    monkeypatch.setattr(Broadcaster, "_play_slate", slate)
     base, app, _settings, srv, task = await start_server(tmp_path, FakePlex())
     try:
         data = await record(f"{base}/stream/99", 6.0)
     finally:
         srv.should_exit = True
         await task
-    # (Its film, never the card: "We'll be right back" said it wasn't found. 1.36.4.)
+    # (Its film, never the card: "We'll be right back" said it wasn't found, 1.36.4.
+    # However it fails, the card plays instead: 1.36.4's audit.)
     assert "file not found" not in caplog.text
+    assert cards == []
     out = tmp_path / "info.ts"
     out.write_bytes(data)
     assert len(data) > 100_000
@@ -620,3 +632,18 @@ async def test_infos_film_is_found_though_its_key_looks_like_a_folders(tmp_path)
     assert (await sources.find_file(settings, sources.MediaAccess(), infostation.KEY, str(other)))[
         0
     ] is None
+
+
+async def test_infos_film_is_found_where_cuts_are_looked_for_too(tmp_path):
+    """1.36.4's audit: readable() with a check of the share (where the cut
+    finder looks for a program's picture cuts) still sent INFO's key to the
+    Media folders' own lookup, inside the media folder, so its film wasn't
+    found there either. It's tapiOca's own film there too."""
+    from app import sources
+
+    settings = Settings(data_dir=tmp_path / "data", media_dir=str(tmp_path / "media"))
+    library = Library(PlexClient("", ""), Database(tmp_path / "db.sqlite"))
+    got = await sources.readable(
+        settings, library, infostation.program(), sources.MediaAccess(), sources.ShareCheck()
+    )
+    assert got.source == str(infostation.FILE.resolve()) and not got.error, got

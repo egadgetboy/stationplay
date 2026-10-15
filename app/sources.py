@@ -393,8 +393,11 @@ async def readable(
     stuck from before isn't joined by another (see ShareCheck)."""
     if item.file_path:
         if check is not None:
-            # (One check of the share at a time: see ShareCheck.)
-            if is_folder_key(item.rating_key):
+            # (One check of the share at a time: see ShareCheck. INFO's film is
+            # tapiOca's own, never in the media folder: see find_file.)
+            if infostation.made_here(item.rating_key):
+                look = functools.partial(_made_here, item.file_path)
+            elif is_folder_key(item.rating_key):
                 look = functools.partial(_own_file, settings.media_dir, item.file_path)
             else:
                 look = functools.partial(

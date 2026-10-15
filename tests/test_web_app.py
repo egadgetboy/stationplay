@@ -28,6 +28,7 @@ from .test_security import PAT, both_ports
 ICONS = {"/icon-192.png": 192, "/icon-512.png": 512, "/icon-maskable-512.png": 512}
 # (1.34.0, tapiOca's brand) Its mark in a browser's tab, and the page's fonts.
 FAVICONS = {"/favicon.svg": "image/svg+xml", "/favicon.ico": "image/x-icon"}
+MARK = "2"  # (the icons' version: tapiOca's mark, 1.36.4)
 FONTS = [f"/fonts/{name}" for name in FONT_FILES]
 # The page's code: index.html, and its own styles and scripts.
 PAGE = "\n".join(
@@ -64,23 +65,24 @@ def test_the_manifest_says_how_to_install_the_page(client):
     assert got.headers["content-type"] == "application/manifest+json"
     assert got.headers["cache-control"] == "max-age=86400"
     manifest = got.json()
-    assert manifest["name"] == manifest["short_name"] == "tapiOca"
+    # (The owner, October 14, 1.36.4: "tapiOca Server", as the tab says; under its icon, tapiOca.)
+    assert (manifest["name"], manifest["short_name"]) == ("tapiOca Server", "tapiOca")
     assert manifest["start_url"] == manifest["scope"] == "/"
     assert manifest["display"] == "standalone"
     # The page's own background, as it is in dark (the window's color before the page is drawn).
     assert background("dark") == "#0a0a0a" and background("light") == "#ffffff"
     assert manifest["background_color"] == manifest["theme_color"] == background("dark")
     assert [(i["src"], i["sizes"], i["type"], i["purpose"]) for i in manifest["icons"]] == [
-        ("/icon-192.png", "192x192", "image/png", "any"),
-        ("/icon-512.png", "512x512", "image/png", "any"),
-        ("/icon-maskable-512.png", "512x512", "image/png", "maskable"),
+        (f"/icon-192.png?v={MARK}", "192x192", "image/png", "any"),
+        (f"/icon-512.png?v={MARK}", "512x512", "image/png", "any"),
+        (f"/icon-maskable-512.png?v={MARK}", "512x512", "image/png", "maskable"),
     ]
     # Each icon is there, at its size exactly.
     for icon in manifest["icons"]:
         got = client.get(icon["src"])
         assert got.status_code == 200 and got.headers["content-type"] == "image/png"
         assert got.headers["cache-control"] == "max-age=86400"
-        assert png_size(got.content) == (ICONS[icon["src"]],) * 2
+        assert png_size(got.content) == (ICONS[icon["src"].split("?")[0]],) * 2
     assert png_size(client.get("/apple-touch-icon.png").content) == (180, 180)
 
 
@@ -511,8 +513,9 @@ def test_the_page_has_tapiocas_icons_and_its_own_fonts(client):
     The page's fonts are tapiOca's own files (never a font service's), each
     swapped in once loaded, served as WOFF2, with its license beside it."""
     head = client.get("/").text.split("</head>")[0]
-    assert '<link rel="icon" href="/favicon.svg" type="image/svg+xml">' in head
-    assert '<link rel="icon" href="/favicon.ico" sizes="48x48">' in head
+    # (Their addresses carry the mark's version from 1.36.4: see the next test.)
+    assert f'<link rel="icon" href="/favicon.svg?v={MARK}" type="image/svg+xml">' in head
+    assert f'<link rel="icon" href="/favicon.ico?v={MARK}" sizes="48x48">' in head
     for path, kind in FAVICONS.items():
         got = client.get(path)
         assert got.status_code == 200 and got.headers["content-type"].startswith(kind), path
@@ -531,6 +534,25 @@ def test_the_page_has_tapiocas_icons_and_its_own_fonts(client):
     on_disk = sorted(p.relative_to(WEB_DIR / "fonts").as_posix()
                      for p in (WEB_DIR / "fonts").rglob("*.woff2"))  # fmt: skip
     assert on_disk == sorted(FONT_FILES)
+
+
+def test_the_tab_says_tapioca_server_with_tapiocas_mark(client):
+    """The owner, October 14 (1.36.4): the browser's tab showed StationPlay's
+    old icon, and should say "tapiOca Server". A browser keeps a page's icon
+    by the icon's address, however long ago it got it, so the addresses
+    carry the mark's version (MARK): one that kept StationPlay's asks again.
+    The installed web app has the name too."""
+    head = client.get("/").text.split("</head>")[0]
+    assert "<title>tapiOca Server</title>" in head
+    links = re.findall(r'<link rel="(?:icon|apple-touch-icon)" href="([^"]+)"', head)
+    assert len(links) == 3 and all(link.endswith(f"?v={MARK}") for link in links), links
+    for link in links:
+        got = client.get(link)
+        path = link.split("?")[0]
+        assert got.status_code == 200 and got.content == (WEB_DIR / path.lstrip("/")).read_bytes()
+    made = client.get("/manifest.webmanifest").json()
+    assert made["name"] == "tapiOca Server" and made["short_name"] == "tapiOca"
+    assert all(i["src"].endswith(f"?v={MARK}") for i in made["icons"])
 
 
 def _tokens(block: str) -> dict[str, str]:

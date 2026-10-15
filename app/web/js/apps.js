@@ -723,6 +723,15 @@ function libraryFields(got, onEdit) {
     changed: () => JSON.stringify(values()) !== first,
   };
 }
+// Even sound for a show's episodes (see applibrary.py on the server): on to start.
+// On the Access tab and in setup's Media in tapiOca's apps step (1.36.4).
+function evenSoundField(got, onEdit) {
+  const input = h('input', { type: 'checkbox', id: 'evenSound', checked: got.evenSound, oninput: onEdit });
+  const node = h('div', { class: 'arr-body', style: 'margin:0;gap:6px' },
+    h('label', { for: 'evenSound' }, input, ' ', h('strong', {}, 'Even sound for a show’s episodes')),
+    h('span', { class: 'hint' }, 'Every episode plays at the same loudness as the episodes on your stations, so a show’s episodes match, in any order, and none is much louder or quieter than the next. Stations always have even sound. This is for Media in tapiOca’s apps. Movies aren’t changed. The picture plays as it is and only the sound is made again, which costs next to nothing (where the picture can’t be kept as it is, the episode plays as it is). The cost: sound a device would send as it is to a receiver or soundbar, such as Dolby Atmos or DTS, comes as ordinary 5.1 or stereo instead. Turn this off to play each episode’s sound as it is.'));
+  return { node, input };
+}
 async function loadAppLibraries() {
   let got;
   try { got = await api('/api/app-libraries'); }
@@ -733,11 +742,7 @@ async function loadAppLibraries() {
   const body = $('#appLibrariesBody');
   if (body.dataset.editing) return;  // (not while it's being changed)
   const fields = libraryFields(got, () => { body.dataset.editing = '1'; });
-  // Even sound for a show's episodes (see applibrary.py on the server): on to start.
-  const even = h('input', { type: 'checkbox', id: 'evenSound', checked: got.evenSound, oninput: () => { body.dataset.editing = '1'; } });
-  const evenField = h('div', { class: 'arr-body', style: 'margin:0;gap:6px' },
-    h('label', { for: 'evenSound' }, even, ' ', h('strong', {}, 'Even sound for a show’s episodes')),
-    h('span', { class: 'hint' }, 'Every episode plays at the same loudness as the episodes on your stations, so a show’s episodes match, in any order, and none is much louder or quieter than the next. Movies aren’t changed. The picture plays as it is and only the sound is made again, which costs next to nothing (where the picture can’t be kept as it is, the episode plays as it is). The cost: sound a device would send as it is to a receiver or soundbar, such as Dolby Atmos or DTS, comes as ordinary 5.1 or stereo instead. Turn this off to play each episode’s sound as it is.'));
+  const { node: evenField, input: even } = evenSoundField(got, () => { body.dataset.editing = '1'; });
   const result = h('span', { class: 'hint', role: 'status' });
   const save = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
     const chosen = { ...fields.values(), evenSound: even.checked };
