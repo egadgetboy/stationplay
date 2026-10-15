@@ -1,7 +1,7 @@
 """Night mode's sound, as tapiOca makes it (hls.NIGHT_SOUND) for apps
 that can't make it themselves (Apple's, Roku's), and for converted copies:
-it only ever turns sound down, loud scenes the most, so turning night mode
-on never makes anything louder (the owner's report: in 1.31 and before, it
+it only ever turns sound down, loud scenes the most, and cuts rumble under
+50 Hz (1.36.4), so turning night mode on never makes anything louder (the owner's report: in 1.31 and before, it
 turned everything up 8 dB after turning loud sounds down, so most programs
 got louder). The Android app makes the same sound on the device (its
 NightMode, with the same curve: these levels are its too)."""
@@ -110,3 +110,24 @@ def test_voices_and_action_end_up_a_few_decibels_apart():
 def test_the_curve_is_the_android_apps(peak, turned):
     before, after = measured(tone(peak), False), measured(tone(peak), True)
     assert after - before == pytest.approx(turned, abs=1.5), (before, after)
+
+
+def pitch(hz: float, db: float) -> str:
+    """A tone of `hz` peaking at `db`, on two channels."""
+    a = 10 ** (db / 20)
+    return f"aevalsrc={a:.6f}*sin(2*PI*{hz}*t)|{a:.6f}*sin(2*PI*{hz}*t):s=48000"
+
+
+# The owner, October 14 (1.36.4): "cut audio 0-50 Hz". A steep cut from 50 Hz down (24 dB
+# an octave, 6 dB down at 50 Hz), so rumble no longer shakes the room, nor pulls the
+# voices down with it. A bass voice (100 Hz and up) stays as it was.
+@pytest.mark.parametrize(("hz", "down"), [(20, 30), (30, 17), (40, 9)])
+def test_rumble_under_50_hz_is_cut(hz, down):
+    before, after = measured(pitch(hz, -40), False), measured(pitch(hz, -40), True)
+    assert after <= before - down, (hz, before, after)
+
+
+@pytest.mark.parametrize("hz", [100, 200])
+def test_bass_from_100_hz_stays(hz):
+    before, after = measured(pitch(hz, -40), False), measured(pitch(hz, -40), True)
+    assert abs(after - before) <= 0.8, (hz, before, after)

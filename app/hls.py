@@ -25,8 +25,8 @@ doesn't count.)
 Night mode, for apps that can't change the sound themselves (Apple's player,
 a Roku): a second HLS stream of the same station, made only while an app
 asks for it, with the picture copied as it is and only the sound made over:
-loud scenes brought down the most, and nothing turned up (NIGHT_SOUND,
-the same as the Android app does it on the device). It watches the
+rumble under 50 Hz cut, loud scenes brought down the most, and nothing turned
+up (NIGHT_SOUND, the same as the Android app does it on the device). It watches the
 station as one more viewer too, so it needs no tuner of its own; everyone
 else keeps the usual sound. Making sound costs little.
 """
@@ -79,9 +79,15 @@ IDLE_CHECK_S = 2.0
 # puts -22 dB, 7 dB over -29 coming out 4.7 over; with 1.5 before it,
 # 13.33 makes 20. Android's NightMode makes the same curve on the device.
 # aresample keeps the sound on the picture's time if a piece is ever
-# missing.)
+# missing.) First, rumble under 50 Hz is cut (the owner, October 14, 1.36.4:
+# "cut audio 0-50 Hz"): two 2-pole high-pass filters, 24 dB an octave, 6 dB
+# down at 50 Hz, about 19 at 30 and 32 at 20, and 100 Hz and up as it was. So
+# it no longer shakes the room, nor pulls the voices down with it. (Android's
+# NightMode cuts it the same way, NIGHT_CUT_HZ.)
+NIGHT_CUT_HZ = 50
 NIGHT_SOUND = (
     "aresample=async=1000,"
+    f"highpass=f={NIGHT_CUT_HZ}:poles=2,highpass=f={NIGHT_CUT_HZ}:poles=2,"
     "acompressor=threshold=0.03548:ratio=1.5:knee=2:attack=5:release=250:makeup=1:"
     "link=maximum:detection=peak,"
     "acompressor=threshold=0.06081:ratio=13.333:knee=2:attack=5:release=250:makeup=1:"
