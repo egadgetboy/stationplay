@@ -1325,6 +1325,22 @@ has no genres.
 | `items` | list | Others like it |
 | `items[]` | card | One show or movie |
 
+## GET /api/internal/items/{key}/shuffle
+
+From 1.37.0. A show's episodes in a random order, for Shuffle on its page: **Shuffle all**, and **Shuffle unwatched** with `?unwatched=1`. The app plays them one after another, each as it would play from the page.
+
+- **Only what this person may see,** as every address here: a show that isn't shared, or that's hidden from them, is answered as though it weren't there (404). A movie's or an episode's key is refused (400).
+- **Specials aside,** and each file once: episodes in one file with others ("S01E01-E02") play it once.
+- **Unwatched:** only the episodes this person hasn't watched. With none left, `items` is `[]`.
+- **A new order each time,** at most 500 episodes.
+
+| Field | Type | What it is |
+|---|---|---|
+| `show` | string | The show's key |
+| `unwatched` | boolean | Whether only unwatched episodes were asked for |
+| `total` | number | How many are in `items` |
+| `items` | list | The episodes, as cards (see A card), in the order to play them |
+
 ## GET /api/internal/items/{key}/episodes
 
 A show's episodes, in order: seasons in order, specials last, and episodes

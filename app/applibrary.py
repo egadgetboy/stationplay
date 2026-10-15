@@ -22,6 +22,7 @@ import contextlib
 import hashlib
 import itertools
 import logging
+import random
 import shutil
 import time
 from collections.abc import AsyncIterator
@@ -180,6 +181,11 @@ class ShowMarked(BaseModel):
     season: int | None = Field(default=None, ge=0, le=10_000)
     watched: bool
 
+
+# Shuffle (1.37.0): the most episodes in one shuffled order, and its
+# randomness (the system's, so no two orders are alike by design).
+SHUFFLE_MOST = 500
+SHUFFLED = random.SystemRandom()
 
 # The most episodes marked at once. Half of what's kept for each person
 # (db.PROGRESS_KEPT), so one marking never pushes out what it marked. (Marked
@@ -875,6 +881,45 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                 _, _, pool = await cat.whole(e.library, "title")
                 found = ondemand.related(e, await seen_only(cat, viewer, pool))
         return {"items": cards(user_id, found)}
+
+    @app.get("/api/internal/items/{key}/shuffle")
+    async def shuffled(key: str, request: Request):
+        """A show's episodes in a random order, for Shuffle (1.37.0, the owner,
+        October 14: "Shuffle all", and "Shuffle unwatched" with unwatched=1):
+        those this person may see, specials aside, each file once (episodes in
+        one file play it once), up to SHUFFLE_MOST. Each asking is a new order;
+        the app plays them one after another."""
+        shared_here(request)
+        user_id, _ = person(request)
+        viewer = viewer_of(request)
+        unwatched = request.query_params.get("unwatched", "") in ("1", "true")
+        async with asking(request):
+            e = await cat.entry(key)
+            if not cat.shared_library(e):
+                raise NotShared(e.key)
+            await must_see(cat, viewer, e)
+            if e.kind != catalog.SHOW:
+                raise HTTPException(400, "That isn't a show")
+            found = await seen_only(cat, viewer, await cat.episodes(e.key))
+        files: set[str] = set()
+        pool: list[Entry] = []
+        for x in found:
+            if x.season == 0 or (x.file and x.file in files):
+                continue
+            if x.file:
+                files.add(x.file)
+            pool.append(x)
+        if unwatched:
+            done = ctx.db.progress_of(user_id, [x.key for x in pool])
+            pool = [x for x in pool if not done.get(x.key, (0, False))[1]]
+        SHUFFLED.shuffle(pool)
+        pool = pool[:SHUFFLE_MOST]
+        return {
+            "show": e.key,
+            "unwatched": unwatched,
+            "total": len(pool),
+            "items": cards(user_id, pool),
+        }
 
     @app.get("/api/internal/items/{key}/episodes")
     async def episodes_of(key: str, request: Request):
