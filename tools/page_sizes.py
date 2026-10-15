@@ -34,6 +34,7 @@ import colorsys
 import io
 import json
 import logging
+import re
 import socket
 import subprocess
 import sys
@@ -84,6 +85,10 @@ USER = {"name": "Sam", "password": "battery staple", "role": "user", "maxStation
 KID = {"name": "Robin", "password": "", "role": "user", "pin": "2468"}
 JO = {"name": "Jo", "password": "lighthouse keeper", "role": "user"}
 JO_PIN = "1357"  # (Jo signs in on the page with it: see the sign-in screen's PIN form)
+# (1.37.0) Shown only on devices she's signed in on, with a PIN: on a trusted
+# network, the page lists her where she signed in with her password.
+ARI = {"name": "Ari", "password": "harbor violet quill", "role": "user", "showOn": "signed-in"}
+ARI_PIN = "8642"
 # Tuner access: the devices listed, and who used the tuner lately (address,
 # what it called itself, what it asked for, how many minutes ago, refused):
 # Plex in Docker, at the Docker network's address (not listed: the warning),
@@ -370,6 +375,7 @@ def fill(sp: Running, data: Path) -> None:
         ok(home.post("/api/access/users", json={**ADMIN, "role": "admin", "maxStations": None}))
         ok(home.post("/api/access/users", json=USER))
         ok(home.post("/api/access/users", json={**JO, "pin": JO_PIN}))
+        ok(home.post("/api/access/users", json={**ARI, "pin": ARI_PIN}))
         robin = ok(home.post("/api/access/users", json=KID))
         levels = {lv["name"]: lv["id"] for lv in ok(home.get("/api/access/viewing"))["levels"]}
         ok(home.put(f"/api/access/users/{robin['id']}/viewing", json={"level": levels["Kid"]}))
@@ -1271,6 +1277,63 @@ def top_people_names(page: Page, look: Look) -> None:
     page.wait_for_timeout(300)
 
 
+def log_search(page: Page, look: Look) -> None:
+    """(1.37.0, the owner: "There is no SEARCH field in Logs - needs one.")
+    The search box is with the log's switches, inside the page at every
+    width. A word from the log narrows it to the lines that have it, in any
+    case; a word that's nowhere in it says so. Cleared after."""
+    box = page.locator("#logFind")
+    look.expect("the log's search box shows", box.is_visible(), True)
+    outside = page.evaluate(
+        "() => { const r = document.querySelector('#logFind').getBoundingClientRect();"
+        " return r.left < 0 || r.right > document.documentElement.clientWidth; }"
+    )
+    look.expect("the log's search box inside the page", outside, False)
+    # (The cold audit, 1.37.0: the page's own rule for search boxes, full
+    # width, won over its 260, so it took a row of its own at every width.)
+    if (page.viewport_size or {}).get("width", 0) >= 768:
+        wide = page.evaluate(
+            "() => document.querySelector('#logFind').getBoundingClientRect().width"
+        )
+        look.expect("the log's search box at most 260 wide, beside the switches", wide <= 260, True)
+
+    def lines() -> list[str]:
+        return page.evaluate(
+            "() => [...document.querySelectorAll('#logList .logline .msg')].map(m => m.textContent)"
+        )
+
+    def searched(q: str) -> None:
+        box.fill(q)
+        page.wait_for_timeout(300 + 700)  # (searched once typing pauses: logs.js)
+
+    shown = lines()
+    # (A word some lines have and others don't, so the search visibly narrows.)
+    words = sorted(
+        {w for line in shown for w in re.findall(r"[A-Za-z]{5,}", line)},
+        key=lambda w: (sum(w.casefold() in line.casefold() for line in shown), w),
+    )
+    word = next(
+        (w for w in words if sum(w.casefold() in s.casefold() for s in shown) < len(shown)), None
+    )
+    if word is None:
+        look.expect("the log has words to search for", words, ["(some)"])
+        return
+    searched(word.upper())
+    found = lines()
+    look.expect(f"searching for {word.upper()!r} finds lines", bool(found), True)
+    look.expect(
+        f"every line found has {word!r}, in any case",
+        [line for line in found if word.casefold() not in line.casefold()],
+        [],
+    )
+    look("logs-searched")
+    searched("zzqx nowhere")
+    empty = page.locator("#logList").inner_text()
+    look.expect("a search that finds nothing says so", "Nothing in the log has" in empty, True)
+    searched("")
+    look.expect("cleared, the log is back", bool(lines()), True)
+
+
 def media_folder_switches(page: Page, look: Look, sp: Running) -> None:
     """(1.36.4, the owner: "Server just needs to know what folders it can
     see, and the option to toggle them on and off.") The Setup tab's Media
@@ -1335,15 +1398,18 @@ def media_folder_switches(page: Page, look: Look, sp: Running) -> None:
 
 
 def signin_trusted(browser: Any, base: str, context_of: Callable[..., Any], look: Look) -> None:
-    """The sign-in screen on a trusted network (1.36.0): Who's tuning in?,
-    with Jo's PIN asked when Jo is picked; and on Sam's laptop, Continue as
+    """The sign-in screen on a trusted network (1.36.0): Who's signing in?
+    (from 1.37.0: "Who's tuning in?" is the apps' question, the owner,
+    October 15), with Jo's PIN asked when Jo is picked; Ari, listed on a
+    browser she signed in on with her password, once an hour without
+    activity has signed her out (1.37.0); and on Sam's laptop, Continue as
     Sam (shown, not pressed: as after signing out on purpose)."""
     context = context_of({"X-Page-Peer": TRUSTED_DEVICE})
     page = context.new_page()
     page.goto(base + "/")
     if not until(page, "() => !document.querySelector('#signinTrusted').hidden"):
         look.expect(
-            "Who's tuning in? shows on a trusted network",
+            "Who's signing in? shows on a trusted network",
             page.evaluate("() => JSON.stringify(me)"),
             True,
         )
@@ -1351,12 +1417,45 @@ def signin_trusted(browser: Any, base: str, context_of: Callable[..., Any], look
         return
     look.page = page
     look("signin-trusted")
+    look.expect("the page's question", page.inner_text("#signinTrustedTitle"), "Who’s signing in?")
+    long_names(page, look)
     names = page.locator("#signinPeople .who-name").all_inner_texts()
-    look.expect("Who's tuning in? lists Jo", JO["name"] in names, True)
+    look.expect("Who's signing in? lists Jo", JO["name"] in names, True)
+    look.expect(
+        "Ari isn't listed on a browser she hasn't signed in on", ARI["name"] in names, False
+    )
     page.locator("#signinPeople .who", has_text=JO["name"]).click()
     until(page, "() => !document.querySelector('#signinByPin').hidden")
     look.expect("Jo's PIN asked", page.inner_text("#signinPinLabel"), f"PIN for {JO['name']}")
     look("signin-trusted-pin")
+    context.close()
+    # Ari signs in with her password on this browser; an hour without
+    # activity signs her out (her sign-in's cookie gone, the browser's kept).
+    context = context_of({"X-Page-Peer": TRUSTED_DEVICE})
+    signed = context.request.post(
+        f"{base}/api/access/sign-in",
+        data={"name": ARI["name"], "password": ARI["password"]},
+        headers=PAGE,
+    )  # fmt: skip
+    look.expect("Ari signs in with her password", signed.ok, True)
+    kept = [c for c in context.cookies() if c["name"] != SESSION_COOKIE]
+    context.clear_cookies()
+    context.add_cookies(kept)
+    page = context.new_page()
+    page.goto(base + "/")
+    until(page, "() => !document.querySelector('#signinTrusted').hidden")
+    look.page = page
+    names = page.locator("#signinPeople .who-name").all_inner_texts()
+    look.expect("Ari is listed where she signed in", ARI["name"] in names, True)
+    if ARI["name"] in names:
+        page.locator("#signinPeople .who", has_text=ARI["name"]).click()
+        until(page, "() => !document.querySelector('#signinByPin').hidden")
+        look.expect("Ari's PIN asked", page.inner_text("#signinPinLabel"), f"PIN for {ARI['name']}")
+        look("signin-trusted-own")
+        page.fill("#signinPin", ARI_PIN)
+        page.click("#signinGo")
+        signed_in = until(page, "() => !!(me && me.user)")
+        look.expect("Ari's PIN signs her in", signed_in, True)
     context.close()
     context = context_of({"X-Page-Peer": SAMS_LAPTOP})
     context.add_init_script("try { sessionStorage.setItem('tapioca.signedOut', '1'); } catch {}")
@@ -1369,6 +1468,37 @@ def signin_trusted(browser: Any, base: str, context_of: Callable[..., Any], look
     )
     look("signin-trusted-person")
     context.close()
+
+
+def long_names(page: Page, look: Look) -> None:
+    """(1.37.0, the owner, October 15: "we need to accommodate longer names
+    that won't get cut off", as "Bartholomew".) Who's signing in?'s cards
+    grow to their names: a long one-word name on one line, never broken
+    inside the word or cut; a long name of two words, whole. Put back as it
+    was after."""
+    page.evaluate(
+        """() => trustedSignIn({ gives: 'picker', people: [
+             { id: 901, name: 'Bartholomew', pin: true },
+             { id: 902, name: 'Maximiliana Fitzgerald-Worthington', pin: false },
+             { id: 903, name: 'Jo', pin: true } ] })"""
+    )
+    page.wait_for_timeout(100)
+    got = page.evaluate(
+        """() => [...document.querySelectorAll('#signinPeople .who-name')].map(el => {
+             const r = document.createRange(); r.selectNodeContents(el);
+             const box = el.closest('.who').getBoundingClientRect();
+             const room = document.querySelector('#signinPeople').getBoundingClientRect();
+             return { name: el.textContent, lines: r.getClientRects().length,
+                      cut: el.scrollWidth > el.clientWidth + 1,
+                      outside: box.left < room.left - 1 || box.right > room.right + 1 };
+           })"""
+    )
+    by = {g["name"]: g for g in got}
+    look.expect("Bartholomew on one line", by.get("Bartholomew", {}).get("lines"), 1)
+    look.expect("no name cut", [g["name"] for g in got if g["cut"]], [])
+    look.expect("every card inside the list", [g["name"] for g in got if g["outside"]], [])
+    look("signin-trusted-long-names")
+    page.evaluate("() => trustedSignIn(me.trusted)")
 
 
 def signin_by_pin(page: Page, look: Look) -> None:
@@ -1870,6 +2000,7 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
         tab(page, "logs")
         page.wait_for_selector("#logList .logline")
         look("logs", full=True)
+        log_search(page, look)
         # The log: scrolled to its newest, at the bottom, so more is above.
         got = arrows(page, look, "the log", "#logList")
         if got:

@@ -2437,15 +2437,31 @@ class Database:
                 "DELETE FROM access_log WHERE id <= ?", (int(cur.lastrowid or 0) - keep,)
             )
 
-    def access_entries(self, limit: int) -> list[tuple[int, str, str]]:
+    def access_entries(
+        self, limit: int, words: list[str] | None = None
+    ) -> list[tuple[int, str, str]]:
         """The newest `limit` entries in the access log, oldest first: (time
-        in ms, level, message)."""
+        in ms, level, message); with `words` (casefolded), only those with
+        every one of them (1.37.0: the Logs tab's search)."""
+        if not words:
+            with self._lock:
+                rows = self._conn.execute(
+                    "SELECT time_ms, level, message FROM access_log ORDER BY id DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            return [(r["time_ms"], r["level"], r["message"]) for r in reversed(rows)]
+        # (Matched in Python, as the rest of the log is: SQLite's lower() knows only ASCII.)
+        found: list[tuple[int, str, str]] = []
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT time_ms, level, message FROM access_log ORDER BY id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-        return [(r["time_ms"], r["level"], r["message"]) for r in reversed(rows)]
+            for r in self._conn.execute(
+                "SELECT time_ms, level, message FROM access_log ORDER BY id DESC"
+            ):
+                folded = (r["message"] or "").casefold()
+                if all(w in folded for w in words):
+                    found.append((r["time_ms"], r["level"], r["message"]))
+                    if len(found) >= limit:
+                        break
+        return list(reversed(found))
 
     # Problems the apps ran into (see problems.py) ------------------------------
 

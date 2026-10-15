@@ -142,7 +142,18 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(403, NOT_TRUSTED)
         return user
 
-    def info(entry: dict[str, Any]) -> dict[str, Any]:
+    def browsers_own(request: Request) -> User | None:
+        """Whose PIN may sign in on this browser (tapiOca's page, at home):
+        someone who signed in on it with their password, since it last
+        changed and they last signed out there (see access.pin_browser)."""
+        return ctx.access.pin_browser(request.cookies.get(access.DEVICE_COOKIE))
+
+    def info(entry: dict[str, Any], own: User | None = None) -> dict[str, Any]:
+        """What a trusted network gives the page: the person it signs in as,
+        or the picker's people: those shown at home, and this browser's own
+        person (`own`, see browsers_own), so their PIN does here as it does
+        on any browser at home (1.37.0, the owner, October 15: signed out
+        after an hour, no one was listed, and only a password would do)."""
         if entry["gives"] == "person":
             user = ctx.db.user(entry["person"]) if entry.get("person") else None
             return {"gives": "person", "name": user.name} if user else {"gives": "none"}
@@ -151,7 +162,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "people": [
                 {"id": u.id, "name": u.name, "pin": u.has_pin,
                  "password": u.has_password, "admin": u.role == access.ADMIN}
-                for u in ctx.db.users() if listed(u)
+                for u in ctx.db.users() if listed(u) or (own is not None and u.id == own.id)
             ],
         }  # fmt: skip
 
@@ -291,7 +302,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             user = person_of(entry)
         else:
             user = ctx.db.user(body.id) if body.id is not None else None
-            if user is None or not listed(user):
+            own = browsers_own(request)
+            if user is None or not (listed(user) or (own is not None and own.id == user.id)):
                 raise HTTPException(404, NOT_LISTED)
             here = access.address(request.scope)
             try:
@@ -311,6 +323,21 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     try:
                         await ctx.devices.check_pin(user, body.pin or "")
                     except devices.Refused as e:
+                        # (This browser's own person, not listed otherwise: wrong
+                        # PINs count against the browser too, as on the page's own
+                        # PIN form, so after BROWSER_PIN_TRIES only their password
+                        # will do there, which can't be waited out. The audit of
+                        # 1.37.0.)
+                        token = request.cookies.get(access.DEVICE_COOKIE) or ""
+                        theirs = own is not None and own.id == user.id and not listed(user)
+                        if e.status != 429 and theirs and ctx.access.pin_wrong_on(token):
+                            ctx.access.record(
+                                logging.WARNING,
+                                f"{access.BROWSER_PIN_TRIES} wrong PINs for {user.name} on a "
+                                f"browser at {access.where(request.scope)}: it needs the "
+                                "password now",
+                            )
+                            raise devices.Refused(PASSWORD_NOW) from None
                         if e.status != 429 and pin_wrong_here(here):
                             ctx.access.record(
                                 logging.WARNING,

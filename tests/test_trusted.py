@@ -816,3 +816,85 @@ def test_a_proxy_trusted_since_is_no_longer_a_door(home):
     pat = admin_at_home(home)
     assert pat.put("/api/access/trusted", json={"proxies": [{"network": "192.168.1.2"}]}).is_success
     assert ctx.doors.listed() == []
+
+
+def test_a_browser_its_person_signed_in_on_lists_them_for_their_pin(home):
+    """(The owner, October 15: signed out after an hour without activity, on
+    a trusted network, the page's picker listed no one and asked only for a
+    password, though he'd signed in on that browser with his password, so
+    his PIN should do, as it does on a browser at home.) Someone shown only
+    on devices they've signed in on: on a browser they signed in on with
+    their password, the page's picker lists them, with their PIN; on
+    another browser, or after signing out on purpose, it doesn't."""
+    pat = admin_at_home(home)
+    made = pat.post("/api/access/users", json={
+        "name": "Lee", "password": "harbor violet quill", "role": "user", "showOn": "signed-in"})  # fmt: skip
+    assert made.status_code == 201, made.text
+    lee = made.json()["id"]
+    assert pat.put(f"/api/access/users/{lee}/picker", json={"pin": "4242"}).is_success
+
+    def listed(c) -> dict:
+        return {p["name"]: p for p in c.get("/api/access/me").json()["trusted"]["people"]}
+
+    laptop = device_at(home, "192.168.1.70")
+    signed = laptop.post(
+        "/api/access/sign-in", json={"name": "Lee", "password": "harbor violet quill"}
+    )
+    assert signed.status_code == 200, signed.text
+    # An hour without activity: signed out (the sign-in's cookie gone, the browser's kept).
+    laptop.cookies.delete(access.COOKIE)
+    assert "Lee" in listed(laptop) and listed(laptop)["Lee"]["pin"]
+    # Another browser on the same network: not listed, and can't pick Lee.
+    other = device_at(home, "192.168.1.71")
+    assert "Lee" not in listed(other)
+    assert (
+        other.post("/api/access/trusted-sign-in", json={"id": lee, "pin": "4242"}).status_code
+        == 404
+    )
+    # Picked on the laptop: Lee's PIN signs Lee in; a wrong one doesn't.
+    assert (
+        laptop.post("/api/access/trusted-sign-in", json={"id": lee, "pin": "0000"}).status_code
+        == 403
+    )
+    picked = laptop.post("/api/access/trusted-sign-in", json={"id": lee, "pin": "4242"})
+    assert picked.status_code == 200, picked.text
+    assert laptop.get("/api/access/me").json()["user"]["name"] == "Lee"
+    # Signed out on purpose: the password first, next time.
+    assert laptop.post("/api/access/sign-out").status_code == 200
+    assert "Lee" not in listed(laptop)
+
+
+def test_wrong_pins_for_a_browsers_own_person_count_against_that_browser(home):
+    """(The audit of 1.37.0.) A browser's own person picked on a trusted
+    network: wrong PINs there count against that browser, as on the page's
+    own PIN form (BROWSER_PIN_TRIES, then the password on that browser, which
+    can't be waited out), from any address. Before, only the address's limit
+    and the person's applied, and both can be waited out."""
+    from app import devices
+
+    pat = admin_at_home(home)
+    lee = pat.post("/api/access/users", json={
+        "name": "Lee", "password": "harbor violet quill", "role": "user", "showOn": "signed-in"}).json()["id"]  # fmt: skip
+    assert pat.put(f"/api/access/users/{lee}/picker", json={"pin": "4242"}).is_success
+    laptop = device_at(home, "192.168.1.70")
+    assert laptop.post(
+        "/api/access/sign-in", json={"name": "Lee", "password": "harbor violet quill"}
+    ).is_success
+    laptop.cookies.delete(access.COOKIE)
+    ctx = home.state.ctx
+    for n in range(access.BROWSER_PIN_TRIES):
+        ctx.devices._wrong.clear()  # (as if the person's own wait had gone by)
+        got = laptop.post("/api/access/trusted-sign-in", json={"id": lee, "pin": "0000"})
+        assert got.status_code in (401, 403), (n, got.text)
+    # That browser now needs Lee's password: he isn't listed, and his PIN does nothing,
+    # from this address or any other with the browser's cookies.
+    people = {p["name"] for p in laptop.get("/api/access/me").json()["trusted"]["people"]}
+    assert "Lee" not in people
+    elsewhere = device_at(home, "192.168.1.99")
+    elsewhere.cookies.update(laptop.cookies)
+    ctx.devices._wrong.clear()
+    assert (
+        elsewhere.post("/api/access/trusted-sign-in", json={"id": lee, "pin": "4242"}).status_code
+        == 404
+    )
+    assert devices.PIN_TRIES < access.BROWSER_PIN_TRIES

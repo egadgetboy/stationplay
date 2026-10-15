@@ -656,8 +656,11 @@ _LETTERS = str.maketrans(
 
 def folded(text: str) -> str:
     """Text as titles are compared and sorted: case and accents set aside
-    ("Élodie" is "elodie", "Æther Bay" is "aether bay")."""
-    apart = unicodedata.normalize("NFKD", text.casefold())
+    ("Élodie" is "elodie", "Æther Bay" is "aether bay"), and styled letters
+    as plain ones (a mathematical bold Z, or a fullwidth one, is "z": come
+    apart first, then folded, so none is left a capital: the cold audit,
+    1.37.0)."""
+    apart = unicodedata.normalize("NFKD", unicodedata.normalize("NFKD", text).casefold())
     return "".join(c for c in apart if not unicodedata.combining(c)).translate(_LETTERS)
 
 
@@ -686,7 +689,12 @@ def _sorted_as(e: Entry) -> str:
 def letter_of(e: Entry) -> str:
     """The letter a show or movie is listed under ("The Orbit Room" under
     O; "Élan" under E); "#" for a digit, or anything that isn't A to Z."""
-    first = _sorted_as(e)[:1].upper()
+    return _letter(_sorted_as(e))
+
+
+def _letter(text: str) -> str:
+    """The letter for a sort title as compared (see _sorted_as)."""
+    first = text[:1].upper()
     return first if "A" <= first <= "Z" else "#"
 
 
@@ -708,7 +716,9 @@ def title_order(e: Entry) -> tuple:
     letter or digit, case and accents aside, numbers as numbers; titles
     alike in order of their keys, so the order is always the same."""
     text = _sorted_as(e)
-    return (letter_of(e) != "#", _numbers_in_order(text), key_order(e.key))
+    letter = _letter(text)
+    # (Its letter too, so each letter's titles are always together.)
+    return (letter != "#", letter, _numbers_in_order(text), key_order(e.key))
 
 
 def sorted_by(entries: Iterable[Entry], sort: str) -> list[Entry]:
@@ -721,11 +731,66 @@ def sorted_by(entries: Iterable[Entry], sort: str) -> list[Entry]:
     if sort == "released":
 
         def released(e: Entry) -> tuple[bool, str]:
-            when = e.released or (str(e.year) if e.year else "")
+            when = released_as(e)
             return bool(when), when
 
         return sorted(by_title, key=released, reverse=True)
     return by_title
+
+
+def released_as(e: Entry) -> str:
+    """When a show or movie came out, as it's sorted and grouped: its release
+    date if that starts with a four-digit year (in the digits 0 to 9), else
+    its year (four digits: 999 is "0999", so it sorts as the year it is); ""
+    for none. (From 1.37.0, a date that doesn't start with a year, an NFO's
+    free text say, is as though it had no date: its year, or else none, last.
+    Before, "Unknown" sorted before 2026.)"""
+    if re.match(r"[0-9]{4}", e.released or ""):
+        return e.released
+    return f"{e.year:04d}" if e.year and 0 < e.year <= 9999 else ""
+
+
+WEEK_MS = 7 * 86_400_000  # (Recently added's first group: the last 7 days)
+
+
+def mark_of(e: Entry, sort: str, now_ms: int, this_year: int) -> tuple[str, str]:
+    """The group a show or movie is in, as `sort` lists it (see marks):
+    (kind, value)."""
+    if sort == "added":
+        if not e.added_ms:
+            return "undated", ""
+        if e.added_ms >= now_ms - WEEK_MS:
+            return "week", ""
+        local = time.localtime(e.added_ms / 1000)
+        if local.tm_year == this_year:
+            return "month", f"{local.tm_year:04d}-{local.tm_mon:02d}"
+        return "year", f"{local.tm_year:04d}"
+    if sort == "released":
+        when = released_as(e)
+        if not when:
+            return "undated", ""
+        return "decade", str(int(when[:4]) // 10 * 10)
+    return "letter", letter_of(e)
+
+
+def marks(entries: list[Entry], sort: str, now_ms: int) -> list[dict[str, Any]]:
+    """Where each group of `entries` (as `sort` lists them) starts, for the
+    apps' dial (1.37.0, the owner's handoff, October 14): [{"start", "kind",
+    "value"}], in order, each group once. By title, the letters (as
+    letters); Recently added, the last 7 days ("week"), then this year's
+    months ("month", "YYYY-MM"), earlier years ("year", "YYYY"), then
+    those with no date ("undated"), in the server's own time zone; by
+    release, decades ("decade", its first year), then "undated". One pass;
+    the apps word them."""
+    this_year = time.localtime(now_ms / 1000).tm_year
+    out: list[dict[str, Any]] = []
+    last: tuple[str, str] | None = None
+    for i, e in enumerate(entries):
+        group = mark_of(e, sort, now_ms, this_year)
+        if group != last:
+            last = group
+            out.append({"start": i, "kind": group[0], "value": group[1]})
+    return out
 
 
 def letters(entries: list[Entry]) -> list[dict[str, Any]]:

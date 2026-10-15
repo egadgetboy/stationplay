@@ -145,10 +145,11 @@ browsing rarely asks Plex for them.
 | Address | What it answers |
 |---|---|
 | `GET /libraries` | The shared Media folders: key, title, kind (`show` or `movie`) |
-| `GET /libraries/{key}` | One Media folder's shows or movies, a page at a time (`start`, `size` up to 200), sorted by `title`, `added` (newest first) or `released` (newest first), narrowed by `genre` or `unwatched`, with its genres and where each letter starts |
+| `GET /libraries/{key}` | One Media folder's shows or movies, a page at a time (`start`, `size` up to 200), sorted by `title`, `added` (newest first) or `released` (newest first), narrowed by `genre` or `unwatched`, with its genres, where each letter starts, and where each group of the sort starts (`marks`, from 1.37.0) |
 | `GET /home` | The Resume row for this person, and each shared Media folder's recently added |
 | `GET /search?q=` | Shows and movies whose titles contain the words, across shared Media folders, ignoring case and accents; and stations airing one now |
 | `GET /items/{key}` | A show's, movie's or episode's details |
+| `GET /items/{key}/shuffle?unwatched=` | A show's episodes in a random order, for Shuffle (from 1.37.0) |
 | `GET /items/{key}/episodes?season=` | A show's episodes: one season's, or all of them, a page at a time (`start`, `size` up to 500) |
 | `GET /items/{key}/related` | Titles like a show or movie: sharing its genres, then the nearest in years |
 | `GET /art/{key}?kind=&w=` | A picture: `poster` (2:3), `backdrop` (16:9) or `thumb` (an episode's still) |

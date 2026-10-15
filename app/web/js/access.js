@@ -280,7 +280,7 @@ const showNewUserStations = () => {
   // (What a password asks, and what having none means: the owner, October
   // 14, made a User with neither and found they couldn't sign in.)
   $('#addUserHint').textContent = `A password needs at least ${ACCESS.passwordMin} characters. A few words together work well.`
-    + (user && me.required ? ' A User with no password can only be picked on Who’s tuning in? at home, or signed in on a new device with an invite code. Their PIN, if they have one, is asked when they pick themselves.' : '');
+    + (user && me.required ? ' A User with no password can only be picked at home, on Who’s tuning in? in the apps or Who’s signing in? on this page, or signed in on a new device with an invite code. Their PIN, if they have one, is asked when they pick themselves.' : '');
   $('#newUserPinField').hidden = !me.required;
   $('#newUserLevelField').hidden = !user || !me.required || !viewing;
 };

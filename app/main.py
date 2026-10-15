@@ -154,6 +154,7 @@ PRIVACY = Path(__file__).parent.parent / "PRIVACY.md"
 STATION_GUIDE_MAX_HOURS = GUIDE_FUTURE_MS / 3_600_000
 SOURCE_TYPES = ("show", "movie", "section", "filter", "collection", "info")
 NAME_MAX = 60  # the longest a station's name can be
+LOG_SEARCH_MOST = 100  # (the Logs tab's search: its longest, in characters)
 # The editor's posters: drawn at up to 64x96, so this is sharp on most
 # screens; and larger ones, for when the list is zoomed in (drawn at 120x180).
 POSTER_W, POSTER_H = 96, 144
@@ -2851,23 +2852,33 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         return jobs.start_check(ctx, channel_id).as_dict()
 
     @app.get("/api/logs")
-    async def recent_logs(levels: str = "", access_log: bool = False, limit: int = 200):
+    async def recent_logs(
+        levels: str = "",
+        access_log: bool = False,
+        limit: int = 200,
+        q: str = "",
+    ):
         """The newest log entries: all of them; or those at `levels` (e.g.
         "WARNING,ERROR"), and with `access_log`, the access log's (which is
-        kept between restarts)."""
+        kept between restarts). With `q` (1.37.0, the owner: "There is no
+        SEARCH field in Logs - needs one"), only those with every one of its
+        words, in any case, searched through all that's kept."""
+        if len(q) > LOG_SEARCH_MOST:
+            raise HTTPException(400, f"Search for {LOG_SEARCH_MOST} characters or fewer.")
         limit = max(1, min(limit, logbuffer.KEEP))
         wanted = {v.strip().upper() for v in levels.split(",") if v.strip()}
+        words = logbuffer.search_words(q)
         if not access_log:
-            entries = logs.entries(wanted or None, limit)
+            entries = logs.entries(wanted or None, limit, words)
         else:
             entries = (
-                [e for e in logs.entries(wanted, limit) if e["source"] != access.log.name]
+                [e for e in logs.entries(wanted, limit, words) if e["source"] != access.log.name]
                 if wanted
                 else []
             )
             entries += [
                 {"time": ms / 1000, "level": level, "source": access.log.name, "message": message}
-                for ms, level, message in ctx.db.access_entries(limit)
+                for ms, level, message in ctx.db.access_entries(limit, words)
             ]
             entries = sorted(entries, key=lambda e: e["time"])[-limit:]
         return {"entries": entries, "text": logbuffer.as_text(entries)}

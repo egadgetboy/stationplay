@@ -1160,6 +1160,19 @@ nothing.
 | `letters` | list | Sorted by `title`: where each letter starts in the whole list, as narrowed, for jumping to it: each letter once, in order, `#` first (`[]` for the other sorts; from 1.24.0). How many a letter has is where the next starts (or `total`), less its own `start` |
 | `letters[].letter` | string | `A` to `Z`, or `#` for titles starting with a digit or anything else |
 | `letters[].start` | number | Where its first show or movie is (a `start` to ask for) |
+| `marks` | list | Where each group of the list, as sorted and narrowed, starts, in order, for the apps' dial; `[]` when there are none (from 1.37.0). Every sort has them: see [Marks](#marks) |
+| `marks[].start` | number | Where the group's first show or movie is. The first is 0, and each is larger than the one before. How many a group has is where the next starts (or `total`), less its own `start` |
+| `marks[].kind` | string | `letter`, `week`, `month`, `year`, `decade` or `undated`. An app that doesn't know a kind shows no dial for that list |
+| `marks[].value` | string | For `letter`: `#` or `A` to `Z`. For `month`: `YYYY-MM`. For `year`: `YYYY`. For `decade`: its first year (`1980`). `""` for `week` and `undated` |
+
+### Marks
+
+What makes a group, for each sort (each group is in one piece, and no `kind` and `value` repeats):
+- **`title`:** the letter each title is listed under, so exactly `letters`' groups.
+- **`added`** (newest first): `week`, added in the 7 days before the request (or later than now); then `month`, the rest of this calendar year by month; then `year`, earlier years; then `undated`. Months and years are in the server's own time zone, as INFO's blocks and the guides' hours are.
+- **`released`** (newest first): `decade`, from the year that starts its release date, or its year; then `undated`. A release date that doesn't start with a four-digit year in the digits 0 to 9 (an NFO's free text, say) sorts and counts as though it had no date: in its year's decade when it has a year, else undated, last (from 1.37.0; before, "Unknown" sorted first).
+
+They're counted from the same list as `total` and `items`: after Viewing Levels, the genre and Unwatched, so a title someone can't see is never counted.
 
 ## GET /api/internal/home
 
@@ -1311,6 +1324,23 @@ has no genres.
 |---|---|---|
 | `items` | list | Others like it |
 | `items[]` | card | One show or movie |
+
+## GET /api/internal/items/{key}/shuffle
+
+From 1.37.0. A show's episodes in a random order, for Shuffle on its page: **Shuffle all**, and **Shuffle unwatched** with `?unwatched=1`. The app plays them one after another, each as it would play from the page.
+
+- **Only what this person may see,** as every address here: a show that isn't shared, or that's hidden from them, is answered as though it weren't there (404). A movie's or an episode's key is refused (400).
+- **Specials aside,** and each file once: episodes in one file with others ("S01E01-E02") play it once.
+- **Unwatched:** only the episodes this person hasn't watched. With none left, `items` is `[]`.
+- **A new order each time,** at most 500 episodes.
+
+| Field | Type | What it is |
+|---|---|---|
+| `show` | string | The show's key |
+| `unwatched` | boolean | Whether only unwatched episodes were asked for |
+| `total` | number | How many are in `items` |
+| `items` | list | The episodes, in the order to play them |
+| `items[]` | card | One episode |
 
 ## GET /api/internal/items/{key}/episodes
 
