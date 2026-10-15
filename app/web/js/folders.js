@@ -8,16 +8,26 @@
 let foldersShown = null;
 let mediaShown = null;
 let foldersTimer = null;
+// (Each load's number: an answer to an older one, or one asked before a switch
+// was saved, is dropped, so a slow answer never brings back what was switched.
+// 1.36.4's third audit.)
+let foldersAsked = 0;
 // `again`: /api/app-libraries asked again too (not while one's being read:
 // it can wait a few seconds for Plex).
 async function loadFolderLibraries(again = true) {
-  let got;
+  const asked = ++foldersAsked;
+  let got, media;
   try {
-    [got, mediaShown] = await Promise.all([
+    [got, media] = await Promise.all([
       api('/api/folder-libraries'),
       again || !mediaShown ? api('/api/app-libraries').catch(e => ({ failed: e.message })) : mediaShown,
     ]);
-  } catch (e) { $('#foldersPanel').replaceChildren(h('p', { class: 'muted empty' }, e.message)); return; }
+  } catch (e) {
+    if (asked === foldersAsked) $('#foldersPanel').replaceChildren(h('p', { class: 'muted empty' }, e.message));
+    return;
+  }
+  if (asked !== foldersAsked) return;
+  mediaShown = media;
   foldersShown = got;
   renderFolderLibraries(got, mediaShown);
   // (While one's being read, it says how far it's got.)
@@ -61,9 +71,12 @@ function renderFolderLibraries(got, media) {
       : h('p', { class: 'muted empty' }, 'No Media folders yet. Add one, or connect Plex in setup.'));
     return;
   }
-  // A switch saves at once: the Media folders now on, and only them.
+  // A switch saves at once: the Media folders now on, and only them. (Nothing
+  // asked before it is shown after it.)
   const boxes = new Map();
   const save = async () => {
+    clearTimeout(foldersTimer);
+    foldersAsked++;
     const on = [...boxes].filter(([, b]) => b.checked).map(([key]) => key);
     boxes.forEach(b => { b.disabled = true; });
     try { await api('/api/app-libraries', { method: 'PUT', body: { libraries: on } }); toast('Saved'); }
@@ -74,7 +87,8 @@ function renderFolderLibraries(got, media) {
   const kind = l => l.kind === 'movie' ? 'Movies' : 'Shows';
   const switchFor = l => {
     if (media.failed || !listed.some(m => m.key === l.key)) return null;
-    const box = mediaFolderBox(media, l.key, save, { 'aria-label': `${l.title} in tapiOca’s apps` });
+    // (On only when it's shared: none are while sharing is still to be chosen, from before 1.34.1.)
+    const box = mediaFolderBox({ ...media, waiting: false }, l.key, save, { 'aria-label': `${l.title} in tapiOca’s apps` });
     boxes.set(l.key, box);
     return h('label', { class: 'small in-apps' }, box, ' In tapiOca’s apps');
   };
@@ -91,8 +105,14 @@ function renderFolderLibraries(got, media) {
       catch (e) { toast(e.message, true); }
       loadFolderLibraries();
     } }, 'Remove'));
+  // What a switch does to Media folders added later (1.36.4's third audit): said before it's used.
+  const later = media.failed || said ? null
+    : media.everything ? 'Every Media folder is in tapiOca’s apps now, and new ones join by themselves. Once you switch one off, only those switched on are, and new ones start switched off.'
+    : media.waiting ? 'None are in tapiOca’s apps yet. Switch on the ones to share, or choose them in setup’s Media step.'
+    : null;
   panel.replaceChildren(
     ...(said ? [h('p', { class: 'small', style: 'margin:0 0 10px' }, warnIcon(), ' ', said)] : []),
+    ...(later ? [h('p', { class: 'hint', style: 'margin:0 0 10px' }, later)] : []),
     h('table', { class: 'users folder-libs' },
       h('thead', {}, h('tr', {}, h('th', {}, 'Media folder'), h('th', {}, 'Its folders'), h('th', {}, 'State'), h('th', {}, ''))),
       h('tbody', {}, ...all.map(m => {

@@ -350,8 +350,10 @@ def test_a_media_folders_switch_saves_at_once():
 
 def test_media_folders_while_they_cant_all_be_listed():
     """While the Media folders can't all be listed, the switches can't be
-    changed and the problem is said, as on the Access tab; every one is on
-    while every Media folder is shared, or none has been chosen yet."""
+    changed and the problem is said, as on the Access tab. A switch is on
+    only while its folder is shared: while none has been chosen yet (from
+    before 1.34.1), every one is off, and the page says how to choose (1.36.4's
+    third audit: they all showed on, though nothing was shared)."""
     problem = "Plex isn’t answering, so tapiOca can’t list Plex’s Media folders right now."
     down = {**MEDIA, "libraries": MEDIA["libraries"][2:], "problem": problem}
     said = media_folders(
@@ -368,10 +370,11 @@ def test_media_folders_while_they_cant_all_be_listed():
         FOLDERS,
         waiting,
         """
-    console.log(JSON.stringify(boxes().map(b => b.checked)));
+    console.log(JSON.stringify({ boxes: boxes().map(b => b.checked), all: text(panel()) }));
     """,
     )
-    assert said == [True, True, True]
+    assert said["boxes"] == [False, False, False]
+    assert "None are in tapiOca’s apps yet." in said["all"]
 
 
 def test_no_media_folders_yet():
@@ -401,8 +404,8 @@ def test_the_media_folders_section_says_what_it_is():
     ]
     assert (
         "Every Media folder tapiOca has. Switch one off to keep it out of tapiOca’s apps; "
-        "stations can still use it. Add a Media folder to have tapiOca read folders in its "
-        "media folder itself. It takes each title’s details from the NFO files beside it, the "
+        "stations can still use it. Add a Media folder to have tapiOca read shows or movies "
+        "itself, from the folders it can see. It takes each title’s details from the NFO files beside it, the "
         "file itself and its name, and its pictures from beside it, and reads them again every "
         "6 hours, when you choose Read again, and when Sonarr or Radarr brings a replacement "
         "tapiOca asked for."
@@ -411,4 +414,19 @@ def test_the_media_folders_section_says_what_it_is():
     apps = (JS.parent / "apps.js").read_text(encoding="utf-8")
     assert "const box = mediaFolderBox(got, l.key, onEdit);" in apps
     folders = (JS.parent / "folders.js").read_text(encoding="utf-8")
-    assert "mediaFolderBox(media, l.key" in folders
+    assert "mediaFolderBox({ ...media, waiting: false }, l.key" in folders
+
+
+def test_a_save_keeps_every_media_folder_shared_unless_a_folders_switch_changed():
+    """1.36.4's third audit: saving the Access tab's panel, or setup's Media step, with
+    only "When playing can't keep up" or Even sound changed sent every folder, which
+    stopped sharing Media folders added later. The choice of folders goes only when a
+    folder's switch changed. And the Setup tab's switches drop a slow, older answer, so
+    one never brings back a folder just switched off, and say what switching one does."""
+    apps = (JS.parent / "apps.js").read_text(encoding="utf-8")
+    setup = (JS.parent / "setup.js").read_text(encoding="utf-8")
+    folders = (JS.parent / "folders.js").read_text(encoding="utf-8")
+    assert "if (!got.waiting && !fields.librariesChanged()) delete chosen.libraries;" in apps
+    assert "if (!got.waiting && !fields.librariesChanged()) delete body.libraries;" in setup
+    assert "if (asked !== foldersAsked) return;" in folders and "foldersAsked++;" in folders
+    assert "Once you switch one off, only those switched on are, and new ones start switched off." in folders

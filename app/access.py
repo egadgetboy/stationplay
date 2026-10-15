@@ -66,6 +66,7 @@ import re
 import secrets
 import sqlite3
 import time
+import unicodedata
 from collections import deque
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -1179,15 +1180,30 @@ def _check_password(password: str, name: str = "") -> None:
         raise ValueError(f"That password repeats itself too much. {PASSWORD_ADVICE}")
     if low in _common() or low.strip() in _common():
         raise ValueError(f"That's one of the most common passwords. {PASSWORD_ADVICE}")
-    # (Built from the name or tapiOca's: with them taken out, fewer than NAMED_REST letters
-    # and digits are left. Only where one of them is in it: 1.36.4, when the minimum became
-    # 8, "kq7-mz2w" was turned away as built from a name it doesn't have.)
-    rest = low
-    for word in (name.casefold().strip(), "tapioca", "stationplay"):
+    # (Built from the name or tapiOca's: where one of them is in it, what's left with them
+    # taken out isn't a password itself: fewer than NAMED_REST letters and digits, a run or a
+    # repeat, or a common one. 1.36.4: with a minimum of 8, "kq7-mz2w" was turned away as built
+    # from a name it doesn't have; and its third audit: "tapioca123456" got through. A name is
+    # matched with and without its spaces, and its accents.)
+    plain = _plain(password)
+    named = _plain(name).strip()
+    rest = plain
+    for word in sorted(
+        {named, named.replace(" ", ""), "tapioca", "stationplay"}, key=len, reverse=True
+    ):
         if len(word) >= 3:
             rest = rest.replace(word, "")
-    if rest != low and sum(c.isalnum() for c in rest) < NAMED_REST:
-        raise ValueError("Choose a password that isn't built from your name or tapiOca's.")
+    if rest != plain:
+        left = "".join(c for c in rest if c.isalnum())
+        runs = {ord(b) - ord(a) for a, b in itertools.pairwise(left)}
+        if len(left) < NAMED_REST or len(set(left)) < 4 or runs <= {-1, 0, 1} or left in _common():
+            raise ValueError("Choose a password that isn't built from your name or tapiOca's.")
+
+
+def _plain(text: str) -> str:
+    """`text` without its accents, in one case, to compare as people read it ("İlker" is ilker)."""
+    split = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in split if not unicodedata.combining(c)).casefold()
 
 
 def _now() -> int:

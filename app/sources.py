@@ -241,7 +241,7 @@ def _say_once_its_gone(item: Item) -> None:
     _said_gone.add(item.rating_key)
     if is_folder_key(item.rating_key):
         log.info(
-            "%s is no longer in your own Media folders under its key (it was removed, or "
+            "%s is no longer in the Media folders tapiOca reads itself under its key (it was removed, or "
             "found again under a new key); playing its old file until the station's next update",
             item.label,
         )
@@ -286,7 +286,7 @@ async def resolve_source(
             why = str(e) or f"{'it' if own else 'Plex'} didn't answer within {PLEX_LOOKUP_S}s"
             log.warning(
                 "%s for %s (%s) failed (%s); using the saved path",
-                "Looking in your own Media folders" if own else "Plex lookup",
+                "Looking in the Media folders tapiOca reads itself" if own else "Plex lookup",
                 item.rating_key,
                 item.label,
                 why,

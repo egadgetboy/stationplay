@@ -574,7 +574,9 @@ const SETUP_PAGES = {
         try { await api('/api/app-libraries', { method: 'PUT', body: { evenSound: even.input.checked } }); } catch (e) { return e.message; }
         return;
       }
-      try { await api('/api/app-libraries', { method: 'PUT', body: { ...fields.values(), evenSound: even.input.checked } }); } catch (e) { return e.message; }
+      const body = { ...fields.values(), evenSound: even.input.checked };
+      if (!got.waiting && !fields.librariesChanged()) delete body.libraries;  // (see libraryFields)
+      try { await api('/api/app-libraries', { method: 'PUT', body }); } catch (e) { return e.message; }
     } };
   },
 

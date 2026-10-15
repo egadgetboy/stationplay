@@ -727,6 +727,9 @@ function libraryFields(got, onEdit) {
     ],
     values,
     changed: () => JSON.stringify(values()) !== first,
+    // (Whether a Media folder's box changed: only then is the choice of folders saved, so
+    // "every one, those added later too" stays when only something else changed. 1.36.4.)
+    librariesChanged: () => JSON.stringify(values().libraries) !== JSON.stringify(JSON.parse(first).libraries),
   };
 }
 // Even sound for a show's episodes (see applibrary.py on the server): on to start.
@@ -753,6 +756,7 @@ async function loadAppLibraries() {
   const result = h('span', { class: 'hint', role: 'status' });
   const save = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
     const chosen = { ...fields.values(), evenSound: even.checked };
+    if (!got.waiting && !fields.librariesChanged()) delete chosen.libraries;
     try { await api('/api/app-libraries', { method: 'PUT', body: chosen }); }
     catch (e) { result.textContent = e.message; return; }
     toast(!chosen.libraries ? 'Saved' : chosen.libraries.length ? 'Saved. tapiOca’s apps can show the Media folders you chose.' : 'Saved. tapiOca’s apps don’t show any Media folder.');

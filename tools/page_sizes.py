@@ -1566,6 +1566,23 @@ def waiting_media_step(context: Any, base: str, look: Look, sp: Running) -> None
                 sp.call(lambda: (shared.everything, shared.even_sound)), (True, False))  # fmt: skip
     page.close()
     sp.call(lambda: shared.save_even_sound(True))
+    # (1.36.4's third audit) Only "When playing can't keep up" changed on the Access tab:
+    # every Media folder stays shared, those added later too.
+    sp.call(everything_shared)
+    page = context.new_page()
+    page.goto(base + "/")
+    page.wait_for_timeout(800)
+    page.evaluate("document.querySelector('#closeSetup')?.click()")
+    tab(page, "access")
+    page.evaluate("document.querySelector('#appLibrariesPanel').open = true")
+    page.wait_for_selector("#appLibrariesBody select")
+    page.select_option("#appLibrariesBody select >> nth=0", "switch")
+    page.locator("#appLibrariesBody .btn.primary").click()
+    page.wait_for_timeout(800)
+    look.expect("only When playing can't keep up changed keeps every Media folder shared",
+                sp.call(lambda: (shared.everything, shared.when_slow["home"])), (True, "switch"))  # fmt: skip
+    page.close()
+    sp.call(lambda: shared.save_when_slow("offer", shared.when_slow["away"]))
     sp.call(restore)
 
 
