@@ -179,7 +179,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         # (1.34.1, the owner: Media is on to start, so a new server offers it.)
         assert server["features"] == [
             "hls", "speed-test", "reports", "night", "problems", "library", "convert",
-            "convert-asked", "even-sound",
+            "convert-asked", "shuffle", "marks", "even-sound",
         ]  # fmt: skip
         # From the internet, until signing in is on, there's nothing to do.
         outside = check.answer(internet.get("/api/v1/server"), "GET /api/v1/server")
@@ -372,7 +372,7 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
         features = check.answer(phone.get("/api/v1/server"), "GET /api/v1/server")["features"]
         assert features == [
             "hls", "speed-test", "reports", "night", "problems", "library", "convert",
-            "convert-asked", "even-sound",
+            "convert-asked", "shuffle", "marks", "even-sound",
         ]  # fmt: skip
         libs = check.answer(
             phone.get("/api/internal/libraries", headers=sam), "GET /api/internal/libraries"
