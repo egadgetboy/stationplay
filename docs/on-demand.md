@@ -149,6 +149,7 @@ browsing rarely asks Plex for them.
 | `GET /home` | The Resume row for this person, and each shared Media folder's recently added |
 | `GET /search?q=` | Shows and movies whose titles contain the words, across shared Media folders, ignoring case and accents; and stations airing one now |
 | `GET /items/{key}` | A show's, movie's or episode's details |
+| `GET /items/{key}/shuffle?unwatched=` | A show's episodes in a random order, for Shuffle (from 1.37.0) |
 | `GET /items/{key}/episodes?season=` | A show's episodes: one season's, or all of them, a page at a time (`start`, `size` up to 500) |
 | `GET /items/{key}/related` | Titles like a show or movie: sharing its genres, then the nearest in years |
 | `GET /art/{key}?kind=&w=` | A picture: `poster` (2:3), `backdrop` (16:9) or `thumb` (an episode's still) |
