@@ -862,3 +862,39 @@ def test_a_browser_its_person_signed_in_on_lists_them_for_their_pin(home):
     # Signed out on purpose: the password first, next time.
     assert laptop.post("/api/access/sign-out").status_code == 200
     assert "Lee" not in listed(laptop)
+
+
+def test_wrong_pins_for_a_browsers_own_person_count_against_that_browser(home):
+    """(The audit of 1.37.0.) A browser's own person picked on a trusted
+    network: wrong PINs there count against that browser, as on the page's
+    own PIN form (BROWSER_PIN_TRIES, then the password on that browser, which
+    can't be waited out), from any address. Before, only the address's limit
+    and the person's applied, and both can be waited out."""
+    from app import devices
+
+    pat = admin_at_home(home)
+    lee = pat.post("/api/access/users", json={
+        "name": "Lee", "password": "harbor violet quill", "role": "user", "showOn": "signed-in"}).json()["id"]  # fmt: skip
+    assert pat.put(f"/api/access/users/{lee}/picker", json={"pin": "4242"}).is_success
+    laptop = device_at(home, "192.168.1.70")
+    assert laptop.post(
+        "/api/access/sign-in", json={"name": "Lee", "password": "harbor violet quill"}
+    ).is_success
+    laptop.cookies.delete(access.COOKIE)
+    ctx = home.state.ctx
+    for n in range(access.BROWSER_PIN_TRIES):
+        ctx.devices._wrong.clear()  # (as if the person's own wait had gone by)
+        got = laptop.post("/api/access/trusted-sign-in", json={"id": lee, "pin": "0000"})
+        assert got.status_code in (401, 403), (n, got.text)
+    # That browser now needs Lee's password: he isn't listed, and his PIN does nothing,
+    # from this address or any other with the browser's cookies.
+    people = {p["name"] for p in laptop.get("/api/access/me").json()["trusted"]["people"]}
+    assert "Lee" not in people
+    elsewhere = device_at(home, "192.168.1.99")
+    elsewhere.cookies.update(laptop.cookies)
+    ctx.devices._wrong.clear()
+    assert (
+        elsewhere.post("/api/access/trusted-sign-in", json={"id": lee, "pin": "4242"}).status_code
+        == 404
+    )
+    assert devices.PIN_TRIES < access.BROWSER_PIN_TRIES
