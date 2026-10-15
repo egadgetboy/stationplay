@@ -454,6 +454,12 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
             "GET /api/internal/items/{key}/episodes",
         )
         assert [e["episode"] for e in listed["episodes"]] == [1, 2, 3, 4]
+        shuffled = check.answer(
+            phone.get("/api/internal/items/100/shuffle", headers=sam),
+            "GET /api/internal/items/{key}/shuffle",
+        )
+        assert shuffled["show"] == "100" and shuffled["unwatched"] is False
+        assert shuffled["total"] == len(shuffled["items"]) > 0
         found = check.answer(
             phone.get("/api/internal/search?q=movie", headers=sam), "GET /api/internal/search"
         )

@@ -1339,7 +1339,8 @@ From 1.37.0. A show's episodes in a random order, for Shuffle on its page: **Shu
 | `show` | string | The show's key |
 | `unwatched` | boolean | Whether only unwatched episodes were asked for |
 | `total` | number | How many are in `items` |
-| `items` | list | The episodes, as cards (see A card), in the order to play them |
+| `items` | list | The episodes, in the order to play them |
+| `items[]` | card | One episode |
 
 ## GET /api/internal/items/{key}/episodes
 
