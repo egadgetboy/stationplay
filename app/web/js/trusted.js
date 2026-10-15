@@ -245,7 +245,7 @@ function trustedSignIn(info, idle = false) {
   }, h('span', { class: 'face', 'aria-hidden': 'true' }, (p.name[0] || '?').toUpperCase()),
     h('span', { class: 'who-name' }, p.name),
     p.pin || p.admin ? h('span', { class: 'who-note' }, p.pin ? 'PIN' : 'Password') : null))
-    : [h('p', { class: 'muted small', style: 'margin:0; grid-column: 1 / -1' }, 'No one is listed here yet. Sign in below.')]));
+    : [h('p', { class: 'muted small', style: 'margin:0; flex-basis: 100%' }, 'No one is listed here yet. Sign in below.')]));
 }
 // Someone picked: signed in, or asked for their PIN (or password).
 function trustedPick(p, button, password = false) {

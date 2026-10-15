@@ -721,15 +721,18 @@ table.stats .station img.shaped { padding: 2px; }
 #signinTrusted { display: grid; gap: 12px; }
 #signinTrusted[hidden] { display: none; }
 .signin-who { margin: 0; font-size: 18px; text-align: center; }
-.who-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
+/* (Each card as wide as its name needs, at least 96: "Bartholomew" whole, on
+   one line, never cut or broken inside the word; one longer than the list,
+   on two lines, by its words. The owner, October 15, 1.37.0.) */
+.who-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
 /* (Who's tuning in?'s cards, in their list only: 1.36.4, they'd made Top
    people's rows cards too, each shrunk to fit, so names were cut short.) */
-.who-list .who { display: grid; justify-items: center; gap: 6px; padding: 12px 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--ink); font: inherit; cursor: pointer; min-height: 44px; }
+.who-list .who { display: grid; justify-items: center; gap: 6px; padding: 12px 14px; flex: 0 1 auto; min-width: 96px; max-width: 100%; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--ink); font: inherit; cursor: pointer; min-height: 44px; }
 .who-list .who:hover { border-color: var(--accent); }
 .who-list .who:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .who-list .who[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
 .who-list .who .face { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 18px; }
-.who-list .who .who-name { font-weight: 600; overflow-wrap: anywhere; text-align: center; }
+.who-list .who .who-name { font-weight: 600; overflow-wrap: break-word; text-align: center; }
 .who-list .who .who-note { font-size: 12px; color: var(--ink-3); }
 .trusted-you { margin: 0; }
 .trusted-list td .hint { display: block; }

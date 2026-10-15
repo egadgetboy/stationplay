@@ -1418,6 +1418,7 @@ def signin_trusted(browser: Any, base: str, context_of: Callable[..., Any], look
     look.page = page
     look("signin-trusted")
     look.expect("the page's question", page.inner_text("#signinTrustedTitle"), "Who’s signing in?")
+    long_names(page, look)
     names = page.locator("#signinPeople .who-name").all_inner_texts()
     look.expect("Who's signing in? lists Jo", JO["name"] in names, True)
     look.expect(
@@ -1467,6 +1468,37 @@ def signin_trusted(browser: Any, base: str, context_of: Callable[..., Any], look
     )
     look("signin-trusted-person")
     context.close()
+
+
+def long_names(page: Page, look: Look) -> None:
+    """(1.37.0, the owner, October 15: "we need to accommodate longer names
+    that won't get cut off", as "Bartholomew".) Who's signing in?'s cards
+    grow to their names: a long one-word name on one line, never broken
+    inside the word or cut; a long name of two words, whole. Put back as it
+    was after."""
+    page.evaluate(
+        """() => trustedSignIn({ gives: 'picker', people: [
+             { id: 901, name: 'Bartholomew', pin: true },
+             { id: 902, name: 'Maximiliana Fitzgerald-Worthington', pin: false },
+             { id: 903, name: 'Jo', pin: true } ] })"""
+    )
+    page.wait_for_timeout(100)
+    got = page.evaluate(
+        """() => [...document.querySelectorAll('#signinPeople .who-name')].map(el => {
+             const r = document.createRange(); r.selectNodeContents(el);
+             const box = el.closest('.who').getBoundingClientRect();
+             const room = document.querySelector('#signinPeople').getBoundingClientRect();
+             return { name: el.textContent, lines: r.getClientRects().length,
+                      cut: el.scrollWidth > el.clientWidth + 1,
+                      outside: box.left < room.left - 1 || box.right > room.right + 1 };
+           })"""
+    )
+    by = {g["name"]: g for g in got}
+    look.expect("Bartholomew on one line", by.get("Bartholomew", {}).get("lines"), 1)
+    look.expect("no name cut", [g["name"] for g in got if g["cut"]], [])
+    look.expect("every card inside the list", [g["name"] for g in got if g["outside"]], [])
+    look("signin-trusted-long-names")
+    page.evaluate("() => trustedSignIn(me.trusted)")
 
 
 def signin_by_pin(page: Page, look: Look) -> None:
