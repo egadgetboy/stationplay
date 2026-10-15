@@ -682,6 +682,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "items": cards(user_id, entries[start : start + size]),
             "genres": [g["title"] for g in genres],
             "letters": ondemand.letters(entries) if sort == "title" else [],
+            # (Where each group of the sort starts, for the apps' dial: 1.37.0.)
+            "marks": ondemand.marks(entries, sort, int(time.time() * 1000)),
         }
 
     @app.get("/api/internal/home")
