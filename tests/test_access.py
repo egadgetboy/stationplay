@@ -804,7 +804,11 @@ def test_passwords_as_the_guidelines_say(pat):
     for password, why in refused.items():
         made = pat.post("/api/access/users", json={"name": "Robin", "password": password})
         assert made.status_code == 400 and why in made.json()["detail"], password
-    for name, password in (("Robin", "purple elephant dance"), ("Lee", "Xk7-pR2!qL9#"), ("Ana", "kq7-mz2w")):
+    for name, password in (
+        ("Robin", "purple elephant dance"),
+        ("Lee", "Xk7-pR2!qL9#"),
+        ("Ana", "kq7-mz2w"),
+    ):
         made = pat.post("/api/access/users", json={"name": name, "password": password})
         assert made.status_code == 201, (password, made.text)
     # The same when someone changes their own.

@@ -429,4 +429,7 @@ def test_a_save_keeps_every_media_folder_shared_unless_a_folders_switch_changed(
     assert "if (!got.waiting && !fields.librariesChanged()) delete chosen.libraries;" in apps
     assert "if (!got.waiting && !fields.librariesChanged()) delete body.libraries;" in setup
     assert "if (asked !== foldersAsked) return;" in folders and "foldersAsked++;" in folders
-    assert "Once you switch one off, only those switched on are, and new ones start switched off." in folders
+    assert (
+        "Once you switch one off, only those switched on are, and new ones start switched off."
+        in folders
+    )
