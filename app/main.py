@@ -1541,7 +1541,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         except (LibraryError, LogoError, TimeoutError) as e:
             log.info(
                 "Couldn't use the logo from %s for %s: %s",
-                "your own Media folders" if is_folder_key(rating_key) else "Plex",
+                "the Media folders tapiOca reads itself" if is_folder_key(rating_key) else "Plex",
                 rating_key,
                 str(e) or "it took too long",
             )

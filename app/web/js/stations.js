@@ -178,8 +178,8 @@ function stationDetails(ch, check, now) {
           ? `Plex has found intros or credits in ${ch.trimmedCount} of this station’s ${ch.itemCount} programs, and tapiOca skips them. The rest play in full.`
           // (Without Plex, there's nothing to turn on: 1.35.0.)
           : !plexUsed()
-            ? 'tapiOca skips intros and credits where Plex has found them. Programs from your own Media folders play in full.'
-            : 'Plex hasn’t found intros or credits in any of this station’s programs yet. Turn on intro and credits detection in Plex, under Settings → Library. tapiOca picks them up within a few hours. Programs from your own Media folders play in full.')
+            ? 'tapiOca skips intros and credits where Plex has found them. Programs from Media folders tapiOca reads itself play in full.'
+            : 'Plex hasn’t found intros or credits in any of this station’s programs yet. Turn on intro and credits detection in Plex, under Settings → Library. tapiOca picks them up within a few hours. Programs from Media folders tapiOca reads itself play in full.')
         : text('plays intros & credits'),
       ch.mostlyOneShow ? text('mostly one show', 'One show makes up most of this station, so shuffle will sometimes play it three or more times in a row. Add more shows to avoid that.') : null),
     ...row('Specials',

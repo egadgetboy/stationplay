@@ -9,8 +9,8 @@ document "tapiOca: the full plan."
 
 "Library" here is the code's name for this layer and for its libraries.
 What people read says **Media** for the titles shared with tapiOca's apps,
-**Media folders** for Plex's libraries, and **Media folders of your own**
-for tapiOca's.
+**Media folders** for Plex's libraries, and **Media folders tapiOca reads itself**
+for the folders it reads without Plex.
 
 ## Goals
 
@@ -108,7 +108,7 @@ These stay on `ctx.plex`: `hdhr`, the guide refresh (`dvrs`,
 
 ## Phase 3: Media folders of tapiOca's own (1.35.0)
 
-An Admin adds one on the Setup tab, under **Your own folders**: a
+An Admin adds one on the Setup tab, under **Folders tapiOca reads itself**: a
 name, Shows or Movies, and one or more folders inside the media folder
 (`MEDIA_DIR`, `/media` in the container). Each is a library like Plex's:
 for stations, filters, smart stations, collections, and Media in tapiOca's

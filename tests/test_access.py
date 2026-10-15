@@ -224,7 +224,7 @@ def test_changing_your_password_in_an_app(pat, app):
     short = app_.post(
         "/api/internal/password", json={"current": SAM["password"], "new": "short"}, headers=sams
     )
-    assert short.status_code == 400 and "12 characters" in short.json()["detail"]  # (1.36.2: 12)
+    assert short.status_code == 400 and "8 characters" in short.json()["detail"]  # (1.36.4: 8)
     changed = app_.post(
         "/api/internal/password", json={"current": SAM["password"], "new": "a new one, longer!"},
         headers=sams,
@@ -781,26 +781,31 @@ def test_passwords_as_the_guidelines_say(pat):
     """(1.36.2) The owner, October 14: "Password strength needs to be
     industry standard." As NIST SP 800-63B and OWASP say: at least 12
     characters, no rules about symbols, never a common password, nothing
-    built from the person's name or tapiOca's; a passphrase is welcome."""
+    built from the person's name or tapiOca's; a passphrase is welcome.
+    (1.36.4, the owner, October 14: "the password minimum (8 characters)",
+    with common passwords of 8 characters and more turned away.)"""
     refused = {
-        "eleven char": "at least 12 characters",
+        "seven c": "at least 8 characters",
+        "sunshine": "most common passwords",
+        "football1": "most common passwords",
         "zzzzzzzzzzzzzz": "repeats itself",
         "abcdefghijklmnop": "repeats itself",
         "passwordpassword": "most common passwords",
         "123456789012": "most common passwords",
         "Robin-Tapioca-1": "your name or tapiOca's",
+        "robin2024!": "your name or tapiOca's",
     }
     for password, why in refused.items():
         made = pat.post("/api/access/users", json={"name": "Robin", "password": password})
         assert made.status_code == 400 and why in made.json()["detail"], password
-    for name, password in (("Robin", "purple elephant dance"), ("Lee", "Xk7-pR2!qL9#")):
+    for name, password in (("Robin", "purple elephant dance"), ("Lee", "Xk7-pR2!qL9#"), ("Ana", "kq7-mz2w")):
         made = pat.post("/api/access/users", json={"name": name, "password": password})
         assert made.status_code == 201, (password, made.text)
     # The same when someone changes their own.
     mine = pat.post(
-        "/api/access/me/password", json={"current": PAT["password"], "password": "pat1234567"}
+        "/api/access/me/password", json={"current": PAT["password"], "password": "pat1234"}
     )
-    assert mine.status_code == 400 and "12 characters" in mine.json()["detail"]
+    assert mine.status_code == 400 and "8 characters" in mine.json()["detail"]
 
 
 def test_changing_your_own_pin_is_an_admins_choice_too(pat, app):

@@ -122,11 +122,12 @@ PICKED_MS = 24 * 3600_000  # a sign-in from a linked device's picker lasts this 
 # (1.36.2, the owner, October 14: "Password strength needs to be industry
 # standard.") As NIST's digital identity guidelines (SP 800-63B) and OWASP
 # advise: length, not rules about symbols (NIST asks for 15 characters where a
-# password is the only way to sign in; 12 is tapiOca's for now, the owner's
-# call, open since October 14); no common passwords (a list kept in
+# password is the only way to sign in; 8 is tapiOca's, the owner's call,
+# October 14, 1.36.4: 12 in 1.36.2 and 1.36.3); no common passwords (a list kept in
 # tapiOca: nothing is sent anywhere to check one); nothing built from the
 # person's name or tapiOca's; any characters, spaces too.
-PASSWORD_MIN, PASSWORD_MAX = 12, 200
+PASSWORD_MIN, PASSWORD_MAX = 8, 200
+NAMED_REST = 6  # (letters and digits left, at least, with the name or tapiOca's taken out)
 COMMON_PASSWORDS = Path(__file__).parent / "assets" / "passwords" / "common.txt"
 PASSWORD_ADVICE = "A few words together work well."
 NAME = re.compile(r"[\w .@-]{1,40}")
@@ -1178,11 +1179,14 @@ def _check_password(password: str, name: str = "") -> None:
         raise ValueError(f"That password repeats itself too much. {PASSWORD_ADVICE}")
     if low in _common() or low.strip() in _common():
         raise ValueError(f"That's one of the most common passwords. {PASSWORD_ADVICE}")
+    # (Built from the name or tapiOca's: with them taken out, fewer than NAMED_REST letters
+    # and digits are left. Only where one of them is in it: 1.36.4, when the minimum became
+    # 8, "kq7-mz2w" was turned away as built from a name it doesn't have.)
     rest = low
     for word in (name.casefold().strip(), "tapioca", "stationplay"):
         if len(word) >= 3:
             rest = rest.replace(word, "")
-    if sum(c.isalnum() for c in rest) < 8:
+    if rest != low and sum(c.isalnum() for c in rest) < NAMED_REST:
         raise ValueError("Choose a password that isn't built from your name or tapiOca's.")
 
 

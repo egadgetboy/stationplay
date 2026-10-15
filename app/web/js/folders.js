@@ -1,4 +1,4 @@
-// Your own folders: folder libraries (see folders.py on the server), on
+// Folders tapiOca reads itself: folder libraries (see folders.py on the server), on
 // the Setup tab. Shows or movies from folders in the media folder,
 // with or without Plex, for stations and for Media alike.
 let foldersShown = null;
@@ -35,7 +35,7 @@ function folderLibraryState(lib) {
 function renderFolderLibraries(got) {
   const panel = $('#foldersPanel');
   if (!got.libraries.length) {
-    panel.replaceChildren(h('p', { class: 'muted empty' }, 'None yet. Add one to use your own folders, with or without Plex.'));
+    panel.replaceChildren(h('p', { class: 'muted empty' }, 'None yet. Add one for tapiOca to read itself, with or without Plex.'));
     return;
   }
   const what = l => l.kind === 'show' ? `${plural(l.shows, 'show')}, ${plural(l.episodes, 'episode')}` : plural(l.movies, 'movie');

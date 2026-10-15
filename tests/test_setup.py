@@ -138,10 +138,10 @@ def test_the_checks_when_plex_isnt_set_up(tmp_path):
     assert plex["plex"]["state"] == "bad"
     assert plex["plex"]["lines"][0] == (
         "tapiOca has nothing to play yet: it isn’t connected to Plex, and you haven’t "
-        "added a Media folder of your own."
+        "added a Media folder for it to read itself."
     )
     assert any("PLEX_URL and PLEX_TOKEN" in line for line in plex["plex"]["lines"])
-    assert any("Your own folders" in line for line in plex["plex"]["lines"])
+    assert any("Folders tapiOca reads itself" in line for line in plex["plex"]["lines"])
     assert plex["plexFiles"]["state"] == plex["dvr"]["state"] == "wait"
 
 
@@ -249,11 +249,11 @@ def test_the_media_folder_check_reads_the_folder_itself(tmp_path):
     own = setup.folders_check(
         [(nowhere, setup.look_at_folder(nowhere))], nowhere, plex=False, own=True
     )
-    assert own.lines[-1] == "Until then, tapiOca can’t read your own Media folders."
+    assert own.lines[-1] == "Until then, tapiOca can’t reach its own Media folders."
     both = setup.folders_check(
         [(nowhere, setup.look_at_folder(nowhere))], nowhere, plex=True, own=True
     )
-    assert both.lines[-1].startswith("Until then, tapiOca can’t read your own Media folders, and ")
+    assert both.lines[-1].startswith("Until then, tapiOca can’t reach its own Media folders, and ")
     neither = setup.folders_check(
         [(nowhere, setup.look_at_folder(nowhere))], nowhere, plex=False, own=False
     )
@@ -296,7 +296,7 @@ def test_the_media_folder_check_reads_the_folder_itself(tmp_path):
     # (Without Plex, nothing streams from it then either: the third audit.)
     for problem in (None, setup.Folder("error", [], 0, error="Stale file handle")):
         slow = setup.folders_check([(str(media), problem)], str(media), plex=False, own=True)
-        assert slow.lines[-1] == "Until then, tapiOca can’t read your own Media folders."
+        assert slow.lines[-1] == "Until then, tapiOca can’t reach its own Media folders."
         assert not any("Plex" in line for line in slow.lines), slow.lines
     # All's well: the Plex step's check is mentioned only where Plex is used.
     fine = setup.folders_check([(str(media), looked)], str(media), plex=False, own=True)
@@ -395,8 +395,8 @@ def test_media_in_the_apps_without_plex(tmp_path):
     with TestClient(app) as c:
         got = c.get("/api/app-libraries").json()
     assert got["problem"] == (
-        "There are no Media folders to share yet. Add one of your own on the Add to "
-        "Plex tab, under Your own folders, or connect Plex (the Tuner step of the setup "
+        "There are no Media folders to share yet. Add one on the Setup tab, under "
+        "Folders tapiOca reads itself, or connect Plex (the Tuner step of the setup "
         "says how)."
     )
 
@@ -668,7 +668,7 @@ def test_where_the_media_looks_to_be():
     )  # fmt: skip
     assert got.lines[1:3] == [
         "Your media looks to be at /mnt/media inside tapiOca now.",
-        "Your own Media folders are read from /media, so mount your media there again: in "
+        "tapiOca reads its Media folders from /media, so mount your media there again: in "
         "tapiOca’s app settings (its YAML or Compose file), its line under volumes must end in "
         ":/media or :/media:ro. Then restart tapiOca.",
     ]

@@ -428,6 +428,16 @@ def quality(session: ondemand.PlaySession) -> tuple[int, int, str]:
     return m.height, m.bitrate_kbps or 0, words
 
 
+def sends_kbps(session: ondemand.PlaySession) -> int:
+    """The kilobits a second a session sends over the connection: a converted
+    copy's as it's made, whatever its file holds (1.36.4's second audit: an
+    8 Mbps copy of a 2.6 Mbps file sends 8); otherwise its file's."""
+    copy = session.copy
+    if copy is not None and not copy.plan.copies_picture:
+        return copy.plan.kbps
+    return session.media.bitrate_kbps or 0
+
+
 def stepped_down(before: ondemand.PlaySession, after: ondemand.PlaySession) -> bool:
     """Whether `after` sends less than `before` did: a smaller picture, or
     the same with clearly less detail."""
@@ -1144,11 +1154,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         fits = f" (about {playing.mbps(body.maxKbps)})" if body.maxKbps else ""
         # (Every app sends the connection it measured, `maxKbps`, with every
         # play: it's why only when the app asked for a copy to fit it, or
-        # what played before didn't fit it.)
+        # what played before didn't fit it, by what it sent: sends_kbps.)
         if body.convert:
             why = "the app asked for a converted copy"
         elif body.fit or (
-            body.maxKbps and quality(before)[1] * ondemand.FIT_HEADROOM > body.maxKbps
+            body.maxKbps and sends_kbps(before) * ondemand.FIT_HEADROOM > body.maxKbps
         ):
             why = f"to fit its connection{fits}"
         elif cap and any(ondemand.over_cap(m, cap) for m in after.entry.media):
@@ -1965,8 +1975,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         problem = None
         if not ctx.library.configured:
             problem = (
-                "There are no Media folders to share yet. Add one of your own on the Add to "
-                "Plex tab, under Your own folders, or connect Plex (the Tuner step of the setup "
+                "There are no Media folders to share yet. Add one on the Setup tab, under "
+                "Folders tapiOca reads itself, or connect Plex (the Tuner step of the setup "
                 "says how)."
             )
         else:

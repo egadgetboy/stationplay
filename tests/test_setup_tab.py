@@ -99,10 +99,10 @@ def test_skipping_intros_says_what_your_own_folders_get():
     tapiOca doesn't use Plex."""
     stations = (JS.parent / "stations.js").read_text(encoding="utf-8")
     editor = (JS.parent / "editor.js").read_text(encoding="utf-8")
-    assert "Programs from your own Media folders play in full." in stations
+    assert "Programs from Media folders tapiOca reads itself play in full." in stations
     assert ": !plexUsed()" in stations  # (core.js: the one place that says)
     assert (
-        "Programs Plex hasn’t marked, and those in your own Media folders, play in full." in editor
+        "Programs Plex hasn’t marked, and those in Media folders tapiOca reads itself, play in full." in editor
     )
     # (And an update that waits for review says what's gone, wherever it was.)
     assert "`Plex lost ${plural(p.removed" not in stations

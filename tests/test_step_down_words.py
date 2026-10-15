@@ -89,3 +89,46 @@ def test_the_connection_is_why_only_when_it_is(app, caplog):
             "Tia's tapiOca app at home (192.168.1.50) switched A Film (2000) to a smaller version, "
             "from 1080p at 8 Mbps to 720p at 4 Mbps: the app asked for it"
         ]
+
+
+@pytest.fixture
+def copied_film(tmp_path):
+    """A 1080p film at 2.6 Mbps with a picture subtitle (drawn in, so it plays as an 8 Mbps
+    converted copy), and its 720p version at 4 Mbps."""
+    fp = LibraryPlex()
+    fp.add_section("2", "Movies", "movie")
+    fp.add_movie("300", "A Film", "/x/film.mkv", 90 * 60_000, section="2")
+    fp.describe("300")
+    fp.media["300"]["bitrate"] = 2600
+    fp.streams["300"].append(
+        {"id": 3005, "streamType": 3, "codec": "pgs", "language": "English",
+         "languageCode": "eng", "index": 2}
+    )  # fmt: skip
+    fp.add_version("300", 1280, 720, bitrate=4000)
+    fp.files["300"] = b"a program, as it is" * 100
+    settings = Settings(plex_url="http://plex.test", plex_token="token", data_dir=tmp_path / "d")
+    app = create_app(settings, PlexClient("http://plex.test", "token", transport=fp.transport()))
+    app.state.ctx.play_transport = fp.transport()
+    return app
+
+
+def test_a_step_down_from_a_copy_says_the_connection_when_its_why(copied_film, caplog):
+    """1.36.4's second audit, with the owner's yes (October 14): a converted copy sends what
+    it's made at (8 Mbps here), whatever its file holds (2.6 Mbps). Stepping down from it
+    on a 6 Mbps connection is to fit the connection, as 1.36.3 said; the handoff's fix,
+    taking the copy as its file's 2.6 Mbps, said "the app asked for it"."""
+    caplog.set_level(logging.INFO)
+    with TestClient(copied_film) as home:
+        home.post("/api/access/users", json=TIA)
+        home.put("/api/app-libraries", json={"libraries": ["2"]})
+        tia = bearer(home, TIA)
+        drawn = home.post("/api/internal/play", headers=tia, json={
+            "key": "300", "device": TV, "subtitle": "3005", "maxKbps": 6_000})  # fmt: skip
+        assert drawn.status_code == 200 and drawn.json()["method"] == "convert", drawn.text
+        caplog.clear()
+        smaller = home.post("/api/internal/play", headers=tia, json={
+            "key": "300", "device": TV, "version": "30001", "maxKbps": 6_000})  # fmt: skip
+        assert smaller.status_code == 200, smaller.text
+        [line] = [m for m in said(caplog) if " switched " in m]
+        assert " to a smaller version, from 1080p H.264 at 8 Mbps " in line, line
+        assert line.endswith(": to fit its connection (about 6 Mbps)"), line
