@@ -45,7 +45,12 @@ def test_the_log_is_searched_through_all_it_keeps(tmp_path, caplog):
         assert len(found) == 2
         warned = c.get(f"/api/logs?q={tag}&levels=WARNING").json()["entries"]
         assert [e["level"] for e in warned] == ["WARNING"]
-        assert c.get("/api/logs?q=" + "x" * 101).status_code == 422
+        # (Longer than 100 characters: a plain sentence, as other addresses
+        # say what's wrong; the cold audit, 1.37.0. FastAPI's list before.)
+        long = c.get("/api/logs?q=" + "x" * 101)
+        assert long.status_code == 400
+        assert long.json() == {"detail": "Search for 100 characters or fewer."}
+        assert c.get("/api/logs?q=" + "x" * 100).status_code == 200
 
 
 def test_the_access_log_is_searched_too(tmp_path):

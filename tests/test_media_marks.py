@@ -52,11 +52,16 @@ def groups(entries: list[Entry], sort: str, now: int) -> list[tuple[int, str, st
 
 
 def well_formed(found: list[dict], total: int) -> None:
-    """Every sort's: the first at 0, each later, no group twice, all within total."""
+    """Every sort's: the first at 0, each later, no group twice, all within
+    total, and each group's count (to the next start, or total) at least one,
+    adding up to total."""
     starts = [m["start"] for m in found]
     assert not found or starts[0] == 0
     assert starts == sorted(set(starts)) and all(s < total for s in starts)
     assert len({(m["kind"], m["value"]) for m in found}) == len(found)
+    ends = [*starts[1:], total] if starts else []
+    counts = [b - a for a, b in zip(starts, ends, strict=True)]
+    assert all(n >= 1 for n in counts) and sum(counts) == (total if found else 0)
 
 
 def test_by_title_the_letters(chicago):
@@ -160,3 +165,85 @@ def test_from_the_same_list_as_total_after_viewing_levels(app):  # noqa: F811
         admin.post("/api/internal/progress", json={"key": "300", "watched": True})
         left = admin.get("/api/internal/libraries/2?unwatched=1").json()
         assert left["total"] == 0 and left["marks"] == []
+
+
+def test_styled_letters_are_their_plain_letters_each_mark_once(chicago):
+    # (The cold audit, 1.37.0: a styled letter, a mathematical bold Z or a squared A,
+    # came out as a capital, sorted before every plain one, and made a second Z mark.)
+    films = [movie("1", "\U0001d419ebra"), movie("2", "Zoo"), movie("3", "Apple"),
+             movie("4", "\U0001f130rcade"), movie("5", "\uff22oat")]  # fmt: skip
+    listed = ondemand.sorted_by(films, "title")
+    found = ondemand.marks(listed, "title", ms("2026-10-14 12:00"))
+    assert [(m["start"], m["value"]) for m in found] == [(0, "A"), (2, "B"), (3, "Z")]
+    assert [(m["start"], m["value"]) for m in found] == [
+        (x["start"], x["letter"]) for x in ondemand.letters(listed)
+    ]
+    well_formed(found, len(films))
+
+
+def test_release_dates_only_with_a_plain_four_digit_year(chicago):
+    # (The cold audit, 1.37.0: a date in other digits counted in its decade
+    # but sorted after 2026, so the 2010s came twice; a year under 1000
+    # sorted first, as text.)
+    now = ms("2026-10-14 12:00")
+    films = [movie("1", "A", released="\u0662\u0660\u0661\u0665-01-01"),
+             movie("2", "B", released="2022-01-01"), movie("3", "C", released="2015-01-01"),
+             movie("4", "D", year=999), movie("5", "E", year=1999, released="Unknown")]  # fmt: skip
+    assert [e.key for e in ondemand.sorted_by(films, "released")] == ["2", "3", "5", "4", "1"]
+    assert groups(films, "released", now) == [
+        (0, "decade", "2020"), (1, "decade", "2010"), (2, "decade", "1990"),
+        (3, "decade", "990"), (4, "undated", ""),
+    ]  # fmt: skip
+    well_formed(ondemand.marks(ondemand.sorted_by(films, "released"), "released", now), 5)
+
+
+@pytest.fixture
+def movies(plex):  # noqa: F811
+    """Picnic (PG, 2000) and four more: genres, ratings and years to narrow by."""
+    for key, title, year, genre, rating in (
+        ("301", "Apple Cart", 1985, "Comedy", "PG"), ("302", "Bandit", 1999, "Drama", "R"),
+        ("303", "Cobalt", 2021, "Comedy", "R"), ("304", "Delta", 2015, "Drama", "PG"),
+    ):  # fmt: skip
+        plex.add_movie(key, title, f"/m/{key}.mkv", 90 * 60_000, year=year, section="2",
+                       genres=[genre], contentRating=[rating])  # fmt: skip
+    return plex
+
+
+def test_narrowed_by_genre_unwatched_and_a_level_for_every_sort(app, movies):  # noqa: F811
+    # (The cold audit, 1.37.0: what the handoff's tests ask for, every sort.)
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        kit = admin.post("/api/access/users", json={**KIT, "role": "user"}).json()
+        level = kid_level(admin)
+        assert admin.put(f"/api/access/users/{kit['id']}/viewing",
+                         json={"level": level}).status_code == 200  # fmt: skip
+        admin.portal.call(admin.app.state.ctx.titles.filled)
+        admin.put("/api/app-libraries", json={"libraries": ["1", "2"]})
+
+        def got(client: TestClient, query: str, **kw) -> tuple[int, list[tuple]]:
+            body = client.get(f"/api/internal/libraries/2?{query}", **kw).json()
+            well_formed(body["marks"], body["total"])
+            return body["total"], [(m["start"], m["kind"], m["value"]) for m in body["marks"]]
+
+        assert got(admin, "sort=released") == (5, [
+            (0, "decade", "2020"), (1, "decade", "2010"), (2, "decade", "2000"),
+            (3, "decade", "1990"), (4, "decade", "1980")])  # fmt: skip
+        assert got(admin, "sort=released&genre=Comedy") == (2, [
+            (0, "decade", "2020"), (1, "decade", "1980")])  # fmt: skip
+        assert got(admin, "sort=title&genre=Drama") == (2, [
+            (0, "letter", "B"), (1, "letter", "D")])  # fmt: skip
+        # Unwatched: what's left, every sort.
+        admin.post("/api/internal/progress", json={"key": "304", "watched": True})
+        assert got(admin, "sort=released&unwatched=1") == (4, [
+            (0, "decade", "2020"), (1, "decade", "2000"), (2, "decade", "1990"),
+            (3, "decade", "1980")])  # fmt: skip
+        total, marks = got(admin, "sort=added&unwatched=1")
+        assert total == 4 and marks[0][0] == 0
+        # A Kid never sees the R-rated two, in any sort.
+        as_kit = sign_in_app(app, KIT)
+        phone = TestClient(app)
+        assert got(phone, "sort=released", headers=as_kit) == (3, [
+            (0, "decade", "2010"), (1, "decade", "2000"), (2, "decade", "1980")])  # fmt: skip
+        assert got(phone, "sort=title", headers=as_kit) == (3, [
+            (0, "letter", "A"), (1, "letter", "D"), (2, "letter", "P")])  # fmt: skip
+        assert got(phone, "sort=added", headers=as_kit)[0] == 3

@@ -69,3 +69,25 @@ def test_at_most_shuffle_most(app, monkeypatch):  # noqa: F811
     with TestClient(app) as home:
         home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
         assert len(shuffled(home, "100").json()["items"]) == 2
+
+
+def test_only_a_show_and_only_from_a_shared_media_folder(app):  # noqa: F811
+    # (The cold audit, 1.37.0: an episode's key is refused, and a show in a
+    # Media folder that isn't shared is as though it weren't there.)
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["2"]})
+        assert shuffled(home, "100").status_code == 404
+        home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
+        assert shuffled(home, "201").status_code == 400  # (an episode)
+
+
+def test_unwatched_keeps_a_file_whose_other_episode_is_unwatched(app):  # noqa: F811
+    # (The cold audit, 1.37.0: 203 and 204 are one file. Marking one marks
+    # both, but one alone can be watched, as kept from before the two were
+    # one file. The file still has 204 to watch: it plays once, as 204.)
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
+        home.app.state.ctx.db.save_progress(0, "203", "100", 0, 22 * 60_000, True, 1)
+        left = shuffled(home, "100", unwatched=True).json()
+        keys = sorted(c["key"] for c in left["items"])
+        assert keys == ["201", "202", "204", "205", "206"], keys

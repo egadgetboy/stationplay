@@ -34,6 +34,7 @@ import colorsys
 import io
 import json
 import logging
+import re
 import socket
 import subprocess
 import sys
@@ -1271,6 +1272,63 @@ def top_people_names(page: Page, look: Look) -> None:
     page.wait_for_timeout(300)
 
 
+def log_search(page: Page, look: Look) -> None:
+    """(1.37.0, the owner: "There is no SEARCH field in Logs - needs one.")
+    The search box is with the log's switches, inside the page at every
+    width. A word from the log narrows it to the lines that have it, in any
+    case; a word that's nowhere in it says so. Cleared after."""
+    box = page.locator("#logFind")
+    look.expect("the log's search box shows", box.is_visible(), True)
+    outside = page.evaluate(
+        "() => { const r = document.querySelector('#logFind').getBoundingClientRect();"
+        " return r.left < 0 || r.right > document.documentElement.clientWidth; }"
+    )
+    look.expect("the log's search box inside the page", outside, False)
+    # (The cold audit, 1.37.0: the page's own rule for search boxes, full
+    # width, won over its 260, so it took a row of its own at every width.)
+    if (page.viewport_size or {}).get("width", 0) >= 768:
+        wide = page.evaluate(
+            "() => document.querySelector('#logFind').getBoundingClientRect().width"
+        )
+        look.expect("the log's search box at most 260 wide, beside the switches", wide <= 260, True)
+
+    def lines() -> list[str]:
+        return page.evaluate(
+            "() => [...document.querySelectorAll('#logList .logline .msg')].map(m => m.textContent)"
+        )
+
+    def searched(q: str) -> None:
+        box.fill(q)
+        page.wait_for_timeout(300 + 700)  # (searched once typing pauses: logs.js)
+
+    shown = lines()
+    # (A word some lines have and others don't, so the search visibly narrows.)
+    words = sorted(
+        {w for line in shown for w in re.findall(r"[A-Za-z]{5,}", line)},
+        key=lambda w: (sum(w.casefold() in line.casefold() for line in shown), w),
+    )
+    word = next(
+        (w for w in words if sum(w.casefold() in s.casefold() for s in shown) < len(shown)), None
+    )
+    if word is None:
+        look.expect("the log has words to search for", words, ["(some)"])
+        return
+    searched(word.upper())
+    found = lines()
+    look.expect(f"searching for {word.upper()!r} finds lines", bool(found), True)
+    look.expect(
+        f"every line found has {word!r}, in any case",
+        [line for line in found if word.casefold() not in line.casefold()],
+        [],
+    )
+    look("logs-searched")
+    searched("zzqx nowhere")
+    empty = page.locator("#logList").inner_text()
+    look.expect("a search that finds nothing says so", "Nothing in the log has" in empty, True)
+    searched("")
+    look.expect("cleared, the log is back", bool(lines()), True)
+
+
 def media_folder_switches(page: Page, look: Look, sp: Running) -> None:
     """(1.36.4, the owner: "Server just needs to know what folders it can
     see, and the option to toggle them on and off.") The Setup tab's Media
@@ -1870,6 +1928,7 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
         tab(page, "logs")
         page.wait_for_selector("#logList .logline")
         look("logs", full=True)
+        log_search(page, look)
         # The log: scrolled to its newest, at the bottom, so more is above.
         got = arrows(page, look, "the log", "#logList")
         if got:

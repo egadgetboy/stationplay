@@ -656,8 +656,11 @@ _LETTERS = str.maketrans(
 
 def folded(text: str) -> str:
     """Text as titles are compared and sorted: case and accents set aside
-    ("Élodie" is "elodie", "Æther Bay" is "aether bay")."""
-    apart = unicodedata.normalize("NFKD", text.casefold())
+    ("Élodie" is "elodie", "Æther Bay" is "aether bay"), and styled letters
+    as plain ones (a mathematical bold Z, or a fullwidth one, is "z": come
+    apart first, then folded, so none is left a capital: the cold audit,
+    1.37.0)."""
+    apart = unicodedata.normalize("NFKD", unicodedata.normalize("NFKD", text).casefold())
     return "".join(c for c in apart if not unicodedata.combining(c)).translate(_LETTERS)
 
 
@@ -686,7 +689,12 @@ def _sorted_as(e: Entry) -> str:
 def letter_of(e: Entry) -> str:
     """The letter a show or movie is listed under ("The Orbit Room" under
     O; "Élan" under E); "#" for a digit, or anything that isn't A to Z."""
-    first = _sorted_as(e)[:1].upper()
+    return _letter(_sorted_as(e))
+
+
+def _letter(text: str) -> str:
+    """The letter for a sort title as compared (see _sorted_as)."""
+    first = text[:1].upper()
     return first if "A" <= first <= "Z" else "#"
 
 
@@ -708,7 +716,9 @@ def title_order(e: Entry) -> tuple:
     letter or digit, case and accents aside, numbers as numbers; titles
     alike in order of their keys, so the order is always the same."""
     text = _sorted_as(e)
-    return (letter_of(e) != "#", _numbers_in_order(text), key_order(e.key))
+    letter = _letter(text)
+    # (Its letter too, so each letter's titles are always together.)
+    return (letter != "#", letter, _numbers_in_order(text), key_order(e.key))
 
 
 def sorted_by(entries: Iterable[Entry], sort: str) -> list[Entry]:
@@ -730,12 +740,14 @@ def sorted_by(entries: Iterable[Entry], sort: str) -> list[Entry]:
 
 def released_as(e: Entry) -> str:
     """When a show or movie came out, as it's sorted and grouped: its release
-    date if that starts with a four-digit year, else its year; "" for none.
-    (From 1.37.0, a date that doesn't start with a year, an NFO's free text
-    say, is as none, and sorts last: before, "Unknown" sorted before 2026.)"""
-    if re.match(r"\d{4}", e.released or ""):
+    date if that starts with a four-digit year (in the digits 0 to 9), else
+    its year (four digits: 999 is "0999", so it sorts as the year it is); ""
+    for none. (From 1.37.0, a date that doesn't start with a year, an NFO's
+    free text say, is as though it had no date: its year, or else none, last.
+    Before, "Unknown" sorted before 2026.)"""
+    if re.match(r"[0-9]{4}", e.released or ""):
         return e.released
-    return str(e.year) if e.year else ""
+    return f"{e.year:04d}" if e.year and 0 < e.year <= 9999 else ""
 
 
 WEEK_MS = 7 * 86_400_000  # (Recently added's first group: the last 7 days)

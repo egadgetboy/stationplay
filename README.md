@@ -447,7 +447,7 @@ Channels DVR and VLC accept the playlist address, `http://<server-ip>:3310/stati
 - **Secure sign-in.** On a TV, the app shows a short code. You enter it on tapiOca's page from your phone or computer, so you never type a password with a remote. The dash in the code fills in by itself as you type. On a phone or tablet, you can use your name and password instead. Every signed-in app appears under **Signed-in apps** on the **Access** tab, where an Admin can sign it out.
 - **Watching away from home.** When an Admin turns this on, the apps also work away from home, for stations and Media alike. They connect over HTTPS through the same reverse proxy that serves tapiOca's page (see [Reaching tapiOca from outside your home](#reaching-tapioca-from-outside-your-home)).
 - **Built for stability.** An Admin sets how many devices can watch at once, including how many away from home. tapiOca tests what your server and internet connection can handle and recommends limits. When a limit is reached, the app explains why and asks the viewer to try again later.
-- **Media.** Browse your shows and movies by title, genre, what's new or what you haven't watched. Jump to a letter, search, and pick up where you left off from the Resume row. Each title's page shows its cast and crew and titles like it. Skip an episode's intro and credits with one button, and choose subtitles and audio tracks.
+- **Media.** Browse your shows and movies by title, genre, what's new or what you haven't watched. Jump to a letter, search, and pick up where you left off from the Resume row. Each title's page shows its cast and crew and titles like it. Skip an episode's intro and credits with one button, and choose subtitles and audio tracks. From tapiOca 1.37.0, with the apps that use it, you can also shuffle a show, and jump through a folder by month or year added, or by decade. These are tapiOca's apps' own: Plex, Jellyfin and other apps on the tuner see only your stations.
 - **The best picture and sound.** Each device gets the best picture and sound it supports, including Dolby Vision and Dolby Atmos. A file is repackaged or converted only when a device can't play it directly.
 
 **Which tapiOca the apps need.** The apps need tapiOca 1.22.0 or newer. With an older version, the app says so: "The tapiOca at … is version …, but this app needs 1.22.0 or newer." For every feature, use the newest version:
@@ -460,6 +460,7 @@ Channels DVR and VLC accept the playlist address, `http://<server-ip>:3310/stati
 | 1.29.1 | A converted copy of a file the device can't play, and more detail on problems |
 | 1.30.0 | Report a problem |
 | 1.34.0 | Automatic subtitles |
+| 1.37.0 | Shuffle on a show's page (**Shuffle all**, or **Shuffle unwatched**), and jumping through a Media folder by letter, by month or year added, or by decade, as it's sorted |
 
 The apps read the stations and guide through [tapiOca's API](#tapiocas-api), like any other program. They sign in, test connections and browse Media through their own addresses, documented for the apps in [docs/internal-api.md](docs/internal-api.md).
 
@@ -1368,7 +1369,7 @@ Picture sizes and the number of tuners are set on the page. Versions before 1.14
 
 ## Troubleshooting
 
-Start with the **Logs** tab, which shows the newest 200 entries. Type in **Search the log** to find entries with those words, in any case, through everything tapiOca keeps (from 1.37.0). Check **Warnings** or **Errors** to filter, and use **Copy** to paste them into a message. `docker logs stationplay` (or the app's logs in TrueNAS) has everything.
+Start with the **Logs** tab, which shows the newest 200 entries. Type in **Search the log** to find entries with those words, in any case, through all the Logs tab keeps: its newest 500 lines, and with **Access** checked, the newest 2,000 sign-ins and changes to who can sign in (from 1.37.0). Check **Warnings** or **Errors** to filter, and use **Copy** to paste them into a message. `docker logs stationplay` (or the app's logs in TrueNAS) has everything.
 
 **What's playing.** The log names each station by its number and name ("station 2, Cartoon Classics") and describes what plays as it starts:
 

@@ -679,6 +679,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             entries = await seen_only(cat, viewer, entries)
         if unwatched:
             entries = unwatched_only(user_id, entries)
+        # (Where each group of the sort starts, for the apps' dial: 1.37.0. By
+        # title, its marks are the letters, as apps before it ask for them:
+        # one pass, not two.)
+        marks = ondemand.marks(entries, sort, int(time.time() * 1000))
         return {
             "key": key,
             "title": title,
@@ -687,9 +691,10 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "start": start,
             "items": cards(user_id, entries[start : start + size]),
             "genres": [g["title"] for g in genres],
-            "letters": ondemand.letters(entries) if sort == "title" else [],
-            # (Where each group of the sort starts, for the apps' dial: 1.37.0.)
-            "marks": ondemand.marks(entries, sort, int(time.time() * 1000)),
+            "letters": [{"letter": m["value"], "start": m["start"]} for m in marks]
+            if sort == "title"
+            else [],
+            "marks": marks,
         }
 
     @app.get("/api/internal/home")
@@ -901,17 +906,20 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             if e.kind != catalog.SHOW:
                 raise HTTPException(400, "That isn't a show")
             found = await seen_only(cat, viewer, await cat.episodes(e.key))
+        found = [x for x in found if x.season != 0]
+        if unwatched:
+            # (Before each file is taken once: a file with one episode
+            # watched and another not still has one to watch.)
+            done = ctx.db.progress_of(user_id, [x.key for x in found])
+            found = [x for x in found if not done.get(x.key, (0, False))[1]]
         files: set[str] = set()
         pool: list[Entry] = []
         for x in found:
-            if x.season == 0 or (x.file and x.file in files):
+            if x.file and x.file in files:
                 continue
             if x.file:
                 files.add(x.file)
             pool.append(x)
-        if unwatched:
-            done = ctx.db.progress_of(user_id, [x.key for x in pool])
-            pool = [x for x in pool if not done.get(x.key, (0, False))[1]]
         SHUFFLED.shuffle(pool)
         pool = pool[:SHUFFLE_MOST]
         return {
