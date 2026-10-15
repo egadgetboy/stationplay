@@ -837,7 +837,9 @@ def test_a_browser_its_person_signed_in_on_lists_them_for_their_pin(home):
         return {p["name"]: p for p in c.get("/api/access/me").json()["trusted"]["people"]}
 
     laptop = device_at(home, "192.168.1.70")
-    signed = laptop.post("/api/access/sign-in", json={"name": "Lee", "password": "harbor violet quill"})
+    signed = laptop.post(
+        "/api/access/sign-in", json={"name": "Lee", "password": "harbor violet quill"}
+    )
     assert signed.status_code == 200, signed.text
     # An hour without activity: signed out (the sign-in's cookie gone, the browser's kept).
     laptop.cookies.delete(access.COOKIE)
@@ -845,9 +847,15 @@ def test_a_browser_its_person_signed_in_on_lists_them_for_their_pin(home):
     # Another browser on the same network: not listed, and can't pick Lee.
     other = device_at(home, "192.168.1.71")
     assert "Lee" not in listed(other)
-    assert other.post("/api/access/trusted-sign-in", json={"id": lee, "pin": "4242"}).status_code == 404
+    assert (
+        other.post("/api/access/trusted-sign-in", json={"id": lee, "pin": "4242"}).status_code
+        == 404
+    )
     # Picked on the laptop: Lee's PIN signs Lee in; a wrong one doesn't.
-    assert laptop.post("/api/access/trusted-sign-in", json={"id": lee, "pin": "0000"}).status_code == 403
+    assert (
+        laptop.post("/api/access/trusted-sign-in", json={"id": lee, "pin": "0000"}).status_code
+        == 403
+    )
     picked = laptop.post("/api/access/trusted-sign-in", json={"id": lee, "pin": "4242"})
     assert picked.status_code == 200, picked.text
     assert laptop.get("/api/access/me").json()["user"]["name"] == "Lee"
