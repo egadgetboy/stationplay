@@ -400,6 +400,36 @@ def test_the_log_says_finished_when_it_played_to_its_end(app, caplog):
         assert any(" started " in line for line in said[1:]), said
 
 
+def test_finished_goes_by_the_version_playing(app, caplog):
+    """1.36.4's audit: Plex lists the film at its first version's length, and
+    a longer version plays. Stopped where the longer one isn't nearly done,
+    it's stopped (as its progress says: not watched), not finished."""
+    caplog.set_level(logging.INFO)
+    with TestClient(app) as home:
+        assert home.post("/api/access/users", json=PAT).status_code == 201
+        home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
+        den = app_signed_in(home, PAT, DEN)
+        ctx = app.state.ctx
+        got = home.post("/api/internal/play", json={"key": "300", "device": TV}, headers=den)
+        session = ctx.plays.get(got.json()["session"])
+        listed = session.entry.duration_ms
+        session.media = replace(
+            session.media, duration_ms=listed + 30 * 60_000
+        )  # (half an hour longer)
+        at = listed - 60_000  # (90% of the listed length, far from the end of what plays)
+        home.post(
+            "/api/internal/progress",
+            json={"key": "300", "positionMs": at, "session": session.id},
+            headers=den,
+        )
+        session.watched_s = 60 * 60
+        caplog.clear()
+        assert home.post(f"/play/{session.id}/leave").status_code == 204
+        assert lines(caplog) == [
+            f"Pat stopped Jaws (1975) at {playing.clock(at / 1000)} (watched 1 hr)"
+        ]
+
+
 def test_media_counts_as_its_watched_and_flicking_past_doesnt(app):
     with TestClient(app) as home:
         home.put("/api/app-libraries", json={"libraries": ["1", "2"]})

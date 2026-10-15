@@ -1398,7 +1398,7 @@ def waiting_media_step(context: Any, base: str, look: Look, sp: Running) -> None
     sp.call(waiting)
     page = context.new_page()
     to_media_step(page)
-    boxes = page.locator("#setupBody .playback input[type=checkbox]:not(#evenSound)")  # (folders only)
+    boxes = page.locator("#setupBody .playback input[type=checkbox]:not(#setupEvenSound)")  # (folders only)
     look.expect("the waiting Media step ticks every folder",
                 all(boxes.nth(n).is_checked() for n in range(boxes.count())) and boxes.count() > 0, True)  # fmt: skip
     look.expect("the waiting Media step says none are shared yet",
@@ -1421,6 +1421,25 @@ def waiting_media_step(context: Any, base: str, look: Look, sp: Running) -> None
             sp.ctx.db.set_meta(ondemand.META, chosen)
         shared.everything, shared._chosen, shared.waiting = everything, kept, was
 
+    sp.call(restore)
+    # (1.36.4) Every Media folder shared, those added later too: Even sound turned off in
+    # setup's step, and its words, tick its own box, and going on keeps every folder shared.
+    def everything_shared() -> None:
+        sp.ctx.db.set_metas({SETUP_ANSWERED: answered})  # (setup opens, at its Media step)
+        shared.everything, shared.waiting = True, False
+
+    sp.call(everything_shared)
+    page = context.new_page()
+    to_media_step(page)
+    page.locator("label[for=setupEvenSound]").click()
+    look.expect("Even sound's words in setup tick setup's own box",
+                page.locator("#setupEvenSound").is_checked(), False)  # fmt: skip
+    page.locator("#setupFoot .btn.primary").click()
+    page.wait_for_timeout(800)
+    look.expect("Even sound off in setup keeps every Media folder shared, those added later too",
+                sp.call(lambda: (shared.everything, shared.even_sound)), (True, False))  # fmt: skip
+    page.close()
+    sp.call(lambda: shared.save_even_sound(True))
     sp.call(restore)
 
 

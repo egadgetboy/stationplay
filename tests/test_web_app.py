@@ -88,7 +88,8 @@ def test_the_manifest_says_how_to_install_the_page(client):
 
 async def test_installing_needs_no_sign_in_at_home_or_from_the_internet(tmp_path):
     async with both_ports(tmp_path) as (home, internet):
-        wanted = ["/manifest.webmanifest", "/apple-touch-icon.png", *ICONS]
+        wanted = ["/manifest.webmanifest", "/apple-touch-icon.png", *ICONS,
+                  f"/apple-touch-icon.png?v={MARK}", *(f"{p}?v={MARK}" for p in ICONS)]  # fmt: skip
         # From the internet before there's a user, when only the sign-in page is shown.
         async with httpx.AsyncClient(headers=FROM_PAGE, base_url=internet) as outside:
             assert (await outside.get("/api/status")).status_code == 403
@@ -487,7 +488,8 @@ def test_every_file_the_page_loads_is_one_of_its_files():
 async def test_the_brands_icons_and_fonts_need_no_sign_in_at_home_or_from_the_internet(tmp_path):
     """(1.34.0) The favicons and the page's fonts load on the sign-in page
     too: from the internet before there's a user, and before signing in."""
-    wanted = [*FAVICONS, *FONTS]
+    # (And as the page asks for them, with the mark's version, 1.36.4.)
+    wanted = [*FAVICONS, *(f"{p}?v={MARK}" for p in FAVICONS), *FONTS]
     others = ["/fonts/SpaceGrotesk/OFL.txt", "/fonts/..%2findex.html", "/favicon.png"]
     async with both_ports(tmp_path) as (home, internet):
         async with httpx.AsyncClient(headers=FROM_PAGE, base_url=internet) as outside:

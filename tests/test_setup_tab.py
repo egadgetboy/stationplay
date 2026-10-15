@@ -207,4 +207,10 @@ def test_setup_offers_even_sound_where_media_in_the_apps_is_chosen():
     step = setup.split("async library(", 1)[1].split("\n  async ", 1)[0]
     assert "evenSoundField(got" in step and "evenSound: even.input.checked" in step
     assert apps.count("= evenSoundField(got") == 1  # (the Access tab panel, the one other)
-    assert "Stations always have even sound." in apps
+    assert "Episodes on your stations always have even sound." in apps
+    # (1.36.4's audit: setup's box had the Access tab's id, so its words could change the
+    # other box; and saving setup's step with only Even sound changed sent every folder,
+    # which stopped sharing Media folders added later. Even sound goes alone then.)
+    assert "evenSoundField(got, () => {}, 'setupEvenSound')" in step
+    assert "if (cant || (!fields.changed() && !got.waiting)) {" in step
+    assert "body: { evenSound: even.input.checked }" in step

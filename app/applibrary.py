@@ -1040,7 +1040,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         log said he stopped an episode that played to its end, as Up next
         went on to the next one); before that, it "stopped"."""
         at = session.position_ms
-        done = at is not None and ondemand.is_watched(at, session.entry)
+        # (By how long the version playing is, as its progress goes: 1.36.4's audit.)
+        length = ondemand.length_of(session.entry, session.media)
+        done = at is not None and ondemand.is_watched(at, session.entry, length)
         log.info(
             "%s %s %s%s%s (watched %s)",
             session.user or "Someone",
