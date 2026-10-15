@@ -2311,10 +2311,11 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             channel.order_mode,
             await ctx.updater.sets_as_aired(channel, sets, main=items),
         )
-        # Its files are checked straight away (the station's card shows how
-        # that's going), and the scanner looks out for new programs.
+        # What it airs in its first day is checked straight away (the station's
+        # card shows how that's going); the scanner checks the rest as new
+        # programs, and looks out for more.
         if jobs.CHECK_NEW_STATIONS:
-            jobs.start_check(ctx, channel.id)
+            jobs.start_check(ctx, channel.id, jobs.NEW_STATION_MS)
         ctx.scanner.wake()
         ctx.icon_cache.pop(body.number, None)
         return channel_or_404(channel.id)

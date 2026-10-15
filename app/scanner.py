@@ -1645,9 +1645,14 @@ class Scanner:
         due = self._due(programs, scans)
         due.sort(key=lambda p: p.key not in self._first)  # (a stable sort)
         first = [p for p in due if p.key in self._first or p.key in self.soon]
-        rest = [p for p in due if p not in first]
+        # (By key, in sets: each program's key is its own (see programs), and
+        # comparing whole programs in lists took minutes for a big new station:
+        # 1.37.1, the owner, October 15.)
+        first_keys = {p.key for p in first}
+        rest = [p for p in due if p.key not in first_keys]
         new = [p for p in rest if (r := scans.get(p.key)) is None or not r.quick_ms]
-        weekly = [p for p in rest if p not in new]
+        new_keys = {p.key for p in new}
+        weekly = [p for p in rest if p.key not in new_keys]
         media = await self._media_arrivals({p.key for p in programs}, scans)
         now = time.time()
         targets = [t for t in self._targets if t.wait_until <= now]

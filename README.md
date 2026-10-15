@@ -1027,7 +1027,7 @@ The checks wait in one line, in this order:
 4. **Weekly.** Every program on a station is quick-checked again once a week. This also catches files that went missing or were replaced. Media's files are checked when they arrive, and when someone has trouble with one.
 5. **Overnight deep scan.** Between 1 AM and 6 AM, files are decoded in full. To change the time or turn it off, use **Deep scan every night from** on the **Broken files** tab. The stations' programs go first, soonest to air first. Then come Media's files: what's in someone's Resume row, the next episode of a show someone is watching, then the rest, most recently added first. A file that hasn't had its quick check gets one first. The scan stops the moment anyone starts watching and continues later. Each file is deep-scanned once, and again only if it changes. A 45-minute episode usually takes a few minutes.
 
-**Check files** on a station card quick-checks all of its programs right away. A new station gets this automatically.
+**Check files** on a station card quick-checks all of its programs right away. A new station's first day is checked as soon as it's made. The rest are checked as the scanner reaches them, before they air when possible.
 
 **A movie in several files** has each of its files checked in order, by both the quick check and the deep scan. A problem in any of them takes the movie off the air, and its entry names the file.
 
