@@ -132,7 +132,7 @@ function renderTrusted() {
     h('p', { style: 'margin:0' }, 'Devices on a trusted network skip signing in. Add your own home network, one device, or your own VPN. Never add a guest network. Nothing is trusted until you add it.'),
     h('dl', { class: 'roles' },
       h('dt', {}, 'Who’s tuning in?'),
-      h('dd', {}, 'Each person picks themselves, and kids get their own limits. Anyone with a PIN is asked for it, and an Admin always is. It lists people shown on Every device at home, and on a device or browser someone signed in on with their password, them too. On this page, it asks Who’s signing in?'),
+      h('dd', {}, 'Each person picks themselves, and kids get their own limits. Anyone with a PIN is asked for it, and an Admin always is. It lists people shown on Every device at home. It also lists anyone who signed in with their password on that device or browser. On this page, it asks Who’s signing in?'),
       h('dt', {}, 'Signed in as a person'),
       h('dd', {}, 'The device is signed in as that person. For an Admin, only one device’s address.')),
     h('p', { class: 'hint', style: 'margin:0' }, 'Anyone can still sign in as someone else. Works in tapiOca’s apps (1.36.0 and later) and on this page. Plex, Jellyfin and other apps use Tuner access.'),
@@ -245,7 +245,7 @@ function trustedSignIn(info, idle = false) {
   }, h('span', { class: 'face', 'aria-hidden': 'true' }, (p.name[0] || '?').toUpperCase()),
     h('span', { class: 'who-name' }, p.name),
     p.pin || p.admin ? h('span', { class: 'who-note' }, p.pin ? 'PIN' : 'Password') : null))
-    : [h('p', { class: 'muted small', style: 'margin:0; flex-basis: 100%' }, 'No one is listed here yet. Sign in below.')]));
+    : [h('p', { class: 'muted small', style: 'margin:0; grid-column: 1 / -1' }, 'No one is listed here yet. Sign in below.')]));
 }
 // Someone picked: signed in, or asked for their PIN (or password).
 function trustedPick(p, button, password = false) {

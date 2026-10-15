@@ -323,6 +323,21 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     try:
                         await ctx.devices.check_pin(user, body.pin or "")
                     except devices.Refused as e:
+                        # (This browser's own person, not listed otherwise: wrong
+                        # PINs count against the browser too, as on the page's own
+                        # PIN form, so after BROWSER_PIN_TRIES only their password
+                        # will do there, which can't be waited out. The audit of
+                        # 1.37.0.)
+                        token = request.cookies.get(access.DEVICE_COOKIE) or ""
+                        theirs = own is not None and own.id == user.id and not listed(user)
+                        if e.status != 429 and theirs and ctx.access.pin_wrong_on(token):
+                            ctx.access.record(
+                                logging.WARNING,
+                                f"{access.BROWSER_PIN_TRIES} wrong PINs for {user.name} on a "
+                                f"browser at {access.where(request.scope)}: it needs the "
+                                "password now",
+                            )
+                            raise devices.Refused(PASSWORD_NOW) from None
                         if e.status != 429 and pin_wrong_here(here):
                             ctx.access.record(
                                 logging.WARNING,
