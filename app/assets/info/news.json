@@ -1,8 +1,8 @@
 {
-  "version": "1.36.2",
+  "version": "1.36.3",
   "new": [
-    "Easier to read, with your device's own font",
-    "INFO in the guide: 4-hour listings",
-    "Changes only from tapiOca's own page"
+    "Mark a whole show watched in tapiOca for Android",
+    "Resume starts 15 seconds back",
+    "Setup's Tuner step: the apps you watch in"
   ]
 }

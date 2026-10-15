@@ -1866,14 +1866,25 @@ class Database:
         watched: bool,
         now: int,
     ) -> None:
+        self.save_progress_many(
+            user_id, [(rating_key, show_key, position_ms, duration_ms, watched)], now
+        )
+
+    def save_progress_many(
+        self, user_id: int, programs: list[tuple[str, str | None, int, int, bool]], now: int
+    ) -> None:
+        """Each of `programs` (its key, its show's key, where it is, its
+        length and whether it's watched) saved for `user_id` in one
+        transaction: all of them, or none (a show or a season marked from a
+        menu at once, from 1.36.3)."""
         with self._lock, self._conn:
-            self._conn.execute(
+            self._conn.executemany(
                 "INSERT INTO progress (user_id, rating_key, show_key, position_ms, duration_ms, "
                 "watched, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(user_id, rating_key) DO UPDATE SET show_key = excluded.show_key, "
                 "position_ms = excluded.position_ms, duration_ms = excluded.duration_ms, "
                 "watched = excluded.watched, updated_ms = excluded.updated_ms",
-                (user_id, rating_key, show_key, position_ms, duration_ms, int(watched), now),
+                [(user_id, k, s, p, d, int(w), now) for k, s, p, d, w in programs],
             )
             # (The newest PROGRESS_KEPT of each person's are kept.)
             self._conn.execute(
@@ -1899,14 +1910,37 @@ class Database:
         return out
 
     def recent_progress(self, user_id: int, most: int) -> list[sqlite3.Row]:
-        """Someone's progress, newest first: rating_key, show_key,
-        position_ms, watched."""
+        """Someone's progress, newest first, one row for each title: a
+        movie's, and each show's newest (rating_key, show_key, position_ms,
+        watched). Not "unwatched" marks from a menu (at the start, not
+        watched), which say nothing of what's going. One row a title, so a
+        show marked watched all at once (1.36.3) can't crowd out the rest:
+        before, the newest `most` rows were read, and a whole show's marks
+        could be all of them (1.36.3's audit)."""
         with self._lock:
             return self._conn.execute(
-                "SELECT rating_key, show_key, position_ms, watched FROM progress "
-                "WHERE user_id = ? ORDER BY updated_ms DESC, rowid DESC LIMIT ?",
+                "SELECT rating_key, show_key, position_ms, watched FROM ("
+                "SELECT rating_key, show_key, position_ms, watched, updated_ms, rowid AS r, "
+                "ROW_NUMBER() OVER (PARTITION BY COALESCE(NULLIF(show_key, ''), '-' || rating_key) "
+                "ORDER BY updated_ms DESC, rowid DESC) AS n "
+                "FROM progress WHERE user_id = ? AND NOT (position_ms = 0 AND watched = 0)"
+                ") WHERE n = 1 ORDER BY updated_ms DESC, r DESC LIMIT ?",
                 (user_id, most),
             ).fetchall()
+
+    def forget_progress(self, user_id: int, keys: list[str]) -> None:
+        """Someone's progress in these programs forgotten, all in one
+        transaction: as never started (a show or a season marked unwatched
+        from a menu, 1.36.3; a row for each would only crowd out what's
+        kept: 1.36.3's audit)."""
+        with self._lock, self._conn:
+            for at in range(0, len(keys), 500):
+                batch = keys[at : at + 500]
+                marks = ",".join("?" * len(batch))
+                self._conn.execute(
+                    f"DELETE FROM progress WHERE user_id = ? AND rating_key IN ({marks})",
+                    (user_id, *batch),
+                )
 
     def recent_progress_of_show(self, user_id: int, show_key: str, most: int) -> list[sqlite3.Row]:
         """recent_progress, for one show's episodes."""

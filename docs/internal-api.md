@@ -1621,7 +1621,7 @@ is, and otherwise offer it. With none, say so plainly.
 | `chosen.subtitle` | string or null | The subtitle track to show: select it in the player (for a file of its own, add it from `subtitles[].url`), unless it's `drawnSubtitle`; null for none |
 | `chosen.subtitleWhy` | string | Why: "English subtitles, as you chose", "Forced English subtitles, for the parts in another language", "Subtitles are off" (from 1.29.1; "captions" before) |
 | `leave` | string | Where to `POST` when the player stops |
-| `resumeMs` | number | Where this person stopped last time (0: the start). Offer to resume there, or start over |
+| `resumeMs` | number | Where playing starts again: 15 seconds before where this person stopped (from 1.36.3; exactly there before), never before the start (0: the start). Offer to resume there, or start over |
 | `durationMs` | number or null | How long it is |
 | `bitrateKbps` | number or null | What the file (or a converted copy) needs, in kilobits a second: to tell, when playing keeps stopping to load, whether the connection is too slow for it (see `/api/internal/speed-test`) |
 | `version` | string or null | The version playing |
@@ -1718,6 +1718,30 @@ Or mark it from a menu: `{"key": "1234", "watched": true}` (or `false`).
 |---|---|---|
 | `positionMs` | number | Where it will start next time |
 | `watched` | boolean | Whether this person has watched it |
+
+## POST /api/internal/watched
+
+From 1.36.3. A whole show, or one of its seasons, marked watched or not
+from a menu, in one request:
+
+```json
+{"show": "1234", "season": 2, "watched": true}
+```
+
+Leave out `season` (or send `null`) for the whole show; `0` is Specials.
+Answered with `{"watched": true, "marked": 7}`, how many episodes it marked.
+
+- **Only what this person may see,** as for every address here. A show
+  that isn't shared, or that's hidden from them, is answered as though it
+  weren't there (404). A movie's or an episode's key is refused (400): mark
+  those with `POST /api/internal/progress`.
+- **All or none.** Every episode is marked together, or none is. Each
+  starts from the beginning next time, as when one is marked.
+- **Episodes in one file** with one marked ("S01E01-E02") are marked with it.
+- **At most 2,500 episodes** at once. More is refused (400): "That's too
+  many episodes to mark at once. Mark one season at a time."
+- **An older tapiOca** (before 1.36.3) doesn't have this address: mark each
+  episode with `POST /api/internal/progress` there.
 
 ## A card
 

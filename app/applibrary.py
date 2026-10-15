@@ -172,6 +172,22 @@ class ProgressReport(BaseModel):
     sequence: int | None = Field(default=None, ge=1, le=2**31)
 
 
+class ShowMarked(BaseModel):
+    """A whole show, or one of its seasons, marked watched or not from a
+    menu (from 1.36.3: POST /api/internal/watched)."""
+
+    show: str = Field(max_length=20)
+    season: int | None = Field(default=None, ge=0, le=10_000)
+    watched: bool
+
+
+# The most episodes marked at once. Half of what's kept for each person
+# (db.PROGRESS_KEPT), so one marking never pushes out what it marked. (Marked
+# watched, they count among the newest kept, as playing them would.)
+MARK_MOST = 2500
+TOO_MANY_TO_MARK = "That's too many episodes to mark at once."
+
+
 class WhenSlow(BaseModel):
     home: str | None = Field(default=None, max_length=10)
     away: str | None = Field(default=None, max_length=10)
@@ -1432,7 +1448,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         session.copy = converting.Copy(settings.ffmpeg_path, source, plan, folder, first=task,
                                        gpu=ctx.gpu, name=describe(e))  # fmt: skip
         session.copy.trouble = lambda at_s, why: trouble(session, at_s, why)
-        resume = ondemand.resume_at(ctx.db.progress_of(user_id, [e.key]).get(e.key))
+        resume = ondemand.resume_from(ctx.db.progress_of(user_id, [e.key]).get(e.key))
         session.start_s = (body.startMs if body.startMs is not None else resume) / 1000
         cant = ondemand.unplayable(media, dev)
         if sound is not None and sound.codec and sound.codec not in dev.audio:
@@ -1667,7 +1683,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "drawnSubtitle": None,
             "chosen": chosen(picked, sound, shown_for(picked, None, shows, copy=False)),
             "leave": f"{here}/leave",
-            "resumeMs": ondemand.resume_at(ctx.db.progress_of(user_id, [e.key]).get(e.key)),
+            "resumeMs": ondemand.resume_from(ctx.db.progress_of(user_id, [e.key]).get(e.key)),
             "durationMs": media.duration_ms or e.duration_ms,
             "bitrateKbps": media.bitrate_kbps,
             "version": media.id or None,
@@ -1741,6 +1757,40 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             ctx.db.save_progress(user_id, x.key, x.show_key, position, e.duration_ms or 0,
                                  watched, now)  # fmt: skip
         return {"positionMs": ondemand.resume_at((position, watched)), "watched": watched}
+
+    @app.post("/api/internal/watched")
+    async def watched(body: ShowMarked, request: Request):
+        """A whole show, or one season of it, marked watched or not from a
+        menu, at once (from 1.36.3; see docs/internal-api.md): the episodes
+        this person may see, all of them or none. Each starts from the
+        beginning next time, as when one is marked. Nothing goes to Plex."""
+        shared_here(request)
+        user_id, _ = person(request)
+        viewer = viewer_of(request)
+        async with asking(request):
+            e = await cat.entry(body.show)
+            if not cat.shared_library(e):
+                raise NotShared(e.key)
+            await must_see(cat, viewer, e)
+            if e.kind != catalog.SHOW:
+                raise HTTPException(400, "That isn't a show")
+            found = await seen_only(cat, viewer, await cat.episodes(e.key))
+        chosen = {x.key: x for x in found if body.season is None or x.season == body.season}
+        # (An episode in one file with others, "S01E01-E02": they go with it.)
+        files = {x.file for x in chosen.values() if x.file}
+        chosen.update({x.key: x for x in found if x.file and x.file in files})
+        if len(chosen) > MARK_MOST:
+            raise HTTPException(400, TOO_MANY_TO_MARK)
+        if body.watched:
+            ctx.db.save_progress_many(
+                user_id,
+                [(x.key, x.show_key, 0, x.duration_ms or 0, True) for x in chosen.values()],
+                int(time.time() * 1000),
+            )
+        else:
+            # (Unwatched: as never started, so no rows that crowd out what's kept.)
+            ctx.db.forget_progress(user_id, list(chosen))
+        return {"watched": body.watched, "marked": len(chosen)}
 
     # The play sessions' own addresses (a player can't sign in) ---------------
 
@@ -1881,7 +1931,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if not ctx.library.configured:
             problem = (
                 "There are no Media folders to share yet. Add one of your own on the Add to "
-                "Plex tab, under Your own folders, or connect Plex (the Plex step of the setup "
+                "Plex tab, under Your own folders, or connect Plex (the Tuner step of the setup "
                 "says how)."
             )
         else:

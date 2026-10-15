@@ -700,7 +700,9 @@ def test_progress_continue_watching_and_whats_next(app):
 
         assert home.get("/api/internal/home").json()["continue"] == []
         assert report("300", 30 * 60_000) == {"positionMs": 30 * 60_000, "watched": False}
-        assert play(home, "300").json()["resumeMs"] == 30 * 60_000
+        # (Playing again starts 15 seconds before where they stopped: the owner's
+        # change for 1.36.3, October 14. Before, it was exactly there, 30:00.)
+        assert play(home, "300").json()["resumeMs"] == 29 * 60_000 + 45_000
         # Into its credits: watched, and next is the following episode.
         assert report("201", 49 * 60_000) == {"positionMs": 0, "watched": True}
         going = home.get("/api/internal/home").json()["continue"]
@@ -1087,3 +1089,17 @@ def test_only_numbered_keys_go_to_plex_together():
     for wrong in ("/library/metadata/1,2/thumb", "/poster/1,2", "/library/metadata/1,../x"):
         with pytest.raises(plex_module.PlexError):
             plex_module._checked(wrong)
+
+
+def test_resume_starts_15_seconds_back_never_before_the_start():
+    # (The owner, October 14: "rewind 15 seconds and then play"; 1.36.3.)
+    assert ondemand.RESUME_BACK_MS == 15_000
+    assert ondemand.resume_from((30 * 60_000, False)) == 29 * 60_000 + 45_000
+    # (Never under a minute in, where stopping at once would start it over: 1.36.3's
+    # audit found 1:05 starting at 0:50, before this was released.)
+    assert ondemand.resume_from((65_000, False)) == 60_000
+    assert ondemand.resume_from((60_000, False)) == 60_000
+    assert ondemand.resume_from((80_000, False)) == 65_000
+    assert ondemand.resume_from((59_000, False)) == 0  # (barely started: from the start, as before)
+    assert ondemand.resume_from((0, True)) == 0  # (finished: from the start)
+    assert ondemand.resume_from(None) == 0

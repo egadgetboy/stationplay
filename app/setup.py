@@ -13,8 +13,9 @@ checks.
 
 The first step's checks look at the server itself: its media folder, video
 encoding, the clock and backups. None of them waits on Plex, which is
-checked in the Plex step: whether it answers, whether tapiOca finds the
-files Plex lists, and whether Plex has tapiOca as a DVR (1.34.1, the
+checked in the Tuner step (called Plex before 1.36.3, still "plex" here):
+whether it answers, whether tapiOca finds the files Plex lists, and
+whether Plex has tapiOca as a DVR (1.34.1, the
 owner: a new tapiOca said Plex was Not working on the first page, before
 there was any chance to connect it). Each gives a state ("good", "warn" for something to look at,
 "bad" for something that keeps tapiOca from working, "info" for
@@ -56,12 +57,80 @@ QUESTIONS: dict[str, int] = {
     "away": 1,  # tapiOca's apps away from home
     "library": 2,  # Media in tapiOca's apps (2: on to start, 1.34.1)
     "fileChecks": 1,  # the overnight deep scan
-    "plex": 1,  # adding tapiOca to Plex
+    "plex": 2,  # the Tuner step: where you watch, and how to add tapiOca there (2: 1.36.3)
 }
 # The questions the welcome before this one asked (until 1.22.3): someone who
 # saw it answered them. Its version "3" added which corner, so with an
 # earlier one, what new stations start with is asked again.
 WELCOME_ASKED = ("playback", "newStation", "signIn", "fileChecks", "plex")
+
+
+# Where you watch (1.36.3): the Tuner step's question, which apps an Admin
+# will watch stations in, each with its own steps on the page. It changes
+# only what the step shows, never what the tuner, playlist or guide give any
+# app ("Never limit Plex, Jellyfin or other clients"). Kept in one `meta`
+# row, as {"watchIn": [...]}: the row and shape 1.37.0's draft (uses.py)
+# reads too, so other keys in it are kept. No table changes.
+META_WATCH_IN = "uses"
+WATCH_IN = ("plex", "jellyfin", "emby", "kodi", "other", "tapioca")  # (as the page lists them)
+WATCH_IN_NAMES = {
+    "plex": "Plex", "jellyfin": "Jellyfin", "emby": "Emby", "kodi": "Kodi",
+    "other": "another app", "tapioca": "only tapiOca's own apps",
+}  # fmt: skip
+NO_WATCH_IN = "Choose at least one app, or Only tapiOca’s own apps."
+ONLY_TAPIOCA = "Choose Only tapiOca’s own apps by itself, or the other apps you’ll use."
+
+
+def _uses(db: Any) -> dict[str, Any]:
+    try:
+        got = json.loads(db.get_meta(META_WATCH_IN) or "{}")
+    except ValueError:
+        return {}
+    return got if isinstance(got, dict) else {}
+
+
+def _known_places(values: Any) -> list[str]:
+    """The known choices in `values`, in the page's order, without repeats."""
+    if not isinstance(values, list):
+        return []
+    return [p for p in WATCH_IN if p in values]
+
+
+def watch_in(db: Any) -> list[str] | None:
+    """Where an Admin said they'll watch; None until it's been saved (or if
+    it can't be read). Only known choices count, and "tapioca" (only
+    tapiOca's own apps) only on its own."""
+    places = _known_places(_uses(db).get("watchIn"))
+    if len(places) > 1:
+        places = [p for p in places if p != "tapioca"]
+    return places or None
+
+
+def save_watch_in(db: Any, values: list[str]) -> list[str]:
+    """Saves where an Admin will watch, keeping only known choices; what's
+    stored. ValueError, with the sentence to show, for none, or for only
+    tapiOca's own apps with others."""
+    places = _known_places(values)
+    if not places:
+        raise ValueError(NO_WATCH_IN)
+    if "tapioca" in places and len(places) > 1:
+        raise ValueError(ONLY_TAPIOCA)
+    kept = _uses(db)
+    kept["watchIn"] = places
+    db.set_meta(META_WATCH_IN, json.dumps(kept))
+    return places
+
+
+def suggested_watch_in(plex_set_up: bool, plex_seen: bool) -> list[str]:
+    """What the Tuner step ticks before it's been answered: Plex, if it's
+    set up (PLEX_URL) or has used the tuner (`plex_seen`: it downloaded the
+    guide, or has tapiOca as a DVR). Nothing is guessed beyond that."""
+    return ["plex"] if plex_set_up or plex_seen else []
+
+
+def said_watch_in(places: list[str] | None) -> str:
+    """Where an Admin watches, as the log says it: "Plex, Jellyfin"."""
+    return ", ".join(WATCH_IN_NAMES[p] for p in places or [])
 
 
 def answered(db: Any) -> dict[str, int]:
@@ -425,7 +494,7 @@ def folders_check(
             lines.append(f"tapiOca can read {path}, which holds {_holds(f)}.")
     if not fixes:
         if plex:
-            lines.append("The Plex step checks that tapiOca finds the files Plex lists.")
+            lines.append("The Tuner step checks that tapiOca finds the files Plex lists.")
         return Check("media", title, GOOD, lines)
     if "denied" in fixes:
         lines.append(

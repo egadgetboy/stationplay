@@ -8,3 +8,4 @@ Settings → Library  # Plex's own settings page, where its markers are turned o
 audio channels  # sound (5.1 and stereo), not stations
 tapiOca was called StationPlay until version 1.34.0  # the one line that gives the old name (README, PRIVACY.md)
 say "StationPlay" for "tapiOca"  # docs/internal-api.md: older apps' trouble, which problems.py still reads
+problem fetching channel mappings  # Plex's own error message, quoted in the setup's Tuner step and the README

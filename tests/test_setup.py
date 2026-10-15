@@ -225,7 +225,7 @@ def test_the_media_folder_check_reads_the_folder_itself(tmp_path):
     assert got.lines[0] == (
         f"tapiOca can read {media}, which holds Concerts, Kids, Movies and 2 other folders."
     )
-    assert got.lines[1] == "The Plex step checks that tapiOca finds the files Plex lists."
+    assert got.lines[1] == "The Tuner step checks that tapiOca finds the files Plex lists."
     # Nothing mounted: how to fix it, and streamed from Plex meanwhile. (Until
     # 1.35.0 it said "Mount your media folder at <MEDIA_DIR>", which sent the
     # owner, October 13, to his server's own path: MEDIA_DIR is where tapiOca
@@ -396,7 +396,7 @@ def test_media_in_the_apps_without_plex(tmp_path):
         got = c.get("/api/app-libraries").json()
     assert got["problem"] == (
         "There are no Media folders to share yet. Add one of your own on the Add to "
-        "Plex tab, under Your own folders, or connect Plex (the Plex step of the setup "
+        "Plex tab, under Your own folders, or connect Plex (the Tuner step of the setup "
         "says how)."
     )
 

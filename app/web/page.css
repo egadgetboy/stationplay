@@ -363,6 +363,9 @@ header.top {
 .setup-main { display: grid; gap: 14px; min-width: 0; }
 .setup-main .wstep { margin: 0; }
 .setup-checks { display: grid; gap: 14px; }
+/* The Tuner step: each app ticked, set off from the one before it (1.36.3). */
+.watch-in .checks-col { margin-top: 0; }
+.watch-app { border-top: 1px solid var(--line); padding-top: 14px; }
 .setup-check { display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 12px; align-items: start; }
 .setup-check > .dot { margin-top: 7px; }
 .setup-check .head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

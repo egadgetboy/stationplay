@@ -154,6 +154,7 @@ browsing rarely asks Plex for them.
 | `GET /art/{key}?kind=&w=` | A picture: `poster` (2:3), `backdrop` (16:9) or `thumb` (an episode's still) |
 | `POST /play` | Starts playing a program, and answers how and where |
 | `POST /progress` | Where someone is in a program, or marks it watched or not |
+| `POST /watched` | A whole show, or one season, marked watched or not at once (from 1.36.3) |
 
 ## Lists
 
@@ -635,6 +636,9 @@ progress (user_id, rating_key, show_key, position_ms, duration_ms,
   while someone watches it again.
 - **Under a minute.** Less than a minute in starts from the beginning next
   time.
+- **Resume starts 15 seconds back** (from 1.36.3): a play answer's
+  `resumeMs` is 15 seconds before where they stopped, so they pick up the
+  thread, in every app. Where they stopped is kept as it was.
 - **Up next** for a show is decided in one place (`ondemand.next_up`), the
   same for every app. It comes from the person's progress in the show,
   newest first, setting aside "not watched" marks from a menu:

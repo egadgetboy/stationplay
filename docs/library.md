@@ -181,7 +181,7 @@ Never a file's name or a path: a version is described by what it holds
 (picture, sound, subtitles, length), as Plex's are.
 
 **Without Plex.** With a Media folder of its own and no `PLEX_URL`,
-tapiOca's setup says Plex is optional and passes its Plex step; stations
+tapiOca's setup says Plex is optional and passes its Tuner step's Plex checks; stations
 play from the files, and the tuner works for Jellyfin and other apps as
 before. Plex's Live TV still needs Plex, and Plex Pass.
 
