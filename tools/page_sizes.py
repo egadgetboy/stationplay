@@ -1398,7 +1398,7 @@ def waiting_media_step(context: Any, base: str, look: Look, sp: Running) -> None
     sp.call(waiting)
     page = context.new_page()
     to_media_step(page)
-    boxes = page.locator("#setupBody .playback input[type=checkbox]")
+    boxes = page.locator("#setupBody .playback input[type=checkbox]:not(#evenSound)")  # (folders only)
     look.expect("the waiting Media step ticks every folder",
                 all(boxes.nth(n).is_checked() for n in range(boxes.count())) and boxes.count() > 0, True)  # fmt: skip
     look.expect("the waiting Media step says none are shared yet",
