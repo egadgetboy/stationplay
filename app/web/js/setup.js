@@ -625,7 +625,10 @@ const SETUP_PAGES = {
     const plexChecks = h('div', { class: 'playback' },
       hint('tapiOca works with your own Plex Media Server. These checks say whether tapiOca can reach Plex and read the files Plex lists, and whether Plex has added tapiOca.'),
       list,
-      h('div', { class: 'row-btns' }, again));
+      h('div', { class: 'row-btns' }, again),
+      // (Plex's terms go with Plex's checks, so they show whenever tapiOca uses Plex: with Plex
+      // unticked too. 1.36.3's audit.)
+      PERSONAL_USE());
     const plexSteps = h('div', { class: 'playback' },
       h('strong', { class: 'small' }, 'Adding tapiOca to Plex'),
       h('ol', { class: 'steps' },
@@ -637,8 +640,7 @@ const SETUP_PAGES = {
       hint('If Plex says “There was a problem fetching channel mappings,” reload Plex’s page and start again. Plex renames the tuner partway through setup, so it may still know tapiOca’s tuner from before.'),
       hint('Plex needs at least one station to add tapiOca, so a new tapiOca starts with INFO on station 99: the date and time, what’s new in tapiOca and tips for watching. It plays even before Plex is connected.'),
       plexAddresses,
-      hint('Watching in Plex needs Plex Pass on the account that owns your Plex server. You’ll find these addresses on the Setup tab too, under Tuner integration.'),
-      PERSONAL_USE());
+      hint('Watching in Plex needs Plex Pass on the account that owns your Plex server. You’ll find these addresses on the Setup tab too, under Tuner integration.'));
     // (Plex unticked: its checks, with a word on why they're here.)
     const plexOnly = hint('tapiOca gets your shows and movies from Plex, so Plex is checked here too.');
     const apps = h('div', { class: 'playback' });

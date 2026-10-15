@@ -14,7 +14,7 @@ from app.main import create_app
 from app.plex import PlexClient
 
 from .fakeplex_library import LibraryPlex
-from .test_who_sees_what import ADA, KIT, kid_level, sign_in_app
+from .test_who_sees_what import ADA, KIT, TV, kid_level, sign_in_app
 
 
 @pytest.fixture
@@ -117,3 +117,45 @@ def test_a_kid_cant_mark_a_show_above_their_level(app):
         assert allowed.json() == {"watched": True, "marked": 6}
         # Each person's own: Ada's are as they were.
         assert unwatched(admin)[0] == 6
+
+
+def test_a_whole_show_marked_watched_leaves_the_resume_row_as_it_was(app, plex, monkeypatch):
+    """1.36.3's audit: every episode marked got the newest time, and the
+    Resume row read only the newest rows, so marking a long show watched
+    emptied it. It reads one row for each title now."""
+    from app import ondemand
+
+    monkeypatch.setattr(ondemand, "CONTINUE_MOST", 1)  # (its rows looked through: 10)
+    for n in range(1, 13):
+        plex.add_episode(
+            f"6{n:02d}", "110", 2, n, f"Shift {n + 1}", f"/tv/n/2-{n}.mkv", 44 * 60_000
+        )
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
+        home.post("/api/internal/progress", json={"key": "300", "positionMs": 30 * 60_000})
+        assert [c["key"] for c in home.get("/api/internal/home").json()["continue"]] == ["300"]
+        assert mark(home, {"show": "110", "watched": True}).json()["marked"] == 13
+        assert [c["key"] for c in home.get("/api/internal/home").json()["continue"]] == ["300"]
+
+
+def test_marked_unwatched_leaves_no_rows_to_crowd_out_the_rest(app, monkeypatch):
+    """1.36.3's audit: marking unwatched wrote a row for each episode, which
+    counted among the newest kept and pushed out older places (and a
+    season's marks pushed a show's place out of Up next). Marked unwatched,
+    they're as never started now: no rows."""
+    monkeypatch.setattr(db, "PROGRESS_KEPT", 4)
+    with TestClient(app) as home:
+        home.put("/api/app-libraries", json={"libraries": ["1", "2"]})
+        home.post("/api/internal/progress", json={"key": "300", "positionMs": 30 * 60_000})
+        home.post("/api/internal/progress", json={"key": "202", "positionMs": 5 * 60_000})
+        assert mark(home, {"show": "100", "season": 2, "watched": False}).json()["marked"] == 4
+        assert play_start(home, "300") == 29 * 60_000 + 45_000  # (still where it was)
+        assert home.get("/api/internal/items/100").json()["next"]["key"] == "202"
+        rows = app.state.ctx.db.progress_of(0, ["201", "203", "204", "205", "206"])
+        assert rows == {}
+
+
+def play_start(client: TestClient, key: str) -> int:
+    got = client.post("/api/internal/play", json={"key": key, "device": TV})
+    assert got.status_code == 200, got.text
+    return got.json()["resumeMs"]

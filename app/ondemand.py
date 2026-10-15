@@ -1106,9 +1106,11 @@ RESUME_BACK_MS = 15_000
 
 def resume_from(row: tuple[int, bool] | None) -> int:
     """Where playing starts again (a play answer's resumeMs): RESUME_BACK_MS
-    before where they stopped (resume_at), never before the start."""
+    before where they stopped (resume_at), never before STARTED_MS, so
+    stopping again at once keeps their place (1.36.3's audit: from 1:05, it
+    started at 0:50, and under a minute starts over)."""
     at = resume_at(row)
-    return max(0, at - RESUME_BACK_MS) if at else 0
+    return max(STARTED_MS, at - RESUME_BACK_MS) if at else 0
 
 
 def progressed(

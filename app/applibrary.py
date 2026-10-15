@@ -182,9 +182,10 @@ class ShowMarked(BaseModel):
 
 
 # The most episodes marked at once. Half of what's kept for each person
-# (db.PROGRESS_KEPT), so marking never pushes out what it marked.
+# (db.PROGRESS_KEPT), so one marking never pushes out what it marked. (Marked
+# watched, they count among the newest kept, as playing them would.)
 MARK_MOST = 2500
-TOO_MANY_TO_MARK = "That's too many episodes to mark at once. Mark one season at a time."
+TOO_MANY_TO_MARK = "That's too many episodes to mark at once."
 
 
 class WhenSlow(BaseModel):
@@ -1780,11 +1781,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         chosen.update({x.key: x for x in found if x.file and x.file in files})
         if len(chosen) > MARK_MOST:
             raise HTTPException(400, TOO_MANY_TO_MARK)
-        ctx.db.save_progress_many(
-            user_id,
-            [(x.key, x.show_key, 0, x.duration_ms or 0, body.watched) for x in chosen.values()],
-            int(time.time() * 1000),
-        )
+        if body.watched:
+            ctx.db.save_progress_many(
+                user_id,
+                [(x.key, x.show_key, 0, x.duration_ms or 0, True) for x in chosen.values()],
+                int(time.time() * 1000),
+            )
+        else:
+            # (Unwatched: as never started, so no rows that crowd out what's kept.)
+            ctx.db.forget_progress(user_id, list(chosen))
         return {"watched": body.watched, "marked": len(chosen)}
 
     # The play sessions' own addresses (a player can't sign in) ---------------

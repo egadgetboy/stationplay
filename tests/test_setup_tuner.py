@@ -350,3 +350,13 @@ def test_the_step_is_called_tuner_and_asks_where_you_watch():
     assert "Plex is checked in the Tuner step, near the end." in script
     tab = (JS / "addtoplex.js").read_text(encoding="utf-8")
     assert "its Tuner step says what to change" in tab and "its Plex step" not in tab
+
+
+def test_plexs_terms_go_with_plexs_checks():
+    """1.36.3's audit: with Plex set up but only Jellyfin ticked, Plex's checks
+    showed without Plex's terms (CLAUDE.md: the setup's Plex step states
+    them). They're part of the checks now, shown whenever Plex is checked."""
+    script = (JS / "setup.js").read_text(encoding="utf-8")
+    checks = script[script.index("const plexChecks = ") :]
+    checks = checks[: checks.index(";\n")]
+    assert "PERSONAL_USE()" in checks

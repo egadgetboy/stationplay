@@ -1095,7 +1095,11 @@ def test_resume_starts_15_seconds_back_never_before_the_start():
     # (The owner, October 14: "rewind 15 seconds and then play"; 1.36.3.)
     assert ondemand.RESUME_BACK_MS == 15_000
     assert ondemand.resume_from((30 * 60_000, False)) == 29 * 60_000 + 45_000
-    assert ondemand.resume_from((60_000, False)) == 45_000  # (a minute in: just after the start)
+    # (Never under a minute in, where stopping at once would start it over: 1.36.3's
+    # audit found 1:05 starting at 0:50, before this was released.)
+    assert ondemand.resume_from((65_000, False)) == 60_000
+    assert ondemand.resume_from((60_000, False)) == 60_000
+    assert ondemand.resume_from((80_000, False)) == 65_000
     assert ondemand.resume_from((59_000, False)) == 0  # (barely started: from the start, as before)
     assert ondemand.resume_from((0, True)) == 0  # (finished: from the start)
     assert ondemand.resume_from(None) == 0
