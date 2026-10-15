@@ -1,8 +1,8 @@
 {
   "version": "1.37.0",
   "new": [
-    "Shuffle a show in tapiOca's apps",
-    "The apps jump through Media by date",
-    "Search the Logs"
+    "Search the Logs",
+    "Sign back in with your PIN at home",
+    "Long names fit when signing in"
   ]
 }
