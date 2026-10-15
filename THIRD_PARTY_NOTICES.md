@@ -100,8 +100,8 @@ never fetches a font from anywhere else.
 
 ## Common passwords
 
-`app/assets/passwords/common.txt` (from 1.36.2) holds the passwords of 12
-characters or more from the UK National Cyber Security Centre's list of the
+`app/assets/passwords/common.txt` (from 1.36.2) holds the passwords of 8
+characters or more (12 in 1.36.2 and 1.36.3) from the UK National Cyber Security Centre's list of the
 100,000 most used passwords (drawn from Have I Been Pwned), lowercased, as
 SecLists keeps it
 (<https://github.com/danielmiessler/SecLists>, `Passwords/Common-Credentials/100k-most-used-passwords-NCSC.txt`).

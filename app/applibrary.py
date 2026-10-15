@@ -328,6 +328,22 @@ def sound_of(media: Media, track: Track | None) -> str:
     )  # fmt: skip
 
 
+def drawn_words(track: Track, asked: bool, shows: frozenset[str]) -> str:
+    """Which subtitles were drawn into a copy, and why, for the log (1.36.4,
+    the owner: an episode was converted "with subtitles drawn in", and the
+    log didn't say why): "English SRT, chosen in the app: a copy can't carry
+    them" (`asked`: the app asked, as one does when they're chosen while a
+    copy plays); "French PGS, which this device can't show"."""
+    what = " ".join(x for x in (track.language, ondemand.label(track.codec)) if x)
+    if track.codec in shows:
+        return (
+            f"{what}, chosen in the app: a copy can't carry them"
+            if asked
+            else (f"{what}: a copy can't carry them")
+        )
+    return f"{what}, which this device can't show"
+
+
 def how_copied(
     plan: converting.Plan,
     cant: list[str],
@@ -335,6 +351,7 @@ def how_copied(
     encoder: Encoder,
     cap_kbps: int | None = None,
     asked: str | None = None,
+    drawn: str | None = None,
 ) -> str:
     """How a copy plays, for the log: "repackaged, its sound made AAC
     stereo, because this device can't play its sound's format (DTS)";
@@ -377,7 +394,7 @@ def how_copied(
     extras = [
         what
         for what, on in (
-            ("subtitles drawn in", plan.drawn is not None),
+            (f"subtitles drawn in{f' ({drawn})' if drawn else ''}", plan.drawn is not None),
             ("even sound", plan.even),
             ("night mode's sound", plan.night),
         )
@@ -394,16 +411,31 @@ def how_copied(
 
 def quality(session: ondemand.PlaySession) -> tuple[int, int, str]:
     """What a session sends, to compare with another: (its picture's
-    height, its kilobits a second, in words: "1080p at 12 Mbps")."""
+    height, its kilobits a second, in words: "1080p at 12 Mbps"). A
+    converted copy holds no more than the file it's made from, so it's
+    compared as no bigger than that file (an 8 Mbps copy of a 2.6 Mbps
+    file is a 2.6 Mbps picture), though it's said as made."""
     copy = session.copy
+    m = session.media
     if copy is not None and not copy.plan.copies_picture:
         plan = copy.plan
         words = f"{playing.size(plan.height)} H.264 at {playing.mbps(plan.kbps)}"
-        return plan.height, plan.kbps, words + f" on {playing.encoder_name(copy.encoder)}"
-    m = session.media
+        height = min(plan.height, m.height) if m.height else plan.height
+        kbps = min(plan.kbps, m.bitrate_kbps) if m.bitrate_kbps else plan.kbps
+        return height, kbps, words + f" on {playing.encoder_name(copy.encoder)}"
     named = m.size_label or "its picture"
     words = f"{named} at {playing.mbps(m.bitrate_kbps)}" if m.bitrate_kbps else named
     return m.height, m.bitrate_kbps or 0, words
+
+
+def sends_kbps(session: ondemand.PlaySession) -> int:
+    """The kilobits a second a session sends over the connection: a converted
+    copy's as it's made, whatever its file holds (1.36.4's second audit: an
+    8 Mbps copy of a 2.6 Mbps file sends 8); otherwise its file's."""
+    copy = session.copy
+    if copy is not None and not copy.plan.copies_picture:
+        return copy.plan.kbps
+    return session.media.bitrate_kbps or 0
 
 
 def stepped_down(before: ondemand.PlaySession, after: ondemand.PlaySession) -> bool:
@@ -1013,11 +1045,18 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     def said_stop(session: ondemand.PlaySession) -> None:
         """The log's line for something stopping in an app: who, what, where
-        they stopped, and for how long they watched."""
+        they stopped, and for how long they watched. Played into its credits,
+        or as far as counts as watched, it "finished" (1.36.4, the owner: the
+        log said he stopped an episode that played to its end, as Up next
+        went on to the next one); before that, it "stopped"."""
         at = session.position_ms
+        # (By how long the version playing is, as its progress goes: 1.36.4's audit.)
+        length = ondemand.length_of(session.entry, session.media)
+        done = at is not None and ondemand.is_watched(at, session.entry, length)
         log.info(
-            "%s stopped %s%s%s (watched %s)",
+            "%s %s %s%s%s (watched %s)",
             session.user or "Someone",
+            "finished" if done else "stopped",
             describe(session.entry),
             " away from home" if session.away else "",
             f" at {playing.clock(at / 1000)}" if at is not None else "",
@@ -1113,9 +1152,14 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             after.away, after.user, after.user_id or None, after.app, after.tag,
         )  # fmt: skip
         fits = f" (about {playing.mbps(body.maxKbps)})" if body.maxKbps else ""
+        # (Every app sends the connection it measured, `maxKbps`, with every
+        # play: it's why only when the app asked for a copy to fit it, or
+        # what played before didn't fit it, by what it sent: sends_kbps.)
         if body.convert:
             why = "the app asked for a converted copy"
-        elif body.fit or body.maxKbps:
+        elif body.fit or (
+            body.maxKbps and sends_kbps(before) * ondemand.FIT_HEADROOM > body.maxKbps
+        ):
             why = f"to fit its connection{fits}"
         elif cap and any(ondemand.over_cap(m, cap) for m in after.entry.media):
             why = f"to fit the {playing.mbps(cap)} allowed away from home"
@@ -1456,6 +1500,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         how = how_copied(
             plan, list(dict.fromkeys(cant)), smaller, session.copy.encoder,
             cap if capped else None, said_before(body, request) if body.convert else None,
+            drawn_words(shown, picked is None, shows) if shown is not None else None,
         )  # fmt: skip
         if not said_step_down(before, session, body, request, cap):
             said_start(session, sound, how, path is None)
@@ -1930,8 +1975,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         problem = None
         if not ctx.library.configured:
             problem = (
-                "There are no Media folders to share yet. Add one of your own on the Add to "
-                "Plex tab, under Your own folders, or connect Plex (the Tuner step of the setup "
+                "There are no Media folders to share yet. Add one on the Setup tab, under "
+                "Media folders, or connect Plex (the Tuner step of the setup "
                 "says how)."
             )
         else:

@@ -259,15 +259,15 @@ def plex_check(plex_state: dict[str, Any], plex_pass: bool | None, folders: int 
             )
         if folders:
             return Check("plex", title, GOOD, [
-                "tapiOca isn’t using Plex: your own Media folders are where its stations "
-                "and Media come from.",
+                "tapiOca isn’t using Plex: the Media folders it reads itself are where its "
+                "stations and Media come from.",
                 *to_connect,
             ])  # fmt: skip
         return Check("plex", title, BAD, [
             "tapiOca has nothing to play yet: it isn’t connected to Plex, and you haven’t "
-            "added a Media folder of your own.",
-            "Add one on the Setup tab, under Your own folders, to use your folders "
-            "without Plex.",
+            "added a Media folder for it to read itself.",
+            "Add one on the Setup tab, under Media folders, to use your folders without "
+            "Plex.",
             *to_connect,
         ])  # fmt: skip
     if not plex_state.get("ok"):
@@ -547,7 +547,7 @@ def _where_it_is(
         # back there, or they'd stay out of reach.)
         lines = [f"Your media looks to be at {there[0][0]} inside tapiOca now."] if there else []
         return [*lines, (
-            f"Your own Media folders are read from {media_dir}, so mount your media there again: "
+            f"tapiOca reads its Media folders from {media_dir}, so mount your media there again: "
             f"in {settings}, its line under volumes must end in :{media_dir} or :{media_dir}:ro. "
             f"{restart}"
         )]  # fmt: skip
@@ -617,11 +617,11 @@ def _meanwhile(plex: bool, own: bool) -> str:
     from_plex = "which is slower and puts more load on Plex."
     if own and plex:
         return (
-            "Until then, tapiOca can’t read your own Media folders, and streams Plex’s files "
+            "Until then, tapiOca can’t reach its own Media folders, and streams Plex’s files "
             f"from Plex where it can, {from_plex}"
         )
     if own:
-        return "Until then, tapiOca can’t read your own Media folders."
+        return "Until then, tapiOca can’t reach its own Media folders."
     if plex:
         return f"Until then, tapiOca streams your files from Plex where it can, {from_plex}"
     return (

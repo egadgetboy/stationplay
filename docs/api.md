@@ -134,7 +134,7 @@ Every station, in number order, with what's on now and next.
 | `stations[].colors.light` | string | A lighter background |
 | `stations[].colors.accent` | string | The accent |
 | `stations[].hls` | string | The station as HLS, to play: `/hls/<number>/index.m3u8` at home, and an address of the token's own from outside. At home, it's one of the token's own too while only listed devices may use the tuner, and for tapiOca's own apps always (from 1.32.0; see Away from home) |
-| `stations[].nightHls` | string | The same with night mode's sound (from 1.23.0): `/hls/<number>/night/index.m3u8` at home, or the token's own address, as for `hls`. Loud scenes are much quieter, voices a little quieter, and nothing is louder (from 1.32.0; before, everything was then turned up 8 dB); the picture is the same. It's made only while something plays it, from the same tuner. An app that leaves reports it at `.../night/leave` |
+| `stations[].nightHls` | string | The same with night mode's sound (from 1.23.0): `/hls/<number>/night/index.m3u8` at home, or the token's own address, as for `hls`. Loud scenes are much quieter, voices a little quieter, and nothing is louder (from 1.32.0; before, everything was then turned up 8 dB); rumble under 50 Hz is cut (from 1.36.4); the picture is the same. It's made only while something plays it, from the same tuner. An app that leaves reports it at `.../night/leave` |
 | `stations[].now` | program or null | What's on now (null before the station's first program) |
 | `stations[].next` | program or null | What's on next |
 

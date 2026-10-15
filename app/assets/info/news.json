@@ -1,8 +1,8 @@
 {
-  "version": "1.36.3",
+  "version": "1.36.4",
   "new": [
-    "Mark a whole show watched in tapiOca for Android",
-    "Resume starts 15 seconds back",
-    "Setup's Tuner step: the apps you watch in"
+    "INFO plays again",
+    "Night mode cuts deep rumble",
+    "Resume starts 15 seconds back"
   ]
 }

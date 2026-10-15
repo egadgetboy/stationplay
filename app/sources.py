@@ -19,6 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 from . import ffmpeg as ff
+from . import infostation
 from .catalog import Media
 from .config import Settings
 from .db import Item
@@ -105,6 +106,11 @@ async def find_file(
     while it's really in the media folder (one swapped since for a link to
     a file outside it is never read); for Plex's, the first of
     local_candidates that exists."""
+    if infostation.made_here(key):
+        # (INFO's own film, among tapiOca's files: its key, f0, looks like a Media
+        # folder's, but it never is one, so it's never looked for in the media folder.
+        # Before 1.36.4 it was, and INFO said "We'll be right back".)
+        return _made_here(file), False
     if not is_folder_key(key):
         return await find_first(local_candidates(settings, access, file), timeout)
     try:
@@ -114,6 +120,14 @@ async def find_file(
         return found, False
     except TimeoutError:
         return None, True
+
+
+def _made_here(path: str) -> Candidate | None:
+    """INFO's film, only where tapiOca keeps it (infostation.FILE)."""
+    real = os.path.realpath(path)
+    if real != os.path.realpath(infostation.FILE) or not os.path.isfile(real):
+        return None
+    return Candidate(real, "", "")
 
 
 def _own_file(media_dir: str, path: str) -> Candidate | None:
@@ -227,7 +241,7 @@ def _say_once_its_gone(item: Item) -> None:
     _said_gone.add(item.rating_key)
     if is_folder_key(item.rating_key):
         log.info(
-            "%s is no longer in your own Media folders under its key (it was removed, or "
+            "%s is no longer in the Media folders tapiOca reads itself under its key (it was removed, or "
             "found again under a new key); playing its old file until the station's next update",
             item.label,
         )
@@ -272,7 +286,7 @@ async def resolve_source(
             why = str(e) or f"{'it' if own else 'Plex'} didn't answer within {PLEX_LOOKUP_S}s"
             log.warning(
                 "%s for %s (%s) failed (%s); using the saved path",
-                "Looking in your own Media folders" if own else "Plex lookup",
+                "Looking in the Media folders tapiOca reads itself" if own else "Plex lookup",
                 item.rating_key,
                 item.label,
                 why,
@@ -379,8 +393,11 @@ async def readable(
     stuck from before isn't joined by another (see ShareCheck)."""
     if item.file_path:
         if check is not None:
-            # (One check of the share at a time: see ShareCheck.)
-            if is_folder_key(item.rating_key):
+            # (One check of the share at a time: see ShareCheck. INFO's film is
+            # tapiOca's own, never in the media folder: see find_file.)
+            if infostation.made_here(item.rating_key):
+                look = functools.partial(_made_here, item.file_path)
+            elif is_folder_key(item.rating_key):
                 look = functools.partial(_own_file, settings.media_dir, item.file_path)
             else:
                 look = functools.partial(

@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import struct
+import subprocess
 
 import httpx
 import pytest
@@ -28,6 +30,7 @@ from .test_security import PAT, both_ports
 ICONS = {"/icon-192.png": 192, "/icon-512.png": 512, "/icon-maskable-512.png": 512}
 # (1.34.0, tapiOca's brand) Its mark in a browser's tab, and the page's fonts.
 FAVICONS = {"/favicon.svg": "image/svg+xml", "/favicon.ico": "image/x-icon"}
+MARK = "2"  # (the icons' version: tapiOca's mark, 1.36.4)
 FONTS = [f"/fonts/{name}" for name in FONT_FILES]
 # The page's code: index.html, and its own styles and scripts.
 PAGE = "\n".join(
@@ -64,29 +67,31 @@ def test_the_manifest_says_how_to_install_the_page(client):
     assert got.headers["content-type"] == "application/manifest+json"
     assert got.headers["cache-control"] == "max-age=86400"
     manifest = got.json()
-    assert manifest["name"] == manifest["short_name"] == "tapiOca"
+    # (The owner, October 14, 1.36.4: "tapiOca Server", as the tab says; under its icon, tapiOca.)
+    assert (manifest["name"], manifest["short_name"]) == ("tapiOca Server", "tapiOca")
     assert manifest["start_url"] == manifest["scope"] == "/"
     assert manifest["display"] == "standalone"
     # The page's own background, as it is in dark (the window's color before the page is drawn).
     assert background("dark") == "#0a0a0a" and background("light") == "#ffffff"
     assert manifest["background_color"] == manifest["theme_color"] == background("dark")
     assert [(i["src"], i["sizes"], i["type"], i["purpose"]) for i in manifest["icons"]] == [
-        ("/icon-192.png", "192x192", "image/png", "any"),
-        ("/icon-512.png", "512x512", "image/png", "any"),
-        ("/icon-maskable-512.png", "512x512", "image/png", "maskable"),
+        (f"/icon-192.png?v={MARK}", "192x192", "image/png", "any"),
+        (f"/icon-512.png?v={MARK}", "512x512", "image/png", "any"),
+        (f"/icon-maskable-512.png?v={MARK}", "512x512", "image/png", "maskable"),
     ]
     # Each icon is there, at its size exactly.
     for icon in manifest["icons"]:
         got = client.get(icon["src"])
         assert got.status_code == 200 and got.headers["content-type"] == "image/png"
         assert got.headers["cache-control"] == "max-age=86400"
-        assert png_size(got.content) == (ICONS[icon["src"]],) * 2
+        assert png_size(got.content) == (ICONS[icon["src"].split("?")[0]],) * 2
     assert png_size(client.get("/apple-touch-icon.png").content) == (180, 180)
 
 
 async def test_installing_needs_no_sign_in_at_home_or_from_the_internet(tmp_path):
     async with both_ports(tmp_path) as (home, internet):
-        wanted = ["/manifest.webmanifest", "/apple-touch-icon.png", *ICONS]
+        wanted = ["/manifest.webmanifest", "/apple-touch-icon.png", *ICONS,
+                  f"/apple-touch-icon.png?v={MARK}", *(f"{p}?v={MARK}" for p in ICONS)]  # fmt: skip
         # From the internet before there's a user, when only the sign-in page is shown.
         async with httpx.AsyncClient(headers=FROM_PAGE, base_url=internet) as outside:
             assert (await outside.get("/api/status")).status_code == 403
@@ -485,7 +490,8 @@ def test_every_file_the_page_loads_is_one_of_its_files():
 async def test_the_brands_icons_and_fonts_need_no_sign_in_at_home_or_from_the_internet(tmp_path):
     """(1.34.0) The favicons and the page's fonts load on the sign-in page
     too: from the internet before there's a user, and before signing in."""
-    wanted = [*FAVICONS, *FONTS]
+    # (And as the page asks for them, with the mark's version, 1.36.4.)
+    wanted = [*FAVICONS, *(f"{p}?v={MARK}" for p in FAVICONS), *FONTS]
     others = ["/fonts/SpaceGrotesk/OFL.txt", "/fonts/..%2findex.html", "/favicon.png"]
     async with both_ports(tmp_path) as (home, internet):
         async with httpx.AsyncClient(headers=FROM_PAGE, base_url=internet) as outside:
@@ -511,8 +517,9 @@ def test_the_page_has_tapiocas_icons_and_its_own_fonts(client):
     The page's fonts are tapiOca's own files (never a font service's), each
     swapped in once loaded, served as WOFF2, with its license beside it."""
     head = client.get("/").text.split("</head>")[0]
-    assert '<link rel="icon" href="/favicon.svg" type="image/svg+xml">' in head
-    assert '<link rel="icon" href="/favicon.ico" sizes="48x48">' in head
+    # (Their addresses carry the mark's version from 1.36.4: see the next test.)
+    assert f'<link rel="icon" href="/favicon.svg?v={MARK}" type="image/svg+xml">' in head
+    assert f'<link rel="icon" href="/favicon.ico?v={MARK}" sizes="48x48">' in head
     for path, kind in FAVICONS.items():
         got = client.get(path)
         assert got.status_code == 200 and got.headers["content-type"].startswith(kind), path
@@ -531,6 +538,25 @@ def test_the_page_has_tapiocas_icons_and_its_own_fonts(client):
     on_disk = sorted(p.relative_to(WEB_DIR / "fonts").as_posix()
                      for p in (WEB_DIR / "fonts").rglob("*.woff2"))  # fmt: skip
     assert on_disk == sorted(FONT_FILES)
+
+
+def test_the_tab_says_tapioca_server_with_tapiocas_mark(client):
+    """The owner, October 14 (1.36.4): the browser's tab showed StationPlay's
+    old icon, and should say "tapiOca Server". A browser keeps a page's icon
+    by the icon's address, however long ago it got it, so the addresses
+    carry the mark's version (MARK): one that kept StationPlay's asks again.
+    The installed web app has the name too."""
+    head = client.get("/").text.split("</head>")[0]
+    assert "<title>tapiOca Server</title>" in head
+    links = re.findall(r'<link rel="(?:icon|apple-touch-icon)" href="([^"]+)"', head)
+    assert len(links) == 3 and all(link.endswith(f"?v={MARK}") for link in links), links
+    for link in links:
+        got = client.get(link)
+        path = link.split("?")[0]
+        assert got.status_code == 200 and got.content == (WEB_DIR / path.lstrip("/")).read_bytes()
+    made = client.get("/manifest.webmanifest").json()
+    assert made["name"] == "tapiOca Server" and made["short_name"] == "tapiOca"
+    assert all(i["src"].endswith(f"?v={MARK}") for i in made["icons"])
 
 
 def _tokens(block: str) -> dict[str, str]:
@@ -618,3 +644,75 @@ def test_no_style_makes_the_name_capitals():
         assert found in ([], ["uppercase"]), name
         if found:
             assert 'id="linkCode"' in page and page.count("uppercase") == 1, name
+
+
+def test_top_people_rows_are_never_the_sign_in_screens_cards():
+    """The owner, October 15 (1.36.4): "User names are truncated in
+    Server/Stats/Top People - no reason for this - plenty of room." Top
+    people's rows (class who) took the sign-in screen's Who's tuning in?
+    cards' styles, made for any .who: centered, so each row's line shrank
+    to fit and its name was cut ("egadgetb…") beside an empty panel. Each
+    use has its own: the cards in their list, Top people's rows in theirs."""
+    css = (WEB_DIR / "page.css").read_text(encoding="utf-8")
+    selectors = [
+        " ".join(s.split())
+        for group, _ in re.findall(r"([^{}]+)\{([^{}]*)\}", css)
+        for s in group.split(",")
+    ]
+    assert not [s for s in selectors if s.startswith(".who") and not s.startswith(".who-")]
+    assert ".who-list .who { display: grid; justify-items: center;" in css
+    assert ".toplist .who { display: grid; gap: 4px; }" in css
+    assert ".toplist .who + .who { border-top: 1px solid var(--line); padding-top: 8px; }" in css
+    stats = (WEB_DIR / "js" / "stats.js").read_text(encoding="utf-8")
+    assert "$('#statPeople').replaceChildren(" in stats and "h('div', { class: 'who' }," in stats
+    assert '<div class="toplist" id="statPeople"></div>' in (WEB_DIR / "index.html").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_checkboxes_and_radio_buttons_are_the_accent():
+    """(1.36.4) Every checkbox and radio button on the page is in the
+    page's accent (Signal Teal's ink in light, Signal Teal in dark), never
+    the browser's blue."""
+    css = re.sub(r"/\*.*?\*/", "", (WEB_DIR / "page.css").read_text(encoding="utf-8"), flags=re.S)
+    rules = {
+        " ".join(selector.split()): body.strip()
+        for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)
+    }
+    assert rules['input[type="checkbox"], input[type="radio"]'] == "accent-color: var(--accent);"
+
+
+def test_the_pages_down_arrow_only_for_more_to_see():
+    """The owner, October 15 (1.36.4), in Safari: the Stations tab with two
+    stations showed the page's down arrow, with nothing below the footer
+    but the page's empty space. The page's own down arrow shows only while
+    the last footer that shows (the page's or the sign-in screen's) ends
+    below the window, by more than MORE_SLACK. (tools/page_sizes.py checks
+    it in a browser, at a window that hides only the space under the footer
+    and one that hides the footer.)"""
+    if shutil.which("node") is None:
+        pytest.skip("needs node")
+    core = (WEB_DIR / "js" / "core.js").read_text(encoding="utf-8")
+    helper = core[core.index("const pageBelow = ") :].split("\n};\n", 1)[0] + "\n};\n"
+    code = (
+        "const MORE_SLACK = 1;\n"
+        + helper
+        + """
+const foot = (bottom, shown = true) => ({
+  getClientRects: () => (shown ? [1] : []), getBoundingClientRect: () => ({ bottom }) });
+console.log(JSON.stringify([
+  pageBelow([foot(830)], 844),            // the footer in sight, space under it hidden
+  pageBelow([foot(845)], 844),            // 1px: rounding
+  pageBelow([foot(846)], 844),            // the footer out of sight
+  pageBelow([foot(900), foot(830, false)], 844),  // the sign-in screen's, hidden
+  pageBelow([foot(900, false), foot(830)], 844),  // the page's, hidden
+  pageBelow([foot(900, false)], 844),     // none shows: not known here
+]));
+"""
+    )
+    done = subprocess.run(["node", "-e", code], capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == [False, False, True, True, False, None]
+    page = core.split("// The page's own, at the window's edges.", 1)[1].split("\n})();", 1)[0]
+    assert "pageBelow(document.querySelectorAll('.foot'), window.innerHeight)" in page
+    assert "moreArrowsOf(page.scrollTop, window.innerHeight, page.scrollHeight)" in page

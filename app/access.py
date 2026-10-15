@@ -66,6 +66,7 @@ import re
 import secrets
 import sqlite3
 import time
+import unicodedata
 from collections import deque
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -122,11 +123,12 @@ PICKED_MS = 24 * 3600_000  # a sign-in from a linked device's picker lasts this 
 # (1.36.2, the owner, October 14: "Password strength needs to be industry
 # standard.") As NIST's digital identity guidelines (SP 800-63B) and OWASP
 # advise: length, not rules about symbols (NIST asks for 15 characters where a
-# password is the only way to sign in; 12 is tapiOca's for now, the owner's
-# call, open since October 14); no common passwords (a list kept in
+# password is the only way to sign in; 8 is tapiOca's, the owner's call,
+# October 14, 1.36.4: 12 in 1.36.2 and 1.36.3); no common passwords (a list kept in
 # tapiOca: nothing is sent anywhere to check one); nothing built from the
 # person's name or tapiOca's; any characters, spaces too.
-PASSWORD_MIN, PASSWORD_MAX = 12, 200
+PASSWORD_MIN, PASSWORD_MAX = 8, 200
+NAMED_REST = 6  # (letters and digits left, at least, with the name or tapiOca's taken out)
 COMMON_PASSWORDS = Path(__file__).parent / "assets" / "passwords" / "common.txt"
 PASSWORD_ADVICE = "A few words together work well."
 NAME = re.compile(r"[\w .@-]{1,40}")
@@ -1178,12 +1180,30 @@ def _check_password(password: str, name: str = "") -> None:
         raise ValueError(f"That password repeats itself too much. {PASSWORD_ADVICE}")
     if low in _common() or low.strip() in _common():
         raise ValueError(f"That's one of the most common passwords. {PASSWORD_ADVICE}")
-    rest = low
-    for word in (name.casefold().strip(), "tapioca", "stationplay"):
+    # (Built from the name or tapiOca's: where one of them is in it, what's left with them
+    # taken out isn't a password itself: fewer than NAMED_REST letters and digits, a run or a
+    # repeat, or a common one. 1.36.4: with a minimum of 8, "kq7-mz2w" was turned away as built
+    # from a name it doesn't have; and its third audit: "tapioca123456" got through. A name is
+    # matched with and without its spaces, and its accents.)
+    plain = _plain(password)
+    named = _plain(name).strip()
+    rest = plain
+    for word in sorted(
+        {named, named.replace(" ", ""), "tapioca", "stationplay"}, key=len, reverse=True
+    ):
         if len(word) >= 3:
             rest = rest.replace(word, "")
-    if sum(c.isalnum() for c in rest) < 8:
-        raise ValueError("Choose a password that isn't built from your name or tapiOca's.")
+    if rest != plain:
+        left = "".join(c for c in rest if c.isalnum())
+        runs = {ord(b) - ord(a) for a, b in itertools.pairwise(left)}
+        if len(left) < NAMED_REST or len(set(left)) < 4 or runs <= {-1, 0, 1} or left in _common():
+            raise ValueError("Choose a password that isn't built from your name or tapiOca's.")
+
+
+def _plain(text: str) -> str:
+    """`text` without its accents, in one case, to compare as people read it ("İlker" is ilker)."""
+    split = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in split if not unicodedata.combining(c)).casefold()
 
 
 def _now() -> int:

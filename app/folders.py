@@ -78,7 +78,7 @@ CAST_MOST = 20
 CREW_MOST = 5
 NOT_FOUND = "There’s no such Media folder"
 CANT_READ = "It couldn’t be read. The Logs tab says why."
-NO_SUCH = "There’s no such show, episode or movie in your own Media folders"
+NO_SUCH = "There’s no such show, episode or movie in the Media folders tapiOca reads itself"
 
 
 class NotFolder(ValueError):
@@ -345,7 +345,7 @@ class FolderSource:
         if kind not in (SHOW, MOVIE):
             raise NotFolder("Choose Shows or Movies")
         if len(self.libraries) >= LIBRARIES_MOST:
-            raise NotFolder(f"tapiOca can have at most {LIBRARIES_MOST} Media folders of your own")
+            raise NotFolder(f"tapiOca can read at most {LIBRARIES_MOST} Media folders itself")
         name = _name(name)
         folders = folders if checked else self.checked_folders(folders)
         now = _now()
@@ -434,7 +434,7 @@ class FolderSource:
                     raise
                 except Exception:
                     log.exception(
-                        "Reading one of your own Media folders failed; trying again later"
+                        "Reading one of the Media folders tapiOca reads itself failed; trying again later"
                     )
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._wake.wait(), LOOK_EVERY_S)
@@ -1359,7 +1359,7 @@ class FolderSource:
                 404,
             )
         log.info(
-            "The %s “%s” is under a new key in your own Media folders now; using it",
+            "The %s “%s” is under a new key in the Media folders tapiOca reads itself now; using it",
             kind, source.get("title"),
         )  # fmt: skip
         return named[0]

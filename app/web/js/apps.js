@@ -672,14 +672,20 @@ async function loadAppLimits() {
   paint();
 }
 // Media in tapiOca's apps (see ondemand.py) --------------------------------------
+// A Media folder's box for tapiOca's apps (`got`: /api/app-libraries'
+// answer), ticked while it's shared: here, and on the Setup tab's Media
+// folders (folders.js). `more`: more of its attributes.
+function mediaFolderBox(got, key, onEdit, more = {}) {
+  // (None shared yet, from before 1.34.1: every one is offered, ticked.)
+  // (While Plex's can't be listed, nothing here changes: see values.)
+  return h('input', { type: 'checkbox', checked: got.waiting || got.shared.includes(key), disabled: !!got.problem, oninput: onEdit, ...more });
+}
 // Media in tapiOca's apps: its settings, in its panel on the
 // Access tab and in the setup. `changed`: whether anything's been changed.
 function libraryFields(got, onEdit) {
   const boxes = new Map();
   const choices = got.libraries.map(l => {
-    // (None shared yet, from before 1.34.1: every one is offered, ticked.)
-    // (While Plex's can't be listed, nothing here changes: see values.)
-    const box = h('input', { type: 'checkbox', checked: got.waiting || got.shared.includes(l.key), disabled: !!got.problem, oninput: onEdit });
+    const box = mediaFolderBox(got, l.key, onEdit);
     boxes.set(l.key, box);
     return h('label', {}, box, ` ${l.title} `, h('span', { class: 'muted small' }, l.kind === 'movie' ? '(movies)' : '(shows)'));
   });
@@ -721,7 +727,20 @@ function libraryFields(got, onEdit) {
     ],
     values,
     changed: () => JSON.stringify(values()) !== first,
+    // (Whether a Media folder's box changed: only then is the choice of folders saved, so
+    // "every one, those added later too" stays when only something else changed. 1.36.4.)
+    librariesChanged: () => JSON.stringify(values().libraries) !== JSON.stringify(JSON.parse(first).libraries),
   };
+}
+// Even sound for a show's episodes (see applibrary.py on the server): on to start.
+// On the Access tab and in setup's Media in tapiOca's apps step (1.36.4), each
+// with its own id (`id`), so each one's words tick its own box.
+function evenSoundField(got, onEdit, id = 'evenSound') {
+  const input = h('input', { type: 'checkbox', id, checked: got.evenSound, oninput: onEdit });
+  const node = h('div', { class: 'arr-body', style: 'margin:0;gap:6px' },
+    h('label', { for: id }, input, ' ', h('strong', {}, 'Even sound for a show’s episodes')),
+    h('span', { class: 'hint' }, 'Every episode plays at the same loudness as the episodes on your stations, so a show’s episodes match, in any order, and none is much louder or quieter than the next. Episodes on your stations always have even sound. This is for Media in tapiOca’s apps. Movies aren’t changed. The picture plays as it is and only the sound is made again, which costs next to nothing (where the picture can’t be kept as it is, the episode plays as it is). The cost: sound a device would send as it is to a receiver or soundbar, such as Dolby Atmos or DTS, comes as ordinary 5.1 or stereo instead. Turn this off to play each episode’s sound as it is.'));
+  return { node, input };
 }
 async function loadAppLibraries() {
   let got;
@@ -733,14 +752,11 @@ async function loadAppLibraries() {
   const body = $('#appLibrariesBody');
   if (body.dataset.editing) return;  // (not while it's being changed)
   const fields = libraryFields(got, () => { body.dataset.editing = '1'; });
-  // Even sound for a show's episodes (see applibrary.py on the server): on to start.
-  const even = h('input', { type: 'checkbox', id: 'evenSound', checked: got.evenSound, oninput: () => { body.dataset.editing = '1'; } });
-  const evenField = h('div', { class: 'arr-body', style: 'margin:0;gap:6px' },
-    h('label', { for: 'evenSound' }, even, ' ', h('strong', {}, 'Even sound for a show’s episodes')),
-    h('span', { class: 'hint' }, 'Every episode plays at the same loudness as the episodes on your stations, so a show’s episodes match, in any order, and none is much louder or quieter than the next. Movies aren’t changed. The picture plays as it is and only the sound is made again, which costs next to nothing (where the picture can’t be kept as it is, the episode plays as it is). The cost: sound a device would send as it is to a receiver or soundbar, such as Dolby Atmos or DTS, comes as ordinary 5.1 or stereo instead. Turn this off to play each episode’s sound as it is.'));
+  const { node: evenField, input: even } = evenSoundField(got, () => { body.dataset.editing = '1'; });
   const result = h('span', { class: 'hint', role: 'status' });
   const save = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
     const chosen = { ...fields.values(), evenSound: even.checked };
+    if (!got.waiting && !fields.librariesChanged()) delete chosen.libraries;
     try { await api('/api/app-libraries', { method: 'PUT', body: chosen }); }
     catch (e) { result.textContent = e.message; return; }
     toast(!chosen.libraries ? 'Saved' : chosen.libraries.length ? 'Saved. tapiOca’s apps can show the Media folders you chose.' : 'Saved. tapiOca’s apps don’t show any Media folder.');

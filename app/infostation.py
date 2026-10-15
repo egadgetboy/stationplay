@@ -158,6 +158,16 @@ def others(channels: list[Channel]) -> int:
     return sum(1 for c in channels if not is_info(c))
 
 
+def for_other_apps(channels: list[Channel]) -> list[Channel]:
+    """The stations Plex's tuner, its guide and the playlist other apps use
+    list (1.36.4, the owner, October 15: "99 INFO station should not be
+    allowed to get added to TUNER lineup for Plex or Emby or others"): all
+    but INFO once a real station exists. While INFO is the only one, it's
+    listed, so a new tapiOca can still be added to Plex, whose tuner setup
+    wants a station. tapiOca's own apps always have INFO."""
+    return channels if not others(channels) else [c for c in channels if not is_info(c)]
+
+
 def program() -> Item:
     """INFO's one program."""
     return Item(

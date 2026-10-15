@@ -75,6 +75,29 @@ def test_a_new_tapioca_starts_with_info_on_99(tmp_path, caplog):
     assert "Made the INFO station, station 99" in caplog.text
 
 
+def test_other_apps_get_info_only_while_its_the_only_station(tmp_path):
+    """The owner, October 15 (1.36.4): "99 INFO station should not be allowed to get
+    added to TUNER lineup for Plex or Emby or others ... Works in Client for tapioca".
+    His choice: left out once a real station exists; until then it's listed, so a new
+    tapiOca can still be added to Plex (whose tuner setup wants a station)."""
+    with make(tmp_path) as c:
+        assert [s["GuideNumber"] for s in c.get("/lineup.json").json()] == ["99"]
+        made = c.post("/api/channels", json={"number": 1, "name": "One", "sources": [SHOW]})
+        assert made.status_code == 201, made.text
+        # Plex's tuner, its guide, and the playlist and guide other apps use: station 1 only.
+        assert [s["GuideNumber"] for s in c.get("/lineup.json").json()] == ["1"]
+        for guide in ("/xmltv.xml", "/guide.xml"):
+            xml = c.get(guide).text
+            assert 'id="1"' in xml and 'id="99"' not in xml and "tapiOca INFO" not in xml, guide
+        playlist = c.get("/stations.m3u").text
+        assert "/stream/1" in playlist and "/stream/99" not in playlist and "INFO" not in playlist
+        # tapiOca's apps still have it.
+        assert 99 in [s["number"] for s in c.get("/api/channels").json()]
+        # The real station gone, INFO is back for other apps (a new tapiOca again).
+        assert c.delete(f"/api/channels/{made.json()['id']}").status_code in (200, 204)
+        assert [s["GuideNumber"] for s in c.get("/lineup.json").json()] == ["99"]
+
+
 def test_info_airs_in_four_hour_blocks_in_every_guide(tmp_path, monkeypatch):
     """(1.36.2) The owner, October 14, of Plex's guide: "guide looks like
     garbage. 'Unknown' station name and tons of tiny guide start/end
@@ -374,15 +397,29 @@ def test_what_info_draws_is_a_graph_ffmpeg_takes(tmp_path):
     assert out.stat().st_size > 10_000
 
 
-async def test_info_plays_without_plex(tmp_path):
+async def test_info_plays_without_plex(tmp_path, caplog, monkeypatch):
     """Plex knows nothing (a new tapiOca, before it's connected): INFO plays
     anyway, drawn on, a clean stream."""
+    from app.broadcaster import Broadcaster
+
+    cards = []
+    play_slate = Broadcaster._play_slate
+
+    async def slate(self, *args, **kwargs):
+        cards.append(args[-1])  # (its message: "We'll be right back", or None)
+        return await play_slate(self, *args, **kwargs)
+
+    monkeypatch.setattr(Broadcaster, "_play_slate", slate)
     base, app, _settings, srv, task = await start_server(tmp_path, FakePlex())
     try:
         data = await record(f"{base}/stream/99", 6.0)
     finally:
         srv.should_exit = True
         await task
+    # (Its film, never the card: "We'll be right back" said it wasn't found, 1.36.4.
+    # However it fails, the card plays instead: 1.36.4's audit.)
+    assert "file not found" not in caplog.text
+    assert cards == []
     out = tmp_path / "info.ts"
     out.write_bytes(data)
     assert len(data) > 100_000
@@ -597,3 +634,39 @@ def test_by_the_numbers_leaves_out_none_of_a_kind():
     assert shown[2].body == "120 movies"
     shown = infostation.panels(infostation.Counts(stations=3), 0)
     assert shown[2].body == "3 stations"
+
+
+async def test_infos_film_is_found_though_its_key_looks_like_a_folders(tmp_path):
+    """The owner, October 14: INFO still said "We'll be right back". Its key,
+    f0, looks like a Media folder's own (1.35.0), so its film was looked for
+    inside the media folder, and never found there ("file not found"). It's
+    tapiOca's own film now, wherever tapiOca is."""
+    from app import sources
+    from app.config import Settings
+
+    settings = Settings(data_dir=tmp_path / "data", media_dir=str(tmp_path / "media"))
+    found, timed_out = await sources.find_file(
+        settings, sources.MediaAccess(), infostation.KEY, str(infostation.FILE)
+    )
+    assert not timed_out and found is not None and found.path == str(infostation.FILE.resolve())
+    # (Nothing else under its key, or any other file, is read that way.)
+    other = tmp_path / "elsewhere.mp4"
+    other.write_bytes(b"x")
+    assert (await sources.find_file(settings, sources.MediaAccess(), infostation.KEY, str(other)))[
+        0
+    ] is None
+
+
+async def test_infos_film_is_found_where_cuts_are_looked_for_too(tmp_path):
+    """1.36.4's audit: readable() with a check of the share (where the cut
+    finder looks for a program's picture cuts) still sent INFO's key to the
+    Media folders' own lookup, inside the media folder, so its film wasn't
+    found there either. It's tapiOca's own film there too."""
+    from app import sources
+
+    settings = Settings(data_dir=tmp_path / "data", media_dir=str(tmp_path / "media"))
+    library = Library(PlexClient("", ""), Database(tmp_path / "db.sqlite"))
+    got = await sources.readable(
+        settings, library, infostation.program(), sources.MediaAccess(), sources.ShareCheck()
+    )
+    assert got.source == str(infostation.FILE.resolve()) and not got.error, got
