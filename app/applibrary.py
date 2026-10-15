@@ -1976,7 +1976,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if not ctx.library.configured:
             problem = (
                 "There are no Media folders to share yet. Add one on the Setup tab, under "
-                "Folders tapiOca reads itself, or connect Plex (the Tuner step of the setup "
+                "Media folders, or connect Plex (the Tuner step of the setup "
                 "says how)."
             )
         else:

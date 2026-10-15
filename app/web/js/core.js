@@ -219,12 +219,24 @@ function moreArrows(el) {
   new MutationObserver(() => { watch(); update(); }).observe(parent, { childList: true });
   update();
 }
+// The page's own down arrow: while the last footer that shows (the page's,
+// or the sign-in screen's) ends below the window, by more than MORE_SLACK.
+// The page's empty space under it is nothing more to see (the owner, in
+// Safari, October 15). null when no footer shows.
+const pageBelow = (feet, shown) => {
+  const last = [...feet].filter(f => f.getClientRects().length).pop();
+  return last ? last.getBoundingClientRect().bottom - shown > MORE_SLACK : null;
+};
 // The page's own, at the window's edges.
 (() => {
   const layer = moreLayer('page');
   document.body.append(layer);
   const page = document.scrollingElement || document.documentElement;
-  const update = moreLater(() => moreShow(layer, moreArrowsOf(page.scrollTop, window.innerHeight, page.scrollHeight)));
+  const update = moreLater(() => {
+    const arrows = moreArrowsOf(page.scrollTop, window.innerHeight, page.scrollHeight);
+    const below = pageBelow(document.querySelectorAll('.foot'), window.innerHeight);
+    moreShow(layer, below === null ? arrows : { ...arrows, below });
+  });
   window.addEventListener('scroll', update, { passive: true });
   window.addEventListener('resize', update);
   new ResizeObserver(update).observe(document.body);

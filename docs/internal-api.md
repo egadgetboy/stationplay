@@ -653,7 +653,7 @@ the new one:
 {"current": "...", "new": "..."}
 ```
 
-A new password has at least 12 characters (and at most 200; from 1.36.2: 8 before), isn't one of the most common, and isn't built from the person's name or tapiOca's (see the README's Passwords). As on
+A new password has at least 8 characters (and at most 200; 12 in 1.36.2 and 1.36.3), isn't one of the most common, and isn't built from the person's name or tapiOca's (see the README's Passwords). As on
 tapiOca's page, every other sign-in of theirs ends (other apps,
 browsers and pickers). The app's own token ends too. The app carries on
 with `token`, which it keeps in place of the old one. The access log shows

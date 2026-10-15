@@ -108,7 +108,7 @@ These stay on `ctx.plex`: `hdhr`, the guide refresh (`dvrs`,
 
 ## Phase 3: Media folders of tapiOca's own (1.35.0)
 
-An Admin adds one on the Setup tab, under **Folders tapiOca reads itself**: a
+An Admin adds one on the Setup tab, under **Media folders**: a
 name, Shows or Movies, and one or more folders inside the media folder
 (`MEDIA_DIR`, `/media` in the container). Each is a library like Plex's:
 for stations, filters, smart stations, collections, and Media in tapiOca's

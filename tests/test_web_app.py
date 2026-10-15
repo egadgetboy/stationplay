@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import struct
+import subprocess
 
 import httpx
 import pytest
@@ -642,3 +644,75 @@ def test_no_style_makes_the_name_capitals():
         assert found in ([], ["uppercase"]), name
         if found:
             assert 'id="linkCode"' in page and page.count("uppercase") == 1, name
+
+
+def test_top_people_rows_are_never_the_sign_in_screens_cards():
+    """The owner, October 15 (1.36.4): "User names are truncated in
+    Server/Stats/Top People - no reason for this - plenty of room." Top
+    people's rows (class who) took the sign-in screen's Who's tuning in?
+    cards' styles, made for any .who: centered, so each row's line shrank
+    to fit and its name was cut ("egadgetb…") beside an empty panel. Each
+    use has its own: the cards in their list, Top people's rows in theirs."""
+    css = (WEB_DIR / "page.css").read_text(encoding="utf-8")
+    selectors = [
+        " ".join(s.split())
+        for group, _ in re.findall(r"([^{}]+)\{([^{}]*)\}", css)
+        for s in group.split(",")
+    ]
+    assert not [s for s in selectors if s.startswith(".who") and not s.startswith(".who-")]
+    assert ".who-list .who { display: grid; justify-items: center;" in css
+    assert ".toplist .who { display: grid; gap: 4px; }" in css
+    assert ".toplist .who + .who { border-top: 1px solid var(--line); padding-top: 8px; }" in css
+    stats = (WEB_DIR / "js" / "stats.js").read_text(encoding="utf-8")
+    assert "$('#statPeople').replaceChildren(" in stats and "h('div', { class: 'who' }," in stats
+    assert '<div class="toplist" id="statPeople"></div>' in (WEB_DIR / "index.html").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_checkboxes_and_radio_buttons_are_the_accent():
+    """(1.36.4) Every checkbox and radio button on the page is in the
+    page's accent (Signal Teal's ink in light, Signal Teal in dark), never
+    the browser's blue."""
+    css = re.sub(r"/\*.*?\*/", "", (WEB_DIR / "page.css").read_text(encoding="utf-8"), flags=re.S)
+    rules = {
+        " ".join(selector.split()): body.strip()
+        for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)
+    }
+    assert rules['input[type="checkbox"], input[type="radio"]'] == "accent-color: var(--accent);"
+
+
+def test_the_pages_down_arrow_only_for_more_to_see():
+    """The owner, October 15 (1.36.4), in Safari: the Stations tab with two
+    stations showed the page's down arrow, with nothing below the footer
+    but the page's empty space. The page's own down arrow shows only while
+    the last footer that shows (the page's or the sign-in screen's) ends
+    below the window, by more than MORE_SLACK. (tools/page_sizes.py checks
+    it in a browser, at a window that hides only the space under the footer
+    and one that hides the footer.)"""
+    if shutil.which("node") is None:
+        pytest.skip("needs node")
+    core = (WEB_DIR / "js" / "core.js").read_text(encoding="utf-8")
+    helper = core[core.index("const pageBelow = ") :].split("\n};\n", 1)[0] + "\n};\n"
+    code = (
+        "const MORE_SLACK = 1;\n"
+        + helper
+        + """
+const foot = (bottom, shown = true) => ({
+  getClientRects: () => (shown ? [1] : []), getBoundingClientRect: () => ({ bottom }) });
+console.log(JSON.stringify([
+  pageBelow([foot(830)], 844),            // the footer in sight, space under it hidden
+  pageBelow([foot(845)], 844),            // 1px: rounding
+  pageBelow([foot(846)], 844),            // the footer out of sight
+  pageBelow([foot(900), foot(830, false)], 844),  // the sign-in screen's, hidden
+  pageBelow([foot(900, false), foot(830)], 844),  // the page's, hidden
+  pageBelow([foot(900, false)], 844),     // none shows: not known here
+]));
+"""
+    )
+    done = subprocess.run(["node", "-e", code], capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == [False, False, True, True, False, None]
+    page = core.split("// The page's own, at the window's edges.", 1)[1].split("\n})();", 1)[0]
+    assert "pageBelow(document.querySelectorAll('.foot'), window.innerHeight)" in page
+    assert "moreArrowsOf(page.scrollTop, window.innerHeight, page.scrollHeight)" in page

@@ -266,8 +266,8 @@ def plex_check(plex_state: dict[str, Any], plex_pass: bool | None, folders: int 
         return Check("plex", title, BAD, [
             "tapiOca has nothing to play yet: it isn’t connected to Plex, and you haven’t "
             "added a Media folder for it to read itself.",
-            "Add one on the Setup tab, under Folders tapiOca reads itself, to use your "
-            "folders without Plex.",
+            "Add one on the Setup tab, under Media folders, to use your folders without "
+            "Plex.",
             *to_connect,
         ])  # fmt: skip
     if not plex_state.get("ok"):

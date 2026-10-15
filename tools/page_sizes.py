@@ -1135,8 +1135,14 @@ ARROWS = r"""
       through: !!hit && !layer.contains(hit) && (page || el.contains(hit)),
     };
   };
+  // (The page: more below while the last footer that shows ends below the
+  // window; the empty space under it is nothing more to see: 1.36.4.)
+  const foot = page ? [...document.querySelectorAll('.foot')].filter(f => f.getClientRects().length).pop() : null;
   return {
-    below: el.scrollHeight - shown - el.scrollTop > 1, above: el.scrollTop > 1,
+    below: foot ? foot.getBoundingClientRect().bottom - innerHeight > 1 : el.scrollHeight - shown - el.scrollTop > 1,
+    above: el.scrollTop > 1,
+    footBottom: foot ? foot.getBoundingClientRect().bottom : null,
+    hiddenBelow: el.scrollHeight - shown - el.scrollTop,
     up: arrow(up), down: arrow(down),
     hidden: layer.getAttribute('aria-hidden'), clicks: getComputedStyle(layer).pointerEvents,
     focusable: layer.querySelectorAll('[tabindex], a, button, input').length,
@@ -1209,6 +1215,123 @@ def short_dialog(page: Page, look: Look) -> None:
             "a short dialog: no arrows", (bool(got["up"]), bool(got["down"])), (False, False)
         )
     close_dialogs(page)
+
+
+def footer_arrow(page: Page, look: Look, what: str) -> None:
+    """(1.36.4, the owner in Safari: two stations, and the page's down arrow
+    with nothing below the footer.) The page's down arrow only while
+    something is below the window: at a window that hides only the page's
+    empty space under the footer, none; at one that hides the footer, it
+    shows. The window is put back as it was."""
+    size = page.viewport_size
+    assert size is not None
+    page.evaluate("window.scrollTo(0, 0)")
+    foot = page.evaluate(
+        "() => { const f = [...document.querySelectorAll('.foot')].filter(f => f.getClientRects().length).pop();"
+        " return f ? f.getBoundingClientRect().bottom + scrollY : null; }"
+    )
+    if foot is None:
+        look.expect(f"{what}: a footer shows", False, True)
+        return
+    for name, height, down in (
+        ("only the space under the footer out of sight", int(foot) + 8, False),
+        ("the footer out of sight", int(foot) - 40, True),
+    ):
+        page.set_viewport_size({"width": size["width"], "height": height})
+        page.evaluate("window.scrollTo(0, 0)")
+        got = arrows(page, look, f"{what}, {name}")
+        if got:
+            if not down:
+                look.expect(f"{what}, {name}: the footer in sight, space under it hidden",
+                            (got["footBottom"] <= height, got["hiddenBelow"] > 1), (True, True))  # fmt: skip
+            look.expect(f"{what}, {name}: the down arrow", bool(got["down"]), down)
+    page.set_viewport_size(size)
+    page.evaluate("window.scrollTo(0, 0)")
+    page.wait_for_timeout(150)
+
+
+def top_people_names(page: Page, look: Look) -> None:
+    """(1.36.4, the owner: "User names are truncated in Server/Stats/Top
+    People - no reason for this - plenty of room.") Names of an ordinary
+    length show in full beside their bars."""
+    page.evaluate(
+        """() => renderTop(['egadgetboy', 'insertdisc', 'Grandma'].map((name, n) => ({
+             name, plex: n < 2, hours: 3 - n, mediaHours: 0, programs: [],
+             stations: [{ number: 4, name: 'Prime Time', hours: 3 - n }] })), [], null)"""
+    )
+    page.evaluate("() => document.querySelector('#statPeople').scrollIntoView({block: 'center'})")
+    page.wait_for_timeout(150)
+    cut = page.evaluate(
+        "() => [...document.querySelectorAll('#statPeople .toprow .name')]"
+        ".filter(n => n.scrollWidth > n.clientWidth + 1).map(n => n.textContent)"
+    )
+    look.expect("Top people: names of an ordinary length in full", cut, [])
+    look("stats-top-people")
+    page.evaluate("() => loadStats()")
+    page.wait_for_timeout(300)
+
+
+def media_folder_switches(page: Page, look: Look, sp: Running) -> None:
+    """(1.36.4, the owner: "Server just needs to know what folders it can
+    see, and the option to toggle them on and off.") The Setup tab's Media
+    folders: every one, each with its switch for tapiOca's apps, in the
+    page's accent. Switching one off saves it at once (the server no longer
+    shares it); on again shares it again. Sharing is put back as it was."""
+    shared = sp.ctx.shared
+    before = sp.call(lambda: (
+        sp.ctx.db.get_meta(ondemand.META), sp.ctx.db.get_meta(ondemand.WAITING_META),
+        shared.everything, shared._chosen, shared.waiting,
+    ))  # fmt: skip
+    media = page.evaluate("() => api('/api/app-libraries')")
+    look.expect("Media folders lists every Media folder",
+                page.locator("#foldersPanel tbody td:first-child strong").all_inner_texts(),
+                [m["title"] for m in media["libraries"]])  # fmt: skip
+    look.expect("Media folders: a switch for each, In tapiOca’s apps",
+                page.locator("#foldersPanel tbody label.in-apps").all_inner_texts(),
+                ["In tapiOca’s apps"] * len(media["libraries"]))  # fmt: skip
+    look.expect("Media folders says nothing of Plex for a folder",
+                "Plex" in page.inner_text("#foldersPanel"), False)  # fmt: skip
+    look.expect("Media folders' switches in the page's accent",
+                page.evaluate("""() => {
+                  const accent = getComputedStyle(document.body).getPropertyValue('--accent').trim();
+                  const probe = document.body.appendChild(Object.assign(document.createElement('i'), { style: `color:${accent}` }));
+                  const want = getComputedStyle(probe).color; probe.remove();
+                  return [...document.querySelectorAll('#foldersPanel input[type=checkbox]')]
+                    .every(b => getComputedStyle(b).accentColor === want);
+                }"""), True)  # fmt: skip
+    first = media["libraries"][0]
+    row = f"#foldersPanel tr[data-key='{first['key']}'] input[type=checkbox]"
+    if not page.locator(row).is_checked():
+        page.locator(row).check()
+        page.wait_for_timeout(800)
+    page.locator(row).uncheck()
+    until(
+        page, "() => [...document.querySelectorAll('.toast')].some(t => t.textContent === 'Saved')"
+    )
+    page.wait_for_timeout(800)
+    look.expect(f"Media folders: {first['title']} switched off is no longer shared",
+                sp.call(lambda: first["key"] in list(shared.keys)), False)  # fmt: skip
+    look.expect(f"Media folders: {first['title']} shows switched off",
+                page.locator(row).is_checked(), False)  # fmt: skip
+    look("addtoplex-folders-off")
+    page.locator(row).check()
+    page.wait_for_timeout(800)
+    look.expect(f"Media folders: {first['title']} switched on again is shared again",
+                sp.call(lambda: first["key"] in list(shared.keys)), True)  # fmt: skip
+
+    def restore() -> None:
+        chosen, waits, everything, kept, was = before
+        sp.ctx.db.set_metas({ondemand.WAITING_META: waits or "0"})
+        if everything:
+            with sp.ctx.db._lock, sp.ctx.db._conn:
+                sp.ctx.db._conn.execute("DELETE FROM meta WHERE key = ?", (ondemand.META,))
+        else:
+            sp.ctx.db.set_meta(ondemand.META, chosen)
+        shared.everything, shared._chosen, shared.waiting = everything, kept, was
+
+    sp.call(restore)
+    page.evaluate("() => loadFolderLibraries()")
+    page.wait_for_timeout(500)
 
 
 def signin_trusted(browser: Any, base: str, context_of: Callable[..., Any], look: Look) -> None:
@@ -1398,7 +1521,9 @@ def waiting_media_step(context: Any, base: str, look: Look, sp: Running) -> None
     sp.call(waiting)
     page = context.new_page()
     to_media_step(page)
-    boxes = page.locator("#setupBody .playback input[type=checkbox]:not(#setupEvenSound)")  # (folders only)
+    boxes = page.locator(
+        "#setupBody .playback input[type=checkbox]:not(#setupEvenSound)"
+    )  # (folders only)
     look.expect("the waiting Media step ticks every folder",
                 all(boxes.nth(n).is_checked() for n in range(boxes.count())) and boxes.count() > 0, True)  # fmt: skip
     look.expect("the waiting Media step says none are shared yet",
@@ -1422,6 +1547,7 @@ def waiting_media_step(context: Any, base: str, look: Look, sp: Running) -> None
         shared.everything, shared._chosen, shared.waiting = everything, kept, was
 
     sp.call(restore)
+
     # (1.36.4) Every Media folder shared, those added later too: Even sound turned off in
     # setup's step, and its words, tick its own box, and going on keeps every folder shared.
     def everything_shared() -> None:
@@ -1454,6 +1580,7 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
             "() => document.querySelector('#channels details.more')?.setAttribute('open', '')"
         )
         look("stations", full=True)
+        footer_arrow(page, look, "the Stations tab")
     if wanted("editor"):
         page.click("#newChannel")
         page.wait_for_selector("#libItems .pick")
@@ -1564,17 +1691,21 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
         )
         # (1.35.0) Your own folders: the two Media folders of tapiOca's own,
         # and adding one, its folders chosen from inside the media folder.
+        # (1.36.4: among every Media folder, under Media folders; the rows
+        # with Read again are tapiOca's own.)
         page.wait_for_selector("#foldersPanel table.folder-libs")
         page.evaluate(
             "() => document.querySelector('#foldersPanel').scrollIntoView({block: 'center'})"
         )
+        own = "#foldersPanel tbody tr:has(button:text-is('Read again')) td:first-child"
         look.expect("Your own folders lists both",
-                    page.locator("#foldersPanel tbody strong").all_inner_texts(),
+                    page.locator(f"{own} strong").all_inner_texts(),
                     ["Our shows", "Our movies"])  # fmt: skip
         look.expect("Your own folders counts what's in them",
-                    page.locator("#foldersPanel tbody td:first-child .small").all_inner_texts(),
+                    page.locator(f"{own} div.small").all_inner_texts(),
                     ["Shows · 2 shows, 6 episodes", "Movies · 2 movies"])  # fmt: skip
         look("addtoplex-folders")
+        media_folder_switches(page, look, sp)
         page.click("#addFolderLibrary")
         page.wait_for_selector("#flFolders .pick")
         look.expect("Add a Media folder lists the media folder's folders",
@@ -1717,6 +1848,7 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
         tab(page, "stats")
         page.wait_for_selector("#healthTiles .gauge")
         look("stats", full=True)
+        top_people_names(page, look)
     if wanted("logs"):
         tab(page, "logs")
         page.wait_for_selector("#logList .logline")

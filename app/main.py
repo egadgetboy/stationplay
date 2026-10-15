@@ -1039,7 +1039,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.get("/lineup.json")
     async def lineup(request: Request):
-        return hdhr.lineup(ctx.db.list_channels(), base_url(request))
+        return hdhr.lineup(infostation.for_other_apps(ctx.db.list_channels()), base_url(request))
 
     @app.post("/lineup.post")
     async def lineup_post():
@@ -1059,7 +1059,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
             request.headers.get("user-agent", ""), plex_address=for_plex
         )
         now = now_ms()
-        stations = [(c, ctx.guide(c)) for c in ctx.db.list_channels()]
+        stations = [(c, ctx.guide(c)) for c in infostation.for_other_apps(ctx.db.list_channels())]
         body = await asyncio.to_thread(
             hdhr.xmltv, stations, base_url(request), now - GUIDE_PAST_MS, now + GUIDE_FUTURE_MS
         )
@@ -1080,7 +1080,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
     @app.get("/channels.m3u")
     async def m3u(request: Request):
         return PlainTextResponse(
-            hdhr.m3u(ctx.db.list_channels(), base_url(request)),
+            hdhr.m3u(infostation.for_other_apps(ctx.db.list_channels()), base_url(request)),
             media_type="audio/x-mpegurl",
         )
 

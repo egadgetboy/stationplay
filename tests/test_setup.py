@@ -141,7 +141,10 @@ def test_the_checks_when_plex_isnt_set_up(tmp_path):
         "added a Media folder for it to read itself."
     )
     assert any("PLEX_URL and PLEX_TOKEN" in line for line in plex["plex"]["lines"])
-    assert any("Folders tapiOca reads itself" in line for line in plex["plex"]["lines"])
+    assert (
+        "Add one on the Setup tab, under Media folders, to use your folders without Plex."
+        in plex["plex"]["lines"]
+    )
     assert plex["plexFiles"]["state"] == plex["dvr"]["state"] == "wait"
 
 
@@ -396,7 +399,7 @@ def test_media_in_the_apps_without_plex(tmp_path):
         got = c.get("/api/app-libraries").json()
     assert got["problem"] == (
         "There are no Media folders to share yet. Add one on the Setup tab, under "
-        "Folders tapiOca reads itself, or connect Plex (the Tuner step of the setup "
+        "Media folders, or connect Plex (the Tuner step of the setup "
         "says how)."
     )
 

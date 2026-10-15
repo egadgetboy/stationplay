@@ -75,6 +75,29 @@ def test_a_new_tapioca_starts_with_info_on_99(tmp_path, caplog):
     assert "Made the INFO station, station 99" in caplog.text
 
 
+def test_other_apps_get_info_only_while_its_the_only_station(tmp_path):
+    """The owner, October 15 (1.36.4): "99 INFO station should not be allowed to get
+    added to TUNER lineup for Plex or Emby or others ... Works in Client for tapioca".
+    His choice: left out once a real station exists; until then it's listed, so a new
+    tapiOca can still be added to Plex (whose tuner setup wants a station)."""
+    with make(tmp_path) as c:
+        assert [s["GuideNumber"] for s in c.get("/lineup.json").json()] == ["99"]
+        made = c.post("/api/channels", json={"number": 1, "name": "One", "sources": [SHOW]})
+        assert made.status_code == 201, made.text
+        # Plex's tuner, its guide, and the playlist and guide other apps use: station 1 only.
+        assert [s["GuideNumber"] for s in c.get("/lineup.json").json()] == ["1"]
+        for guide in ("/xmltv.xml", "/guide.xml"):
+            xml = c.get(guide).text
+            assert 'id="1"' in xml and 'id="99"' not in xml and "tapiOca INFO" not in xml, guide
+        playlist = c.get("/stations.m3u").text
+        assert "/stream/1" in playlist and "/stream/99" not in playlist and "INFO" not in playlist
+        # tapiOca's apps still have it.
+        assert 99 in [s["number"] for s in c.get("/api/channels").json()]
+        # The real station gone, INFO is back for other apps (a new tapiOca again).
+        assert c.delete(f"/api/channels/{made.json()['id']}").status_code in (200, 204)
+        assert [s["GuideNumber"] for s in c.get("/lineup.json").json()] == ["99"]
+
+
 def test_info_airs_in_four_hour_blocks_in_every_guide(tmp_path, monkeypatch):
     """(1.36.2) The owner, October 14, of Plex's guide: "guide looks like
     garbage. 'Unknown' station name and tons of tiny guide start/end

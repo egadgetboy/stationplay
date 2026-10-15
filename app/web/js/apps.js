@@ -672,14 +672,20 @@ async function loadAppLimits() {
   paint();
 }
 // Media in tapiOca's apps (see ondemand.py) --------------------------------------
+// A Media folder's box for tapiOca's apps (`got`: /api/app-libraries'
+// answer), ticked while it's shared: here, and on the Setup tab's Media
+// folders (folders.js). `more`: more of its attributes.
+function mediaFolderBox(got, key, onEdit, more = {}) {
+  // (None shared yet, from before 1.34.1: every one is offered, ticked.)
+  // (While Plex's can't be listed, nothing here changes: see values.)
+  return h('input', { type: 'checkbox', checked: got.waiting || got.shared.includes(key), disabled: !!got.problem, oninput: onEdit, ...more });
+}
 // Media in tapiOca's apps: its settings, in its panel on the
 // Access tab and in the setup. `changed`: whether anything's been changed.
 function libraryFields(got, onEdit) {
   const boxes = new Map();
   const choices = got.libraries.map(l => {
-    // (None shared yet, from before 1.34.1: every one is offered, ticked.)
-    // (While Plex's can't be listed, nothing here changes: see values.)
-    const box = h('input', { type: 'checkbox', checked: got.waiting || got.shared.includes(l.key), disabled: !!got.problem, oninput: onEdit });
+    const box = mediaFolderBox(got, l.key, onEdit);
     boxes.set(l.key, box);
     return h('label', {}, box, ` ${l.title} `, h('span', { class: 'muted small' }, l.kind === 'movie' ? '(movies)' : '(shows)'));
   });
