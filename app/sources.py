@@ -19,6 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 from . import ffmpeg as ff
+from . import infostation
 from .catalog import Media
 from .config import Settings
 from .db import Item
@@ -105,6 +106,11 @@ async def find_file(
     while it's really in the media folder (one swapped since for a link to
     a file outside it is never read); for Plex's, the first of
     local_candidates that exists."""
+    if infostation.made_here(key):
+        # (INFO's own film, among tapiOca's files: its key, f0, looks like a Media
+        # folder's, but it never is one, so it's never looked for in the media folder.
+        # Before 1.36.4 it was, and INFO said "We'll be right back".)
+        return _made_here(file), False
     if not is_folder_key(key):
         return await find_first(local_candidates(settings, access, file), timeout)
     try:
@@ -114,6 +120,14 @@ async def find_file(
         return found, False
     except TimeoutError:
         return None, True
+
+
+def _made_here(path: str) -> Candidate | None:
+    """INFO's film, only where tapiOca keeps it (infostation.FILE)."""
+    real = os.path.realpath(path)
+    if real != os.path.realpath(infostation.FILE) or not os.path.isfile(real):
+        return None
+    return Candidate(real, "", "")
 
 
 def _own_file(media_dir: str, path: str) -> Candidate | None:

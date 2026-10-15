@@ -374,7 +374,7 @@ def test_what_info_draws_is_a_graph_ffmpeg_takes(tmp_path):
     assert out.stat().st_size > 10_000
 
 
-async def test_info_plays_without_plex(tmp_path):
+async def test_info_plays_without_plex(tmp_path, caplog):
     """Plex knows nothing (a new tapiOca, before it's connected): INFO plays
     anyway, drawn on, a clean stream."""
     base, app, _settings, srv, task = await start_server(tmp_path, FakePlex())
@@ -383,6 +383,8 @@ async def test_info_plays_without_plex(tmp_path):
     finally:
         srv.should_exit = True
         await task
+    # (Its film, never the card: "We'll be right back" said it wasn't found. 1.36.4.)
+    assert "file not found" not in caplog.text
     out = tmp_path / "info.ts"
     out.write_bytes(data)
     assert len(data) > 100_000
@@ -597,3 +599,24 @@ def test_by_the_numbers_leaves_out_none_of_a_kind():
     assert shown[2].body == "120 movies"
     shown = infostation.panels(infostation.Counts(stations=3), 0)
     assert shown[2].body == "3 stations"
+
+
+async def test_infos_film_is_found_though_its_key_looks_like_a_folders(tmp_path):
+    """The owner, October 14: INFO still said "We'll be right back". Its key,
+    f0, looks like a Media folder's own (1.35.0), so its film was looked for
+    inside the media folder, and never found there ("file not found"). It's
+    tapiOca's own film now, wherever tapiOca is."""
+    from app import sources
+    from app.config import Settings
+
+    settings = Settings(data_dir=tmp_path / "data", media_dir=str(tmp_path / "media"))
+    found, timed_out = await sources.find_file(
+        settings, sources.MediaAccess(), infostation.KEY, str(infostation.FILE)
+    )
+    assert not timed_out and found is not None and found.path == str(infostation.FILE.resolve())
+    # (Nothing else under its key, or any other file, is read that way.)
+    other = tmp_path / "elsewhere.mp4"
+    other.write_bytes(b"x")
+    assert (await sources.find_file(settings, sources.MediaAccess(), infostation.KEY, str(other)))[
+        0
+    ] is None
