@@ -1,14 +1,13 @@
 """Signing in on a trusted network (1.36.0; see trusted.py for what an Admin
 lists, and access.Gate for when a request comes from one).
 
-On a network that opens on Who's tuning in?, the page lists who may pick
-themselves (those shown on every device at home, or every device), and an
-app gets a device key that works only there, for its picker (see
-devices.py). Picking someone with a PIN asks for it; an Admin always gives
-their PIN or password. On a network that signs in as someone, the page and
-apps are signed in as them. Either way, what's made works only on that
-network (a token of its own kind: see access.session_hash), and anyone can
-still sign in as someone else.
+On a network that opens on Who's tuning in?, an app gets a device key that
+works only there, for its picker (see devices.py), which lists only those
+who signed in on that device (1.38.0). The page's sign-in screen there is
+as at any home address. On a network that signs in as someone, the page
+and apps are signed in as them, for watching. Either way, what's made works
+only on that network (a token of its own kind: see access.session_hash),
+and anyone can still sign in as someone else.
 """
 
 from __future__ import annotations
@@ -48,12 +47,6 @@ AWAY_NAME = (
     "{name} is your away-from-home address's name, which is how the internet reaches tapiOca, "
     "so it can't be a name for home. Use another name for tapiOca at home."
 )
-WRONG_PASSWORD = "That password isn't right."
-PASSWORD_NOW = (
-    f"That's {access.BROWSER_PIN_TRIES} wrong PINs on this device. Sign in with a password, or "
-    "try a PIN again later."
-)
-WRONG_PINS_WINDOW_S = 3600.0  # (wrong PINs from one address are counted this long)
 
 
 class TrustedSignIn(BaseModel):
@@ -130,41 +123,22 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             del asked[next(iter(asked))]
         return entry
 
-    def listed(user: User) -> bool:
-        """On a trusted network's list: shown on every device at home, or
-        every device (as on a linked device at home, before anyone signs in
-        on it)."""
-        return ctx.devices.on_picker(user, None, at_home=True)
-
     def person_of(entry: dict[str, Any]) -> User:
         user = ctx.db.user(entry["person"]) if entry.get("person") else None
         if user is None:
             raise HTTPException(403, NOT_TRUSTED)
         return user
 
-    def browsers_own(request: Request) -> User | None:
-        """Whose PIN may sign in on this browser (tapiOca's page, at home):
-        someone who signed in on it with their password, since it last
-        changed and they last signed out there (see access.pin_browser)."""
-        return ctx.access.pin_browser(request.cookies.get(access.DEVICE_COOKIE))
-
-    def info(entry: dict[str, Any], own: User | None = None) -> dict[str, Any]:
-        """What a trusted network gives the page: the person it signs in as,
-        or the picker's people: those shown at home, and this browser's own
-        person (`own`, see browsers_own), so their PIN does here as it does
-        on any browser at home (1.37.0, the owner, October 15: signed out
-        after an hour, no one was listed, and only a password would do)."""
-        if entry["gives"] == "person":
-            user = ctx.db.user(entry["person"]) if entry.get("person") else None
-            return {"gives": "person", "name": user.name} if user else {"gives": "none"}
-        return {
-            "gives": "picker",
-            "people": [
-                {"id": u.id, "name": u.name, "pin": u.has_pin,
-                 "password": u.has_password, "admin": u.role == access.ADMIN}
-                for u in ctx.db.users() if listed(u) or (own is not None and u.id == own.id)
-            ],
-        }  # fmt: skip
+    def info(entry: dict[str, Any]) -> dict[str, Any] | None:
+        """What a trusted network that signs in as someone tells the page:
+        who. (From 1.38.0, a network's Who's tuning in? is for the apps
+        only: on the page, as at any home address, the sign-in screen has
+        only the Admins who signed in on that browser. The owner, October
+        17.)"""
+        if entry["gives"] != "person":
+            return None
+        user = ctx.db.user(entry["person"]) if entry.get("person") else None
+        return {"gives": "person", "name": user.name} if user else {"gives": "none"}
 
     ctx.access.trusted_info = info
 
@@ -194,26 +168,6 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     # (And at each start: after reset-access, which removes everyone, or a
     # backup restored from before someone was added.)
     people_changed()
-
-    # Wrong PINs on a trusted network's Who's tuning in?, by the address
-    # they came from (never a cookie: a guesser can send a new one each
-    # time): BROWSER_PIN_TRIES in WRONG_PINS_WINDOW_S, then a password there
-    # (or a wait); on top of each person's own limit (see devices.PIN_TRIES).
-    wrong_pins: dict[str, deque[float]] = {}
-
-    def pins_wrong_here(here: str) -> int:
-        kept = wrong_pins.get(access.counted_as(here))
-        now = time.monotonic()
-        while kept and now - kept[0] > WRONG_PINS_WINDOW_S:
-            kept.popleft()
-        return len(kept or ())
-
-    def pin_wrong_here(here: str) -> bool:
-        key = access.counted_as(here)
-        wrong_pins.setdefault(key, deque()).append(time.monotonic())
-        while len(wrong_pins) > 1000:  # (the oldest go)
-            del wrong_pins[next(iter(wrong_pins))]
-        return pins_wrong_here(here) >= access.BROWSER_PIN_TRIES
 
     def you_at(verdict: networks.Verdict | None, request: Request) -> str:
         """Where an Admin is, as the Access tab says it."""
@@ -294,71 +248,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.post("/api/access/trusted-sign-in")
     async def trusted_sign_in(body: TrustedSignIn, request: Request, response: Response):
-        """Signs tapiOca's page in on a trusted network: as the person it
-        signs in as, or as someone picked from its list."""
+        """Signs tapiOca's page in on a trusted network as the person it signs
+        in as, for watching. (Its list of people is the apps' only, from
+        1.38.0: see info.)"""
         entry = entry_of(request)
-        unlocked, by_password = True, False
-        if entry["gives"] == "person":
-            user = person_of(entry)
-        else:
-            user = ctx.db.user(body.id) if body.id is not None else None
-            own = browsers_own(request)
-            if user is None or not (listed(user) or (own is not None and own.id == user.id)):
-                raise HTTPException(404, NOT_LISTED)
-            here = access.address(request.scope)
-            try:
-                if body.password is not None and user.has_password:
-                    # (Anyone with a password may give it instead: after
-                    # too many wrong PINs here, it's the only way.)
-                    right = body.password and await ctx.access.check_password(
-                        user.name, body.password, here, known=True
-                    )
-                    if not right:
-                        raise devices.Refused(WRONG_PASSWORD, 401)
-                    wrong_pins.pop(access.counted_as(here), None)
-                    unlocked, by_password = False, True
-                elif user.has_pin:
-                    if pins_wrong_here(here) >= access.BROWSER_PIN_TRIES:
-                        raise devices.Refused(PASSWORD_NOW)
-                    try:
-                        await ctx.devices.check_pin(user, body.pin or "")
-                    except devices.Refused as e:
-                        # (This browser's own person, not listed otherwise: wrong
-                        # PINs count against the browser too, as on the page's own
-                        # PIN form, so after BROWSER_PIN_TRIES only their password
-                        # will do there, which can't be waited out. The audit of
-                        # 1.37.0.)
-                        token = request.cookies.get(access.DEVICE_COOKIE) or ""
-                        theirs = own is not None and own.id == user.id and not listed(user)
-                        if e.status != 429 and theirs and ctx.access.pin_wrong_on(token):
-                            ctx.access.record(
-                                logging.WARNING,
-                                f"{access.BROWSER_PIN_TRIES} wrong PINs for {user.name} on a "
-                                f"browser at {access.where(request.scope)}: it needs the "
-                                "password now",
-                            )
-                            raise devices.Refused(PASSWORD_NOW) from None
-                        if e.status != 429 and pin_wrong_here(here):
-                            ctx.access.record(
-                                logging.WARNING,
-                                f"{access.BROWSER_PIN_TRIES} wrong PINs on a trusted network's "
-                                f"Who's tuning in?, from {access.where(request.scope)}: it "
-                                "needs a password there now",
-                            )
-                            raise devices.Refused(PASSWORD_NOW) from None
-                        raise
-                    unlocked = False
-                elif user.role == access.ADMIN:
-                    raise devices.Refused(devices.ADMIN_PASSWORD)
-            except devices.Refused as e:
-                raise HTTPException(e.status, str(e)) from None
-            except access.Busy as e:
-                raise HTTPException(429, str(e)) from None
-        # (With their password: an ordinary sign-in, as by name. Otherwise
-        # one that works only here, and only for watching: access.STEP_UP.)
-        token = ctx.access.start_session(
-            user, unlocked=unlocked, trusted="" if by_password else entry["id"]
-        )
+        if entry["gives"] != "person":
+            raise HTTPException(404, NOT_LISTED)
+        user = person_of(entry)
+        # (One that works only here, and only for watching: access.STEP_UP.)
+        token = ctx.access.start_session(user, unlocked=True, trusted=entry["id"])
         access.set_sign_in_cookie(response, request, token)
         ctx.access.record(
             logging.INFO,

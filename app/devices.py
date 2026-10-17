@@ -74,6 +74,7 @@ CODE_LETTERS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 NAME_MOST = 120
 DEVICE_HEADER = "stationplay-device"
 WRONG_PIN = "That PIN isn't right"
+WRONG_PASSWORD = "That password isn't right"
 # A device linked by a trusted network (1.36.0), used anywhere else.
 OFF_ITS_NETWORK = (
     "This device skips signing in only on its trusted network. Sign in to use tapiOca here."
@@ -294,24 +295,7 @@ class Devices:
             else:
                 kept.append(user)
         self.db.set_show_on(changing, show_on)
-        self.end_unlisted(changing)
         return len(changing), kept
-
-    def end_unlisted(self, user_ids: list[int]) -> None:
-        """Ends the sign-ins these people have on linked devices whose lists
-        they're no longer on (picking yourself somewhere is only good while
-        you're on its list)."""
-        if not user_ids:
-            return
-        here = self.db.device_people()
-        for user_id, device_id in self.db.picker_sessions():
-            if user_id not in user_ids:
-                continue
-            user = self.db.user(user_id)
-            if user is None or not self.on_picker(
-                user, here.get(device_id, {}).get(user_id), at_home=True
-            ):
-                self.db.end_device_sessions(user_id, device_id)
 
     def show_on(self, user: User) -> str:
         """Where someone is shown (on every device at home, for someone
@@ -326,18 +310,18 @@ class Devices:
     def on_picker(self, user: User, how: str | None, at_home: bool) -> bool:
         """Whether someone is on a device's picker, as they are on it (`how`:
         see device_people), where the device is now (`at_home`: its request
-        came in on the home port)."""
-        if how == REMOVED:
+        came in on the home port). Only once they've signed in on it
+        themselves, with their password, an invite code or a link code
+        (1.38.0, the owner, October 17: "No user/admin appears on these sign
+        in pages ... unless they signed into the app for the first time
+        manually"): never because they're at home, their Show on says so, or
+        an Admin chose the device for them, which are kept as they were but
+        list no one. Someone with neither a password nor a PIN, who signed in
+        on it with an invite code, is on it only at home, where anyone may
+        pick them."""
+        if how != SIGNED_IN_HERE:
             return False
-        if how == CHOSEN:
-            return True
-        if how == SIGNED_IN_HERE and self.signs_in_by_name(user):
-            # (Someone who can no longer sign in by name isn't listed where
-            # they once did: only at home, as their Show on says, or where
-            # an Admin chose.)
-            return True
-        show_on = self.show_on(user)
-        return show_on == ALL or (show_on == HOME and at_home)
+        return at_home or self.signs_in_by_name(user)
 
     def people(self, device: Device, at_home: bool = True) -> list[User]:
         """Who's on a device's picker, by name: at home, or away from home
@@ -354,12 +338,12 @@ class Devices:
                     out.setdefault(user_id, []).append(device_id)
         return out
 
-    def note_signed_in(self, device: Device, user: User) -> None:
-        """Someone signed in on a device: they're on its picker from now on
-        (as they were, if an Admin chose it for them)."""
-        how = self.db.device_people().get(device.id, {}).get(user.id)
-        if how != CHOSEN:
-            self.db.set_device_person(device.id, user.id, SIGNED_IN_HERE)
+    def note_signed_in(self, device: Device, user: User, by_password: bool = False) -> None:
+        """Someone signed in on a device themselves: they're on its picker
+        from now on. `by_password`: with their password (or a link code their
+        password signed in for), so an Admin in Light sign-in may use their
+        PIN there for Admin tasks (see choose)."""
+        self.db.set_device_person(device.id, user.id, SIGNED_IN_HERE, by_password)
 
     def remove(self, device: Device, user: User) -> None:
         """Someone takes themselves off a device's picker."""
@@ -384,20 +368,36 @@ class Devices:
         here = self.db.device_people().get(device.id, {})
         if user is None or not self.on_picker(user, here.get(user.id), at_home=not public):
             raise Refused("That person isn't on this device's list", 404)
-        unlocked = by_password = False
-        if user.has_pin:
-            await self._check_pin(user, pin or "")
-        elif user.role == ADMIN and self._shared(device, user, here):
+        unlocked = by_password = admin_pin = False
+        if password is not None and user.has_password and (
+            user.role == ADMIN or not user.has_pin
+        ):
+            # (An Admin may give their password instead of their PIN, for
+            # their Admin tasks: 1.38.0.)
             right = password and await self.access.check_password(
                 user.name, password, address, public=public, known=True
             )
-            if not right:
-                raise Refused(ADMIN_PASSWORD)
+            if not right or right.id != user.id:
+                raise Refused(WRONG_PASSWORD, 401)
             by_password = True
+        elif user.has_pin:
+            await self._check_pin(user, pin or "")
+            # An Admin's PIN gives their Admin tools only in Light sign-in, at
+            # home, on a device they signed in on with their password; it's
+            # for watching otherwise (1.38.0, the owner, October 17).
+            admin_pin = (
+                self.access.light_pin(user)
+                and not public
+                and self.db.signed_in_by_password(device.id, user.id)
+            )
+        elif user.role == ADMIN and self._shared(device, user, here):
+            raise Refused(ADMIN_PASSWORD)
         else:
             # (Anyone at the device may pick them, so the sign-in says nothing
             # about who's there: see set_own_pin.)
             unlocked = True
+        if by_password:
+            self.note_signed_in(device, user, by_password=True)
         # (Someone picked on it: a device in use, never the first to go when
         # its trusted network is full. See link_trusted.)
         self.db.device_seen(device.id, max(_now(), device.created_ms + 1))
@@ -406,9 +406,12 @@ class Devices:
             device.name,
             device.id,
             unlocked,
-            # (With their password: an ordinary sign-in, as on the page's
-            # picker. Otherwise, on a network's device, only there.)
-            trusted="" if by_password else device.trusted,
+            # (With their password, or an Admin's PIN that gives Admin tools:
+            # an ordinary sign-in, as on the page's. Otherwise, on a
+            # network's device, only there.)
+            trusted="" if by_password or admin_pin else device.trusted,
+            admin_pin=admin_pin,
+            watching=user.role == ADMIN and not (by_password or admin_pin),
         )
 
     def _shared(self, device: Device, user: User, here: dict[int, str]) -> bool:
@@ -533,12 +536,14 @@ class Devices:
                     logging.WARNING, f"Failed sign-in as {name[:40]!r} on {device.name}"
                 )
                 raise Refused(WRONG_SIGN_IN)
-        if not self.signs_in_by_name(user):
+        if not code and not self.signs_in_by_name(user):
             raise Refused(
                 f"{user.name} can't sign in by name. If they should be on this device's list, "
-                "ask an Admin.",
+                "ask an Admin for an invite code.",
             )
-        self.note_signed_in(device, user)
+        # (An invite code puts anyone on it, even someone with neither a
+        # password nor a PIN, such as Kids: 1.38.0, as nothing else does now.)
+        self.note_signed_in(device, user, by_password=not code)
         if device.trusted:
             # (A password or invite code on a device a trusted network
             # linked: an ordinary linked device now, as appapi's sign-in
@@ -555,7 +560,9 @@ class Devices:
         now = self.db.user(user.id) or user
         return not now.has_pin and not now.no_pin
 
-    async def set_own_pin(self, user: User, pin: str | None, *, unlocked: bool) -> bool:
+    async def set_own_pin(
+        self, user: User, pin: str | None, *, unlocked: bool, current: str | None = None
+    ) -> bool:
         """Someone sets their own PIN, in an app they're signed in on: 4
         digits, or None for none (any they have is removed, and they're not
         asked for one again, on any device). Whether they have one now.
@@ -569,13 +576,17 @@ class Devices:
         someone without a password, whose PIN is how they sign in; and
         someone with neither (whom anyone at home may pick, such as "Kids")
         gets one only from an Admin. Wrong PINs for them lately still count
-        against the new one."""
+        against the new one. `current`: the hash of the sign-in it's set
+        from."""
         if pin is not None and not PIN.fullmatch(pin):
             raise Refused(PIN_DIGITS, 400)
         self._may_set_own_pin(user, pin, unlocked)  # (before the work of hashing it)
         hashed = await asyncio.to_thread(hash_password, pin) if pin is not None else ""
         self._may_set_own_pin(user, pin, unlocked)  # (and as things are now)
         self.db.set_pin(user.id, hashed, no_pin=pin is None)
+        # (The sign-ins an Admin's old PIN made for Admin tasks end with it,
+        # but the one it's changed from: see access.end_sessions.)
+        self.db.end_admin_pin_sessions(user.id, but=current)
         return pin is not None
 
     def _may_set_own_pin(self, user: User, pin: str | None, unlocked: bool) -> None:
@@ -602,21 +613,22 @@ class Devices:
             hashed = await asyncio.to_thread(hash_password, pin)
         else:
             hashed = ""
-            now = self.db.user(user.id) or user
-            why = _needs_one(now.name, self.show_on(now))
-            if why and not self.db.password_hash(user.id):
-                raise ValueError(
-                    f"{why} Choose Every device at home or Only devices you choose for them first."
-                )
         self.db.set_pin(user.id, hashed)
         self._wrong.pop(user.id, None)
-        if not hashed:
-            self.end_unlisted([user.id])
+        # (The sign-ins an Admin's old PIN made for Admin tasks end with it.)
+        self.db.end_admin_pin_sessions(user.id)
+        if not hashed and not self.db.password_hash(user.id):
+            # (Without a password, they're on a device's list only at home now:
+            # where they picked themselves with it, they pick themselves again.)
+            for user_id, device_id in self.db.picker_sessions():
+                if user_id == user.id:
+                    self.db.end_device_sessions(user.id, device_id)
 
     def set_show_on(self, user: User, show_on: str, devices: list[int] | None) -> None:
         """Where someone is shown ("default": as a new person is, now), and
         (for Only devices you choose, or away from home for Every device at
-        home) which devices. ValueError."""
+        home) which devices: kept, for going back to 1.37.1, though from
+        1.38.0 it puts no one on a device's list (see on_picker). ValueError."""
         if show_on not in (*SHOW_ON, "default"):
             raise ValueError("Choose where they're shown")
         now = self.db.user(user.id) or user
@@ -624,7 +636,6 @@ class Devices:
         self.db.set_show_on([user.id], show_on)
         if devices is not None:
             self.db.set_chosen_devices(user.id, devices)
-        self.end_unlisted([user.id])
 
     def make_invite(self, user: User) -> tuple[str, int]:
         """A new invite code for someone (any earlier one ends): the code and

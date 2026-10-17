@@ -347,7 +347,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             )
             raise HTTPException(401, "That name or password isn't right")
         label = app_label(body.app, body.deviceName)
-        device = None if known else ctx.access.remember_device(user)
+        # (This app is theirs, for the internet's limit on tries: see access.py.)
+        device = ctx.access.enroll_browser(body.device, user)
         if body.picker:
             linked, new_key = linked_device(body.deviceKey, label, user)
             token = ctx.access.start_session(user, linked.name, linked.id)
@@ -378,7 +379,8 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             ctx.db.unbind_device(found.id)
         if found is None:
             found, new_key = ctx.devices.link(label, user)
-        ctx.devices.note_signed_in(found, user)
+        # (With their password, or a link code a password's sign-in entered.)
+        ctx.devices.note_signed_in(found, user, by_password=True)
         return found, new_key
 
     # Signing in with a code (see links.py) --------------------------------
@@ -505,7 +507,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             # watching, never for changing a PIN. See access.STEP_UP.)
             raise HTTPException(403, access.STEP_UP)
         try:
-            has = await ctx.devices.set_own_pin(user, body.pin, unlocked=signed.unlocked)
+            has = await ctx.devices.set_own_pin(
+                user, body.pin, unlocked=signed.unlocked, current=access.sign_in_of(request)
+            )
         except devices.Refused as e:
             raise HTTPException(e.status, str(e)) from None
         chose = "set a PIN" if has else "chose no PIN"
@@ -681,8 +685,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     def never_from_a_network(request: Request) -> None:
         """No sign-in a trusted network gave (or made with no password or
         PIN) links an app: the app's would work anywhere (access.LINK_BOUND)."""
-        made = ctx.access.sign_in_made(request)
-        if made is not None and (made.unlocked or made.trusted):
+        if access.without_secret(ctx.access.sign_in_made(request)):
             raise HTTPException(403, access.LINK_BOUND)
 
     @app.get("/api/access/link/{code}")

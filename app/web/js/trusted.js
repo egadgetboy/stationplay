@@ -210,82 +210,32 @@ function renderHomeNames() {
 }
 
 // The sign-in page, on a trusted network ---------------------------------------------
-// Who's tuning in?: each person listed picks themselves (a PIN if they have
-// one; an Admin always gives a PIN or password). Or the device signs in as
-// one person: the page presses Continue itself when it's first opened.
-let trustedFor = null;  // the person picked, while their PIN or password is asked
+// One that signs in as someone: the page presses Continue itself when it's
+// first opened. (From 1.38.0 a network's Who's tuning in? is the apps' only:
+// on the page, Who's signing in? is this browser's Admins, as at any home
+// address. See showPeople in access.js.)
 let trustedAuto = true;  // (pressed once, on opening: never after signing out or timing out)
-const PASSWORD_NOW = /wrong PINs on this device/;
+// Whether `info` (what tapiOca says of this network) signs in as someone,
+// shown if so.
 function trustedSignIn(info, idle = false) {
-  trustedFor = null;
-  const on = !!info && info.gives !== 'none';
-  $('#signinTrusted').hidden = $('#signinSomeoneElse').hidden = !on;
-  if (!on) return;
+  const on = !!info && info.gives === 'person';
+  if (!on) return false;
   if (idle) trustedAuto = false;
   // (Signed out on purpose in this tab: never pressed for them.)
   try { if (sessionStorage.getItem('tapioca.signedOut')) trustedAuto = false; } catch {}
-  for (const id of ['#signinByPassword', '#signinByPin', '#signinGo', '#signinOther', '#signinSwitch', '#signinHome', '#signinWhere']) $(id).hidden = true;
-  $('#signinName').required = $('#signinPassword').required = $('#signinPin').required = false;
-  if (info.gives === 'person') {
-    $('#signinTrustedTitle').textContent = `This device signs in as ${info.name}.`;
-    $('#signinPeople').replaceChildren();
-    const go = $('#signinContinue');
-    go.hidden = false;
-    go.textContent = `Continue as ${info.name}`;
-    go.onclick = () => trustedSend({});
-    if (trustedAuto) { trustedAuto = false; trustedSend({}); }
-    return;
-  }
-  // (The page's own question: "Who's tuning in?" is the apps', the owner, October 15.)
-  $('#signinTrustedTitle').textContent = 'Who’s signing in?';
-  $('#signinContinue').hidden = true;
-  const people = info.people || [];
-  $('#signinPeople').replaceChildren(...(people.length ? people.map(p => h('button', {
-    class: 'who', type: 'button', role: 'listitem', 'aria-pressed': 'false', onclick: e => trustedPick(p, e.currentTarget),
-  }, h('span', { class: 'face', 'aria-hidden': 'true' }, (p.name[0] || '?').toUpperCase()),
-    h('span', { class: 'who-name' }, p.name),
-    p.pin || p.admin ? h('span', { class: 'who-note' }, p.pin ? 'PIN' : 'Password') : null))
-    : [h('p', { class: 'muted small', style: 'margin:0; grid-column: 1 / -1' }, 'No one is listed here yet. Sign in below.')]));
-}
-// Someone picked: signed in, or asked for their PIN (or password).
-function trustedPick(p, button, password = false) {
-  for (const b of document.querySelectorAll('#signinPeople .who')) b.setAttribute('aria-pressed', String(b === button));
-  $('#signinStatus').textContent = '';
-  if (!p.pin && !p.admin) { trustedSend({ id: p.id }); return; }
-  trustedFor = { ...p, button, byPassword: password || !p.pin };
-  const byPassword = trustedFor.byPassword;
-  $('#signinByPin').hidden = byPassword;
-  $('#signinByPassword').hidden = !byPassword;
-  $('#signinName').closest('.field').hidden = true;
-  $('#signinPin').required = !byPassword;
-  $('#signinPassword').required = byPassword;
-  $('#signinPinLabel').textContent = `PIN for ${p.name}`;
-  $('#signinGo').hidden = false;
-  $('#signinPin').value = $('#signinPassword').value = '';
-  (byPassword ? $('#signinPassword') : $('#signinPin')).focus();
-}
-// The sign-in form, for the person picked (see access.js).
-async function trustedSubmit() {
-  const p = trustedFor;
-  const body = p.byPassword ? { id: p.id, password: $('#signinPassword').value } : { id: p.id, pin: $('#signinPin').value };
-  try { await api('/api/access/trusted-sign-in', { method: 'POST', body }); }
-  catch (err) {
-    // (Too many wrong PINs on this device: a password now, for those who have one.)
-    if (PASSWORD_NOW.test(err.message) && !p.byPassword && p.password) trustedPick(p, p.button, true);
-    throw err;
-  }
+  showPeople([]);
+  for (const id of ['#signinForm', '#pinForm', '#signinOther', '#signinForget', '#signinHome', '#signinWhere']) $(id).hidden = true;
+  $('#signinTrusted').hidden = $('#signinSomeoneElse').hidden = false;
+  $('#signinTrustedTitle').textContent = `This device signs in as ${info.name}.`;
+  const go = $('#signinContinue');
+  go.hidden = false;
+  go.textContent = `Continue as ${info.name}`;
+  go.onclick = () => trustedSend({});
+  if (trustedAuto) { trustedAuto = false; trustedSend({}); }
+  return true;
 }
 async function trustedSend(body) {
   try { await api('/api/access/trusted-sign-in', { method: 'POST', body }); }
   catch (err) { $('#signinStatus').textContent = err.message; return; }
   await signedInNow();
 }
-// Someone else, by name and password.
-$('#signinSomeoneElse').addEventListener('click', () => {
-  trustedFor = null;
-  $('#signinTrusted').hidden = $('#signinSomeoneElse').hidden = true;
-  $('#signinName').closest('.field').hidden = false;
-  signInBy('');
-  $('#signinGo').hidden = false;
-  $('#signinName').focus();
-});

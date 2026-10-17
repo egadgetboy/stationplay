@@ -14,7 +14,7 @@ const refresh = () => {
   if (currentTab === 'stats') loadStats();
 };
 (async () => {
-  try { await loadMe(); } catch {}
+  if (!await firstMe()) return;
   if (me.required && !me.user) { showSignIn(me.idle); return; }
   const initial = location.hash.slice(1);
   if (TABS.includes(initial) && initial !== 'stations') showTab(initial);
