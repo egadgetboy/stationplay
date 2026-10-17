@@ -2264,15 +2264,26 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
                 return None
             return names.get(c.created_by, "a removed user")
 
-        return [
-            channel_json(
+        viewer = ctx.viewing.viewer(user)
+        now = now_ms()
+
+        def shown(c: Channel) -> dict:
+            said = channel_json(
                 c,
                 mayChange=access.may_change(user, c),
                 mine=user is not None and c.created_by == user.id,
                 madeBy=made_by(c),
             )
-            for c in ctx.stations_for(user)
-        ]
+            # (A Station allowed for them by hand: never what it's made of,
+            # which may name what's above them beyond what's been judged for
+            # them. The hostile audit before building 1.39.0.)
+            if ctx.viewing.shown_until(viewer, c.id, now) is not None:
+                said.update(
+                    sources=[], pending=None, nextMarathon=None, nextFeature=None, nextBlock=None
+                )
+            return said
+
+        return [shown(c) for c in ctx.stations_for(user)]
 
     def room_for_one_more(user: User | None) -> None:
         try:

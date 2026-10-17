@@ -166,17 +166,22 @@ def test_an_admin_can_allow_or_block_a_station_for_someone(app):
         # On Unrestricted, with Late Night blocked.
         admin.put(f"/api/access/users/{kit['id']}/viewing", json={"stations": {str(ids[5]): False}})
         assert numbers() == [3, 7, 9]
-        # On Kid, with Mixed (one R movie) allowed after all.
+        # On Kid, with Mixed (one R movie) allowed after all: from 1.39.0
+        # (the owner's D01, October 17), blocked for Kit while the R movie
+        # is in its next 48 hours, which here is always (it plays over and
+        # over). It shows once that's aired: tests/test_station_access.py.
         admin.put(
             f"/api/access/users/{kit['id']}/viewing",
             json={"level": kid_level(admin), "stations": {str(ids[7]): True}},
         )
-        assert numbers() == [3, 7, 9]
+        assert numbers() == [3, 9]
         listed = admin.get(f"/api/access/users/{kit['id']}/stations").json()
         why = {s["number"]: (s["chosen"], s["why"]) for s in listed["stations"]}
         assert why[3] == ("level", None)
         assert why[5] == ("level", "It plays shows rated TV-MA")
         assert why[7] == ("allowed", "It plays movies rated R")
+        seven = next(s for s in listed["stations"] if s["number"] == 7)
+        assert seven["blockedUntilMs"] is not None
         # Logged, in plain words.
         logs = admin.get("/api/logs?access_log=true").json()["text"]
         assert "Ada put Kit on the Viewing Level Kid and allowed station 7 for Kit" in logs

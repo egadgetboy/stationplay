@@ -1,8 +1,8 @@
 {
-  "version": "1.38.0",
+  "version": "1.39.0",
   "new": [
-    "Full or Light sign-in for each Admin",
-    "Sign-in screens show only who signed in there",
-    "No Admin tabs before tapiOca knows who you are"
+    "Stations you allow by hand pause for limits",
+    "They come back once that program has aired",
+    "Guides stop where a Station was checked"
   ]
 }

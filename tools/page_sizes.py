@@ -511,6 +511,13 @@ def fill(sp: Running, data: Path) -> None:
         ok(home.put("/api/updates", json={"on": True}))
         ok(home.post("/api/updates/check"))
 
+        # (1.39.0) A station above Robin's level, allowed for her by hand:
+        # blocked for now, as something above her is on it in the next 48 hours.
+        hers = ok(home.get(f"/api/access/users/{robin['id']}/stations"))["stations"]
+        above = next(s for s in hers if not s["levelSees"])
+        ok(home.put(f"/api/access/users/{robin['id']}/viewing",
+                    json={"stations": {str(above["id"]): True}}))  # fmt: skip
+
         # Tuner access: any device on the home network, with two devices listed.
         ok(home.put("/api/tuner", json={"only": False, "devices": TUNER_LISTED}))
 
@@ -2072,6 +2079,10 @@ def admin_views(page: Page, look: Look, only: set[str] | None, sp: Running) -> N
         robin = page.locator("#userTable tr", has_text=KID["name"])
         robin.locator("button:has-text('What they see')").click()
         page.wait_for_selector("#userStations[open] .sees-part .sel")
+        # (1.39.0) The station allowed for her by hand, blocked for now: said, with until when.
+        look.expect("an allowed station blocked for now says until when",
+                    "Blocked for now: something Robin can’t see is on until"
+                    in page.inner_text("#userStations"), True)  # fmt: skip
         page.evaluate(
             "() => document.querySelectorAll('#userStations .sees-part')[1].scrollIntoView({block: 'start'})"
         )

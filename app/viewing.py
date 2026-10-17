@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
 
-from . import access, ratings
+from . import access, ratings, schedule
 from .access import ADMIN
 from .catalog import EPISODE, MOVIE, SHOW, Entry, Tags
 from .db import Database, Item, User
@@ -74,6 +74,10 @@ UNRESTRICTED_STAYS = (
     "or add one of your own."
 )
 LEVELS_MOST = 50
+# How far ahead a Station allowed by hand for someone is looked at (1.39.0,
+# the owner's D01): its published schedule, as far as the guides show it
+# (updates.GUIDE_FUTURE_MS; a test keeps them the same).
+STATION_WINDOW_MS = 48 * 3600 * 1000
 NAME_MAX = 40
 # The level new people start on (1.34.1, the owner), by its id; none:
 # Unrestricted. An Admin may choose another as each is added.
@@ -508,6 +512,10 @@ class Viewing:
         # everything, so no one has limits.
         self.signing_in: Callable[[], bool] = lambda: True
         self._reaches: dict[int, tuple[tuple, Reach]] = {}
+        # Each Station's next STATION_WINDOW_MS, judged (see _window): kept
+        # for the minute, and for as long as its eras and what's known of
+        # its titles stay as they are.
+        self._windows: dict[int, tuple[tuple, list[tuple[Judged, int, int]] | None]] = {}
         self._names: frozenset[tuple[str, str]] | None = None  # (hidden by, as last loaded)
         self.reload()
 
@@ -749,15 +757,90 @@ class Viewing:
             own=own,
         )
 
-    def sees_station(self, viewer: Viewer, channel_id: int) -> bool:
+    def sees_station(self, viewer: Viewer, channel_id: int, now_ms: int | None = None) -> bool:
+        """Whether someone may tune in to a Station (the owner's D01, October
+        17): one blocked for them never; one allowed for them by hand
+        while nothing above them is in its published schedule (see
+        blocked_until); any other while nothing it plays from now on is
+        above their level or hidden for them. Asked again on every request
+        of its stream, so someone watching is stopped when that changes."""
         if viewer.everything:
             return True
         if channel_id in viewer.blocked:
             return False
         if channel_id in viewer.allowed:
-            return True
-        reach = self.reach(channel_id)
+            return self.blocked_until(viewer, channel_id, now_ms) is None
+        reach = self.reach(channel_id, now_ms)
         return viewer.level.allows_reach(reach) and viewer.own.blocks.meets(reach) is None
+
+    def blocked_until(
+        self, viewer: Viewer, channel_id: int, now_ms: int | None = None
+    ) -> int | None:
+        """For a Station allowed for someone by hand: None while nothing in
+        its next STATION_WINDOW_MS is something they can't see; otherwise
+        when the last such airing in it ends (the owner, October 17: "The
+        station is blocked for kid while a restricted title is scheduled.
+        Once the title passes, then kid is allowed to resume watching the
+        station"). A schedule that can't be read, or has nothing in it, or
+        whose ratings aren't all known yet, blocks it (`now_ms` +
+        STATION_WINDOW_MS, to be safe)."""
+        if viewer.everything:
+            return None
+        now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+        window = self._window(channel_id, now_ms)
+        if not window:
+            return now_ms + STATION_WINDOW_MS
+        until = None
+        for judged, start_ms, end_ms in window:
+            # (One that's ended has aired; one past the window isn't published yet.)
+            if (
+                end_ms > now_ms
+                and start_ms < now_ms + STATION_WINDOW_MS
+                and not viewer.sees(judged)
+            ):
+                until = end_ms if until is None else max(until, end_ms)
+        return until
+
+    def shown_until(self, viewer: Viewer, channel_id: int, now_ms: int) -> int | None:
+        """How far ahead a guide may show someone a Station: for one allowed
+        for them by hand, only as far as it's been judged for them
+        (STATION_WINDOW_MS: what's beyond may be above them, and is judged
+        when it gets that close). None: as far as asked. (The hostile audit
+        before building 1.39.0: the apps' guide can be asked for days
+        ahead.)"""
+        if viewer.everything or channel_id not in viewer.allowed:
+            return None
+        return now_ms + STATION_WINDOW_MS
+
+    def _window(self, channel_id: int, now_ms: int) -> list[tuple[Judged, int, int]] | None:
+        """What a Station airs from the start of `now_ms`'s minute until
+        STATION_WINDOW_MS after its end, each program judged, with when it
+        starts and ends (INFO's own film aside); None if its schedule can't
+        be worked out, or has nothing in it."""
+        eras = self.db.eras(channel_id)
+        minute = now_ms // 60_000 * 60_000
+        key = (minute, tuple(e.id for e in eras), self.titles.version)
+        cached = self._windows.get(channel_id)
+        if cached and cached[0] == key:
+            return cached[1]
+        try:
+            slots = list(
+                schedule.station_schedule(eras).between(minute, minute + 60_000 + STATION_WINDOW_MS)
+            )
+            found: list[tuple[Judged, int, int]] | None = [
+                (self.titles.judge(s.item), s.start_ms, s.end_ms)
+                for s in slots
+                if s.item.rating_key != INFO_KEY
+            ]
+            if not slots:
+                found = None
+        except Exception:
+            log.exception(
+                "Station %s's schedule couldn't be worked out for who may watch it", channel_id
+            )
+            found = None
+        self._windows[channel_id] = (key, found)
+        return found
 
     @property
     def signature(self) -> str:
@@ -1092,6 +1175,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
                     else "level",
                     "levelSees": why is None,
                     "why": why,
+                    # (Allowed by hand, but blocked for now: something they
+                    # can't see is on before then. 1.39.0, the owner's D01.)
+                    "blockedUntilMs": v.blocked_until(viewer, c.id)
+                    if chosen.get(c.id) is True and not viewer.everything
+                    else None,
                 }
             )
         return {"admin": user.role == access.ADMIN, "level": viewer.level.name, "stations": out}

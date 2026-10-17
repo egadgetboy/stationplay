@@ -1023,12 +1023,19 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         if not 0 < to_ms - from_ms <= GUIDE_MAX_MS:
             raise HTTPException(400, "The guide can cover at most 2 days, after its start")
         channels = ctx.stations_for(access.signed_in(request))
+        viewer = ctx.viewing.viewer(access.signed_in(request))
 
         def listing() -> list[dict]:  # (on a worker thread, as on_now)
             out = []
             for channel in channels:
                 station = ctx.guide(channel)
-                programs = [slot_program(station, slot) for slot in station.between(from_ms, to_ms)]
+                # (A Station allowed for them by hand: only as far ahead as
+                # it's been judged for them. See viewing.Viewing.shown_until.)
+                until = ctx.viewing.shown_until(viewer, channel.id, now)
+                upto = to_ms if until is None else min(to_ms, until)
+                programs = [
+                    slot_program(station, slot) for slot in station.between(from_ms, upto)
+                ] if upto > from_ms else []  # fmt: skip
                 out.append({"number": channel.number, "programs": programs})
             return out
 

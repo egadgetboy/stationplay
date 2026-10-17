@@ -19,7 +19,8 @@ apps show only what the server sends.
 3. **Stations are all or nothing.** Everyone watching a station shares one
    stream, so a station can't change for each person. A person sees a
    station only if everything on it is within their limits, or an Admin
-   allowed that station for them.
+   allowed that station for them and nothing above them is on it in the
+   next 48 hours (1.39.0, the owner's D01).
 4. **Plain rules, in order.** The first rule that applies decides, so an
    Admin can always tell why something is hidden.
 5. **Lean.** Plex stays the catalog. tapiOca keeps a title's rating and
@@ -194,11 +195,19 @@ decides. An episode counts as its show for rules 2, 3, 6 and 7.
    is hidden.
 8. Anything else is shown.
 
-For a station, a station **allowed** for the person is shown, and one
-**blocked** for them is hidden. Otherwise, it's shown only if every program
-it plays passes rules 2 and 4 to 7. "Every program" means everything in its
-current lineup, including its specials' programs. A title allowed for the
-person doesn't make a station shown: an Admin allows the station instead.
+For a station, one **blocked** for the person is hidden. One **allowed**
+for them is shown while every program in its published schedule, the next
+48 hours (the guides' window), passes rules 1 to 7 for them; while one
+doesn't, it's blocked for them, and it comes back once that program has
+aired (the owner, October 17). Their guide shows it only 48 hours ahead, and
+the page leaves out what it's made of (its sources and coming specials).
+Otherwise, a station is shown only if every program it plays passes rules
+2 and 4 to 7. "Every program" means everything in its current lineup,
+including its specials' programs. A title allowed for the person doesn't
+make a station shown: an Admin allows the station instead. Whatever decides
+it, it's asked again on every request of its stream, so someone watching
+is stopped when it changes (a new schedule, a new level), and everyone else
+watches on. A schedule that can't be worked out keeps a station hidden.
 Station numbers don't change when some stations are hidden.
 
 Still to come *(after 1.0)*: rating overrides, Station Audience warnings,
@@ -712,8 +721,9 @@ stations.)
 - Someone on the Kid level never sees a TV-MA title in any list, search,
   guide, Resume row or "on now," and its key and stream address are
   refused.
-- A station with one program above a person's level is hidden from them,
-  unless an Admin allows that station for them.
+- A station with one program above a person's level is hidden from them.
+  One an Admin allows for them is hidden only while such a program is in
+  its next 48 hours.
 - A User can't make an Admin, or change their own level.
 - A first Admin can't be added from the internet (as before).
 - A revoked device is signed out on its next request.
