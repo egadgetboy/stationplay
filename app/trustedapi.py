@@ -131,14 +131,16 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     def info(entry: dict[str, Any]) -> dict[str, Any] | None:
         """What a trusted network that signs in as someone tells the page:
-        who. (From 1.38.0, a network's Who's tuning in? is for the apps
-        only: on the page, as at any home address, the sign-in screen has
-        only the Admins who signed in on that browser. The owner, October
-        17.)"""
+        that it does, never who (the owner, October 17: "No user appears on
+        the server sign in page at all unless their user is set as Admin";
+        and only a User can be a network's). From 1.38.0, a network's Who's
+        tuning in? is for the apps only: on the page, as at any home
+        address, the sign-in screen has only the Admins who signed in on that
+        browser."""
         if entry["gives"] != "person":
             return None
         user = ctx.db.user(entry["person"]) if entry.get("person") else None
-        return {"gives": "person", "name": user.name} if user else {"gives": "none"}
+        return {"gives": "person"} if user else {"gives": "none"}
 
     ctx.access.trusted_info = info
 
@@ -220,6 +222,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.put("/api/access/trusted")
     async def change_lists(body: TrustedLists, request: Request):
+        # (What's home decides where a PIN gives Admin tools, and who a
+        # network signs in: only with a password. The cold audit of 1.38.0.)
+        ctx.access.refuse_without_secret(request)
         before = ctx.trusted.entries
         given = body.model_dump(exclude_none=True)
         # (Never the Away from home address's name, which is how the internet

@@ -392,6 +392,31 @@ def shown_on(page: httpx.Client) -> dict[str, str]:
     return {u["name"]: u["showOn"] for u in page.get("/api/access/users").json()}
 
 
+def admin_again(checks: Checks, url: str, made: dict, before: str, where: str) -> dict:
+    """From 1.38.0 an Admin's sign-ins from before the update are for
+    watching (1.37.1 never noted which a PIN made, and every Admin starts on
+    Full: the cold audit of 1.38.0), until their password signs in again: so
+    it does, on the page and in the app. `made`, with those sign-ins."""
+    if version_of(before) >= (1, 38, 0) or version_of(__version__) < (1, 38, 0):
+        return made
+    page = httpx.Client(headers=PAGE, base_url=url, timeout=30, cookies=made["cookies"])
+    me = page.get("/api/access/me").json().get("user") or {}
+    app_me = httpx.get(f"{url}/api/internal/me", headers=made["bearer"], timeout=10).json()
+    # (The app's, if it's still signed in: back on the release before, the
+    # User signing in on its device may have signed it out.)
+    app_watching = (app_me.get("user") or {"watching": True}).get("watching")
+    checks.ok((me.get("name"), me.get("watching"), me.get("adminTools"), app_watching)
+              == (ADMIN["name"], True, False, True),
+              f"{where}: the Admin's sign-ins from before are for watching", (me, app_me))  # fmt: skip
+    fresh = httpx.Client(headers=PAGE, base_url=url, timeout=30)
+    signed = fresh.post("/api/access/sign-in", json=ADMIN)
+    app = httpx.post(f"{url}/api/internal/sign-in", json={**ADMIN, **APP}, timeout=30)
+    checks.ok(signed.status_code == 200 and app.status_code == 200,
+              f"{where}: the Admin's password signs in again", signed.text[:200])  # fmt: skip
+    return {**made, "cookies": dict(fresh.cookies),
+            "bearer": {"Authorization": f"Bearer {app.json().get('token')}"}}  # fmt: skip
+
+
 def has_data(checks: Checks, url: str, made: dict, version: str, where: str) -> None:
     """Everything give_data made is there, everyone still signed in."""
     page = httpx.Client(headers=PAGE, base_url=url, timeout=30, cookies=made["cookies"])
@@ -669,6 +694,8 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         sp = start(ROOT, data, f"{__version__}-updated")
         if sp is None:
             return
+        made_before = made  # (the sign-ins the copy puts back)
+        made = admin_again(checks, sp.url, made, before, "updated")
         page = httpx.Client(headers=PAGE, base_url=sp.url, timeout=30, cookies=made["cookies"])
         notify = {"on": True, "url": f"{plex.url}/notify", "format": "json"}
         checks.ok(page.put("/api/notify", json=notify).status_code == 200,
@@ -865,8 +892,9 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         sp = start(old_code, data, f"{before}-rolled-back")
         if sp is None:
             return
-        has_data(checks, sp.url, made if copies else since, before, "rolled back")
-        page = httpx.Client(headers=PAGE, base_url=sp.url, timeout=30, cookies=made["cookies"])
+        has_data(checks, sp.url, made_before if copies else since, before, "rolled back")
+        page = httpx.Client(headers=PAGE, base_url=sp.url, timeout=30,
+                            cookies=(made_before if copies else made)["cookies"])  # fmt: skip
         said = [p["details"] for p in page.get("/api/problems").json()["problems"]]
         if copies:
             checks.ok(said == [["before the update"]], "the database is as it was before the update",
@@ -899,6 +927,8 @@ def run(checks: Checks, before_tag: str, keep: bool) -> None:
         sp = start(ROOT, data, f"{__version__}-again")
         if sp is None:
             return
+        if copies:
+            made = admin_again(checks, sp.url, made_before, before, "updated again")
         page = httpx.Client(headers=PAGE, base_url=sp.url, timeout=30, cookies=made["cookies"])
         default = page.get("/api/access/devices").json()["default"]
         checks.ok(default == "home", "the Admin's choice stays: new people show on every device "

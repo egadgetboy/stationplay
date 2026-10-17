@@ -73,9 +73,18 @@ addEventListener('pageshow', async e => {
   if (was !== currentTab && isAdmin()) showTab(was);
 });
 $('#meRetry').addEventListener('click', () => location.reload());
+// Signed out (the sign-in screen's turn): nothing the sign-in before had
+// stays, until tapiOca says who's signed in again (the cold audit of 1.38.0:
+// a new role ends a sign-in, and its Admin tabs showed on).
+function forgetMe() {
+  me = { ...me, known: false, user: null };
+  showForMe();
+  $('#watchingNote').hidden = true;
+}
 // `idle`: signed out after an hour without activity.
 function showSignIn(idle = false) {
   if (signedOut()) return;
+  forgetMe();
   for (const d of document.querySelectorAll('dialog[open]')) d.close();
   $('.wrap').hidden = true;
   $('#signinView').hidden = false;
@@ -227,15 +236,20 @@ $('#pinForm').addEventListener('submit', async e => {
   }
   await signedInNow();
 });
-// Signed in, however it was: the page, as that person sees it.
+// Signed in, however it was: the page, as that person sees it, once
+// tapiOca has said who that is (never the sign-in before's for a moment).
 async function signedInNow() {
   try { sessionStorage.removeItem('tapioca.signedOut'); } catch {}
   pickedPerson = null;
   $('#signinPassword').value = '';
   $('#signinPin').value = '';
+  forgetMe();
+  try { await loadMe(); } catch (err) {
+    if (err.status !== 401) $('#signinStatus').textContent = 'tapiOca couldn’t check who’s signed in. Try again.';
+    return;
+  }
   $('#signinView').hidden = true;
   $('.wrap').hidden = false;
-  await loadMe();
   showTab(currentTab);
   loadStatus();
   loadChannels();
@@ -268,9 +282,12 @@ $('#signinModeForm').addEventListener('submit', async e => {
   } catch (err) { $('#modeStatus').textContent = err.message; $('#modePassword').value = ''; return; }
   $('#modePassword').value = '';
   await loadMe();
-  $('#modeStatus').textContent = how === 'light'
-    ? 'Saved. Your PIN signs you in here from now on, at home.'
-    : 'Saved. Your password signs you in every time.';
+  // (Light needs a PIN: without one, it's said how to get one. The cold audit of 1.38.0.)
+  $('#modeStatus').textContent = how !== 'light'
+    ? 'Saved. Your password signs you in every time.'
+    : me.user?.pin
+      ? 'Saved. Your PIN signs you in here from now on, at home.'
+      : 'Saved. Light needs a PIN: set yours on the Access tab.';
 });
 $('#closeAccount').addEventListener('click', () => $('#account').close());
 $('#accountForm').addEventListener('submit', async e => {

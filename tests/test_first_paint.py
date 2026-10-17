@@ -211,3 +211,68 @@ def test_the_pages_scripts_never_declare_a_name_twice():
             declared.setdefault(found, []).append(name)
     twice = {k: v for k, v in declared.items() if len(v) > 1}
     assert twice == {}, twice
+
+
+SIGNED_IN_NOW = """
+const sessionStorage = { removeItem() {} };
+let pickedPerson = null;
+function loadStatus() {}
+function loadChannels() {}
+function linkWanted() {}
+"""
+
+
+@needs_node
+def test_signed_out_by_the_server_no_admin_tools_stay():
+    """(The cold audit of 1.38.0.) A 401 while the page is open (a new role
+    ended the sign-in, or an hour without activity): the sign-in screen
+    shows, and with it nothing the old sign-in had, until tapiOca says who's
+    signed in again."""
+    assert re.search(r"function showSignIn\(idle = false\) \{\n  if \(signedOut\(\)\) return;\n  forgetMe\(\);", ACCESS)
+    said = page(
+        _piece(ACCESS, "function forgetMe(")
+        + """
+answer = { required: true, user: { name: 'Lee', role: 'admin', adminTools: true } };
+await firstMe();
+const before = tabs();
+forgetMe();
+console.log(JSON.stringify({ before, admin: isAdmin(), tabs: tabs(), user: me.user,
+                             watching: !els['#watchingNote'].hidden }));
+"""
+    )
+    assert said == {"before": 4, "admin": False, "tabs": 0, "user": None, "watching": False}
+
+
+@needs_node
+def test_signing_in_again_shows_the_page_only_once_tapioca_says_who():
+    """(The cold audit of 1.38.0: signedInNow showed the page, the Admin
+    tabs of the sign-in before included, and only then asked who's signed
+    in.) Lee, made a User, signs in again: nothing shows until the answer,
+    and then no Admin tab."""
+    said = page(
+        SIGNED_IN_NOW
+        + _piece(ACCESS, "function forgetMe(")
+        + _piece(ACCESS, "async function signedInNow(")
+        + """
+answer = { required: true, user: { name: 'Lee', role: 'admin', adminTools: true } };
+await firstMe();
+el('#signinView').hidden = false;
+el('.wrap').hidden = true;
+let answered;
+const later = new Promise(go => { answered = go; });
+const asked = api;
+api = async path => { await later; return asked(path); };
+answer = { required: true, user: { name: 'Lee', role: 'user', adminTools: false } };
+const going = signedInNow();
+await new Promise(go => setTimeout(go, 20));
+const waiting = { wrap: !els['.wrap'].hidden, tabs: tabs() };
+answered();
+await going;
+console.log(JSON.stringify({ waiting, after: { wrap: !els['.wrap'].hidden, tabs: tabs(),
+                                               signin: !els['#signinView'].hidden } }));
+"""
+    )
+    assert said == {
+        "waiting": {"wrap": False, "tabs": 0},
+        "after": {"wrap": True, "tabs": 0, "signin": False},
+    }

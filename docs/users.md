@@ -523,7 +523,8 @@ From 1.38.0 (the owner, October 17), `app/access.py`.
   (`POST /api/access/pin-sign-in` answers 404 there), and a PIN's sign-in
   used there is for watching only.
 - **What ends them.** Choosing Full ends the sign-ins the PIN made. A new
-  PIN ends the sign-ins the old one made. A new role (a User made an Admin,
+  PIN set by an Admin ends the sign-ins the old one made (one you set
+  yourself keeps the sign-in you set it from). A new role (a User made an Admin,
   or an Admin made a User) ends all of that person's sign-ins, but the one
   making the change, so they sign in again as what they are now.
 - **No credentials.** A PIN's sign-in can't make anything that works
@@ -563,7 +564,7 @@ From 1.38.0 (the owner, October 17), `app/access.py`.
 | `user.adminSignIn` | For an Admin only, their own: `full` or `light` |
 | `user.byNetwork` | A trusted network signed them in |
 | `people` | Signed out, at home: the Admins on this browser's sign-in screen, each with `id`, `name` and `pin` (whether their PIN signs them in here). Left out when there's no one. In place of 1.37.x's `pinFor` |
-| `trusted` | Signed out, at home, only on a network that signs in as someone: `{"gives": "person", "name": ...}` (`{"gives": "none"}` if that person is gone) |
+| `trusted` | Signed out, at home, only on a network that signs in as someone: `{"gives": "person"}`, never who (1.38.0: no User is shown on the sign-in screen); `{"gives": "none"}` if that person is gone |
 
 ## Trusted networks
 

@@ -1125,6 +1125,15 @@ class Database:
                     self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
                     if (table, column) == ("sessions", "active_ms"):
                         self._conn.execute("UPDATE sessions SET active_ms = seen_ms")
+                    if (table, column) == ("sessions", "watching"):
+                        # (1.38.0: before, which sign-ins a PIN made wasn't
+                        # noted, and every Admin starts on Full: an Admin's
+                        # are for watching until their password signs in
+                        # again. The cold audit of 1.38.0.)
+                        self._conn.execute(
+                            "UPDATE sessions SET watching = 1 WHERE trusted = '' AND user_id IN "
+                            "(SELECT id FROM users WHERE role = 'admin')"
+                        )
                     if (table, column) == ("linked_devices", "linked_by_id"):
                         self._conn.execute(
                             "UPDATE linked_devices SET linked_by_id = (SELECT id FROM users "
@@ -2179,6 +2188,13 @@ class Database:
                 "SELECT user_id FROM browser_people WHERE token_hash = ? "
                 "ORDER BY used_ms DESC, rowid DESC LIMIT ?)",
                 (token_hash, token_hash, most_here),
+            )
+
+    def move_browser(self, token_hash: str, to: str) -> None:
+        """A browser's new token: its people, as they were, are its now."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE browser_people SET token_hash = ? WHERE token_hash = ?", (to, token_hash)
             )
 
     def browser_people(self, token_hash: str) -> list[tuple[int, bool]]:

@@ -15,7 +15,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app import access
+from app import access, devices
+from app.db import Database
 
 from .test_picker import TV, away_from_home, bearer, device, two_ports
 
@@ -215,7 +216,11 @@ def test_light_gives_admin_tools_only_at_home(pat, app):
 def test_a_pins_sign_in_makes_no_credential(pat, app):
     """A PIN's sign-in can't change passwords or PINs, add people, make API
     tokens or invite codes, or link an app: each would work where the PIN
-    doesn't (as a trusted network's sign-in, access.STEP_UP)."""
+    doesn't (as a trusted network's sign-in, access.STEP_UP). Nor can it
+    make someone an Admin, or change where home is (trusted networks,
+    proxies and names): the cold audit of 1.38.0 made Sam an Admin with
+    Pat's PIN at home, and Sam's password then gave Admin tools from the
+    internet."""
     pc = browser(app, PAT)
     light(pc)
     assert pin(idle(pc), pat.ids["Pat"], "1234").status_code == 200
@@ -229,6 +234,10 @@ def test_a_pins_sign_in_makes_no_credential(pat, app):
         ),
         ("POST", f"/api/access/users/{pat.ids['Kids']}/invite", None),
         ("POST", "/api/api-tokens", {"name": "Mine", "scope": "admin"}),
+        ("PUT", f"/api/access/users/{pat.ids['Sam']}", {"role": "admin"}),
+        ("PUT", "/api/access/trusted", {"proxies": [{"network": "192.168.1.9"}]}),
+        ("PUT", "/api/access/trusted", {"homeNames": ["tv.example.net"]}),
+        ("PUT", "/api/access/trusted", {"entries": [{"network": "192.168.1.0/24"}]}),
     ):
         said = pc.request(method, path, json=body)
         assert said.status_code == 403 and said.json()["detail"] == access.STEP_UP, (
@@ -239,8 +248,15 @@ def test_a_pins_sign_in_makes_no_credential(pat, app):
     code = phone.post("/api/internal/link", json={"app": "tapiOca for Android"}).json()["code"]
     said = pc.post("/api/access/link", json={"code": code})
     assert said.status_code == 403 and said.json()["detail"] == access.LINK_BOUND
-    # (Everything else an Admin does, it does: a role, say.)
+    roles = {u["name"]: u["role"] for u in pat.get("/api/access/users").json()}
+    assert roles["Sam"] == "user"
+    away = TestClient(app, base_url=PUBLIC, headers={"X-Forwarded-Proto": "https"})
+    assert away.post("/api/access/sign-in", json=SAM).status_code == 200
+    assert away.get("/api/access/users").status_code == 403
+    # (Everything else an Admin does, it does: a limit, say, or a User's
+    # role taken away, which ends their sign-ins.)
     assert pc.put(f"/api/access/users/{pat.ids['Kids']}", json={"maxStations": 1}).is_success
+    assert pc.put(f"/api/access/users/{pat.ids['Lee']}", json={"role": "user"}).is_success
 
 
 def test_choosing_needs_the_password(pat, app):
@@ -417,3 +433,135 @@ def test_on_an_app_an_admin_picked_with_nothing_is_for_watching(pat, app):
     assert picked.status_code == 200, picked.text
     said = phone.get("/api/internal/alerts", headers=bearer(picked.json()["token"]))
     assert said.status_code == 403 and said.json()["detail"] == access.WATCHING_ONLY
+
+
+def test_anyone_elses_password_never_starts_the_wrong_pins_over(pat, app, monkeypatch):
+    """(The cold audit of 1.38.0: Sam's own password on the family browser
+    started its count of wrong PINs over, so Pat's PIN could be guessed
+    there without end, waiting out the five-then-15-minutes limit.) Wrong
+    PINs for Pat on a browser are counted until Pat's own password signs in
+    there; the tenth needs it."""
+    monkeypatch.setattr(devices, "PIN_WAIT_S", 0)  # (the per-person wait, waited out)
+    pc = browser(app, PAT)
+    light(pc)
+    idle(pc)
+    said = []
+    for _ in range(access.BROWSER_PIN_TRIES):
+        assert pc.post("/api/access/sign-in", json=SAM).status_code == 200
+        assert pc.post("/api/access/sign-out").status_code == 200
+        said.append(pin(pc, pat.ids["Pat"], "0000").json()["detail"])
+    assert "wrong PINs on this browser" in said[-1], said[-1]
+    assert not any("wrong PINs on this browser" in s for s in said[:-1])
+    assert tiles(pc) == [("Pat", False)]
+    assert pin(pc, pat.ids["Pat"], "1234").status_code == 400
+    # Pat's own password, and his PIN works there again.
+    assert pc.post("/api/access/sign-in", json=PAT).status_code == 200
+    idle(pc)
+    assert pin(pc, pat.ids["Pat"], "1234").status_code == 200
+
+
+def test_an_apps_pin_sign_in_never_changes_an_admins_pin(pat, app):
+    """(The cold audit of 1.38.0.) An Admin picked with their PIN on a
+    device, for watching (Full) or with Admin tools (Light), can't change
+    that PIN, at home or away: their password is needed for that, as on the
+    page (access.STEP_UP)."""
+    tv = TestClient(app)
+    key = tv.post("/api/internal/sign-in", json={**PAT, **TV}).json()["deviceKey"]
+    for how in ("full", "light"):
+        if how == "light":
+            light(pat)
+        for where in (tv, away_from_home(app)):
+            got = where.post(
+                "/api/internal/picker/choose", json={"id": pat.ids["Pat"], "pin": "1234"},
+                headers=device(key),
+            )  # fmt: skip
+            assert got.status_code == 200, got.text
+            for new in ("0000", None):
+                r = where.post("/api/internal/pin", json={"pin": new},
+                               headers=bearer(got.json()["token"]))  # fmt: skip
+                assert r.status_code == 403 and r.json()["detail"] == access.STEP_UP, (how, r.text)
+    assert pin(idle(browser(app, PAT)), pat.ids["Pat"], "1234").status_code == 200
+
+
+def test_a_browser_cookie_from_elsewhere_never_joins_two_browsers(pat, app):
+    """(The cold audit of 1.38.0.) Sam's browser's cookie, put in Pat's (a
+    page on the same host name can set it, on another port too): Pat's
+    password there gives it a new one, so Sam's browser never lists Pat,
+    and Pat's PIN never signs in there."""
+    sams = browser(app, SAM)
+    token = sams.cookies.get(access.DEVICE_COOKIE)
+    assert token
+    pats = TestClient(app)
+    planted = next(c for c in sams.cookies.jar if c.name == access.DEVICE_COOKIE)
+    pats.cookies.set(access.DEVICE_COOKIE, token, domain=planted.domain, path=planted.path)
+    assert pats.post("/api/access/sign-in", json=PAT).status_code == 200
+    light(pats)
+    assert pats.cookies.get(access.DEVICE_COOKIE) not in (None, token)
+    idle(sams)
+    assert tiles(sams) == []
+    assert pin(sams, pat.ids["Pat"], "1234").status_code == 400
+    # Pat's own browser: his, with his PIN.
+    idle(pats)
+    assert tiles(pats) == [("Pat", True)]
+    assert pin(pats, pat.ids["Pat"], "1234").status_code == 200
+
+
+def test_a_pins_sign_in_ends_when_light_does_even_mid_way(pat, app):
+    """(The cold audit of 1.38.0.) A PIN's sign-in gives Admin tools only
+    while its Admin is still in Light with a PIN, checked on every request:
+    one made while the Admin switched to Full (a PIN sign-in waits on its
+    hash) has none."""
+    pc = browser(app, PAT)
+    light(pc)
+    assert pin(idle(pc), pat.ids["Pat"], "1234").status_code == 200
+    # (As if made just after the switch ended the PIN's sign-ins.)
+    pat.app.state.ctx.db.set_admin_sign_in(pat.ids["Pat"], access.FULL)
+    assert admin_tools(pc) == [403, 403, 403]
+    assert pc.get("/api/access/me").json()["user"]["adminTools"] is False
+
+
+def test_admins_sign_ins_from_before_1_38_are_for_watching(tmp_path):
+    """(The cold audit of 1.38.0.) 1.37.1 didn't note which sign-ins a PIN
+    made: after the update, each Admin starts on Full, so their sign-ins
+    from before are for watching until their password signs in again.
+    Users' are kept as they were."""
+    path = tmp_path / "old.db"
+    old = Database(path)
+    pat = old.add_user("Pat", access.hash_password(PAT["password"]), "admin", 1, None, "x")
+    sam = old.add_user("Sam", access.hash_password(SAM["password"]), "user", 1, None, "x")
+    for name, user in (("pats", pat), ("sams", sam)):
+        old._conn.execute(
+            "INSERT INTO sessions (token_hash, user_id, created_ms, seen_ms) VALUES (?, ?, 1, 1)",
+            (name, user.id),
+        )
+    for column in ("watching", "admin_pin"):
+        old._conn.execute(f"ALTER TABLE sessions DROP COLUMN {column}")  # (as before 1.38.0)
+    old._conn.commit()
+    old.close()
+    upgraded = Database(path)
+    try:
+        assert upgraded.session_user("pats", 0).watching
+        assert not upgraded.session_user("sams", 0).watching
+    finally:
+        upgraded.close()
+
+
+def test_signing_out_ends_a_pins_sign_in_and_rolled_back_it_signs_in_nowhere(pat, app):
+    """A PIN's sign-in is kept as its own kind (as a trusted network's,
+    1.36.0): 1.37.1, rolled back to without the copy put back, never finds it
+    (it would take it for a password's: the cold audit of 1.38.0). And
+    signing out ends it."""
+    import hashlib
+
+    pc = browser(app, PAT)
+    light(pc)
+    assert pin(idle(pc), pat.ids["Pat"], "1234").status_code == 200
+    token = pc.cookies.get(access.COOKIE)
+    assert token.startswith(access.PIN_TOKEN_PREFIX)
+    db = pat.app.state.ctx.db
+    assert db.session_user(hashlib.sha256(token.encode()).hexdigest(), 0) is None
+    assert pc.post("/api/access/sign-out").status_code == 200
+    assert db.session_user(access.session_hash(token), 0) is None
+    again = TestClient(app)
+    again.cookies.set(access.COOKIE, token)
+    assert again.get("/api/access/users").status_code == 401

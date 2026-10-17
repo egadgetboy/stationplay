@@ -510,9 +510,11 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         or in its Options. Not on a sign-in made by picking them without
         one."""
         user, signed = own_app(request)
-        if signed.trusted:
-            # (A trusted network's sign-in, made with a PIN or nothing: for
-            # watching, never for changing a PIN. See access.STEP_UP.)
+        if signed.trusted or signed.admin_pin or signed.watching:
+            # (A trusted network's sign-in, made with a PIN or nothing; or an
+            # Admin's made with their PIN, or for watching: never for changing
+            # a PIN, which for an Admin in Light is their Admin tools. See
+            # access.STEP_UP; the cold audit of 1.38.0.)
             raise HTTPException(403, access.STEP_UP)
         try:
             has = await ctx.devices.set_own_pin(

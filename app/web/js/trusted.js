@@ -211,7 +211,7 @@ function renderHomeNames() {
 
 // The sign-in page, on a trusted network ---------------------------------------------
 // One that signs in as someone: the page presses Continue itself when it's
-// first opened. (From 1.38.0 a network's Who's tuning in? is the apps' only:
+// first opened. It never says who (1.38.0). (From 1.38.0 a network's Who's tuning in? is the apps' only:
 // on the page, Who's signing in? is this browser's Admins, as at any home
 // address. See showPeople in access.js.)
 let trustedAuto = true;  // (pressed once, on opening: never after signing out or timing out)
@@ -226,10 +226,11 @@ function trustedSignIn(info, idle = false) {
   showPeople([]);
   for (const id of ['#signinForm', '#pinForm', '#signinOther', '#signinForget', '#signinHome', '#signinWhere']) $(id).hidden = true;
   $('#signinTrusted').hidden = $('#signinSomeoneElse').hidden = false;
-  $('#signinTrustedTitle').textContent = `This device signs in as ${info.name}.`;
+  // (Never who: no User is shown on this page. The owner, October 17.)
+  $('#signinTrustedTitle').textContent = 'This device signs in for watching.';
   const go = $('#signinContinue');
   go.hidden = false;
-  go.textContent = `Continue as ${info.name}`;
+  go.textContent = 'Continue on this device';
   go.onclick = () => trustedSend({});
   if (trustedAuto) { trustedAuto = false; trustedSend({}); }
   return true;
