@@ -296,7 +296,8 @@ def test_an_app_without_whos_tuning_in_is_told_so(home):
 
 def test_a_device_signed_in_as_someone(home):
     laptop = device_at(home, "192.168.1.44")
-    assert laptop.get("/api/access/me").json()["trusted"] == {"gives": "person", "name": "Pat"}
+    # (Never who, on the page's sign-in screen, from 1.38.0.)
+    assert laptop.get("/api/access/me").json()["trusted"] == {"gives": "person"}
     assert laptop.post("/api/access/trusted-sign-in", json={}).status_code == 200
     assert laptop.get("/api/access/me").json()["user"]["name"] == "Pat"
     # Its neighbor is the network's: Who's tuning in?, for the apps (on the
@@ -315,14 +316,16 @@ def test_an_admins_device_is_never_signed_in_through_a_proxy(home):
     assert via.post("/api/access/trusted-sign-in", json={}).status_code == 404
     # (Straight from the laptop: as listed.)
     laptop = device_at(home, "192.168.1.44")
-    assert laptop.get("/api/access/me").json()["trusted"] == {"gives": "person", "name": "Pat"}
+    assert laptop.get("/api/access/me").json()["trusted"] == {"gives": "person"}
+    assert laptop.post("/api/access/trusted-sign-in", json={}).json()["user"]["name"] == "Pat"
     # (Someone else's device, through the proxy: as listed.)
     pat = admin_at_home(home)
     kid_entry = {"network": "192.168.1.70", "gives": "person", "person": home.state.kid}
     entries = [*pat.get("/api/access/trusted").json()["entries"], kid_entry]
     assert pat.put("/api/access/trusted", json={"entries": entries}).status_code == 200
     via = device_at(home, "192.168.1.2", x_forwarded_for="192.168.1.70")
-    assert via.get("/api/access/me").json()["trusted"] == {"gives": "person", "name": "Kid"}
+    assert via.get("/api/access/me").json()["trusted"] == {"gives": "person"}
+    assert via.post("/api/access/trusted-sign-in", json={}).json()["user"]["name"] == "Kid"
 
 
 def admin_at_home(home):
@@ -560,7 +563,9 @@ def test_made_an_admin_their_sign_ins_without_a_secret_end(home):
     again = [e if e["network"] != "192.168.1.70/32" else {**e, "gives": "person", "person": sam["id"]}
              for e in pat.get("/api/access/trusted").json()["entries"]]  # fmt: skip
     assert pat.put("/api/access/trusted", json={"entries": again}).status_code == 200
-    assert phone.get("/api/access/me").json()["trusted"] == {"gives": "person", "name": "Sam"}
+    # (Never who, from 1.38.0: no User is shown on the page's sign-in screen.)
+    assert phone.get("/api/access/me").json()["trusted"] == {"gives": "person"}
+    assert phone.post("/api/access/trusted-sign-in", json={}).json()["user"]["name"] == "Sam"
 
 
 def test_a_network_cant_be_used_to_sign_people_out_or_unlink_devices(home, monkeypatch):
@@ -615,20 +620,21 @@ def test_a_network_cant_be_used_to_sign_people_out_or_unlink_devices(home, monke
             .status_code
         )
 
-    def pick(n: int, key: str) -> int:
-        """Kid picked on it, as Who's tuning in? did before 1.38.0."""
+    def picked_on(key: str) -> None:
+        """Someone picked on it, as Who's tuning in? did before 1.38.0 (a
+        device a network linked is picked on now only by whoever signed in
+        on it, which makes it an ordinary linked device): it's in use."""
         found = home.state.ctx.devices.device(key)
         home.state.ctx.db.device_seen(found.id, found.created_ms + 1)
-        return 200
 
     first, second = link(0).json()["deviceKey"], link(1).json()["deviceKey"]
-    assert pick(0, first) == 200
+    picked_on(first)
     for _ in range(3):
         assert use(1, second) == 200  # (asking isn't using: no one was picked on it)
     third = link(2)
     assert third.status_code == 200, third.text
     assert use(0, first) == 200 and use(1, second) == 401  # (the one never used went)
-    assert pick(2, third.json()["deviceKey"]) == 200
+    picked_on(third.json()["deviceKey"])
     full = link(3)
     assert full.status_code == 403 and full.json()["detail"] == devices.NETWORK_FULL
     assert use(0, first) == 200

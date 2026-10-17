@@ -2,7 +2,7 @@
   "version": "1.38.0",
   "new": [
     "Full or Light sign-in for each Admin",
-    "Only your own Admins on a browser's sign-in screen",
-    "People on a device once they sign in there"
+    "Sign-in screens show only who signed in there",
+    "No Admin tabs before tapiOca knows who you are"
   ]
 }

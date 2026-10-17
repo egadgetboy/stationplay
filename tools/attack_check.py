@@ -86,7 +86,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import httpx
 import uvicorn
 
-from app import __version__, access, alerts, applibrary, backups, problems, scanner
+from app import __version__, access, alerts, applibrary, backups, devices, problems, scanner
 from app import ffmpeg as ff
 from app.config import Settings
 from app.db import Database, Item
@@ -687,6 +687,135 @@ async def _attacks(checks: Checks, app, home: str, net: str, fp: LibraryPlex) ->
     # proxy, Plex and tapiOca on one server, in each way it's laid out.
     await _from_its_page(checks, home)
     await _one_box(checks, app, home, net)
+
+    # 27) From 1.38.0: Full or Light sign-in. An Admin's PIN gives Admin
+    # tools only in Light, at home, on a browser their password signed in on;
+    # it never makes an Admin or a credential, never changes what's home;
+    # wrong PINs there need their own password; a browser's cookie from
+    # elsewhere never joins two browsers; and a new role ends sign-ins.
+    await _light_sign_in(checks, app, home, net)
+
+
+async def _light_sign_in(checks: Checks, app, home: str, net: str) -> None:
+    checks.section("Full or Light sign-in (1.38.0)")
+    db = app.state.ctx.db
+    ids = {u.name: u.id for u in db.users()}
+    ada, sam = ids[ADMIN["name"]], ids[USER["name"]]
+
+    def peer(n: int) -> dict[str, str]:
+        return {**PAGE, "X-Attack-Peer": f"192.168.1.{150 + n}"}
+
+    def signed_out(c: httpx.AsyncClient) -> None:
+        c.cookies.delete(access.COOKIE)
+
+    async def pin(c: httpx.AsyncClient, user_id: int, said: str) -> httpx.Response:
+        return await c.post("/api/access/pin-sign-in", json={"id": user_id, "pin": said})
+
+    async with (
+        httpx.AsyncClient(base_url=home, headers=peer(0), timeout=30) as adas,
+        httpx.AsyncClient(base_url=home, headers=peer(1), timeout=30) as sams,
+        httpx.AsyncClient(base_url=home, headers=peer(2), timeout=30) as fresh,
+    ):
+        r = await adas.post("/api/access/sign-in", json=ADMIN)
+        checks.ok(r.status_code == 200, "Ada signs in with her password", r.text[:200])
+        await adas.put(f"/api/access/users/{ada}/picker", json={"pin": "2580"})
+        r = await adas.put("/api/access/me/sign-in", json={"how": "light", "password": "wrong"})
+        checks.ok(
+            r.status_code == 400, "choosing Light needs the right password", f"got {r.status_code}"
+        )
+        r = await adas.put("/api/access/me/sign-in",
+                           json={"how": "light", "password": ADMIN["password"]})  # fmt: skip
+        checks.ok(r.status_code == 200, "Ada chooses Light", r.text[:200])
+        # A browser her password never signed in on: no one listed, no PIN.
+        me = (await fresh.get("/api/access/me")).json()
+        checks.ok("people" not in me, "a new browser lists no one", str(me)[:200])
+        r = await pin(fresh, ada, "2580")
+        checks.ok(r.status_code == 400 and not r.cookies.get(access.COOKIE),
+                  "her PIN on a browser she never signed in on: nothing", f"got {r.status_code}")  # fmt: skip
+        # Sam, a User, on his own browser: never listed, even there.
+        await sams.post("/api/access/sign-in", json=USER)
+        signed_out(sams)
+        me = (await sams.get("/api/access/me")).json()
+        checks.ok("people" not in me, "a User is never on the page's sign-in screen", str(me)[:200])
+        r = await sams.post("/api/access/browser/forget", json={"id": ada})
+        r2 = await fresh.post("/api/access/browser/forget", json={"id": 999999})
+        checks.ok(r.status_code == r2.status_code and r.text == r2.text,
+                  "Remove from this browser says nothing of who's an Admin",
+                  f"{r.status_code} {r.text[:80]} / {r2.status_code} {r2.text[:80]}")  # fmt: skip
+        # Her own browser: listed, her PIN gives Admin tools at home.
+        signed_out(adas)
+        me = (await adas.get("/api/access/me")).json()
+        checks.ok(me.get("people") == [{"id": ada, "name": ADMIN["name"], "pin": True}],
+                  "her browser lists her, with her PIN", str(me)[:200])  # fmt: skip
+        async with httpx.AsyncClient(base_url=net, headers={**PAGE, **_cf("203.0.113.80")},
+                                     cookies=adas.cookies, timeout=30) as away:  # fmt: skip
+            r = await pin(away, ada, "2580")
+            checks.ok(
+                r.status_code == 404, "her PIN from the internet: nothing", f"got {r.status_code}"
+            )
+        r = await pin(adas, ada, "2580")
+        checks.ok(r.status_code == 200, "her PIN at home, in Light", r.text[:200])
+        r = await adas.get("/api/access/users")
+        checks.ok(r.status_code == 200, "it gives her Admin tools", f"got {r.status_code}")
+        # A PIN's sign-in makes no Admin and no credential, and never changes what's home.
+        for what, method, path, body in (
+            ("make Sam an Admin", "PUT", f"/api/access/users/{sam}", {"role": "admin"}),
+            ("change a password", "PUT", f"/api/access/users/{sam}", {"password": "a long new one"}),
+            ("change a PIN", "PUT", f"/api/access/users/{ada}/picker", {"pin": "0000"}),
+            ("list a trusted proxy", "PUT", "/api/access/trusted", {"proxies": [{"network": "192.168.1.9"}]}),
+            ("add a person", "POST", "/api/access/users", {"name": "Eve", "password": "a long one", "role": "admin"}),
+            ("make an API token", "POST", "/api/api-tokens", {"name": "x", "scope": "admin"}),
+        ):  # fmt: skip
+            r = await adas.request(method, path, json=body)
+            checks.ok(r.status_code == 403, f"a PIN's sign-in can't {what}", f"got {r.status_code}")
+        checks.ok(next(u for u in db.users() if u.id == sam).role == "user", "Sam is still a User")
+        r = await adas.put("/api/access/me/sign-in", json={"how": "full", "password": "2580"})
+        checks.ok(
+            r.status_code == 400,
+            "a PIN isn't the password for Full or Light",
+            f"got {r.status_code}",
+        )
+        # A browser's cookie from elsewhere (Sam's, put in Ada's): her
+        # password there gives it a new one, and Sam's never lists her.
+        async with httpx.AsyncClient(base_url=home, headers=peer(3), timeout=30) as planted:
+            kept = next(c for c in sams.cookies.jar if c.name == access.DEVICE_COOKIE)
+            token = kept.value or ""
+            planted.cookies.set(access.DEVICE_COOKIE, token, domain=kept.domain, path=kept.path)
+            await planted.post("/api/access/sign-in", json=ADMIN)
+            renewed = planted.cookies.get(access.DEVICE_COOKIE)
+        me = (await sams.get("/api/access/me")).json()
+        checks.ok(bool(token) and renewed not in (None, token) and "people" not in me,
+                  "a browser's cookie from elsewhere never joins two browsers", str(me)[:200])  # fmt: skip
+        # Wrong PINs for her: anyone else's password never starts them over.
+        wait, devices.PIN_WAIT_S = devices.PIN_WAIT_S, 0  # (the per-person wait, waited out)
+        try:
+            signed_out(adas)
+            said = []
+            for _ in range(access.BROWSER_PIN_TRIES):
+                await adas.post("/api/access/sign-in", json=USER)
+                await adas.post("/api/access/sign-out")
+                said.append((await pin(adas, ada, "0000")).text)
+            r = await pin(adas, ada, "2580")
+            checks.ok("wrong PINs on this browser" in said[-1] and r.status_code == 400,
+                      "ten wrong PINs need her own password, whoever else signs in there",
+                      f"{said[-1][:80]} / {r.status_code}")  # fmt: skip
+        finally:
+            devices.PIN_WAIT_S = wait
+        # A new role ends that person's sign-ins.
+        await adas.post("/api/access/sign-in", json=ADMIN)
+        lee = {"name": "Noor", "password": "lantern meadow quartz"}  # (an Admin, new here)
+        await adas.post("/api/access/users", json={**lee, "role": "admin"})
+        async with httpx.AsyncClient(base_url=home, headers=peer(4), timeout=30) as lees:
+            await lees.post("/api/access/sign-in", json=lee)
+            before = (await lees.get("/api/access/users")).status_code
+            lee_id = next(u.id for u in db.users() if u.name == lee["name"])
+            await adas.put(f"/api/access/users/{lee_id}", json={"role": "user"})
+            after = (await lees.get("/api/access/users")).status_code
+            checks.ok((before, after) == (200, 401), "a new role ends that person's sign-ins",
+                      f"{before}, {after}")  # fmt: skip
+        await adas.put(
+            "/api/access/me/sign-in", json={"how": "full", "password": ADMIN["password"]}
+        )
 
 
 async def _media_away(
@@ -2270,10 +2399,11 @@ async def _doors_and_trust(
                 "/api/access/me", headers=peer(PROXY_PEER, **{"X-Forwarded-For": "192.168.1.70"})
             )
         ).json()
+        got = await gives(c, peer(PROXY_PEER, **{"X-Forwarded-For": "192.168.1.70"}))
         checks.ok(
-            me.get("trusted", {}).get("name") == "Sam",
-            "through a proxy, a User's device as listed",
-            str(me)[:200],
+            got == "person" and me.get("trusted") == {"gives": "person"},
+            "through a proxy, a User's device as listed (the page never told who)",
+            f"{str(me)[:160]} {got}",
         )
         me = (
             await c.get(

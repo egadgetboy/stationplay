@@ -1418,7 +1418,8 @@ def signin_trusted(browser: Any, base: str, context_of: Callable[..., Any], look
     tuning in? the page is as at any home address: no one listed on a new
     browser, Jo (shown on the apps' at home) included, and no User even
     where she signed in with her password (Ari); on Sam's laptop, Continue
-    as Sam (shown, not pressed: as after signing out on purpose)."""
+    on this device, never naming Sam (shown, not pressed: as after signing
+    out on purpose)."""
     context = context_of({"X-Page-Peer": TRUSTED_DEVICE})
     page = context.new_page()
     page.goto(base + "/")
@@ -1456,7 +1457,9 @@ def signin_trusted(browser: Any, base: str, context_of: Callable[..., Any], look
     until(page, "() => !document.querySelector('#signinContinue').hidden")
     look.page = page
     look.expect(
-        "Continue as Sam", page.inner_text("#signinContinue"), f"Continue as {USER['name']}"
+        "Continue, never who",
+        (page.inner_text("#signinContinue"), USER["name"] in page.inner_text("#signinView")),
+        ("Continue on this device", False),
     )
     look("signin-trusted-person")
     context.close()
