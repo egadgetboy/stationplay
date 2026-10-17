@@ -765,9 +765,16 @@ async def _light_sign_in(checks: Checks, app, home: str, net: str) -> None:
             ("list a trusted proxy", "PUT", "/api/access/trusted", {"proxies": [{"network": "192.168.1.9"}]}),
             ("add a person", "POST", "/api/access/users", {"name": "Eve", "password": "a long one", "role": "admin"}),
             ("make an API token", "POST", "/api/api-tokens", {"name": "x", "scope": "admin"}),
+            ("restore a backup", "POST", "/api/restore", None),
+            ("let API tokens work from the internet", "PUT", "/api/api-tokens/outside", {"on": True}),
+            ("trust the Away check's proxy", "POST", "/api/away/trust-proxy", {"address": "192.168.1.2"}),
         ):  # fmt: skip
             r = await adas.request(method, path, json=body)
             checks.ok(r.status_code == 403, f"a PIN's sign-in can't {what}", f"got {r.status_code}")
+        name = (await adas.post("/api/backups")).json().get("name", "x")
+        r = await adas.get(f"/api/backups/{name}")
+        checks.ok(r.status_code == 403, "a PIN's sign-in can't download a backup (password hashes)",
+                  f"got {r.status_code}")  # fmt: skip
         checks.ok(next(u for u in db.users() if u.id == sam).role == "user", "Sam is still a User")
         r = await adas.put("/api/access/me/sign-in", json={"how": "full", "password": "2580"})
         checks.ok(

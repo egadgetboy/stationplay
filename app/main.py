@@ -2944,7 +2944,10 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         return {"name": path.name}
 
     @app.get("/api/backups/{name}")
-    async def download_backup(name: str):
+    async def download_backup(name: str, request: Request):
+        # (A backup holds everyone's password hashes: only a password's
+        # sign-in takes one away. The second cold audit of 1.38.0.)
+        ctx.access.refuse_without_secret(request)
         path = backups.backup_path(settings.data_dir, name)
         if path is None:
             raise HTTPException(404)
@@ -2957,7 +2960,10 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         """Restores a backup (the request's body): it's checked and set aside,
         then tapiOca restarts and puts it in place on the way up. A backup
         with no users would turn signing in off, so restoring one while it's
-        on needs `opening` (409 without)."""
+        on needs `opening` (409 without). Only with a password's sign-in: an
+        edited backup could make anyone an Admin, with any password (the
+        second cold audit of 1.38.0)."""
+        ctx.access.refuse_without_secret(request)
         async with restores.turn():
             data = bytearray()
             async for chunk in request.stream():
@@ -3771,7 +3777,8 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         reverse proxy tapiOca's own check from outside last came through,
         then checks again. Only that address, and only as the page showed
         it (`address`), so a stale page, or a form on another site, lists
-        nothing."""
+        nothing. Only with a password's sign-in, as any trusted proxy."""
+        ctx.access.refuse_without_secret(request)
         if not ctx.away.on:
             raise HTTPException(400, "Watching away from home is off, so there's no proxy to trust")
         proxy = ctx.reach.proxy_to_trust()

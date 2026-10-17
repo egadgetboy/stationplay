@@ -33,7 +33,7 @@ function showWatching() {
     ? 'This network signed you in for watching. Admin tasks need your password.'
     : me.outside
       ? 'Your PIN signs you in for watching away from home. Admin tasks need your password.'
-      : 'You signed in for watching. Admin tasks need your password.';
+      : 'This sign-in is for watching. Admin tasks need your password.';
 }
 $('#watchingSignIn').addEventListener('click', () => $('#signOut').click());
 // The Admin tabs and the footer's Setup, as `me` allows (and off an Admin

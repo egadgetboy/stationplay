@@ -343,6 +343,9 @@ def routes(app: FastAPI, ctx: AppContext, actions: Actions) -> None:
 
     @app.put("/api/api-tokens/outside")
     async def tokens_outside(body: TokensOutside, request: Request):
+        # (Admin API tokens from the internet: only with a password's
+        # sign-in. The second cold audit of 1.38.0.)
+        ctx.access.refuse_without_secret(request)
         ctx.access.set_api_outside(body.on, access.signed_in(request))
         return await api_tokens()
 

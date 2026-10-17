@@ -565,3 +565,35 @@ def test_signing_out_ends_a_pins_sign_in_and_rolled_back_it_signs_in_nowhere(pat
     again = TestClient(app)
     again.cookies.set(access.COOKIE, token)
     assert again.get("/api/access/users").status_code == 401
+
+
+def test_a_pins_sign_in_never_takes_or_restores_a_backup(pat, app):
+    """(The second cold audit of 1.38.0.) A backup holds everyone's password
+    hashes and roles: a PIN's sign-in that could download one could crack
+    them offline, and one that could restore an edited one could make Sam an
+    Admin with a password of its choosing. It can make a backup (that's
+    harmless), but downloading or restoring one needs the password. So do
+    letting Admin API tokens work from the internet and trusting the
+    reverse proxy from the Away from home check: each widens where things
+    work."""
+    pc = browser(app, PAT)
+    light(pc)
+    made = pc.post("/api/backups")
+    assert made.status_code == 201, made.text
+    name = made.json()["name"]
+    assert pin(idle(pc), pat.ids["Pat"], "1234").status_code == 200
+    assert pc.post("/api/backups").status_code == 201
+    for method, path, kw in (
+        ("GET", f"/api/backups/{name}", {}),
+        ("POST", "/api/restore", {"content": b"PK\x03\x04"}),
+        ("PUT", "/api/api-tokens/outside", {"json": {"on": True}}),
+        ("POST", "/api/away/trust-proxy", {"json": {"address": "192.168.1.2"}}),
+    ):
+        said = pc.request(method, path, **kw)
+        assert said.status_code == 403 and said.json()["detail"] == access.STEP_UP, (
+            path,
+            said.text,
+        )
+    # (With his password, as before.)
+    assert pc.post("/api/access/sign-in", json=PAT).status_code == 200
+    assert pc.get(f"/api/backups/{name}").status_code == 200

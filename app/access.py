@@ -229,8 +229,7 @@ ADMIN_PASSWORD_NEEDED = (
 # Light away from home or on a device they haven't signed in on with their
 # password; or picked with no PIN at all. 1.38.0.)
 WATCHING_ONLY = (
-    "You signed in without your password, so this sign-in is for watching. For Admin tasks, "
-    "sign out, then sign in with your password."
+    "This sign-in is for watching. For Admin tasks, sign out, then sign in with your password."
 )
 LINK_BOUND = "To link an app, sign in with your name and password first."
 # Signing in off, and asked for by a name that isn't home's (see
