@@ -84,8 +84,8 @@ async function api(path) {
 
 
 def page(steps: str) -> dict:
-    """Runs access.js's sign-in state (me, isAdmin, loadMe, showForMe and
-    firstMe) with stand-ins for the page, then `steps`; what it printed."""
+    """Runs access.js's sign-in state (me, isAdmin, loadMe, showForMe,
+    showWatching and firstMe) with stand-ins for the page, then `steps`; what it printed."""
     code = (
         STAND_INS
         + re.search(r"^let me = .*;$", ACCESS, re.M)[0]
@@ -94,6 +94,7 @@ def page(steps: str) -> dict:
         + "\n"
         + _piece(ACCESS, "async function loadMe(")
         + _piece(ACCESS, "function showForMe(")
+        + _piece(ACCESS, "function showWatching(")
         + _piece(ACCESS, "async function firstMe(")
         + "const tabs = () => adminTabs.filter(t => !t.hidden).length;\n"
         + "(async () => {\n"
@@ -193,3 +194,20 @@ def test_a_page_the_browser_kept_asks_again_before_showing_admin_tools():
     assert "if (!e.persisted" in kept
     assert "me = { ...me, known: false };" in kept
     assert kept.index("showForMe();") < kept.index("await firstMe()")
+
+
+def test_the_pages_scripts_never_declare_a_name_twice():
+    """(Found by tools/page_sizes.py before 1.38.0 shipped: access.js's new
+    `let picked` clashed with filter.js's `const picked`. The page's scripts
+    share one scope, so the browser refused access.js whole, and the page
+    stayed blank for everyone.) Every name a script declares at its top
+    level (let, const, class or function) is declared once in all of them."""
+    order = re.findall(r'<script src="/web/js/([a-z]+\.js)\?v=__VERSION__"></script>', HTML)
+    assert "access.js" in order and "filter.js" in order, order
+    declared: dict[str, list[str]] = {}
+    top = re.compile(r"^(?:async\s+)?(?:let|const|class|function\*?)\s+([A-Za-z_$][\w$]*)", re.M)
+    for name in order:
+        for found in top.findall((WEB_DIR / "js" / name).read_text(encoding="utf-8")):
+            declared.setdefault(found, []).append(name)
+    twice = {k: v for k, v in declared.items() if len(v) > 1}
+    assert twice == {}, twice

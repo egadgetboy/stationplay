@@ -430,7 +430,8 @@ def test_asking_who_is_signed_in_never_makes_a_browser_take_the_pin(pat, app):
 
 def test_the_sign_in_page_shows_where_the_pin_works():
     """What the sign-in page shows, from the internet and at home (the
-    owner's report, October 12)."""
+    owner's report, October 12; from 1.38.0, an Admin's PIN, in Light
+    sign-in, the owner, October 17)."""
     from .test_web_app import PAGE, WEB_DIR
 
     assert (
@@ -438,10 +439,12 @@ def test_the_sign_in_page_shows_where_the_pin_works():
         in PAGE
     )
     assert (
-        '<p class="hint" id="signinHome" hidden>Have a PIN? It works here after you sign in once on this browser with your password.</p>'
+        '<p class="hint" id="signinHome" hidden>An Admin with Light sign-in can use their PIN here after signing in once on this browser with their password.</p>'
         in PAGE
     )
     script = (WEB_DIR / "js" / "access.js").read_text(encoding="utf-8")
     assert "$('#signinWhere').hidden = !me.outside || !!me.notSetUp;" in script
     assert "$('#signinHome').hidden = !!me.outside || !me.required;" in script
-    assert "if (name) $('#signinHome').hidden = true;" in script
+    # (Hidden once Who's signing in? lists someone: see showPeople.)
+    people = script.split("function showPeople(list) {", 1)[1].split("\n}\n", 1)[0]
+    assert "$('#signinHome').hidden = true;" in people

@@ -43,9 +43,9 @@
   </header>
   <!-- A new tapiOca is out (for Admins: see updates.js). -->
   <div class="panel update-banner" id="updateBanner" hidden role="status"></div>
-  <!-- An Admin signed in for watching (a PIN in Full sign-in, a trusted
-       network's sign-in, or a PIN away from home): why the Admin tabs are
-       gone, and the way back to them (1.38.0). -->
+  <!-- An Admin signed in for watching (a trusted network's sign-in, or a
+       PIN's away from home): why the Admin tabs are gone, and the way back
+       to them (1.38.0). -->
   <div class="panel watching-note" id="watchingNote" hidden role="status"><p id="watchingWhy"></p><button class="btn primary" type="button" id="watchingSignIn">Sign in with your password</button></div>
   <!-- tapiOca couldn't be asked who's signed in, as the page opened. -->
   <div class="panel me-problem" id="meProblem" hidden role="alert"><p>tapiOca couldn’t check who’s signed in. Check that it’s running, then try again.</p><button class="btn primary" type="button" id="meRetry">Try again</button></div>
@@ -229,7 +229,7 @@
       <div class="panel-pad"><strong>Linked devices</strong>
       <p class="hint" style="margin:4px 0 0">Devices where people pick who’s watching. Unlinking one signs it out.</p></div>
       <table class="users" id="devicesTable"></table>
-      <div class="panel-pad scan-set"><label for="showOnDefault" class="small"><strong>New people show on</strong></label><select id="showOnDefault"><option value="signed-in">Only devices they sign in on</option><option value="home">Every device at home</option></select><button class="btn" type="button" id="showOnEveryone">Use for everyone</button><span class="hint" id="showOnEveryoneSaid" role="status"></span></div>
+      <p class="panel-pad hint" style="margin:0">Someone is on a device’s list once they sign in on it themselves: with their password, an invite code from Devices, or Link an app. No one else is listed there.</p>
     </div>
     <form class="panel setup" style="margin-top:16px" id="addUserForm">
       <strong id="addUserTitle">Add a user</strong>

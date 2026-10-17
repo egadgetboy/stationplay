@@ -356,6 +356,18 @@ def give_data(checks: Checks, url: str) -> dict:
     checks.ok(
         bool(signed.get("token") and signed.get("deviceKey")), "an app signs in on a linked device"
     )
+    # (Sam signs in on it himself, as 1.38.0 asks before listing anyone there;
+    # Kids, shown on every device at home, never did.)
+    on_it = app.post(
+        "/api/internal/picker/sign-in", headers={"stationplay-device": signed["deviceKey"]},
+        json={"name": USER["name"], "password": USER["password"]},
+    )  # fmt: skip
+    checks.ok(on_it.status_code == 200, "the User signs in on the linked device", on_it.text[:200])
+    # (Which signed the Admin out there: the Admin signs in on it again.)
+    signed = app.post(
+        "/api/internal/sign-in",
+        json={**ADMIN, **APP, "picker": True, "deviceKey": signed["deviceKey"]},
+    ).json() | {"deviceKey": signed["deviceKey"]}
     checks.ok(page.put("/api/playback", json=SETTINGS).status_code == 200, "settings are changed")
     made = page.post("/api/channels", json=STATION)
     checks.ok(made.status_code == 201, "a station is made", made.text[:200])
@@ -417,6 +429,11 @@ def has_data(checks: Checks, url: str, made: dict, version: str, where: str) -> 
     guide = httpx.get(f"{url}/api/v1/guide", headers=made["bearer"], timeout=30)
     programs = guide.json()["stations"][0]["programs"] if guide.status_code == 200 else []
     checks.ok(bool(programs), f"{where}: the station's guide is there", guide.text[:200])
+    listed = httpx.get(f"{url}/api/internal/picker", timeout=30,
+                       headers={"stationplay-device": made["device"]})  # fmt: skip
+    names = sorted(p["name"] for p in listed.json().get("people", []))
+    checks.ok(KIDS["name"] not in names and USER["name"] in names,
+              f"{where}: the device lists who signed in on it, not Kids (1.38.0)", names)  # fmt: skip
     # (Last: choosing someone on the device signs out who was there.)
     chose = httpx.post(f"{url}/api/internal/picker/choose", timeout=30,
                        headers={"stationplay-device": made["device"]},

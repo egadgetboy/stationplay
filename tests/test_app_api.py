@@ -632,22 +632,39 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
             tv.get("/api/internal/picker", headers=key), "GET /api/internal/picker"
         )
         assert listed["device"] == "tapiOca for Roku on Den Roku"
-        assert [(p["name"], p["admin"]) for p in listed["people"]] == [
-            ("Pat", True),
-            ("Sam", False),
-        ]
+        # (Only who signed in on it: Pat, by the code. Sam once he signs in
+        # there himself: 1.38.0, the owner, October 17.)
+        assert [(p["name"], p["admin"]) for p in listed["people"]] == [("Pat", True)]
+        signed = check.answer(
+            tv.post("/api/internal/picker/sign-in", json=SAM, headers=key),
+            "POST /api/internal/picker/sign-in",
+        )
+        listed = tv.get("/api/internal/picker", headers=key).json()
+        assert [p["name"] for p in listed["people"]] == ["Pat", "Sam"]
         sam_id = next(p["id"] for p in listed["people"] if p["name"] == "Sam")
         picked = check.answer(
             tv.post("/api/internal/picker/choose", json={"id": sam_id}, headers=key),
             "POST /api/internal/picker/choose",
         )
         assert picked["user"] == {"name": "Sam", "role": "user"}
-        signed = check.answer(
-            tv.post("/api/internal/picker/sign-in", json=SAM, headers=key),
-            "POST /api/internal/picker/sign-in",
+        # Pat with his PIN, in Full sign-in: for watching (1.38.0).
+        pat_id = next(p["id"] for p in listed["people"] if p["name"] == "Pat")
+        assert home.put(f"/api/access/users/{pat_id}/picker", json={"pin": "2468"}).is_success
+        by_pin = check.answer(
+            tv.post("/api/internal/picker/choose", json={"id": pat_id, "pin": "2468"}, headers=key),
+            "POST /api/internal/picker/choose",
+        )
+        assert by_pin["user"] == {"name": "Pat", "role": "user", "watching": True}
+        watching = check.answer(
+            tv.get("/api/internal/me", headers=bearer(by_pin["token"])), "GET /api/internal/me"
+        )
+        assert watching["user"]["role"] == "user" and watching["user"]["watching"] is True
+        picked = check.answer(
+            tv.post("/api/internal/picker/choose", json={"id": sam_id}, headers=key),
+            "POST /api/internal/picker/choose",
         )
         removed = check.answer(
-            tv.post("/api/internal/picker/remove", headers={**key, **bearer(signed["token"])}),
+            tv.post("/api/internal/picker/remove", headers={**key, **bearer(picked["token"])}),
             "POST /api/internal/picker/remove",
         )
         assert removed == {"ok": True}
@@ -786,16 +803,12 @@ def test_the_api_and_the_apps_addresses_match_their_documents(app):
             "POST /api/internal/trusted",
         )
         assert picker["gives"] == "picker" and picker["deviceKey"].startswith("tt_")
-        # (Someone picked there with no PIN: for watching, by the network.)
+        # (No one on it until they sign in there, which makes it an ordinary
+        # linked device: 1.38.0. A sign-in for watching, by the network, is
+        # one that signs in as someone, below.)
         on_tv = TestClient(app, client=("192.168.7.9", 5),
                            headers={"StationPlay-Device": picker["deviceKey"]})  # fmt: skip
-        listed = on_tv.get("/api/internal/picker").json()["people"]
-        free = next(p for p in listed if not p["pin"] and not p["admin"])
-        chosen = check.answer(
-            on_tv.post("/api/internal/picker/choose", json={"id": free["id"]}),
-            "POST /api/internal/picker/choose",
-        )
-        assert chosen["user"]["byNetwork"] is True and chosen["user"]["role"] == "user"
+        assert on_tv.get("/api/internal/picker").json()["people"] == []
         as_pat = check.answer(
             TestClient(app, client=("192.168.7.44", 5)).post("/api/internal/trusted", json=tv),
             "POST /api/internal/trusted",

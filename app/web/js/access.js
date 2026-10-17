@@ -103,7 +103,7 @@ function showSignIn(idle = false) {
   api('/api/access/me').then(now => {
     if (!signedOut() || now.user || now.notSetUp) return;
     if (now.outside) { $('#signinWhere').hidden = false; $('#signinHome').hidden = true; }
-    if (!trustedSignIn(now.trusted, idle) && !picked) showPeople(now.people || []);
+    if (!trustedSignIn(now.trusted, idle) && !pickedPerson) showPeople(now.people || []);
   }).catch(() => {});
 }
 // Who's signing in?: the Admins who signed in on this browser with their
@@ -128,12 +128,12 @@ function showPeople(list) {
     h('span', { class: 'who-note', 'aria-hidden': 'true' }, p.pin ? 'PIN' : 'Password'))));
   signInBy(list.length === 1 ? list[0] : null, !on);
 }
-// Signing in as `picked` (one of Who's signing in?, by their PIN or their
+// Signing in as `pickedPerson` (one of Who's signing in?, by their PIN or their
 // password), or (null) with a name and password; `asking`: the name and
 // password box shows even beside Who's signing in?.
-let picked = null;
+let pickedPerson = null;
 function signInBy(person, asking = true) {
-  picked = person;
+  pickedPerson = person;
   for (const b of document.querySelectorAll('#signinPeople .who')) b.setAttribute('aria-pressed', String(!!person && b.dataset.id === String(person.id)));
   const byPin = !!person?.pin;
   $('#pinForm').hidden = !byPin;
@@ -153,7 +153,7 @@ function signInBy(person, asking = true) {
 }
 // Their own password instead of the PIN: their name's already there.
 $('#signinOther').addEventListener('click', () => {
-  const person = picked;
+  const person = pickedPerson;
   signInBy(person ? { ...person, pin: false } : null);
 });
 // Anyone else, by name and password (a User too: only Admins are listed).
@@ -164,7 +164,7 @@ $('#signinSomeoneElse').addEventListener('click', () => {
 // Remove from this browser: that Admin is no longer on its sign-in screen
 // (their password brings them back). Sign out only ends the sign-in.
 $('#signinForget').addEventListener('click', async () => {
-  const person = picked;
+  const person = pickedPerson;
   if (!person) return;
   try { await api('/api/access/browser/forget', { method: 'POST', body: { id: person.id } }); }
   catch (err) { $('#signinStatus').textContent = err.message; return; }
@@ -215,7 +215,7 @@ $('#signinForm').addEventListener('submit', async e => {
 });
 $('#pinForm').addEventListener('submit', async e => {
   e.preventDefault();
-  const person = picked;
+  const person = pickedPerson;
   try {
     await api('/api/access/pin-sign-in', { method: 'POST', body: { id: person?.id, pin: $('#signinPin').value } });
   } catch (err) {
@@ -230,7 +230,7 @@ $('#pinForm').addEventListener('submit', async e => {
 // Signed in, however it was: the page, as that person sees it.
 async function signedInNow() {
   try { sessionStorage.removeItem('tapioca.signedOut'); } catch {}
-  picked = null;
+  pickedPerson = null;
   $('#signinPassword').value = '';
   $('#signinPin').value = '';
   $('#signinView').hidden = true;
@@ -505,13 +505,12 @@ function renderDevices() {
   const panel = $('#devicesPanel');
   panel.hidden = !me.required || !linked;
   if (panel.hidden) return;
-  $('#showOnDefault').value = linked.default;
   $('#devicesTable').replaceChildren(...(linked.devices.length ? [
     h('thead', {}, h('tr', {}, h('th', {}, 'Device'), h('th', {}, 'On its list'), h('th', {}, 'Linked'), h('th', {}, 'Last used'), h('th', {}, ''))),
     h('tbody', {}, ...linked.devices.map(d => h('tr', {},
       h('td', {}, h('strong', {}, d.name)),
       h('td', { class: 'small', 'data-label': 'On its list' }, d.people.length ? d.people.join(', ') : 'No one',
-        // (Away from home, only who's on every device, signed in on it or was chosen for it.)
+        // (Away from home, only those who signed in on it and have a password or PIN.)
         d.peopleAway.join() !== d.people.join() ? h('div', { class: 'hint' }, `Away from home: ${d.peopleAway.join(', ') || 'no one'}`) : null),
       h('td', { class: 'small', 'data-label': 'Linked' }, d.trustedNetwork != null
         ? `By the trusted network ${d.trustedNetwork}, ${when(d.linkedMs)}`
@@ -525,39 +524,10 @@ function renderDevices() {
       } }, 'Unlink')))))]
     : [h('tbody', {}, h('tr', {}, h('td', { class: 'muted small' }, 'None yet. A device is linked when someone signs in on it.')))]));
 }
-$('#showOnDefault').addEventListener('change', async e => {
-  $('#showOnEveryoneSaid').textContent = '';
-  try { await api('/api/access/devices/default', { method: 'PUT', body: { showOn: e.target.value } }); toast('Saved. New people start this way.'); }
-  catch (err) { toast(err.message, true); }
-  loadAccess();
-});
 // Who can sign in on a device by name: with a password or a PIN (as the
 // server says: see devices.py).
 const signsInByName = u => u.hasPassword || u.pin;
-const peopleCount = n => n === 1 ? '1 person' : `${n} people`;
 const andList = names => names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names.join('');
-const keptSaid = kept => kept.length ? ` Kept as they were: ${andList(kept)} (no password or PIN).` : '';
-const keepsSaid = kept => kept.length ? ` ${andList(kept)} will stay as they are (no password or PIN).` : '';
-// Use for everyone: everyone already added shows where new people do.
-$('#showOnEveryone').addEventListener('click', async () => {
-  const select = $('#showOnDefault');
-  const showOn = select.value, label = select.selectedOptions[0].textContent;
-  const said = $('#showOnEveryoneSaid');
-  let users;
-  try { users = await api('/api/access/users'); } catch (err) { said.textContent = err.message; return; }
-  const moving = users.filter(u => u.showOn !== showOn);
-  const kept = moving.filter(u => !signsInByName(u)).map(u => u.name);  // (either way: see devices.py)
-  const changing = moving.length - kept.length;
-  if (!changing) { said.textContent = kept.length ? `Nothing to change.${keptSaid(kept)}` : `Everyone already shows on ${label}.`; return; }
-  // (Picking themselves from a device's list isn't signing in on it.)
-  const then = showOn === 'signed-in' ? ' Each shows on a device once they sign in on it with their password or an invite code.' : '';
-  if (!confirm(`Change ${peopleCount(changing)} to ${label}?${then}${keepsSaid(kept)}`)) return;
-  try {
-    const got = await api('/api/access/devices/everyone', { method: 'POST', body: { showOn } });
-    said.textContent = `Changed ${peopleCount(got.changed)} to ${label}.${keptSaid(got.kept)}`;
-  } catch (err) { said.textContent = err.message; }
-  loadAccess();
-});
 // Someone's devices: where they show, their PIN, and an invite code.
 let devicesFor = null;
 function openUserDevices(u) {
@@ -578,51 +548,37 @@ async function savePicker(body, said) {
   paintUserDevices();
   return true;
 }
+// From 1.38.0 (the owner, October 17) someone is on a device's Who's tuning
+// in? only once they sign in on it themselves: Show on and the devices an
+// Admin chose are kept, for going back to 1.37.1, but list no one.
 function paintUserDevices() {
   const u = devicesFor;
   const byName = signsInByName(u);
-  const chosen = new Set((linked.chosen || {})[u.id] || []);
-  const radio = (value, label, hint, disabled = false) => {
-    const input = h('input', { type: 'radio', name: 'showOn', value, checked: u.showOn === value, disabled, onchange: () => {
-      if (value === 'selected') { devicesFor = { ...u, showOn: 'selected' }; paintUserDevices(); return; }
-      savePicker({ showOn: value }, 'Saved');
-    } });
-    return h('label', { class: 'choice' }, input, h('span', {}, h('strong', {}, label), h('span', { class: 'hint' }, hint)));
-  };
-  // The devices chosen for them: their only ones (Only devices you choose),
-  // or the ones they're on away from home too (Every device at home).
-  const boxes = linked.devices.map(d => [d.id, h('input', { type: 'checkbox', checked: chosen.has(d.id) })]);
-  const pick = ['home', 'selected'].includes(u.showOn) ? h('div', { class: 'checks-col', style: 'margin-left:26px' },
-    u.showOn === 'home' ? h('span', { class: 'small' }, 'Away from home too, on:') : null,
-    ...(boxes.length ? boxes.map(([id, box]) => h('label', {}, box, ` ${linked.devices.find(d => d.id === id).name}`)) : [h('span', { class: 'muted small' }, 'No devices are linked yet.')]),
-    boxes.length ? h('div', {}, h('button', { class: 'btn', type: 'button', onclick: () => savePicker({ showOn: u.showOn, devices: boxes.filter(([, b]) => b.checked).map(([id]) => id) }, 'Saved') }, 'Save devices')) : null) : null;
+  const on = (linked.devices || []).filter(d => d.people.includes(u.name)).map(d => d.name);
   const invite = h('div', { class: 'small' });
-  const needsOne = ' Needs a password or a PIN.';
   $('#userDevicesBody').replaceChildren(...[
     h('div', { class: 'playback' },
-      h('strong', {}, 'Show on'),
-      radio('signed-in', 'Only devices they sign in on', byName ? ' They show on a device once they sign in on it.' : needsOne, !byName),
-      radio('home', 'Every device at home', ' Away from home, only devices they signed in on or that you choose.'),
-      u.showOn === 'home' ? pick : null,
-      radio('all', 'Every device, at home and away', byName ? ' Even on a phone at a friend’s house.' : needsOne, !byName),
-      radio('selected', 'Only devices you choose', ' At home and away, such as a family iPad.'),
-      u.showOn === 'selected' ? pick : null),
+      h('strong', {}, 'On devices'),
+      h('p', { class: 'hint', style: 'margin:0' }, on.length ? `On ${andList(on)}.` : 'On no device yet.'),
+      h('p', { class: 'hint', style: 'margin:0' }, byName
+        ? 'They’re on a device once they sign in on it with their password or an invite code. They can take themselves off one there.'
+        : 'With no password or PIN, they’re on a device once it’s signed in for them with an invite code, and then only at home, where anyone there can pick them.')),
     h('div', { class: 'playback' },
       h('strong', {}, 'PIN'),
       h('p', { class: 'hint', style: 'margin:0' }, u.pin
         ? 'Asked for when they pick themselves.'
         : u.role === 'admin' ? 'None: they give their password instead.' : 'None: anyone at a device they’re on can pick them.'),
       pinControls(u, savePicker)),
-    byName ? h('div', { class: 'playback' },
+    h('div', { class: 'playback' },
       h('strong', {}, 'Invite code'),
-      h('p', { class: 'hint', style: 'margin:0' }, 'To sign in on a device without a password, they choose Sign in on Who’s tuning in? and enter their name and this code. It works once, for 7 days.'),
+      h('p', { class: 'hint', style: 'margin:0' }, 'To sign in on a device without a password, choose Sign in on its Who’s tuning in?, then enter their name and this code. It works once, for 7 days.'),
       h('div', {}, h('button', { class: 'btn', type: 'button', onclick: async () => {
         try {
           const got = await api(`/api/access/users/${u.id}/invite`, { method: 'POST' });
           invite.replaceChildren(h('code', { style: 'font-size:18px' }, got.code), ` · works until ${when(got.expiresMs)}`);
         } catch (err) { $('#userDevicesStatus').textContent = err.message; }
       } }, 'Make an invite code')),
-      invite) : null].filter(Boolean));
+      invite)]);
 }
 // Someone's PIN: a box for a new one, Set PIN or Change PIN, and Remove PIN
 // (in the Devices dialog, and in the Users table). `save(body, said)` sends

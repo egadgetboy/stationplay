@@ -169,7 +169,12 @@ def test_light_is_the_pin_for_admin_tools_on_that_browser(pat, app):
     assert tiles(pc) == [("Pat", True)]
     assert pin(pc, pat.ids["Pat"], "1234").status_code == 200
     me = pc.get("/api/access/me").json()["user"]
-    assert (me["name"], me["role"], me["adminTools"], me["watching"]) == ("Pat", "admin", True, False)
+    assert (me["name"], me["role"], me["adminTools"], me["watching"]) == (
+        "Pat",
+        "admin",
+        True,
+        False,
+    )
     assert admin_tools(pc) == [200, 200, 200]
     log = pat.get("/api/logs?access_log=true").json()["text"]
     assert "Pat chose Light sign-in" in log
@@ -217,12 +222,19 @@ def test_a_pins_sign_in_makes_no_credential(pat, app):
     for method, path, body in (
         ("PUT", f"/api/access/users/{pat.ids['Sam']}", {"password": "a brand new one"}),
         ("PUT", f"/api/access/users/{pat.ids['Sam']}/picker", {"pin": "0000"}),
-        ("POST", "/api/access/users", {"name": "Eve", "password": "a long password", "role": "admin"}),
+        (
+            "POST",
+            "/api/access/users",
+            {"name": "Eve", "password": "a long password", "role": "admin"},
+        ),
         ("POST", f"/api/access/users/{pat.ids['Kids']}/invite", None),
         ("POST", "/api/api-tokens", {"name": "Mine", "scope": "admin"}),
     ):
         said = pc.request(method, path, json=body)
-        assert said.status_code == 403 and said.json()["detail"] == access.STEP_UP, (path, said.text)
+        assert said.status_code == 403 and said.json()["detail"] == access.STEP_UP, (
+            path,
+            said.text,
+        )
     phone = TestClient(app)
     code = phone.post("/api/internal/link", json={"app": "tapiOca for Android"}).json()["code"]
     said = pc.post("/api/access/link", json={"code": code})
@@ -237,7 +249,12 @@ def test_choosing_needs_the_password(pat, app):
     wrong = pat.put("/api/access/me/sign-in", json={"how": "light", "password": "nope"})
     assert wrong.status_code == 400 and wrong.json()["detail"] == "That password isn't right"
     for how in ("medium", "", "LIGHT"):
-        assert pat.put("/api/access/me/sign-in", json={"how": how, **{"password": PAT["password"]}}).status_code == 400
+        assert (
+            pat.put(
+                "/api/access/me/sign-in", json={"how": how, "password": PAT["password"]}
+            ).status_code
+            == 400
+        )
     assert pat.get("/api/access/me").json()["user"]["adminSignIn"] == "full"
     sam = browser(app, SAM)
     refused = sam.put("/api/access/me/sign-in", json={"how": "light", "password": SAM["password"]})
@@ -246,7 +263,10 @@ def test_choosing_needs_the_password(pat, app):
     light(pat)
     pc = browser(app, PAT)
     assert pin(idle(pc), pat.ids["Pat"], "1234").status_code == 200
-    assert pc.put("/api/access/me/sign-in", json={"how": "full", "password": "nope"}).status_code == 400
+    assert (
+        pc.put("/api/access/me/sign-in", json={"how": "full", "password": "nope"}).status_code
+        == 400
+    )
     assert pc.get("/api/access/me").json()["user"]["adminSignIn"] == "light"
 
 
@@ -256,7 +276,9 @@ def test_back_to_full_ends_the_pins_sign_ins(pat, app):
     light(pat)
     pc = browser(app, PAT)
     assert pin(idle(pc), pat.ids["Pat"], "1234").status_code == 200
-    assert pat.put("/api/access/me/sign-in", json={"how": "full", **{"password": PAT["password"]}}).is_success
+    assert pat.put(
+        "/api/access/me/sign-in", json={"how": "full", "password": PAT["password"]}
+    ).is_success
     assert pc.get("/api/access/me").json()["user"] is None
     assert pat.get("/api/access/me").json()["user"]["name"] == "Pat"
     assert tiles(pc) == [("Pat", False)]
@@ -323,7 +345,10 @@ def test_on_an_app_full_makes_the_pin_for_watching(pat, app):
         headers=device(key),
     )  # fmt: skip
     assert by_password.status_code == 200
-    assert tv.get("/api/internal/alerts", headers=bearer(by_password.json()["token"])).status_code == 200
+    assert (
+        tv.get("/api/internal/alerts", headers=bearer(by_password.json()["token"])).status_code
+        == 200
+    )
     wrong = tv.post(
         "/api/internal/picker/choose", json={"id": pat.ids["Pat"], "password": "nope"},
         headers=device(key),
@@ -367,21 +392,28 @@ def test_on_an_app_light_is_the_pin_where_his_password_signed_in(pat, app):
         headers=device(pad_key),
     )  # fmt: skip
     assert by_pin.status_code == 200, by_pin.text
-    assert pad.get("/api/internal/alerts", headers=bearer(by_pin.json()["token"])).status_code == 403
+    assert (
+        pad.get("/api/internal/alerts", headers=bearer(by_pin.json()["token"])).status_code == 403
+    )
 
 
 def test_on_an_app_an_admin_picked_with_nothing_is_for_watching(pat, app):
     """An Admin with no PIN, alone on a device they linked, picked with
     nothing (1.35.0 to 1.37.1: an Admin's sign-in): for watching from 1.38.0,
     as no password or PIN was given."""
-    jo = pat.post("/api/access/users", json={"name": "Jo", "password": "a plenty long password", "role": "admin"})
+    jo = pat.post(
+        "/api/access/users",
+        json={"name": "Jo", "password": "a plenty long password", "role": "admin"},
+    )
     assert jo.status_code == 201
     phone = TestClient(app)
     key = phone.post(
         "/api/internal/sign-in",
         json={"name": "Jo", "password": "a plenty long password", **TV, "deviceName": "Jo's phone"},
     ).json()["deviceKey"]
-    picked = phone.post("/api/internal/picker/choose", json={"id": jo.json()["id"]}, headers=device(key))
+    picked = phone.post(
+        "/api/internal/picker/choose", json={"id": jo.json()["id"]}, headers=device(key)
+    )
     assert picked.status_code == 200, picked.text
     said = phone.get("/api/internal/alerts", headers=bearer(picked.json()["token"]))
     assert said.status_code == 403 and said.json()["detail"] == access.WATCHING_ONLY

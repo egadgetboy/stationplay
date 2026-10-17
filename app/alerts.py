@@ -85,8 +85,8 @@ from urllib.parse import urlsplit
 from . import __version__, infostation, playing, reach, setup
 from . import doors as door_module
 from .notify import FIXED, STARTED
-from .releases import VERSION_META
 from .plex import PlexError, trouble
+from .releases import VERSION_META
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -170,11 +170,21 @@ class _Streak:
             self.wrong, self.right = 0, self.right + 1
 
 
+def _version(text: str) -> tuple[int, ...]:
+    """A version, as numbers to compare ("1.37.1": (1, 37, 1)); () for none."""
+    parts = []
+    for part in text.split("."):
+        if not part.isdigit():
+            break
+        parts.append(int(part))
+    return tuple(parts)
+
 
 def clock_said(wall_s: float) -> str:
     """A time of day as an alert says it: "8:52 PM", by this machine's clock."""
     t = time.localtime(wall_s)
     return f"{t.tm_hour % 12 or 12}:{t.tm_min:02d} {'AM' if t.tm_hour < 12 else 'PM'}"
+
 
 class Alerts:
     """The alerts now and lately, and what's found (see the module's notes)."""
@@ -189,6 +199,9 @@ class Alerts:
         self._fixed: deque[Alert] = deque(maxlen=FIXED_MOST)
         self._streaks: dict[tuple[str, str], _Streak] = {}
         self._station_fails: dict[int, deque[float]] = {}
+        self._station_began: dict[
+            int, float
+        ] = {}  # (when each run of failures began, by the wall clock)
         self._backup_fails = 0
         # The Broken files tab: what needed an Admin when it was last looked
         # at (None: not yet, since tapiOca started), when the alert was
@@ -252,8 +265,14 @@ class Alerts:
                 named = playing.cap(playing.station(channel.number, channel.name))
                 it = channel.name or "it"
                 alert.fixed_ms = _now_ms()
+                # (Or an earlier version, gone back to: the cold audit of 1.37.1.)
+                change = (
+                    f"going back to {__version__}"
+                    if _version(before) > _version(__version__)
+                    else f"the update to {__version__}"
+                )
                 alert.fixed_sentence = (
-                    f"{named}: its alert from before the update to {__version__} was cleared. "
+                    f"{named}: its alert from before {change} was cleared. "
                     f"It comes back if {it} fails again."
                 )
                 self._fixed.append(alert)
@@ -392,14 +411,19 @@ class Alerts:
         """A station failed to start (see the module's notes)."""
         now = self.clock()
         fails = self._station_fails.setdefault(channel_id, deque())
-        fails.append(now)
         while fails and now - fails[0] > STATION_WINDOW_S:
             fails.popleft()
+        if not fails:
+            # (A run of failures begins: when, by the wall clock, stays as it
+            # was while they go on. The cold audit of 1.37.1: the oldest in
+            # the last 10 minutes moved on with each one.)
+            self._station_began[channel_id] = time.time()
+        fails.append(now)
         if len(fails) >= STATION_FAILS:
             named = playing.cap(playing.station(number, name, mid=True))
             # (When the first of them was, by the wall clock: "in the last 10
             # minutes" was true only when it was said. 1.37.1.)
-            began = clock_said(time.time() - (now - fails[0]))
+            began = clock_said(self._station_began.get(channel_id, time.time()))
             channel = self.db.get_channel(channel_id)
             if channel is not None and infostation.is_info(channel):
                 why = (

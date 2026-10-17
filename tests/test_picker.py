@@ -1013,6 +1013,20 @@ def test_taken_off_a_device_ends_their_sign_in_there(tmp_path):
         as_lu = bearer(picked.json()["token"])
         assert away.get("/api/v1/stations", headers=as_lu).status_code == 200
         # Her PIN removed: on the TV only at home now, and off it away.
-        assert admin.put(f"/api/access/users/{lu['id']}/picker", json={"pin": ""}).status_code == 200
+        assert (
+            admin.put(f"/api/access/users/{lu['id']}/picker", json={"pin": ""}).status_code == 200
+        )
         assert "Lu" not in people(away, key) and "Lu" in people(home, key)
         assert away.get("/api/v1/stations", headers=as_lu).status_code == 401
+
+
+def test_someone_who_cant_choose_a_pin_isnt_asked_for_one(app):
+    """(The docs' review of 1.38.0: Kids, with neither a password nor a PIN,
+    signed in on a TV with an invite code, were asked to choose a PIN they
+    can't set: only an Admin gives them one.)"""
+    with TestClient(app) as admin:
+        admin.post("/api/access/users", json=ADA)
+        kids = admin.post("/api/access/users", json={"name": "Kids", "role": "user"}).json()
+        tv = TestClient(app)
+        key = tv.post("/api/internal/sign-in", json={**ADA, **TV}).json()["deviceKey"]
+        assert signs_in_here(tv, key, admin, kids)["askPin"] is False

@@ -9,24 +9,24 @@ is using it picks themselves from its picker, and gets a sign-in on that
 device that lasts a day from when it was last used (picking again starts a
 new one, and ends whoever was signed in there before).
 
-Who's on a device's picker is each person's Show on: only devices they
-sign in on (where new people start, unless an Admin chose otherwise), every
-device at home (its picker is asked on the home port, which a VPN reaches
-too), every device at home and away, or only devices an Admin chooses. Away
-from home (the public port), a device lists only who's on every device, and
-who signed in on it or was chosen for it. The picker always has Sign in, by
-name: the first time on a device with an invite code (made by an Admin,
-once, for 7 days) or a password, never just a PIN; after that, they're
-on that device's picker. Anyone can take themselves off a device's picker.
+Who's on a device's picker: from 1.38.0 (the owner, October 17), only
+those who signed in on it themselves, never because of their Show on or an
+Admin's choice of devices (kept as they were, for going back to 1.37.1,
+but listing no one: see on_picker). The picker always has Sign in, by name:
+the first time on a device with an invite code (made by an Admin, once, for
+7 days), a password, or a link code entered on tapiOca's page, never just a
+PIN; after that, they're on that device's picker. Anyone can take
+themselves off a device's picker.
 
-A PIN (4 digits, kept as a hash) is asked for when someone
-picks themselves, if they have one; an Admin without one gives their
-password. Five wrong PINs for someone means a 15-minute wait for them,
-on every device. Someone with neither a password nor a PIN (a "Kids"
-user, say) can't sign in by name, so they're on every device at home or
-chosen ones only (and start on every device at home): no one can get in
-from anywhere by guessing a name, and no device away from home lists them
-unless an Admin chose it.
+A PIN (4 digits, kept as a hash) is asked for when someone picks
+themselves, if they have one; an Admin without one gives their password on
+a device others use too. An Admin's PIN gives their Admin tools only in
+Light sign-in, at home, on a device they signed in on with their password;
+otherwise it's for watching (see choose). Five wrong PINs for someone means
+a 15-minute wait for them, on every device. Someone with neither a password
+nor a PIN (a "Kids" user, say) gets on a device with an invite code, and is
+on it only at home, where anyone there may pick them: no one can get in
+from anywhere by guessing a name.
 """
 
 from __future__ import annotations
@@ -369,9 +369,7 @@ class Devices:
         if user is None or not self.on_picker(user, here.get(user.id), at_home=not public):
             raise Refused("That person isn't on this device's list", 404)
         unlocked = by_password = admin_pin = False
-        if password is not None and user.has_password and (
-            user.role == ADMIN or not user.has_pin
-        ):
+        if password is not None and user.has_password and (user.role == ADMIN or not user.has_pin):
             # (An Admin may give their password instead of their PIN, for
             # their Admin tasks: 1.38.0.)
             right = password and await self.access.check_password(
@@ -555,10 +553,13 @@ class Devices:
 
     def asks_for_pin(self, user: User) -> bool:
         """Whether an app asks someone who just signed in on it (with their
-        password or an invite code) to choose a PIN: they have none, and
-        haven't said they want none."""
+        password or an invite code) to choose a PIN: they have none, haven't
+        said they want none, and may choose one (someone with no password,
+        such as Kids, gets one only from an Admin: see _may_set_own_pin)."""
         now = self.db.user(user.id) or user
-        return not now.has_pin and not now.no_pin
+        return not now.has_pin and not now.no_pin and now.has_password and (
+            now.role == ADMIN or now.own_pin
+        )
 
     async def set_own_pin(
         self, user: User, pin: str | None, *, unlocked: bool, current: str | None = None

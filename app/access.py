@@ -792,8 +792,10 @@ class Access:
             except sqlite3.IntegrityError:
                 raise ValueError(f"There's already a user called {name}") from None
         self.db.update_user(user.id, password_hash=hashed, role=role)
-        if role is not None and role != current.role and (
-            ended := self.db.end_sessions(user.id, but)
+        if (
+            role is not None
+            and role != current.role
+            and (ended := self.db.end_sessions(user.id, but))
         ):
             # (Their sign-ins end, and they sign in again as what they are now:
             # a User's sign-in, made with a PIN or with nothing, never becomes
@@ -1341,9 +1343,7 @@ def for_watching(made: SignedIn | None, outside_: bool) -> bool:
     from outside the home): a trusted network's, one made for watching, or
     an Admin's made with their PIN in Light sign-in, away from home (1.38.0:
     that PIN gives Admin tools only at home). An Admin's acts as a User's."""
-    return made is not None and (
-        by_network(made) or made.watching or (made.admin_pin and outside_)
-    )
+    return made is not None and (by_network(made) or made.watching or (made.admin_pin and outside_))
 
 
 def without_secret(made: SignedIn | None) -> bool:
@@ -1972,9 +1972,12 @@ def routes(app: FastAPI, access: Access) -> None:
             # On a trusted network that signs in as someone: who (see
             # trustedapi.py, 1.36.0).
             entry = request.scope.get("state", {}).get("trusted")
-            if entry is not None and access.trusted_info is not None:
-                if (found := access.trusted_info(entry)) is not None:
-                    said["trusted"] = found
+            if (
+                entry is not None
+                and access.trusted_info is not None
+                and (found := access.trusted_info(entry)) is not None
+            ):
+                said["trusted"] = found
         return said
 
     @app.post("/api/access/active")

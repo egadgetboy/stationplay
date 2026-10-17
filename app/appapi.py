@@ -441,10 +441,16 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             "canChangePin": ctx.access.may_change_own_pin(user),
             "canReport": ctx.access.may_report(user),
         }
-        if request.scope.get("state", {}).get("by_network"):
+        state = request.scope.get("state", {})
+        if state.get("by_network"):
             # (A trusted network signed them in, for watching: an Admin is a
             # User here then. See access.STEP_UP. Only when so.)
             said["byNetwork"] = True
+        if state.get("watching") and user.role == access.USER and (
+            (stored := ctx.db.user(user.id)) is not None and stored.role == access.ADMIN
+        ):
+            # (An Admin's sign-in for watching, however it was made: 1.38.0.)
+            said["watching"] = True
         return {"user": said, "languages": mine}
 
     def own_languages(user_id: int) -> dict[str, Any]:
@@ -579,13 +585,14 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
             raise HTTPException(401, "This device isn't linked to tapiOca. Sign in again.")
         return found
 
-    def as_signed_in(user: User, token: str) -> dict[str, Any]:
-        """Who a new sign-in is, as /api/internal/me says it: a trusted
-        network's (a PIN or nothing) is for watching, an Admin a User
-        there (access.STEP_UP)."""
+    def as_signed_in(user: User, token: str, outside: bool) -> dict[str, Any]:
+        """Who a new sign-in is, as /api/internal/me says it: one for
+        watching (a trusted network's, or an Admin's PIN without Light
+        sign-in's Admin tools: access.for_watching) makes an Admin a User
+        there (access.STEP_UP), and says so."""
         made = ctx.db.session_user(access.session_hash(token), 0)
-        if access.by_network(made):
-            return {"name": user.name, "role": access.USER, "byNetwork": True}
+        if user.role == access.ADMIN and access.for_watching(made, outside):
+            return {"name": user.name, "role": access.USER, "watching": True}
         return {"name": user.name, "role": user.role}
 
     def person_json(user: User) -> dict[str, Any]:
@@ -599,9 +606,9 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
     @app.get("/api/internal/picker")
     async def picker(request: Request):
         """Who's on this device's picker where it is now: at home (on the
-        home port, through a VPN too), or away from home (the public port),
-        where it lists only who's on every device, signed in on it or was
-        chosen for it."""
+        home port, through a VPN too), or away from home (the public port):
+        who signed in on it (from 1.38.0), and away from home only those who
+        can sign in by name (see devices.on_picker)."""
         device = this_device(request)
         at_home = not access.outside(request.scope)
         return {
@@ -626,7 +633,7 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         except access.Busy as e:
             raise HTTPException(429, str(e)) from None
         log.info("%s is watching on %s", user.name, device.name)
-        return {"token": token, "user": as_signed_in(user, token)}
+        return {"token": token, "user": as_signed_in(user, token, access.outside(request.scope))}
 
     @app.post("/api/internal/picker/sign-in")
     async def picker_sign_in(body: PickerSignIn, request: Request):

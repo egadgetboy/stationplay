@@ -57,6 +57,9 @@ class CheckStatus:
     skipped: int = 0
     started_at: float = 0
     finished_at: float = 0
+    # (A new station's: only what airs in its next NEW_STATION_MS. Check
+    # files, pressed meanwhile, checks everything instead.)
+    partial: bool = False
     _task: asyncio.Task | None = field(default=None, repr=False)
 
     def as_dict(self) -> dict:
@@ -101,6 +104,56 @@ async def run_check(
     if channel is None:
         status.running = False
         return
+    workers: list[asyncio.Task] = []
+    try:
+        items = await _to_check(ctx, channel_id, within_ms)
+        status.total = len(items)
+        # A few workers take the programs in turn, never a task for each one
+        # (40,000 for a big station).
+        turns = iter(items)
+
+        async def worker() -> None:
+            for item in turns:
+                async with check_turn(ctx):
+                    try:
+                        result = await check_item(ctx, item, channel.number)
+                    except Exception:
+                        log.exception("Quick check of Plex item %s failed", item.rating_key)
+                        result = "skipped"
+                    status.done += 1
+                    if result == "broken":
+                        status.newly_broken += 1
+                    elif result == "skipped":
+                        status.skipped += 1
+
+        workers = [asyncio.create_task(worker()) for _ in range(min(CHECK_CONCURRENCY, len(items)))]
+        await asyncio.gather(*workers)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        # (Anything before or between the checks, such as the schedule
+        # failing to be worked out: the check ends, said, never left
+        # "running". The cold audit of 1.37.1.)
+        log.exception(
+            "%s: its file check stopped", cap(station_named(channel.number, channel.name))
+        )
+    finally:
+        for task in workers:  # (one worker failing never leaves the other going)
+            task.cancel()
+        status.running = False
+        status.finished_at = time.time()
+        log.info(
+            "%s: checked %d files (%d with problems, %d couldn't be checked)",
+            cap(station_named(channel.number, channel.name)),
+            status.done,
+            status.newly_broken,
+            status.skipped,
+        )
+
+
+async def _to_check(ctx: AppContext, channel_id: int, within_ms: int | None) -> list[Item]:
+    """A station's programs a check reads, each once: all of them, or (`within_ms`)
+    what it airs that soon, soonest first."""
     seen: set[str] = set()
     items = []
     for item in ctx.db.all_programs(channel_id):
@@ -117,37 +170,7 @@ async def run_check(
         # be worked out here first.)
         airs = await asyncio.to_thread(airing_soon, ctx, channel_id, within_ms)
         items = sorted((i for i in items if i.rating_key in airs), key=lambda i: airs[i.rating_key])
-    status.total = len(items)
-    # A few workers take the programs in turn, never a task for each one
-    # (40,000 for a big station).
-    turns = iter(items)
-
-    async def worker() -> None:
-        for item in turns:
-            async with check_turn(ctx):
-                try:
-                    result = await check_item(ctx, item, channel.number)
-                except Exception:
-                    log.exception("Quick check of Plex item %s failed", item.rating_key)
-                    result = "skipped"
-                status.done += 1
-                if result == "broken":
-                    status.newly_broken += 1
-                elif result == "skipped":
-                    status.skipped += 1
-
-    try:
-        await asyncio.gather(*(worker() for _ in range(min(CHECK_CONCURRENCY, len(items)))))
-    finally:
-        status.running = False
-        status.finished_at = time.time()
-        log.info(
-            "%s: checked %d files (%d with problems, %d couldn't be checked)",
-            cap(station_named(channel.number, channel.name)),
-            status.total,
-            status.newly_broken,
-            status.skipped,
-        )
+    return items
 
 
 def start_check(ctx: AppContext, channel_id: int, within_ms: int | None = None) -> CheckStatus:
@@ -155,11 +178,24 @@ def start_check(ctx: AppContext, channel_id: int, within_ms: int | None = None) 
     airs in the next `within_ms` (a new station's: see NEW_STATION_MS)."""
     status = ctx.checks.get(channel_id)
     if status and status.running:
-        return status
-    status = CheckStatus(running=True, started_at=time.time())
+        if not (status.partial and within_ms is None):
+            return status
+        # (Check files while a new station's first day is checked: everything,
+        # in its place. The cold audit of 1.37.1: the answer was the first
+        # day's, and the rest were never checked.)
+        stop_check(ctx, channel_id)
+    status = CheckStatus(running=True, started_at=time.time(), partial=within_ms is not None)
     ctx.checks[channel_id] = status
     status._task = asyncio.create_task(run_check(ctx, channel_id, status, within_ms))
     return status
+
+
+def stop_check(ctx: AppContext, channel_id: int) -> None:
+    """A station's check stops (Check files again, or the station deleted:
+    the cold audit of 1.37.1), and is forgotten."""
+    status = ctx.checks.pop(channel_id, None)
+    if status is not None and status._task is not None and not status._task.done():
+        status._task.cancel()
 
 
 def airing_soon(ctx: AppContext, channel_id: int, within_ms: int) -> dict[str, int]:

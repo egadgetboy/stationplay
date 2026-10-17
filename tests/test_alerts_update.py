@@ -8,6 +8,7 @@ and INFO's never points to Plex or the files."""
 from __future__ import annotations
 
 import re
+import time
 
 import pytest
 
@@ -93,3 +94,41 @@ def test_a_plex_stations_alert_says_when_it_began(db):
         r"station's files can be reached\.",
         alert.sentence,
     ), alert.sentence
+
+
+def test_from_says_when_the_failures_began_not_the_oldest_of_the_last_ten_minutes(db, monkeypatch):
+    """(The cold audit of 1.37.1: failing every minute for an hour from 6:38
+    AM, the alert said "from 7:27 AM", moving on with each failure.)"""
+    from app import alerts
+
+    channel = db.create_channel(5, "Cartoon Classics", [{"type": "show", "ratingKey": "1"}])
+    # (Long ago, so its log lines never pass for any other test's.)
+    began = time.mktime((2020, 1, 6, 6, 38, 0, 0, 0, -1))
+    now = [0.0]
+    monkeypatch.setattr(alerts.time, "time", lambda: began + now[0])
+    found = Alerts(Told(), db, clock=lambda: now[0])  # type: ignore[arg-type]
+    for minute in range(60):
+        now[0] = minute * 60.0
+        found.station_failed(channel.id, 5, "Cartoon Classics")
+    [alert] = found.now()
+    assert " times in 10 minutes, from 6:38 AM." in alert.sentence, alert.sentence
+    # Fine for longer than the window, then failing again: a new run, from then.
+    found.station_played(channel.id, 5, "Cartoon Classics")
+    for minute in range(3):
+        now[0] = 7200.0 + minute * 60
+        found.station_failed(channel.id, 5, "Cartoon Classics")
+    [alert] = found.now()
+    assert " 3 times in 10 minutes, from 8:38 AM." in alert.sentence, alert.sentence
+
+
+def test_going_back_to_an_earlier_version_says_so(db):
+    """(The cold audit of 1.37.1: started after a later version, the alert
+    said it was cleared "before the update to" this one.)"""
+    db.set_meta(releases.VERSION_META, "99.0.0")
+    info, _, _ = info_failing(db)
+    again = Alerts(Told(), db)  # type: ignore[arg-type]
+    [fixed] = [a for a in again.listed() if a.about == str(info)]
+    assert fixed.fixed_sentence == (
+        f"Station 99, INFO: its alert from before going back to {__version__} was cleared. "
+        "It comes back if INFO fails again."
+    )

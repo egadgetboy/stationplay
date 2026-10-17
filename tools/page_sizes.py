@@ -89,6 +89,9 @@ JO_PIN = "1357"  # (Jo signs in on the page with it: see the sign-in screen's PI
 # network, the page lists her where she signed in with her password.
 ARI = {"name": "Ari", "password": "harbor violet quill", "role": "user", "showOn": "signed-in"}
 ARI_PIN = "8642"
+# (1.38.0) Pat's PIN: in Light sign-in, it gives his Admin tools at home, on a
+# browser where he signed in with his password.
+PAT_PIN = "9753"
 # Tuner access: the devices listed, and who used the tuner lately (address,
 # what it called itself, what it asked for, how many minutes ago, refused):
 # Plex in Docker, at the Docker network's address (not listed: the warning),
@@ -528,6 +531,13 @@ def fill(sp: Running, data: Path) -> None:
             "proxies": [{"network": "192.168.1.2", "label": "Nginx Proxy Manager"}],
             "homeNames": ["tv.home.example.com"],
         }))  # fmt: skip
+
+        # (1.38.0) Pat chooses Light sign-in, with a PIN.
+        with httpx.Client(headers=PAGE, base_url=sp.home, timeout=60) as pat:
+            ok(pat.post("/api/access/sign-in", json=ADMIN))
+            ok(pat.put(f"/api/access/users/{people[ADMIN['name']]}/picker", json={"pin": PAT_PIN}))
+            ok(pat.put("/api/access/me/sign-in",
+                       json={"how": "light", "password": ADMIN["password"]}))  # fmt: skip
 
         # tapiOca's apps away from home, through a reverse proxy.
         ctx.reach.transport = Proxy(sp.app, sp.ports[1]).transport
@@ -1092,7 +1102,9 @@ def notify_addresses(page: Page, look: Look) -> None:
 
 def signin_answer_lost(context: Any, base: str, look: Look) -> None:
     """The sign-in page from the internet, its first question of who's
-    signed in lost: the PIN's note still comes, from the next answer."""
+    signed in lost: the PIN's note still comes, from the next answer. (From
+    1.38.0 the page shows nothing it can't be sure of, so a lost first
+    answer shows Try again, and the note comes with the next one.)"""
     lost = context.new_page()
     dropped: list[str] = []
 
@@ -1105,6 +1117,8 @@ def signin_answer_lost(context: Any, base: str, look: Look) -> None:
 
     lost.route("**/api/access/me", drop_first)
     lost.goto(base + "/")
+    if until(lost, "() => !document.querySelector('#meProblem').hidden"):
+        lost.click("#meRetry")
     shown = until(lost, "() => !document.querySelector('#signinWhere').hidden")
     look.expect("the internet's PIN note, its first answer lost", (bool(dropped), shown),
                 (True, True))  # fmt: skip
@@ -1398,36 +1412,24 @@ def media_folder_switches(page: Page, look: Look, sp: Running) -> None:
 
 
 def signin_trusted(browser: Any, base: str, context_of: Callable[..., Any], look: Look) -> None:
-    """The sign-in screen on a trusted network (1.36.0): Who's signing in?
-    (from 1.37.0: "Who's tuning in?" is the apps' question, the owner,
-    October 15), with Jo's PIN asked when Jo is picked; Ari, listed on a
-    browser she signed in on with her password, once an hour without
-    activity has signed her out (1.37.0); and on Sam's laptop, Continue as
-    Sam (shown, not pressed: as after signing out on purpose)."""
+    """The sign-in screen on a trusted network (1.36.0). From 1.38.0 (the
+    owner, October 17: "No user appears on the server sign in page at all
+    unless their user is set as Admin"), on a network that opens on Who's
+    tuning in? the page is as at any home address: no one listed on a new
+    browser, Jo (shown on the apps' at home) included, and no User even
+    where she signed in with her password (Ari); on Sam's laptop, Continue
+    as Sam (shown, not pressed: as after signing out on purpose)."""
     context = context_of({"X-Page-Peer": TRUSTED_DEVICE})
     page = context.new_page()
     page.goto(base + "/")
-    if not until(page, "() => !document.querySelector('#signinTrusted').hidden"):
-        look.expect(
-            "Who's signing in? shows on a trusted network",
-            page.evaluate("() => JSON.stringify(me)"),
-            True,
-        )
-        context.close()
-        return
+    until(page, "() => !document.querySelector('#signinView').hidden")
     look.page = page
     look("signin-trusted")
-    look.expect("the page's question", page.inner_text("#signinTrustedTitle"), "Who’s signing in?")
+    look.expect("a new browser on the network: no one listed",
+                (page.is_visible("#signinTrusted"), page.locator("#signinPeople .who").count()),
+                (False, 0))  # fmt: skip
+    look.expect("its name and password", page.is_visible("#signinName"), True)
     long_names(page, look)
-    names = page.locator("#signinPeople .who-name").all_inner_texts()
-    look.expect("Who's signing in? lists Jo", JO["name"] in names, True)
-    look.expect(
-        "Ari isn't listed on a browser she hasn't signed in on", ARI["name"] in names, False
-    )
-    page.locator("#signinPeople .who", has_text=JO["name"]).click()
-    until(page, "() => !document.querySelector('#signinByPin').hidden")
-    look.expect("Jo's PIN asked", page.inner_text("#signinPinLabel"), f"PIN for {JO['name']}")
-    look("signin-trusted-pin")
     context.close()
     # Ari signs in with her password on this browser; an hour without
     # activity signs her out (her sign-in's cookie gone, the browser's kept).
@@ -1438,24 +1440,14 @@ def signin_trusted(browser: Any, base: str, context_of: Callable[..., Any], look
         headers=PAGE,
     )  # fmt: skip
     look.expect("Ari signs in with her password", signed.ok, True)
-    kept = [c for c in context.cookies() if c["name"] != SESSION_COOKIE]
-    context.clear_cookies()
-    context.add_cookies(kept)
+    context.clear_cookies(name=SESSION_COOKIE)
     page = context.new_page()
     page.goto(base + "/")
-    until(page, "() => !document.querySelector('#signinTrusted').hidden")
+    until(page, "() => !document.querySelector('#signinView').hidden")
+    page.wait_for_timeout(300)
     look.page = page
     names = page.locator("#signinPeople .who-name").all_inner_texts()
-    look.expect("Ari is listed where she signed in", ARI["name"] in names, True)
-    if ARI["name"] in names:
-        page.locator("#signinPeople .who", has_text=ARI["name"]).click()
-        until(page, "() => !document.querySelector('#signinByPin').hidden")
-        look.expect("Ari's PIN asked", page.inner_text("#signinPinLabel"), f"PIN for {ARI['name']}")
-        look("signin-trusted-own")
-        page.fill("#signinPin", ARI_PIN)
-        page.click("#signinGo")
-        signed_in = until(page, "() => !!(me && me.user)")
-        look.expect("Ari's PIN signs her in", signed_in, True)
+    look.expect("a User is never listed, even where she signed in", names, [])
     context.close()
     context = context_of({"X-Page-Peer": SAMS_LAPTOP})
     context.add_init_script("try { sessionStorage.setItem('tapioca.signedOut', '1'); } catch {}")
@@ -1477,10 +1469,10 @@ def long_names(page: Page, look: Look) -> None:
     inside the word or cut; a long name of two words, whole. Put back as it
     was after."""
     page.evaluate(
-        """() => trustedSignIn({ gives: 'picker', people: [
+        """() => showPeople([
              { id: 901, name: 'Bartholomew', pin: true },
              { id: 902, name: 'Maximiliana Fitzgerald-Worthington', pin: false },
-             { id: 903, name: 'Jo', pin: true } ] })"""
+             { id: 903, name: 'Jo', pin: true } ])"""
     )
     page.wait_for_timeout(100)
     got = page.evaluate(
@@ -1498,42 +1490,139 @@ def long_names(page: Page, look: Look) -> None:
     look.expect("no name cut", [g["name"] for g in got if g["cut"]], [])
     look.expect("every card inside the list", [g["name"] for g in got if g["outside"]], [])
     look("signin-trusted-long-names")
-    page.evaluate("() => trustedSignIn(me.trusted)")
+    page.evaluate("() => showPeople(me.people || [])")
 
 
-def signin_by_pin(page: Page, look: Look) -> None:
-    """The sign-in screen's PIN form: at home, on a browser Jo signed in on
-    with her password (her session's cookie gone, the browser's kept)."""
-    if not until(page, "() => !document.querySelector('#signinByPin').hidden"):
-        look.expect("the sign-in screen's PIN form", "not shown", "shown")
+def signin_by_pin(context_of: Callable[..., Any], base: str, look: Look) -> None:
+    """The sign-in screen at home (1.38.0, the owner, October 17): on a
+    browser where Jo (a User) and Pat (an Admin, in Light sign-in) signed in
+    with their passwords (their sessions' cookies gone, the browser's kept),
+    only Pat is listed, alone, so his PIN is asked at once; Use your
+    password instead; Sign in with a password for anyone else; Remove from
+    this browser; and his PIN gives his Admin tools."""
+    context = context_of()
+    for who in (JO, ADMIN):
+        signed = context.request.post(f"{base}/api/access/sign-in", data=who, headers=PAGE)
+        look.expect(f"{who['name']} signs in with a password", signed.ok, True)
+        context.clear_cookies(name=SESSION_COOKIE)
+    page = context.new_page()
+    look.page = page
+    page.goto(base + "/")
+    if not until(page, "() => !document.querySelector('#pinForm').hidden"):
+        look.expect("the sign-in screen's PIN form",
+                    page.evaluate("() => location.href + ' ' + (document.body?.innerText || '').slice(0, 300)"),
+                    "shown")  # fmt: skip
+        context.close()
         return
-    look.expect("the PIN form's label", page.inner_text("#signinPinLabel"), f"PIN for {JO['name']}")
+    names = page.locator("#signinPeople .who-name").all_inner_texts()
+    look.expect("only the Admin who signed in here is listed", names, [ADMIN["name"]])
+    look.expect(
+        "the PIN form's label", page.inner_text("#signinPinLabel"), f"PIN for {ADMIN['name']}"
+    )
+    look.expect("no Admin tab before signing in", page.locator(".tab.admin:visible").count(), 0)
     look("signin-pin")
-    # Someone else at this browser (the owner, October 12: there was no way
-    # to switch to another person): their name and password, the name empty.
-    switch = "#signinSwitch"
-    shown = page.is_visible(switch)
-    look.expect("the PIN form's Switch user link", page.inner_text(switch) if shown else "not shown",
-                f"Not {JO['name']}? Switch user")  # fmt: skip
-    if not shown:
-        return
-    page.click(switch)
-    look.expect("Switch user: the name and password form",
-                (page.is_visible("#signinByPassword"), page.is_visible("#signinByPin")), (True, False))  # fmt: skip
-    look.expect("Switch user: the name, empty", page.input_value("#signinName"), "")
+    # His password instead: his name already there, out of sight.
+    page.click("#signinOther")
+    look.expect("Use your password instead",
+                (page.is_visible("#signinPassword"), page.is_visible("#signinName"),
+                 page.input_value("#signinName"), page.is_visible("#pinForm")),
+                (True, False, ADMIN["name"], False))  # fmt: skip
+    look.expect("the password's box has the focus",
+                page.evaluate("() => document.activeElement.id"), "signinPassword")  # fmt: skip
+    look("signin-pin-password")
+    # Someone else at this browser: a name and password, the name empty.
+    page.click("#signinSomeoneElse")
+    look.expect("Sign in with a password: the name and password, the name empty",
+                (page.is_visible("#signinName"), page.input_value("#signinName"),
+                 page.is_visible("#pinForm")), (True, "", False))  # fmt: skip
     look("signin-switch")
-    # Her password instead: her name already there.
-    signin = page.url
-    page.goto(signin)
-    if until(page, "() => !document.querySelector('#signinByPin').hidden"):
-        page.click("#signinOther")
-        look.expect(
-            "Use your password: her name, already there",
-            page.input_value("#signinName"),
-            JO["name"],
-        )
-        look.expect("Use your password: the password's box has the focus",
-                    page.evaluate("() => document.activeElement.id"), "signinPassword")  # fmt: skip
+    # His PIN: his Admin tools.
+    page.locator("#signinPeople .who", has_text=ADMIN["name"]).click()
+    page.fill("#signinPin", PAT_PIN)
+    page.click("#pinGo")
+    got = until(page, "() => !!(me && me.user && me.user.adminTools)")
+    look.expect("in Light sign-in, his PIN gives his Admin tools",
+                (got, page.locator(".tab.admin:visible").count() > 0), (True, True))  # fmt: skip
+    context.close()
+    # Remove from this browser: no one listed then.
+    context = context_of()
+    context.request.post(f"{base}/api/access/sign-in", data=ADMIN, headers=PAGE)
+    context.clear_cookies(name=SESSION_COOKIE)
+    page = context.new_page()
+    look.page = page
+    page.goto(base + "/")
+    if until(page, "() => !document.querySelector('#signinForget').hidden"):
+        page.click("#signinForget")
+        until(page, "() => document.querySelector('#signinTrusted').hidden")
+        look.expect("Remove from this browser",
+                    (page.locator("#signinPeople .who").count(), page.inner_text("#signinStatus")),
+                    (0, f"{ADMIN['name']} is no longer on this browser’s sign-in screen."))  # fmt: skip
+        look("signin-forgotten")
+    else:
+        look.expect("Remove from this browser shows", False, True)
+    context.close()
+
+
+def first_paint(context_of: Callable[..., Any], base: str, look: Look) -> None:
+    """(1.38.0, the owner, October 17: "they shouldn't flash for a second
+    for a restricted [non Admin] user at all".) While tapiOca's answer of
+    who's signed in is slow, nothing shows, an Admin tab least of all; for a
+    User, no Admin tab ever shows; and when it can't be asked, the page says
+    so, with Try again, and shows no tab."""
+    seen = """() => ({ wrap: !document.querySelector('.wrap').hidden,
+                       admin: document.querySelectorAll('.tab.admin:not([hidden])').length,
+                       tabs: [...document.querySelectorAll('.tab')].filter(t => t.checkVisibility()).length,
+                       problem: !document.querySelector('#meProblem').hidden })"""
+    for who in (USER, ADMIN):
+        context = context_of()
+        signed = context.request.post(f"{base}/api/access/sign-in", data=who, headers=PAGE)
+        look.expect(f"{who['name']} signs in", signed.ok, True)
+        # (Any Admin tab that ever shows, noted as it happens.)
+        context.add_init_script("""
+          window.__adminShown = 0;
+          new MutationObserver(() => {
+            for (const t of document.querySelectorAll('.tab.admin'))
+              if (t.checkVisibility()) window.__adminShown++;
+          }).observe(document, { subtree: true, attributes: true, childList: true });""")
+        # (tapiOca's answer of who's signed in, 1.5 seconds slow.)
+        context.add_init_script("""
+          const sent = window.fetch;
+          window.fetch = (url, ...more) => String(url).includes('/api/access/me')
+            ? new Promise(go => setTimeout(go, 1500)).then(() => sent(url, ...more))
+            : sent(url, ...more);""")
+        page = context.new_page()
+        look.page = page
+        page.goto(base + "/", wait_until="domcontentloaded")
+        page.wait_for_timeout(500)
+        look.expect(f"{who['name']}: nothing shows before tapiOca answers",
+                    page.evaluate(seen), {"wrap": False, "admin": 0, "tabs": 0, "problem": False})  # fmt: skip
+        if who is USER:
+            look("first-paint-waiting")
+        until(page, "() => me.known")
+        page.wait_for_timeout(300)
+        after = page.evaluate(seen)
+        if who is USER:
+            look.expect("a User never sees an Admin tab",
+                        (after["wrap"], after["admin"], page.evaluate("() => window.__adminShown")),
+                        (True, 0, 0))  # fmt: skip
+        else:
+            look.expect("an Admin's tabs once tapiOca answers", (after["wrap"], after["admin"] > 0),
+                        (True, True))  # fmt: skip
+        context.close()
+    # tapiOca can't be asked: the page says so, and shows no tab.
+    context = context_of()
+    context.request.post(f"{base}/api/access/sign-in", data=ADMIN, headers=PAGE)
+    page = context.new_page()
+    look.page = page
+    page.route("**/api/access/me", lambda route: route.fulfill(status=502, body="Bad gateway"))
+    page.goto(base + "/")
+    until(page, "() => !document.querySelector('#meProblem').hidden")
+    got = page.evaluate(seen)
+    look.expect("when tapiOca can't be asked: Try again, and no tab",
+                (got["problem"], got["tabs"], got["admin"], page.is_visible("#meRetry")),
+                (True, 0, 0, True))  # fmt: skip
+    look("first-paint-problem")
+    context.close()
 
 
 def plex_step(page: Page, look: Look) -> None:
@@ -2092,7 +2181,7 @@ def main() -> None:
     ap.add_argument("--sizes", default=",".join(every), help="WxH, separated by commas")
     ap.add_argument("--themes", default=",".join(THEMES))
     ap.add_argument("--only", default="", help="views, separated by commas (stations, editor...)")
-    ap.add_argument("--who", default="admin,user,signin,signin-pin,signin-trusted")
+    ap.add_argument("--who", default="admin,user,signin,signin-pin,signin-trusted,first-paint")
     args = ap.parse_args()
     sizes = args.sizes.split(",")
     # Touch screens: phones and tablets (and any other size as small as a phone's).
@@ -2130,9 +2219,14 @@ def main() -> None:
                                     extra_http_headers=headers,
                                 )  # fmt: skip
 
-                            if person == "signin-trusted":
+                            if person in ("signin-trusted", "signin-pin", "first-paint"):
                                 look = Look(None, folder, f"{person}-{theme}", size in touch, said)
-                                signin_trusted(browser, sp.home, context_of, look)
+                                if person == "signin-trusted":
+                                    signin_trusted(browser, sp.home, context_of, look)
+                                elif person == "signin-pin":
+                                    signin_by_pin(context_of, sp.home, look)
+                                else:
+                                    first_paint(context_of, sp.home, look)
                                 continue
                             context = context_of()
                             # (The update banner is shown in one view only.)
@@ -2146,14 +2240,6 @@ def main() -> None:
                                     headers=PAGE,
                                 )
                                 assert signed.ok, signed.text()
-                            if person == "signin-pin":
-                                # (Signed in with a password before, at home: the
-                                # browser's kept, its session isn't.)
-                                signed = context.request.post(
-                                    f"{sp.home}/api/access/sign-in", data=JO, headers=PAGE
-                                )
-                                assert signed.ok, signed.text()
-                                context.clear_cookies(name=SESSION_COOKIE)
                             page = context.new_page()
                             base = sp.internet if person == "signin" else sp.home
                             page.goto(base + "/")
@@ -2166,8 +2252,6 @@ def main() -> None:
                                     waiting_media_step(context, base, look, sp)
                             elif person == "user":
                                 user_views(page, look, only)
-                            elif person == "signin-pin":
-                                signin_by_pin(page, look)
                             else:
                                 look("signin")
                                 # (From the internet: where the PIN works, never

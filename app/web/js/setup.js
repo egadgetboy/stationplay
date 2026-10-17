@@ -468,8 +468,8 @@ const SETUP_PAGES = {
         await loadMe();
         toast(`Sign-in is on, and you’re signed in as ${name}`);
       }
-      // The network ticked: trusted, and new people show on every device
-      // at home (else its Who's tuning in? lists no one new).
+      // The network ticked: trusted (its devices are linked without signing
+      // in; each person signs in once on each, from 1.38.0).
       if (me.required && trust.checked && !listed.length) {
         const entry = { network: trustNetwork.value.trim(), label: trustName.value.trim(), gives: 'picker', person: null };
         let body = { entries: [entry] };
@@ -481,7 +481,6 @@ const SETUP_PAGES = {
           }
         }
         listed.push(entry);
-        try { await api('/api/access/devices/default', { method: 'PUT', body: { showOn: 'home' } }); } catch {}
         toast(`${entry.label || entry.network} is trusted: its devices skip signing in`);
       }
     } };

@@ -896,8 +896,9 @@ async def _new_people_and_everyone(
                   got.text[:200])  # fmt: skip
         r = await c.post("/api/internal/picker/choose", headers=key,
                          json={"id": made.json()["id"]})  # fmt: skip
-        checks.ok(r.status_code == 200, "and still picked at home, as before",
-                  f"got {r.status_code}")  # fmt: skip
+        checks.ok(r.status_code == 404,
+                  "and, never signed in on the device, not on its list, whatever Show on says "
+                  "(1.38.0)", f"got {r.status_code}")  # fmt: skip
 
         # (A household from here on.)
         r = await c.post(everyone, json={"showOn": "home"}, headers=admin_h)
@@ -907,9 +908,9 @@ async def _new_people_and_everyone(
 
 
 async def _picker_away(checks: Checks, app, home: str, net: str, device_key: str) -> None:
-    """A linked device's picker through the public port: it lists only who
-    signed in on it (or is on every device, or was chosen for it), and no
-    one it doesn't list there can be picked by their id."""
+    """A linked device's picker, at home and through the public port: it
+    lists only who signed in on it (from 1.38.0, at home too, whatever Show
+    on says), and no one it doesn't list there can be picked by their id."""
     checks.section("Who's tuning in? away from home")
     key = {"StationPlay-Device": device_key}
     https = {"X-Forwarded-Proto": "https", "X-Real-IP": "203.0.113.65", **key}
@@ -919,8 +920,8 @@ async def _picker_away(checks: Checks, app, home: str, net: str, device_key: str
         r = await out.get("/api/internal/picker")
         away = [p["name"] for p in r.json().get("people", [])] if r.status_code == 200 else None
         checks.ok(
-            away == [USER["name"]] and ADMIN["name"] in at_home and KID["name"] in at_home,
-            "away from home, the device lists only who signed in on it",
+            away == at_home == [USER["name"]],
+            "at home and away, the device lists only who signed in on it",
             f"at home {at_home}, away {away}",
         )
         for person in app.state.ctx.db.users():
@@ -929,7 +930,7 @@ async def _picker_away(checks: Checks, app, home: str, net: str, device_key: str
             r = await out.post("/api/internal/picker/choose",
                                json={"id": person.id, "password": ADMIN["password"]})  # fmt: skip
             checks.ok(r.status_code == 404,
-                      f"{person.name}, listed only at home, can't be picked away from home",
+                      f"{person.name}, not on its list, can't be picked away from home",
                       f"got {r.status_code}")  # fmt: skip
         plain = await out.get("/api/internal/picker", headers={"X-Forwarded-Proto": "http"})
         checks.ok(plain.status_code == 403, "the picker away from home needs HTTPS",
@@ -1026,6 +1027,12 @@ async def _own_pin_and_password(
         # Someone anyone at home may pick ("Kids") gets a PIN only from an Admin.
         made = await c.post("/api/access/users", headers=admin_h,
                             json={"name": "Kids", "role": "user"})  # fmt: skip
+        # (From 1.38.0 a device lists only those who signed in on it: Kids
+        # with an invite code.)
+        code = (await c.post(f"/api/access/users/{made.json()['id']}/invite",
+                             headers=admin_h)).json()["code"]  # fmt: skip
+        await c.post("/api/internal/picker/sign-in", json={"name": "Kids", "code": code},
+                     headers={"StationPlay-Device": device_key})  # fmt: skip
         picked = await c.post("/api/internal/picker/choose", json={"id": made.json()["id"]},
                               headers={"StationPlay-Device": device_key})  # fmt: skip
         kids_h = {"Authorization": f"Bearer {picked.json().get('token', '')}"}
@@ -1042,6 +1049,8 @@ async def _own_pin_and_password(
         # device, isn't locked out by them.
         made = await c.post("/api/access/users", headers=admin_h,
                             json={"name": "Lee", "password": "harbor violet quill", "role": "user"})  # fmt: skip
+        await c.post("/api/internal/picker/sign-in", headers={"StationPlay-Device": device_key},
+                     json={"name": "Lee", "password": "harbor violet quill"})  # fmt: skip
         picked = await c.post("/api/internal/picker/choose", json={"id": made.json()["id"]},
                               headers={"StationPlay-Device": device_key})  # fmt: skip
         lee_h = {"Authorization": f"Bearer {picked.json().get('token', '')}"}
@@ -2104,6 +2113,14 @@ async def _doors_and_trust(
     def peer(address: str, **more: str) -> dict[str, str]:
         return {"X-Attack-Peer": address, **more}
 
+    async def gives(c: httpx.AsyncClient, h: dict[str, str]) -> str | None:
+        """What a trusted network gives an app from here, or None. (From
+        1.38.0 the page is told only of a network that signs in as someone:
+        a network's Who's tuning in? is the apps'.)"""
+        r = await c.post("/api/internal/trusted", headers=h,
+                         json={"app": "tapiOca for Roku", "picker": True})  # fmt: skip
+        return r.json().get("gives") if r.is_success else None
+
     async def internet_like(c: httpx.AsyncClient, what: str, h: dict[str, str]) -> None:
         """What the public port gives, and no more: no tuner, no PIN, no
         at-home picker list, signing in asked for."""
@@ -2197,8 +2214,11 @@ async def _doors_and_trust(
             "/api/access/trusted", json={"entries": entries, "confirmWide": True}, headers=admin_h
         )
         checks.ok(r.status_code == 200, "an Admin lists trusted networks", r.text[:200])
+        got = await gives(c, peer("192.168.1.60"))
+        checks.ok(got == "picker", "a device on the network: Who's tuning in?", str(got))
         me = (await c.get("/api/access/me", headers=peer("192.168.1.60"))).json()
-        checks.ok(me.get("trusted", {}).get("gives") == "picker", "a device on the network: Who's tuning in?",
+        checks.ok("trusted" not in me and "people" not in me,
+                  "the page there lists no one who hasn't signed in on it (1.38.0)",
                   str(me)[:200])  # fmt: skip
         # Not trusted: another VLAN, the public port, a trusted /32's
         # neighbor, an internet name (door 3), headers from a device that
@@ -2215,22 +2235,21 @@ async def _doors_and_trust(
                 f"{what}: never the Admin",
                 str(me)[:200],
             )
+            got = await gives(c, h)
+            checks.ok(got != "person", f"{what}: never signed in as someone", str(got))
             if what != "a LAN device claiming it in X-Real-IP":
-                checks.ok("trusted" not in me, f"{what}: not trusted", str(me)[:200])
-        me = (await c.get("/api/access/me", headers=peer("192.168.1.45"))).json()
+                checks.ok("trusted" not in me and got is None, f"{what}: not trusted",
+                          f"{str(me)[:160]} {got}")  # fmt: skip
+        got = await gives(c, peer("192.168.1.45"))
         checks.ok(
-            me.get("trusted", {}).get("gives") == "picker",
-            "the Admin's laptop's neighbor gets only its network's choice",
-            str(me)[:200],
+            got == "picker", "the Admin's laptop's neighbor gets only its network's choice", str(got)
         )
         # Door 3, fixed: the name listed for home.
         r = await c.put(
             "/api/access/trusted", json={"homeNames": ["nas.example.net"]}, headers=admin_h
         )
-        me = (
-            await c.get("/api/access/me", headers=peer("192.168.1.60", Host="nas.example.net"))
-        ).json()
-        checks.ok("trusted" in me, "door 3: once listed as a home name, trusted", str(me)[:200])
+        got = await gives(c, peer("192.168.1.60", Host="nas.example.net"))
+        checks.ok(got == "picker", "door 3: once listed as a home name, trusted", str(got))
         # (Never the away-from-home address's name, even listed: that's how
         # the internet reaches tapiOca.)
         await c.put(
@@ -2238,22 +2257,12 @@ async def _doors_and_trust(
             json={"homeNames": ["nas.example.net", "tv.example.com"]},
             headers=admin_h,
         )
-        me = (
-            await c.get("/api/access/me", headers=peer("192.168.1.60", Host="tv.example.com"))
-        ).json()
-        checks.ok("trusted" not in me, "the away address's name is never home's", str(me)[:200])
+        got = await gives(c, peer("192.168.1.60", Host="tv.example.com"))
+        checks.ok(got is None, "the away address's name is never home's", str(got))
         # Through the trusted proxy: the visitor's network, never the
         # Admin's laptop, and nothing when its headers disagree.
-        me = (
-            await c.get(
-                "/api/access/me", headers=peer(PROXY_PEER, **{"X-Forwarded-For": "192.168.1.44"})
-            )
-        ).json()
-        checks.ok(
-            me.get("trusted", {}).get("gives") == "picker",
-            "through a proxy, never the Admin's laptop",
-            str(me)[:200],
-        )
+        got = await gives(c, peer(PROXY_PEER, **{"X-Forwarded-For": "192.168.1.44"}))
+        checks.ok(got == "picker", "through a proxy, never the Admin's laptop", str(got))
         me = (
             await c.get(
                 "/api/access/me", headers=peer(PROXY_PEER, **{"X-Forwarded-For": "192.168.1.70"})
@@ -2272,15 +2281,19 @@ async def _doors_and_trust(
                 ),
             )
         ).json()
-        checks.ok("trusted" not in me, "a proxy's headers that disagree: nothing", str(me)[:200])
+        got = await gives(c, peer(
+            PROXY_PEER, **{"X-Forwarded-For": "192.168.1.70", "X-Real-IP": "192.168.1.60"}
+        ))  # fmt: skip
+        checks.ok("trusted" not in me and got is None, "a proxy's headers that disagree: nothing",
+                  f"{str(me)[:160]} {got}")  # fmt: skip
         # On the public port: never trusted.
         async with httpx.AsyncClient(headers=PAGE, base_url=net, timeout=30) as out:
             me = (
                 await out.get("/api/access/me", headers={"X-Forwarded-For": "192.168.1.60"})
             ).json()
-            checks.ok(
-                "trusted" not in me, "a trusted address on the public port: nothing", str(me)[:200]
-            )
+            got = await gives(out, {"X-Forwarded-For": "192.168.1.60"})
+            checks.ok("trusted" not in me and got is None,
+                      "a trusted address on the public port: nothing", f"{str(me)[:160]} {got}")  # fmt: skip
         # A sign-in a network gives works only there; it ends with the entry.
         r = await c.post("/api/access/trusted-sign-in", json={}, headers=peer("192.168.1.70"))
         checks.ok(r.status_code == 200, "Sam's device signs in as Sam", r.text[:200])
@@ -2325,19 +2338,15 @@ async def _doors_and_trust(
         r = await c.put("/api/access/trusted", json={"entries": kept}, headers=admin_h)
         r = await c.get("/api/channels", headers={**peer("192.168.1.70"), **ck})
         checks.ok(r.status_code == 401, "removing its network ends it", f"got {r.status_code}")
-        # A PIN on the page's Who's tuning in?: Sam's 5, then a wait; Ada's
-        # (an Admin) always asked.
-        r = await c.post(
-            "/api/access/trusted-sign-in", json={"id": ada.id}, headers=peer("192.168.1.62")
-        )
-        checks.ok(
-            r.status_code == 403, "an Admin always gives a PIN or password", f"got {r.status_code}"
-        )
-        codes = [
-            (await c.post("/api/access/trusted-sign-in", json={"id": sam.id, "pin": "0000"},
-                          headers=peer("192.168.1.63"))).status_code for _ in range(6)
-        ]  # fmt: skip
-        checks.ok(codes[-1] == 429, "wrong PINs on a trusted picker are limited", str(codes))
+        # From 1.38.0 the page has no Who's tuning in? on a network: it signs
+        # in no one by a pick, an Admin least of all, with a PIN or without.
+        # (Wrong PINs on the page's PIN sign-in: tests/test_pin_sign_in.py.)
+        for who, body in (("an Admin", {"id": ada.id}), ("an Admin's PIN", {"id": ada.id, "pin": "1357"}),
+                          ("a User", {"id": sam.id}), ("a User's PIN", {"id": sam.id, "pin": "0000"})):  # fmt: skip
+            r = await c.post("/api/access/trusted-sign-in", json=body, headers=peer("192.168.1.62"))
+            checks.ok(r.status_code == 404 and not r.cookies.get(access.COOKIE),
+                      f"the page on a network signs in no one picked ({who})",
+                      f"got {r.status_code}")  # fmt: skip
 
     checks.section("Door 5: Docker hiding where connections come from (1.36.0)")
     async with httpx.AsyncClient(headers=PAGE, base_url=home, timeout=30) as c:

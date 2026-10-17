@@ -546,7 +546,9 @@ def test_made_an_admin_their_sign_ins_without_a_secret_end(home):
                {"network": "192.168.1.70", "gives": "person", "person": sam["id"]}]  # fmt: skip
     assert pat.put("/api/access/trusted", json={"entries": entries}).status_code == 200
     tv = device_at(home, "192.168.20.8")
-    assert tv.post("/api/access/sign-in", json={"name": "Sam", "password": "battery staple"}).is_success
+    assert tv.post(
+        "/api/access/sign-in", json={"name": "Sam", "password": "battery staple"}
+    ).is_success
     phone = device_at(home, "192.168.1.70")
     assert phone.post("/api/access/trusted-sign-in", json={}).status_code == 200
     assert pat.put(f"/api/access/users/{sam['id']}", json={"role": "admin"}).status_code == 200
@@ -786,10 +788,11 @@ def test_an_admin_by_network_is_a_user_and_their_own_devices_are_as_before(home)
     """A network's sign-in for an Admin acts as a User's everywhere (who
     watched what, how the server is set up, others' stations), as the page
     shows it; an app's /me says so, so it doesn't ask for Admin alerts. But
-    an Admin with no PIN picking themselves on their own linked device (as
-    1.35.0 allowed) is an Admin as before, and so is one who gives their
-    password on a network's device. A network's PIN sign-in can't change
-    that PIN. The cold audit of 1.36.0, third round."""
+    a sign-in made before 1.38.0 for an Admin with no PIN, picked on their
+    own linked device (as 1.35.0 allowed), is an Admin's as it was (from
+    1.38.0 a new one is for watching: test_admin_sign_in.py), and so is one
+    who signs in with their password on a network's device. A network's
+    sign-in can't change their PIN. The cold audit of 1.36.0, third round."""
     pat_id = home.state.pat
     laptop = device_at(home, "192.168.1.44")
     assert laptop.post("/api/access/trusted-sign-in", json={}).status_code == 200
@@ -825,7 +828,10 @@ def test_an_admin_by_network_is_a_user_and_their_own_devices_are_as_before(home)
     tv_key = device_at(home, "192.168.1.62").post(
         "/api/internal/trusted", json={"app": "TV", "picker": True}).json()["deviceKey"]  # fmt: skip
     tv = device_at(home, "192.168.1.62", stationplay_device=tv_key)
-    assert tv.post("/api/internal/picker/choose", json={"id": pat_id, "pin": "1234"}).status_code == 404
+    assert (
+        tv.post("/api/internal/picker/choose", json={"id": pat_id, "pin": "1234"}).status_code
+        == 404
+    )
     # Jo with her password on the same TV: an ordinary sign-in, an Admin's.
     by_password = tv.post(
         "/api/internal/picker/sign-in",
@@ -871,7 +877,9 @@ def test_a_browser_its_admin_signed_in_on_lists_them_for_their_pin(home):
         return {p["name"]: p for p in c.get("/api/access/me").json().get("people", [])}
 
     laptop = device_at(home, "192.168.1.70")
-    assert laptop.post("/api/access/sign-in", json={"name": "Sam", "password": "battery staple"}).is_success
+    assert laptop.post(
+        "/api/access/sign-in", json={"name": "Sam", "password": "battery staple"}
+    ).is_success
     assert laptop.post("/api/access/sign-in", json=lees).status_code == 200
     light(laptop, lees)
     # An hour without activity: signed out (the sign-in's cookie gone, the browser's kept).
@@ -882,7 +890,9 @@ def test_a_browser_its_admin_signed_in_on_lists_them_for_their_pin(home):
     assert "Lee" not in listed(other)
     assert other.post("/api/access/pin-sign-in", json={"id": lee, "pin": "4242"}).status_code == 400
     # On the laptop: Lee's PIN signs Lee in, with Admin tools; a wrong one doesn't.
-    assert laptop.post("/api/access/pin-sign-in", json={"id": lee, "pin": "0000"}).status_code == 403
+    assert (
+        laptop.post("/api/access/pin-sign-in", json={"id": lee, "pin": "0000"}).status_code == 403
+    )
     picked = laptop.post("/api/access/pin-sign-in", json={"id": lee, "pin": "4242"})
     assert picked.status_code == 200, picked.text
     me = laptop.get("/api/access/me").json()["user"]
@@ -921,5 +931,8 @@ def test_wrong_pins_for_a_browsers_own_admin_count_against_that_browser(home):
     elsewhere = device_at(home, "192.168.1.99")
     elsewhere.cookies.update(laptop.cookies)
     ctx.devices._wrong.clear()
-    assert elsewhere.post("/api/access/pin-sign-in", json={"id": lee, "pin": "4242"}).status_code == 400
+    assert (
+        elsewhere.post("/api/access/pin-sign-in", json={"id": lee, "pin": "4242"}).status_code
+        == 400
+    )
     assert devices.PIN_TRIES < access.BROWSER_PIN_TRIES

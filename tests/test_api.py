@@ -125,7 +125,10 @@ def test_api_tokens_expire_and_go_with_the_admin_who_made_them(app, monkeypatch)
         assert script.get("/api/v1/status", headers=bearer(sams)).status_code == 200
         demoted = script.post("/api/v1/backups", headers=bearer(sams))
         assert demoted.status_code == 403 and demoted.json()["detail"] == access.ADMINS_ONLY
-        # Users don't manage tokens.
+        # A new role ends Sam's sign-in on the page (1.38.0), so Sam signs
+        # in again as a User; and Users don't manage tokens.
+        assert sam.get("/api/api-tokens").status_code == 401
+        assert sam.post("/api/access/sign-in", json=SAM).status_code == 200
         assert sam.get("/api/api-tokens").status_code == 403
         # Sam removed: Sam's token goes too.
         assert page.delete(f"/api/access/users/{sam_id}").status_code == 204
