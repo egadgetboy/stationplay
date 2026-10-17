@@ -32,14 +32,16 @@ library mid-rescan, a drive offline) than something you meant.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import itertools
 import logging
+import re
 import time
-from urllib.parse import urlsplit
 from collections import Counter
 from collections.abc import Container
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from . import cliprules, specials
 from .breaks import COMMERCIALS, TRAILERS, id_card_ms, with_breaks
@@ -100,12 +102,17 @@ META_PLEX_DOWNLOAD = "guide_plex_download"
 # said: what Setup shows from the internet, where the request can't tell
 # (1.37.1, the owner, October 15: "Setup missing actual personal IPs").
 META_TUNER_ADDRESS = "plex_tuner_address"
+# A machine's name, as an address has it: letters, digits and hyphens, in
+# dot-separated parts (the cold audit of 1.37.1: spaces, ";", "%" and
+# right-to-left marks got through).
+_MACHINE = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*")
 
 
 def tuner_address(uri: object) -> str:
     """An address Plex lists a tuner at, as "http://192.168.50.2:3310": only
     an http or https address of a machine (with its port), nothing else in
-    it; "" for anything else."""
+    it, and never Plex's own view of itself (localhost); "" for anything
+    else."""
     if not isinstance(uri, str) or len(uri) > 300:
         return ""
     try:
@@ -122,6 +129,14 @@ def tuner_address(uri: object) -> str:
         or parts.query
         or parts.fragment
     ):
+        return ""
+    try:
+        ip = ipaddress.ip_address(parts.hostname)
+    except ValueError:
+        ip = None
+        if not _MACHINE.fullmatch(parts.hostname) or parts.hostname == "localhost":
+            return ""
+    if ip is not None and (ip.is_loopback or ip.is_unspecified):
         return ""
     host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
     return f"{parts.scheme}://{host}" + (f":{port}" if port else "")
@@ -868,10 +883,12 @@ class Updater:
         mine = [(dvr, d) for dvr, d in devices if dvr.get("key") and self._is_mine(d)]
         self._dvr_key = str(mine[0][0]["key"]) if mine else None
         self._dvr_checked_ms = now_ms()
-        if mine:
-            address = tuner_address(mine[0][1].get("uri"))
-            if address and address != self.tuner_address:
-                self.ctx.db.set_meta(META_TUNER_ADDRESS, address)
+        # (The address of the entry Plex reaches, never a dead one; none once
+        # Plex lists none: the cold audit of 1.37.1.)
+        alive = [d for _, d in mine if d.get("status", "alive") == "alive"]
+        address = tuner_address(alive[0].get("uri")) if alive else ""
+        if address != self.tuner_address:
+            self.ctx.db.set_meta(META_TUNER_ADDRESS, address)
         if mine and mine[0][1].get("status", "alive") == "alive":
             self._say_once(
                 "Found tapiOca's tuner in Plex's Live TV & DVR, so tapiOca will ask Plex "

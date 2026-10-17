@@ -30,7 +30,8 @@ apps show only what the server sends.
 
 - **Phase 1.** Viewing Levels (rating and Media folders), and stations allowed
   or blocked for each person, enforced everywhere. Linked devices, Who's
-  tuning in?, PINs, invite codes and "Show on." Users can be
+  tuning in?, PINs, invite codes and "Show on" (which lists no one from
+  1.38.0). Users can be
   watch-only.
 - **Phase 2.** Built in 1.33.0: genre, tag, collection, studio and title
   rules for levels and people, and titles allowed for a person. After 1.0:
@@ -288,16 +289,28 @@ Link.
   Media folders (all, or a list), and (1.33.0) the genres, tags,
   collections and studios it hides.
 - **`users`.** Gains each person's level, PIN (`pin`: a hash, or
-  none), whether they chose to have no PIN, Show on (see below),
-  whether they may change their own password, and (1.33.0) what's hidden
-  or allowed for them. A User may have no password.
-  They use only Who's tuning in?
+  none), whether they chose to have no PIN, Show on (kept, but from 1.38.0
+  it lists no one: see below), whether they may change their own password,
+  and (1.33.0) what's hidden or allowed for them. A User may have no
+  password. They use only Who's tuning in? From 1.38.0, an Admin's Full or
+  Light sign-in (`admin_sign_in`, `full` to start).
 - **`user_stations`.** A station allowed or blocked for a person.
 - **`linked_devices`, `device_people` and `invites`.** The linked devices,
-  each by a hash of its key, with who linked it (by ID and by name). Who's
-  on each device's Who's tuning in? apart from their Show on setting
-  (signed in there, chosen by an Admin, or taken off). Each person's invite
-  code (a hash), while it lasts.
+  each by a hash of its key, with who linked it (by ID and by name). Each
+  person's place on each device: signed in there (from 1.38.0, the only
+  one that lists them, and `by_password`: whether with their password),
+  chosen by an Admin (kept, but listing no one from 1.38.0), or taken off.
+  Each person's invite code (a hash), while it lasts.
+- **`browser_people`** (1.38.0). Each browser's people: everyone who signed
+  in on it with their password, several to a browser, by a hash of the
+  token kept in it. Whether each one's PIN may sign them in there, and when
+  they last signed in there. Only the Admins among them are on its sign-in
+  screen. On the first start of 1.38.0, it's filled from `devices`, which is
+  kept as it was, for going back to 1.37.1.
+- **`sessions`** gains, in 1.38.0, `admin_pin` (an Admin's sign-in made with
+  their PIN in Light sign-in) and `watching` (a sign-in for watching only).
+  Sign-ins made before give what they gave then. A backup is made before
+  the update changes the database, as always.
 
 Media in the apps (browsing, search, details, pictures and playing) already
 asks Plex about each title. Plex sends its rating and Media folder, so
@@ -316,52 +329,56 @@ its next request. Whoever is using the device gets a short-lived
 **session** for one person, made by picking that person.
 
 **Who's tuning in?** shows when the app starts, if more than one person can
-use the device. Who appears on it depends on each person's **Show on**
-setting and on where the device is. A device is **at home** when it asks
-for the list on the home port, which a VPN reaches too. It's **away from
-home** on the public port.
+use the device. A device is **at home** when it asks for the list on the
+home port, which a VPN reaches too. It's **away from home** on the public
+port.
 
-- **Only devices they sign in on.** The person appears on no device until
-  they sign in on one. Then they appear on that device, at home and away.
+From 1.38.0 (the owner, October 17), someone is on a device's list only
+once they signed in on it themselves:
+
+- **How.** With their password, an invite code, or a code entered on
+  tapiOca's page (Link an app).
+- **Never otherwise.** Not because they're at home, not because of their
+  Show on, and not because an Admin chose the device for them.
+- **At home and away.** Once there, they're listed wherever the device is.
   Unless Bo has signed in on Ada's TV, he isn't on its list, and she isn't
   on his phone's.
-- **Every device at home.** The person appears on every linked device while
-  it's at home. Away from home, they appear only on a device they signed in
-  on themselves, or one an Admin chose for them. This suits a household.
-- **Every device, at home and away.** The person appears on every linked
-  device, wherever it is. A device away from home, such as a phone at a
-  friend's house, shows their name too.
-- **Only devices you choose.** The person appears only on the devices an
-  Admin picks, at home and away, such as the Kids' Tablet or a family iPad
-  that travels.
+- **No password and no PIN.** Someone with neither, such as "Kids," is
+  listed only at home, where anyone there can pick them.
 
-### New people show on
+### Show on, before 1.38.0
 
-New people start with the **New people show on** setting, next to the linked
-devices: Only devices they sign in on, or Every device at home. From 1.31.0,
-it's Only devices they sign in on, unless an Admin chose otherwise before;
-that choice stays. Someone who can't sign in by name (no password and no
-PIN) can't be shown only where they sign in, so on that default they start
-on Only devices you choose, with none chosen: on no device's list until an
-Admin chooses theirs. (With Every device at home as the default, they start
-there.)
+Before 1.38.0, each person's **Show on** said which devices listed them:
 
-Changing the setting doesn't move anyone already added. **Use for
-everyone**, next to it, does:
+- **Only devices they sign in on.** On no device until they signed in on
+  one, then on that device, at home and away.
+- **Every device at home.** On every linked device while it was at home.
+  Away from home, only on a device they signed in on, or one an Admin chose.
+- **Every device, at home and away.** On every linked device, wherever it
+  was.
+- **Only devices you choose.** Only on the devices an Admin picked, at home
+  and away.
 
-- **A confirm first.** It shows how many people the change affects. Then
-  everyone already added shows that way too, as does anyone added later.
-- **Some people are kept.** Either way, anyone who can't sign in by name
-  keeps their setting, so a profile an Admin kept to one TV never lands on
-  every device. The page names them: "Kept as
-  they were: Kids (no password or PIN)."
-- **Picking isn't signing in.** Picking yourself on Who's tuning in? doesn't
-  count as signing in on that device. So people appear again on a device
-  they used that way once they sign in on it. The confirm says so.
-- **Chosen devices stay.** The devices an Admin chose for someone stay
-  chosen.
-- **It's logged.** The access log shows "<Admin> set everyone to show on
-  <choice>: <n> people changed," and who was kept.
+From 1.38.0, Show on, **New people show on**, **Use for everyone** and the
+devices an Admin chose are gone from the **Access** tab. Their values are
+kept in the database, for going back to 1.37.1, and the API still takes
+them, but they list no one. Someone who used to pick themselves on a device
+signs in on it once to be on its list again. Each person's **Devices**
+dialog shows the devices they're on, their PIN, and **Make an invite code**.
+
+### New people show on, before 1.38.0
+
+**New people show on** set where new people started: Only devices they
+sign in on, or Every device at home. From 1.31.0, it was Only devices they
+sign in on, unless an Admin chose otherwise before. Someone with no password
+and no PIN started on Only devices you choose, with none chosen.
+
+**Use for everyone**, next to it, set everyone already added that way too.
+It asked first, showing how many people it changed, and kept anyone who
+couldn't sign in by name as they were ("Kept as they were: Kids (no
+password or PIN)"). Devices an Admin chose stayed chosen. The access log
+shows "<Admin> set everyone to show on <choice>: <n> people changed," and
+who was kept (still, when the API is used).
 
 ### Earlier names
 
@@ -383,23 +400,33 @@ access log shows how many people moved.
 
 Who's tuning in? always has **Sign in**. The person enters their name and,
 the first time on that device, their invite code or password. After that,
-they switch with their PIN. Each person can choose **Remove me from
-this device**.
+they pick themselves, with their PIN if they have one. Each person can
+choose **Remove me from this device**.
 
 - **A name alone never works.** Someone with neither a password nor a
-  PIN, such as a "Kids" account, can only be on Every device at home or
-  Only devices you choose. They never sign in by name, so no one can get in
-  from anywhere by guessing a name like "Kids." No device away from home
-  lists them unless an Admin chose it.
+  PIN, such as a "Kids" account, never signs in by name. To get on a
+  device, someone enters their name and an invite code there (from 1.38.0;
+  before, they couldn't use one). They're then on that device's list only
+  at home. No one can get in from anywhere by guessing a name like "Kids."
 - **A password still works.** Someone with a password signs in with it, on
   tapiOca's page or in an app, as before.
 - **The first sign-in needs more.** The first sign-in on a device takes an
-  invite code or a password, never just a PIN. An Admin makes an
+  invite code or a password, never just a PIN. A PIN works only on a device
+  someone already signed in on (unchanged since 1.36.2). An Admin makes an
   **invite code** for one person. It works once and expires after 7 days.
-- **Admins always unlock.** An Admin always needs their PIN (or
-  password) on Who's tuning in?
+- **Admins always unlock.** An Admin gives their PIN, or their password, on
+  Who's tuning in? An Admin with no PIN, alone on their own device, may be
+  picked with nothing.
+- **An Admin's sign-in in the apps.** Picked with their PIN, an Admin gets
+  their Admin tasks only in Light sign-in, at home, on a device they signed
+  in on with their password (not just an invite code). Otherwise the
+  sign-in is for watching. So is an Admin picked with no PIN. Picked with
+  their password, it's an Admin's sign-in.
 - **PINs.** A PIN is 4 digits, stored as a hash. After 5 wrong
   PINs, that person waits 15 minutes, on every device.
+- **A PIN removed.** Removing the PIN of someone without a password ends
+  their sign-ins from Who's tuning in? on every device. They're then listed
+  only at home, and pick themselves again.
 - **Linked devices only.** Who's tuning in? exists only on a device that's
   already linked. A stranger who installs an app never sees a name.
 - **Away from home.** Picking someone the device doesn't list there is
@@ -429,8 +456,9 @@ adults and teens to kids and little kids, can choose either way.
   before.
 - **PIN-only people keep it.** Someone without a password keeps their
   PIN, because it's how they sign in.
-- **Never asked.** Someone with neither, such as "Kids," is never asked.
-  They never sign in by name, and only an Admin gives them a PIN.
+- **Only from an Admin.** Someone with neither, such as "Kids," can't
+  choose a PIN themselves. They never sign in by name, and only an Admin
+  gives them a PIN.
 - **Wrong tries still count.** Wrong PINs still count after a new one
   is chosen.
 - **Admins can still change it.** An Admin can still set or remove anyone's
@@ -480,6 +508,63 @@ Admin, showing who sent it and from which device, as their sign-in records.
   10 a day in all. While signing in is off, the limits apply to each
   address.
 
+## Signing in on tapiOca's page
+
+From 1.38.0 (the owner, October 17), `app/access.py`.
+
+- **Full or Light.** Each Admin's own choice, in Your account (the name at
+  the top of the page), under How you sign in. It takes their password
+  (`PUT /api/access/me/sign-in`, `{"how": "full" or "light", "password":
+  ...}`). **Full**, the default for every Admin after updating: their
+  password every time, for Admin tasks. **Light**: their password once on
+  each browser or device, then their PIN there, at home, gives their Admin
+  tools. Light needs a PIN.
+- **Away from home.** On the public port, the page never takes a PIN
+  (`POST /api/access/pin-sign-in` answers 404 there), and a PIN's sign-in
+  used there is for watching only.
+- **What ends them.** Choosing Full ends the sign-ins the PIN made. A new
+  PIN ends the sign-ins the old one made. A new role (a User made an Admin,
+  or an Admin made a User) ends all of that person's sign-ins, but the one
+  making the change, so they sign in again as what they are now.
+- **No credentials.** A PIN's sign-in can't make anything that works
+  elsewhere: passwords, PINs, people, API tokens or invite codes
+  (`access.STEP_UP`). It can't link an app either (`access.LINK_BOUND`).
+- **Who's signing in?** The page's sign-in screen, at home, lists only the
+  Admins who signed in on that browser with their password, latest first.
+  Each shows PIN (Light, and their PIN works there) or Password. Never a
+  User, even one who signed in there. With one listed, their PIN or
+  password is asked at once. **Sign in with a password** is always there,
+  for anyone, Users too.
+- **Sign out, and Remove from this browser.** Sign out ends the sign-in but
+  keeps the Admin listed, for their password first next time. Remove from
+  this browser (`POST /api/access/browser/forget`, `{"id": ...}`) takes them
+  off that browser's list. It answers `{"ok": true}` whoever is named.
+- **A User's PIN.** It no longer signs in on the page. (1.37.0 and 1.37.1
+  allowed it.)
+- **Wrong PINs.** Each person's own limit (5, then 15 minutes, on every
+  device and the page alike), and 10 on one browser, then the password
+  there.
+- **No Admin tabs before tapiOca says.** The page draws no Admin tabs until
+  the server has said this sign-in may use them. If it can't be asked, the
+  page says "tapiOca couldn't check who's signed in," with Try again.
+- **Signed in for watching.** An Admin signed in for watching sees a note
+  saying why, with Sign in with your password. Anything only an Admin may
+  do answers 403 with `access.WATCHING_ONLY` ("You signed in without your
+  password, so this sign-in is for watching. For Admin tasks, sign out, then
+  sign in with your password."), or `access.ADMIN_PASSWORD_NEEDED` for a
+  trusted network's sign-in.
+
+`GET /api/access/me` (the page's) says, from 1.38.0:
+
+| Field | What it is |
+|---|---|
+| `user.adminTools` | Whether this sign-in may do what only an Admin may. The page draws the Admin tabs by it |
+| `user.watching` | An Admin signed in for watching only |
+| `user.adminSignIn` | For an Admin only, their own: `full` or `light` |
+| `user.byNetwork` | A trusted network signed them in |
+| `people` | Signed out, at home: the Admins on this browser's sign-in screen, each with `id`, `name` and `pin` (whether their PIN signs them in here). Left out when there's no one. In place of 1.37.x's `pinFor` |
+| `trusted` | Signed out, at home, only on a network that signs in as someone: `{"gives": "person", "name": ...}` (`{"gives": "none"}` if that person is gone) |
+
 ## Trusted networks
 
 From 1.36.0, devices on a trusted network skip signing in. Nothing is
@@ -512,9 +597,9 @@ trusted until an Admin lists it (`app/trusted.py`).
   User-role copy in the request), and anything only an Admin may do is
   refused (`access.ADMIN_PASSWORD_NEEDED`); what they may watch is still an
   Admin's. A PIN sign-in from a network can't change that PIN. A password
-  given on a picker, the page's or an app's, makes an ordinary sign-in.
-  (An unbound sign-in made with nothing, an Admin on their own linked
-  device as in 1.35.0, is as before.) Stream keys and play sessions made for a bound
+  given on an app's picker makes an ordinary sign-in. (From 1.38.0, an
+  Admin picked with nothing, alone on their own linked device, is for
+  watching too: see Signing in on tapiOca's page.) Stream keys and play sessions made for a bound
   sign-in work only on its entry. A password or invite code used on a
   network-bound device clears its entry. An entry links at most 100
   devices, then one only in place of a device no one was ever picked on,
@@ -524,15 +609,21 @@ trusted until an Admin lists it (`app/trusted.py`).
 - **Reconcile.** When a person is removed or their role changes, and at
   each start (after reset-access, or a restore): an entry whose person is
   gone goes; an Admin's wider entry, or one listed before its person was
-  made an Admin, becomes `picker`; and someone made an Admin loses their
-  unlocked sign-ins. Then, and on each
+  made an Admin, becomes `picker`; and someone whose role changes loses
+  all their sign-ins (from 1.38.0; before, someone made an Admin lost only
+  their unlocked ones). Then, and on each
   save, an entry changed or removed ends what it gave. Each is logged.
-- **The picker.** Lists people on Every device at home or Every device.
-  Anyone with a PIN gives it; an Admin always gives a PIN or password;
-  anyone with a password may give it instead.
+- **The picker.** From 1.38.0, only in the apps. A network's device lists
+  only those who signed in on it themselves, as any device does, so at
+  first no one. Signing in on it by name makes it an ordinary linked
+  device. On the page, a network that opens on Who's tuning in? changes
+  nothing: its sign-in screen is as at any home address. (1.36.0 to 1.37.1
+  listed everyone shown on Every device at home, on the page and in the
+  apps, and signed them in with a PIN or nothing.) A network that signs in
+  as someone still does, on the page and in the apps, for watching.
 - **PIN limits.** Each person's own (5 wrong, then 15 minutes, everywhere).
-  On the page's picker, 10 wrong from one address in an hour, then a
-  password there (or a wait).
+  On the page, 10 wrong on one browser (`access.BROWSER_PIN_TRIES`), then
+  a password there.
   An Admin's PIN locked is an `access` alert, fixed once it's unlocked.
 - **Relays.** Every gateway in the routing table, tapiOca's own addresses
   and loopback are never trusted. When relays carry every request for an
@@ -570,13 +661,21 @@ people show on, and `POST /api/access/devices/everyone`),
 **Access** tab, they're for Admins only, and tapiOca refuses a change
 sent from another site's page.
 
+From 1.38.0, `PUT /api/access/devices/default`,
+`POST /api/access/devices/everyone`, and `showOn` and `devices` in
+`PUT /api/access/users/{id}/picker` are kept, for going back to 1.37.1.
+They still take and save their values, but those values list no one on
+any device. The page no longer offers them. `GET /api/access/devices`
+lists, for each device, who's on it at home (`people`) and away from home
+(`peopleAway`): only those who signed in on it.
+
 `POST /api/access/devices/everyone` (1.31.0) is Use for everyone. It takes
 `{"showOn": "signed-in"}` (Only devices they sign in on) or
 `{"showOn": "home"}` (Every device at home). Anything else is refused (400),
 and nothing changes. It sets New people show on to that value, and sets
-everyone already added to it too, except, for `signed-in`, people who can't
-sign in by name. Then it answers with what it did, and records it in the
-access log:
+everyone already added to it too, except people who can't sign in by name.
+Then it answers with what it did, and records it in the access log. (From
+1.38.0, none of this lists anyone.)
 
 | Field | Type | What it is |
 |---|---|---|

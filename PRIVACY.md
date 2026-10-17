@@ -11,12 +11,13 @@ tapiOca runs on your own hardware, with your own Plex Media Server. Its develope
 On your hardware, in tapiOca's data folder:
 
 - Your stations and settings. These include Sonarr's and Radarr's keys and the alert web addresses, if an Admin sets them. (The Plex token is in tapiOca's app settings, not in its data folder.)
-- The people who can sign in: their names, Viewing Levels, sign-ins and linked devices, when and from what address each last signed in, and their passwords and PINs, stored only as salted hashes.
+- The people who can sign in: their names, Viewing Levels, sign-ins and linked devices, the browsers and apps each signed in on with their password, each Admin's choice of Full or Light sign-in, when and from what address each last signed in, and their passwords and PINs, stored only as salted hashes.
 - What each person watches in tapiOca's apps (history and Resume), and viewing stats for each person.
 - The names of Plex users, and what each watched on tapiOca's stations in Plex, for the viewing stats.
 - The access log: sign-ins (failed ones too, with the name typed), changes, and the addresses they came from. It keeps the newest 2,000 lines.
 - Trusted networks, if an Admin adds them: each network or address, its name, what it gives, the person it signs in as, and who added it and when. Also the trusted proxies and the names for tapiOca at home an Admin lists.
 - Devices linked by a trusted network (the names the app and the device give), and sign-ins made on one. These work only on that network.
+- The address Plex's Live TV & DVR uses for tapiOca's tuner, as your own Plex says it. tapiOca reads it from your Plex, and shows it only to Admins, on the **Setup** tab. It's never sent anywhere. It's cleared when Plex no longer lists a tapiOca tuner it can reach.
 - Problems tapiOca's apps report (with the device's name), and problems people report, with who reported them and the address and device each came from.
 - Nightly backups of all this (the newest 7), and a copy of the database made before each update that changes it.
 

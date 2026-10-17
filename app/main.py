@@ -2724,6 +2724,7 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
         b = ctx.broadcasters.pop(channel_id, None)
         if b:
             await b.stop("the station was deleted")
+        jobs.stop_check(ctx, channel_id)  # (its files no longer need reading)
         forget_eras([e.id for e in ctx.db.eras(channel_id)])
         ctx.db.delete_channel(channel_id)
         ctx.alerts.station_gone(channel_id, channel.number, channel.name)

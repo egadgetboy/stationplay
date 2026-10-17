@@ -102,6 +102,12 @@ SESSION_DAYS = 30
 DEVICE_COOKIE = "stationplay_device"
 DEVICE_DAYS = 400
 DEVICES_KEPT = 20
+BROWSER_PEOPLE_MOST = 10  # people one browser keeps (those who signed in there latest)
+# How an Admin signs in (1.38.0, the owner, October 17), their own choice:
+# Full, their password for every sign-in that does Admin tasks; or Light,
+# their password once on a browser or device, then their PIN there, at home.
+FULL, LIGHT = "full", "light"
+ADMIN_SIGN_INS = (FULL, LIGHT)
 # Wrong PINs on one browser (tapiOca's page, at home) before its PIN
 # signs in there only after the password again: two of the waits for wrong
 # PINs (see devices.py's PIN_TRIES), so guessing every PIN can't be waited out.
@@ -219,6 +225,13 @@ ADMIN_PASSWORD_NEEDED = (
     "This device signed you in without your password. For Admin tasks, sign out, then choose "
     "Sign in with a password."
 )
+# (An Admin's sign-in that's for watching: a PIN in Full sign-in, or with
+# Light away from home or on a device they haven't signed in on with their
+# password; or picked with no PIN at all. 1.38.0.)
+WATCHING_ONLY = (
+    "You signed in without your password, so this sign-in is for watching. For Admin tasks, "
+    "sign out, then sign in with your password."
+)
 LINK_BOUND = "To link an app, sign in with your name and password first."
 # Signing in off, and asked for by a name that isn't home's (see
 # name_not_home): only the page, saying this, the tuner and the outside check.
@@ -295,6 +308,9 @@ OPEN = (
     PAGE
     | {REACH}
     | {"/api/access/sign-in", "/api/access/sign-out", "/api/access/pin-sign-in"}
+    # (Remove from this browser, on its sign-in screen: its own cookie says
+    # which browser. 1.38.0.)
+    | {"/api/access/browser/forget"}
     | {"/api/internal/sign-in", "/api/internal/link", "/api/internal/link/check"}
     # (A linked device's picker: its key, not a sign-in, says who may ask.)
     | {"/api/internal/picker", "/api/internal/picker/choose", "/api/internal/picker/sign-in"}
@@ -741,13 +757,15 @@ class Access:
         password: str | None,
         role: str | None,
         name: str | None = None,
+        but: str | None = None,
     ) -> None:
         """Changes a user's password, role or name, if `by` may: an Admin
         (anyone's, their own too), or (their password only) the user
         themselves, unless an Admin turned that off for them. A new name
         follows the rules a new user's does, and is theirs from now on:
         signing in takes it, and everything of theirs is kept by their id, so
-        it stays theirs. ValueError; NotAllowed."""
+        it stays theirs. A new role ends their sign-ins, but the one with the
+        token hash `but` (the change's own). ValueError; NotAllowed."""
         if name is not None:
             name = plain(name)
             _check_name(name)
@@ -775,16 +793,19 @@ class Access:
                 raise ValueError(f"There's already a user called {name}") from None
         self.db.update_user(user.id, password_hash=hashed, role=role)
         if (
-            role == ADMIN
-            and current.role != ADMIN
-            and (ended := self.db.end_unlocked_sessions(user.id))
+            role is not None
+            and role != current.role
+            and (ended := self.db.end_sessions(user.id, but))
         ):
-            # (An Admin always gives a PIN or password: what was signed in
-            # for them with neither ends. The cold audit of 1.36.0.)
+            # (Their sign-ins end, and they sign in again as what they are now:
+            # a User's sign-in, made with a PIN or with nothing, never becomes
+            # an Admin's, whose sign-in follows their Full or Light sign-in.
+            # 1.38.0; from 1.36.0's cold audit, only those made with neither,
+            # for someone made an Admin.)
             self.record(
                 logging.INFO,
-                f"{current.name} is an Admin now: {ended} sign-in(s) made without their PIN or "
-                "password ended",
+                f"{current.name} is {a_role(role)} now: {ended} sign-in(s) ended, to sign in "
+                "again as one",
             )
         if role is not None and role != current.role and self.on_people_changed is not None:
             self.on_people_changed()
@@ -910,6 +931,8 @@ class Access:
         unlocked: bool = False,
         at: str | None = None,
         trusted: str = "",
+        admin_pin: bool = False,
+        watching: bool = False,
     ) -> str:
         """A new token for a browser (or `app`, one of tapiOca's: which,
         on what device; `device_id`: a linked device, from its picker, and
@@ -917,43 +940,69 @@ class Access:
         devices.py) that's signed in as `user`, there (`at`, as the access
         log says where: by default, where this request came from).
         `trusted`: the trusted network it was made through, the only one it
-        works on (see trusted.py)."""
+        works on (see trusted.py). For an Admin, `admin_pin`: made with
+        their PIN in Light sign-in; `watching`: for watching only (see
+        for_watching)."""
         token = (TRUSTED_TOKEN_PREFIX if trusted else "") + secrets.token_urlsafe(32)
         self.db.add_session(
             session_hash(token), user.id, _now(), SESSIONS_KEPT, app, device_id, unlocked,
-            asked_from.get() if at is None else at, trusted,
+            asked_from.get() if at is None else at, trusted, admin_pin, watching,
         )  # fmt: skip
         return token
 
-    def remember_device(self, user: User) -> str:
-        """A new token for a browser `user` has signed in on."""
-        token = secrets.token_urlsafe(32)
-        self.db.add_device(_token_hash(token), user.id, _now(), DEVICES_KEPT)
-        return token
+    # Browsers people signed in on -------------------------------------------------------
+    # One browser (or app) may be several people's: each who signed in there
+    # with their password (Database.browser_people). Its token, kept in it,
+    # says which it is; only a hash of it is kept here.
 
-    def pin_browser(self, token: str | None) -> User | None:
-        """Whose PIN may sign in on a browser (tapiOca's page, at home):
-        someone who signed in on it with their password, since it last
-        changed and they last signed out there, and who has a PIN."""
-        if not token or self.picker is None:
-            return None
-        user_id = self.db.pin_device_user(_token_hash(token))
-        user = self.db.user(user_id) if user_id is not None else None
-        return user if user is not None and self.db.pin_hash(user.id) else None
+    def enroll_browser(self, token: str | None, user: User) -> str | None:
+        """`user` signed in on a browser (or an app) with their password: it's
+        one of theirs from now on, and their PIN may sign them in there. A new
+        token for it, to keep, or None when it has one (`token`) that tapiOca
+        knows."""
+        known = bool(token) and bool(self.db.browser_people(_token_hash(token or "")))
+        if not known:
+            token = secrets.token_urlsafe(32)
+        hashed = _token_hash(token or "")
+        self._pin_wrong.pop(hashed, None)
+        self.db.add_browser_person(hashed, user.id, _now(), DEVICES_KEPT, BROWSER_PEOPLE_MOST)
+        return None if known else token
 
-    def password_used_on(self, token: str | None) -> None:
-        """Its person signed in on a browser they'd signed in on before, with
-        their password: their PIN may sign them in there again."""
-        if token:
-            self._pin_wrong.pop(_token_hash(token), None)
-            self.db.device_password_used(_token_hash(token))
+    def browser_people(self, token: str | None) -> list[tuple[User, bool]]:
+        """Who signed in on a browser with their password, latest first, as
+        they are now; and whether their PIN may sign them in there (they've
+        signed in there with their password since they last signed out there
+        or changed it)."""
+        if not token:
+            return []
+        found = []
+        for user_id, pin_ok in self.db.browser_people(_token_hash(token)):
+            user = self.db.user(user_id)
+            if user is not None:
+                found.append((user, pin_ok))
+        return found
+
+    def browser_admins(self, token: str | None) -> list[tuple[User, bool]]:
+        """Who's on a browser's sign-in screen (the owner, October 17: only
+        Admins, and only those who signed in on it, never a User), and
+        whether each one's PIN signs them in there (see light_pin)."""
+        return [
+            (user, pin_ok and self.light_pin(user))
+            for user, pin_ok in self.browser_people(token)
+            if user.role == ADMIN
+        ]
+
+    def light_pin(self, user: User) -> bool:
+        """Whether an Admin's PIN gives them their Admin tools, where they've
+        signed in with their password: Light sign-in, and a PIN."""
+        return user.role == ADMIN and user.admin_sign_in == LIGHT and user.has_pin
 
     def pin_wrong_on(self, token: str) -> bool:
         """A wrong PIN on a browser. True when that's BROWSER_PIN_TRIES there
-        since its person's password last signed in there (a right PIN in
-        between doesn't start them over: it may be its person's, between
-        someone else's guesses): then the PIN signs in there only after the
-        password again."""
+        since a password last signed in there (a right PIN in between doesn't
+        start them over: it may be its person's, between someone else's
+        guesses): then a PIN signs in there only after the password again,
+        for everyone there."""
         hashed = _token_hash(token)
         wrong = self._pin_wrong.pop(hashed, 0) + 1
         if wrong < BROWSER_PIN_TRIES:
@@ -961,14 +1010,20 @@ class Access:
             while len(self._pin_wrong) > 1000:  # (the oldest go)
                 del self._pin_wrong[next(iter(self._pin_wrong))]
             return False
-        self.db.device_signed_out(hashed)
+        self.db.browser_signed_out(hashed)
         return True
 
-    def signed_out_on(self, token: str | None) -> None:
-        """Its person signed out of a browser on purpose (see
-        Database.device_signed_out)."""
+    def signed_out_on(self, token: str | None, user: User) -> None:
+        """Someone signed out of a browser on purpose: their name stays on
+        its sign-in screen, but their PIN needs their password there first
+        (see Database.browser_signed_out)."""
         if token:
-            self.db.device_signed_out(_token_hash(token))
+            self.db.browser_signed_out(_token_hash(token), user.id)
+
+    def forget_on(self, token: str | None, user_id: int) -> bool:
+        """Remove from this browser: someone is no longer one of its people
+        (or on its sign-in screen). Whether they were."""
+        return bool(token) and self.db.forget_browser_person(_token_hash(token or ""), user_id)
 
     def sign_in_made(self, request: Request) -> SignedIn | None:
         """How the request's sign-in was made (see SignedIn): unlocked, or
@@ -977,11 +1032,10 @@ class Access:
         return self.db.session_user(hashed, 0) if hashed else None
 
     def refuse_without_secret(self, request: Request) -> None:
-        """HTTPException 403 (STEP_UP) for a sign-in a trusted network made,
-        or one made by picking someone with no PIN (unlocked): it can't make
-        a credential that works elsewhere."""
-        made = self.sign_in_made(request)
-        if by_network(made) or (made is not None and made.unlocked):
+        """HTTPException 403 (STEP_UP) for a sign-in made without a password
+        (see without_secret): it can't make a credential that works
+        elsewhere."""
+        if without_secret(self.sign_in_made(request)):
             raise HTTPException(403, STEP_UP)
 
     def known_device(self, token: str | None, name: str) -> bool:
@@ -989,7 +1043,35 @@ class Access:
         if not token:
             return False
         found = self.db.user_named(plain(name))
-        return found is not None and self.db.device_user(_token_hash(token)) == found[0].id
+        return found is not None and any(
+            user.id == found[0].id for user, _ in self.browser_people(token)
+        )
+
+    def end_sessions(self, user: User, but: str | None = None) -> int:
+        """Ends someone's sign-ins (but the one with the token `but`): their
+        role changed, so they sign in again as what they are now (1.38.0: a
+        User's sign-in made with a PIN never becomes an Admin's)."""
+        return self.db.end_sessions(user.id, session_hash(but) if but else None)
+
+    async def set_admin_sign_in(self, user: User, how: str, password: str, address_: str) -> None:
+        """An Admin chooses Full or Light sign-in for themselves, with their
+        password (never a PIN alone). Leaving Light ends the sign-ins their PIN
+        made. ValueError for anything else; Busy."""
+        if how not in ADMIN_SIGN_INS:
+            raise ValueError("Choose Full or Light")
+        now = self.db.user(user.id) or user
+        if now.role != ADMIN:
+            raise ValueError(ADMINS_ONLY)
+        right = await self.check_password(now.name, password, address_, known=True)
+        if right is None or right.id != now.id:
+            raise ValueError("That password isn't right")
+        self.db.set_admin_sign_in(now.id, how)
+        if how == FULL:
+            self.db.end_admin_pin_sessions(now.id)
+        self.record(
+            logging.INFO,
+            f"{now.name} chose {'Light' if how == LIGHT else 'Full'} sign-in",
+        )
 
     def end_session(self, token: str) -> None:
         self.db.end_session(_token_hash(token))
@@ -1256,6 +1338,24 @@ def by_network(made: SignedIn | None) -> bool:
     return made is not None and bool(made.trusted)
 
 
+def for_watching(made: SignedIn | None, outside_: bool) -> bool:
+    """Whether a sign-in is for watching only, as it's used now (`outside_`:
+    from outside the home): a trusted network's, one made for watching, or
+    an Admin's made with their PIN in Light sign-in, away from home (1.38.0:
+    that PIN gives Admin tools only at home). An Admin's acts as a User's."""
+    return made is not None and (by_network(made) or made.watching or (made.admin_pin and outside_))
+
+
+def without_secret(made: SignedIn | None) -> bool:
+    """Whether a sign-in was made without a password or an invite code (by a
+    trusted network, picking someone with no PIN, or with a PIN for an
+    Admin): it can't make a credential that works elsewhere, change
+    passwords or PINs, or link an app (see STEP_UP)."""
+    return made is not None and (
+        by_network(made) or made.unlocked or made.watching or made.admin_pin
+    )
+
+
 def signed_in(request: Request) -> User | None:
     """Who made a request (None while signing in is off)."""
     return getattr(request.state, "user", None)
@@ -1467,15 +1567,18 @@ class Gate:
                 session_hash(token), active=active, where=entry["id"] if entry else "", made=made
             )
         # A sign-in a trusted network made (with a PIN, or nothing) is for
-        # watching: an Admin's acts as a User's, and anything only an Admin
-        # may do asks for their password (see STEP_UP; what they may watch
-        # is still an Admin's: viewing.py reads their role afresh).
+        # watching, and so is one made for watching, or an Admin's made with
+        # their PIN in Light sign-in, away from home: an Admin's acts as a
+        # User's, and anything only an Admin may do asks for their password
+        # (see STEP_UP; what they may watch is still an Admin's: viewing.py
+        # reads their role afresh).
         network = user is not None and bool(made) and by_network(made[0])
-        state["by_network"] = network
-        if network and user is not None and user.role == ADMIN:
+        watching = user is not None and bool(made) and for_watching(made[0], state["outside"])
+        state["by_network"], state["watching"] = network, watching
+        if watching and user is not None and user.role == ADMIN:
             if path not in OPEN and not _for_users(path, scope["method"]):
                 state["user"], state["idle"] = user, idle
-                return 403, ADMIN_PASSWORD_NEEDED
+                return 403, ADMIN_PASSWORD_NEEDED if network else WATCHING_ONLY
             user = dataclasses.replace(user, role=USER)
         state["user"], state["idle"] = user, idle
         if user is not None and app_token and on_public_port(scope) and over_https(scope):
@@ -1699,6 +1802,18 @@ class SignIn(BaseModel):
 
 class PinSignIn(BaseModel):
     pin: str = Field(max_length=20)
+    # (Whose, from the sign-in screen's Admins: see browser_admins. None, from
+    # a page opened before 1.38.0: the only one whose PIN works there.)
+    id: int | None = None
+
+
+class BrowserForget(BaseModel):
+    id: int
+
+
+class AdminSignIn(BaseModel):
+    how: str = Field(max_length=10)
+    password: str = Field(max_length=PASSWORD_MAX)
 
 
 class NewUser(BaseModel):
@@ -1822,10 +1937,18 @@ def routes(app: FastAPI, access: Access) -> None:
             "user": _user_json(user, access.db.stations_made()) if user else None,
         }
         if user is not None:
-            # (As they are, and whether a trusted network signed them in, for
-            # watching: see STEP_UP.)
-            said["user"] = _user_json(access.db.user(user.id) or user, access.db.stations_made())
-            said["user"]["byNetwork"] = bool(request.scope.get("state", {}).get("by_network"))
+            # (As they are, and whether a trusted network signed them in, or
+            # the sign-in is otherwise for watching: see STEP_UP. adminTools:
+            # whether it may do what only an Admin may, which the page draws
+            # the Admin tabs by. 1.38.0.)
+            stored = access.db.user(user.id) or user
+            state = request.scope.get("state", {})
+            said["user"] = _user_json(stored, access.db.stations_made())
+            said["user"]["byNetwork"] = bool(state.get("by_network"))
+            said["user"]["watching"] = stored.role == ADMIN and bool(state.get("watching"))
+            said["user"]["adminTools"] = user.role == ADMIN
+            if stored.role == ADMIN:
+                said["user"]["adminSignIn"] = stored.admin_sign_in
         # When this browser is signed out unless someone uses it, as
         # tapiOca's clock says (so a page open in several tabs agrees);
         # or that it was signed out that way (see IDLE_SIGN_OUT_S).
@@ -1838,19 +1961,23 @@ def routes(app: FastAPI, access: Access) -> None:
         # where the PIN works.
         if outside(request.scope):
             said["outside"] = True
-        # Signed out, at home, on a browser someone signed in on with their
-        # password: their PIN will do (see pin_sign_in).
+        # Signed out, at home: Who's signing in?, the Admins who signed in on
+        # this browser with their password, and whether each one's PIN will
+        # do (see pin_sign_in). Never a User, and never anyone who hasn't
+        # (the owner, October 17).
         if access.required and user is None and not outside(request.scope):
-            found = access.pin_browser(request.cookies.get(DEVICE_COOKIE))
-            if found is not None:
-                said["pinFor"] = found.name
-            # On a trusted network: who may pick themselves, or who it signs
-            # in as (see trustedapi.py, 1.36.0).
+            # (Nothing said when there's no one.)
+            if people := access.browser_admins(request.cookies.get(DEVICE_COOKIE)):
+                said["people"] = [{"id": u.id, "name": u.name, "pin": pin} for u, pin in people]
+            # On a trusted network that signs in as someone: who (see
+            # trustedapi.py, 1.36.0).
             entry = request.scope.get("state", {}).get("trusted")
-            # (With this browser's own person, `found`, whose PIN will do
-            # here: 1.37.0, the owner, October 15.)
-            if entry is not None and access.trusted_info is not None:
-                said["trusted"] = access.trusted_info(entry, found)
+            if (
+                entry is not None
+                and access.trusted_info is not None
+                and (found := access.trusted_info(entry)) is not None
+            ):
+                said["trusted"] = found
         return said
 
     @app.post("/api/access/active")
@@ -1871,11 +1998,9 @@ def routes(app: FastAPI, access: Access) -> None:
             )
             raise HTTPException(401, "That name or password isn't right")
         _set_cookie(response, request, access.start_session(user))
-        if known:
-            # (Their password, here: their PIN may sign them in here again.)
-            access.password_used_on(request.cookies.get(DEVICE_COOKIE))
-        else:
-            token = access.remember_device(user)
+        # (Their password, here: this browser is theirs, and their PIN may
+        # sign them in here again.)
+        if token := access.enroll_browser(request.cookies.get(DEVICE_COOKIE), user):
             _set_cookie(response, request, token, DEVICE_COOKIE, DEVICE_DAYS)
         access.record(
             logging.INFO,
@@ -1885,24 +2010,37 @@ def routes(app: FastAPI, access: Access) -> None:
 
     @app.post("/api/access/pin-sign-in")
     async def pin_sign_in(body: PinSignIn, request: Request, response: Response):
-        """Signing in with a PIN on tapiOca's page: only at home, and
-        only on a browser its person signed in on with their password (since
-        it last changed, and they last signed out there). Wrong PINs are
-        limited as on the apps' Who's tuning in?: five, then 15 minutes, for
-        that person everywhere; and ten on one browser, then the password
-        there (BROWSER_PIN_TRIES)."""
+        """Signing in with a PIN on tapiOca's page (1.38.0, the owner, October
+        17): only at home, only an Admin on this browser's sign-in screen
+        (one who signed in on it with their password, since it last changed
+        and they last signed out here), and only in Light sign-in. It's an
+        Admin's sign-in, with Admin tools while it's used at home
+        (for_watching). Wrong PINs are limited as on the apps' Who's tuning
+        in?: five, then 15 minutes, for that person everywhere; and ten on
+        one browser, then the password there (BROWSER_PIN_TRIES)."""
         if outside(request.scope):
             raise HTTPException(404, "Not Found")
-        user = access.pin_browser(request.cookies.get(DEVICE_COOKIE))
-        if user is None:
+        token = request.cookies.get(DEVICE_COOKIE) or ""
+        here = access.browser_admins(token)
+        if body.id is None:  # (a page opened before 1.38.0)
+            with_pin = [u for u, pin in here if pin]
+            here = [(u, True) for u in with_pin[:1]] if len(with_pin) == 1 else []
+            chosen = here[0] if here else None
+        else:
+            chosen = next(((u, pin) for u, pin in here if u.id == body.id), None)
+        if chosen is None:
+            raise HTTPException(400, "Sign in with your name and password.")
+        user, pin_works = chosen
+        if not pin_works:
             raise HTTPException(
                 400,
-                "Sign in with your password on this browser first. After that, your PIN works "
-                "here at home.",
+                f"{user.name}'s sign-in is Full, so it needs the password every time."
+                if user.admin_sign_in != LIGHT or not user.has_pin
+                else "Sign in with your password on this browser first. After that, your PIN "
+                "works here at home.",
             )
         from .devices import Refused  # (devices.py imports this module)
 
-        token = request.cookies.get(DEVICE_COOKIE) or ""
         try:
             await access.picker.check_pin(user, body.pin.strip())
         except Refused as e:
@@ -1922,13 +2060,28 @@ def routes(app: FastAPI, access: Access) -> None:
                     "browser. Sign in with your password now.",
                 ) from None
             raise HTTPException(e.status, str(e)) from None
-        _set_cookie(response, request, access.start_session(user))
+        _set_cookie(response, request, access.start_session(user, admin_pin=True))
         access.record(
             logging.INFO,
             f"{user.name} ({role_name(user.role)}) signed in with their PIN from "
             f"{where(request.scope)}",
         )
         return {"user": _user_json(user, access.db.stations_made())}
+
+    @app.post("/api/access/browser/forget")
+    async def forget_browser(body: BrowserForget, request: Request):
+        """Remove from this browser, on its sign-in screen: that Admin is no
+        longer on it (and their PIN no longer works here) until they sign in
+        here with their password again. It says nothing about anyone not
+        on it."""
+        user = access.db.user(body.id)
+        if user is not None and access.forget_on(request.cookies.get(DEVICE_COOKIE), user.id):
+            access.record(
+                logging.INFO,
+                f"{user.name} was removed from a browser's sign-in screen at "
+                f"{where(request.scope)}",
+            )
+        return {"ok": True}
 
     @app.post("/api/access/sign-out")
     async def sign_out(request: Request, response: Response):
@@ -1939,8 +2092,9 @@ def routes(app: FastAPI, access: Access) -> None:
         response.delete_cookie(COOKIE, path="/")
         # (Signing out on purpose: this browser needs the password before the
         # PIN next time. It stays theirs for the internet's limit on tries,
-        # so its cookie is kept.)
-        access.signed_out_on(request.cookies.get(DEVICE_COOKIE))
+        # and its sign-in screen, so its cookie is kept.)
+        if user:
+            access.signed_out_on(request.cookies.get(DEVICE_COOKIE), user)
         if user:
             access.record(logging.INFO, f"{user.name} signed out from {where(request.scope)}")
         return {"ok": True}
@@ -1959,9 +2113,25 @@ def routes(app: FastAPI, access: Access) -> None:
         # (Every other browser is signed out; this one carries on, and is
         # one they signed in on with their password, for their PIN.)
         _set_cookie(response, request, access.start_session(user))
-        _set_cookie(response, request, access.remember_device(user), DEVICE_COOKIE, DEVICE_DAYS)
+        if token := access.enroll_browser(request.cookies.get(DEVICE_COOKIE), user):
+            _set_cookie(response, request, token, DEVICE_COOKIE, DEVICE_DAYS)
         access.record(logging.INFO, f"{user.name} changed their password")
         return {"ok": True}
+
+    @app.put("/api/access/me/sign-in")
+    async def choose_admin_sign_in(body: AdminSignIn, request: Request):
+        """An Admin's own choice of Full or Light sign-in (1.38.0), with their
+        password."""
+        user = signed_in(request)
+        if user is None:
+            raise HTTPException(400, "Sign-in is off, so there's nothing to choose")
+        try:
+            await access.set_admin_sign_in(user, body.how, body.password, address(request.scope))
+        except Busy as e:
+            raise HTTPException(429, str(e)) from None
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        return {"adminSignIn": body.how}
 
     @app.get("/api/access/users")
     async def list_users():
@@ -2031,8 +2201,9 @@ def routes(app: FastAPI, access: Access) -> None:
             if limit_given:
                 _check_limit(body.maxStations)  # (before anything changes)
             await access.change_user(
-                user, by, password=body.password, role=body.role, name=body.name
-            )
+                user, by, password=body.password, role=body.role, name=body.name,
+                but=sign_in_of(request),
+            )  # fmt: skip
             if limit_given:
                 access.set_max_stations(user, by, body.maxStations)
             if body.canChangePassword is not None:

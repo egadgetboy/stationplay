@@ -1,8 +1,8 @@
 {
-  "version": "1.37.1",
+  "version": "1.38.0",
   "new": [
-    "Big smart stations without the hang",
-    "Setup shows your tuner's address",
-    "INFO plays only in tapiOca's apps"
+    "Full or Light sign-in for each Admin",
+    "Only your own Admins on a browser's sign-in screen",
+    "People on a device once they sign in there"
   ]
 }

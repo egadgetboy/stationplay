@@ -85,3 +85,64 @@ async def test_an_address_that_isnt_one_is_never_shown(tmp_path):
                 f"http://<your NAS>:{lan_port}",
                 f"http://<your NAS>:{lan_port}",
             ), uri
+
+
+def plex_lists(app, *devices: dict) -> None:
+    ctx = app.state.ctx
+
+    async def dvrs():
+        return [
+            {"key": "16", "Device": [{"deviceIdentifier": ctx.device_id, **d} for d in devices]}
+        ]
+
+    ctx.plex.dvrs = dvrs
+    ctx.updater._dvr_checked_ms = 0
+
+
+async def test_the_address_plex_reaches_not_a_dead_one_and_none_once_its_gone(tmp_path):
+    """(The cold audit of 1.37.1: Setup took Plex's first entry for tapiOca's
+    tuner, alive or not, and kept it after the tuner left Plex: a NAS given
+    a new address by DHCP showed its old one as "the address Plex uses".)"""
+    async with serving(tmp_path) as (app, home, internet):
+        async with httpx.AsyncClient(headers=PAGE, base_url=home) as inside:
+            assert (await inside.post("/api/access/users", json=PAT)).status_code == 201
+        lan_port = home.rsplit(":", 1)[1]
+        plex_lists(
+            app,
+            {"uri": "http://192.168.1.99:3310", "status": "dead"},
+            {"uri": "http://192.168.50.2:3310", "status": "alive"},
+        )
+        await app.state.ctx.updater.find_dvr()
+        assert await setup_from_the_internet(internet) == ("http://192.168.50.2:3310",) * 2
+        # Only a dead one: none known, rather than that one.
+        plex_lists(app, {"uri": "http://192.168.1.99:3310", "status": "dead"})
+        await app.state.ctx.updater.find_dvr()
+        assert await setup_from_the_internet(internet) == (f"http://<your NAS>:{lan_port}",) * 2
+        # Back, then the tuner taken out of Plex: forgotten.
+        plex_lists(app, {"uri": "http://192.168.50.2:3310", "status": "alive"})
+        await app.state.ctx.updater.find_dvr()
+        assert (await setup_from_the_internet(internet))[0] == "http://192.168.50.2:3310"
+        plex_lists(app)
+        await app.state.ctx.updater.find_dvr()
+        assert await setup_from_the_internet(internet) == (f"http://<your NAS>:{lan_port}",) * 2
+
+
+def test_only_a_plain_machine_address_is_taken():
+    """(The cold audit of 1.37.1: spaces, a semicolon, percent signs and
+    right-to-left marks got through, and Plex's own view of itself, such as
+    localhost, isn't an address anyone else can use.)"""
+    from app.updates import tuner_address
+
+    for good, said in (
+        ("http://192.168.50.2:3310/", "http://192.168.50.2:3310"),
+        ("http://nas.lan:3310", "http://nas.lan:3310"),
+        ("https://NAS-1.example.com", "https://nas-1.example.com"),
+        ("http://[fd00::2]:3310", "http://[fd00::2]:3310"),
+    ):
+        assert tuner_address(good) == said, good
+    for bad in (
+        "http://a b:3310", "http://evil.com;x:1", "http://%65vil.com:3310",
+        "http://‮gnp.exe:3310", "http://localhost:3310", "http://127.0.0.1:3310",
+        "http://[::1]:3310", "http://-nas.lan:3310", "http://nas..lan:3310",
+    ):  # fmt: skip
+        assert tuner_address(bad) == "", bad

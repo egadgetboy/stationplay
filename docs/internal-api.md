@@ -84,7 +84,9 @@ then answers 401, and the app links again.
 
 An app shows the picker when it lists more than one person, or one person
 with a PIN. Otherwise it picks that person itself. (An Admin without a
-PIN gives their password only on a device others use too.)
+PIN gives their password only on a device others use too. From 1.38.0, an
+Admin picked with nothing is signed in for watching: see What 1.38.0 asks
+of the apps.)
 
 Apps that don't send `"picker": true` sign in as they always have, and get
 no `deviceKey`.
@@ -348,6 +350,52 @@ Nothing is required: an app that does nothing new signs in as before.
    from a device that isn't a trusted proxy, signing in off). Show its
    sentence as it comes, as for every kind.
 
+## What 1.38.0 asks of the apps
+
+Nothing new is required, but the picker lists fewer people (the owner,
+October 17).
+
+1. **Who's listed.** A device's Who's tuning in? lists someone only once
+   they signed in on that device themselves: with their password
+   (`POST /api/internal/sign-in` or `POST /api/internal/picker/sign-in`),
+   an invite code, or a code entered on tapiOca's page
+   (`POST /api/internal/link`). Never because they're at home, their Show
+   on says so, or an Admin chose the device. So a device just linked lists
+   only whoever linked it, and a device a trusted network linked lists no
+   one at first. Always offer **Sign in** on the picker, even when it's
+   empty. Signing in there by name makes a network's device an ordinary
+   linked device, as before.
+2. **Invite codes for people with no password or PIN.** Someone with
+   neither (a "Kids" user) gets on a device with an invite code, through
+   `POST /api/internal/picker/sign-in` with `name` and `code`. Before
+   1.38.0 that was refused. They're then listed only at home, where anyone
+   there can pick them, so `GET /api/internal/picker` leaves them out away
+   from home. A password for them is still refused (403).
+3. **An Admin's password on the picker.** An Admin may send `password` in
+   place of `pin` with `POST /api/internal/picker/choose`, PIN or not. That
+   gives an Admin's sign-in. Offer "Use your password" beside the PIN pad
+   for an Admin (`people[].admin`).
+4. **Sign-ins for watching.** An Admin's sign-in is for watching, with no
+   Admin tasks, when they were picked:
+   - with their PIN in Full sign-in;
+   - with their PIN in Light sign-in, but away from home, or on a device
+     they joined only with an invite code;
+   - with nothing (no PIN, alone on their own device).
+
+   Anything only an Admin may do (`GET /api/internal/alerts`, say) then
+   answers 403 with this `detail`, to show unchanged: "You signed in
+   without your password, so this sign-in is for watching. For Admin
+   tasks, sign out, then sign in with your password." (A trusted network's
+   sign-in still answers "This device signed you in without your password.
+   For Admin tasks, sign out, then choose Sign in with a password.")
+   `GET /api/internal/me`
+   says `user.role` is `user` for it, so take the role from there before
+   asking for Admin alerts.
+5. **A new role.** When someone's role changes, all their sign-ins end, so
+   the app gets 401 and they sign in or pick themselves again.
+
+A server before 1.38.0 lists people by their Show on, as before.
+
 ## POST /api/internal/trusted
 
 What an app gets on a trusted network (1.36.0). Open to anyone; refused
@@ -361,7 +409,10 @@ anywhere but on one. Send:
 
 `picker`: the app has Who's tuning in? (a network that opens on it answers
 403 to an app without it). `deviceKey`, optional: a key this network gave
-before; if it's still good, none new is made.
+before; if it's still good, none new is made. From 1.38.0, the device's
+picker lists only people who signed in on it themselves, so at first no
+one: offer Sign in. Signing in on it by name makes it an ordinary linked
+device.
 
 | Field | Type | What it is |
 |---|---|---|
@@ -452,20 +503,17 @@ and 400 when signing in is off.
 
 ## GET /api/internal/picker
 
-Sent with the device's key (`StationPlay-Device`; see Linked devices). From
-1.28.0, it lists who can be picked on this device, by name, where the
-device is now:
+Sent with the device's key (`StationPlay-Device`; see Linked devices). It
+lists who can be picked on this device, by name, where the device is now.
+From 1.38.0, that's only those who signed in on this device themselves,
+with their password, an invite code, or a code entered on tapiOca's page.
+Someone with neither a password nor a PIN is listed only at home (on the
+home network, or through a VPN). So a device just linked lists only
+whoever linked it. Ask again when the app comes back to the front, since
+the device may have moved.
 
-- Those who signed in on this device.
-- Those an Admin chose it for.
-- Those an Admin shows on every device, at home and away.
-- At home (on the home network, or through a VPN), also those shown on
-  every device at home.
-
-From 1.31.0, new people show only on devices they sign in on, unless an
-Admin chose otherwise. So a device just linked may list only whoever linked
-it. Ask again when the app comes back to the front, since the device may
-have moved.
+(1.28.0 to 1.37.1 also listed those an Admin chose the device for, those
+shown on every device, and at home, those shown on every device at home.)
 
 | Field | Type | What it is |
 |---|---|---|
@@ -489,15 +537,19 @@ Sent with the device's key. Picks someone on its picker:
 
 Send `pin` (their PIN) when they have one. Send `password` instead for
 an Admin with no PIN on a device others use too (its picker lists more
-than one person).
+than one person). From 1.38.0, an Admin may always send `password` in
+place of `pin`, for an Admin's sign-in. Picked with their PIN, an Admin
+gets Admin tasks only in Light sign-in, at home, on a device they signed
+in on with their password; otherwise, and when picked with nothing, the
+sign-in is for watching (see What 1.38.0 asks of the apps).
 
 | Field | Type | What it is |
 |---|---|---|
 | `token` | string | Send it as `Authorization: Bearer <token>` |
 | `user` | object | Who was picked |
 | `user.name` | string | Their name |
-| `user.role` | string | `admin` or `user` (`user` for an Admin picked with a PIN, or nothing, on a device a trusted network linked) |
-| `user.byNetwork` | boolean | (From 1.36.0; only when true) Picked on a device a trusted network linked, with a PIN or nothing: for watching (see `GET /api/internal/me`). Take the role from this answer, or from `GET /api/internal/me` |
+| `user.role` | string | `admin` or `user` (`user` for an Admin's sign-in for watching, as `GET /api/internal/me` says) |
+| `user.watching` | boolean | (From 1.38.0; only when true) An Admin picked for watching: with their PIN in Full sign-in, or in Light away from home or on a device they haven't signed in on with their password, or with nothing. Admin tasks need their password (`WATCHING_ONLY`) |
 
 Answers 403 for a wrong PIN or password (with the sentence to show).
 Answers 429 after 5 wrong PINs for that person in 15 minutes, on any
@@ -530,8 +582,9 @@ picker from then on.
 | `askPin` | boolean | Whether to ask them now to choose a PIN, or none (from 1.28.0: see A PIN, after the first sign-in) |
 
 Answers 403, with the sentence to show, for a wrong name, code or password.
-It also answers 403 for someone who can't sign in by name, because they have
-neither a password nor a PIN (pick them from the list instead).
+Someone with neither a password nor a PIN signs in here only with an invite
+code (from 1.38.0; before, they couldn't). They're then on this device's
+picker at home only.
 Answers 429 after 10 wrong tries on this device in 15 minutes.
 
 ## POST /api/internal/picker/remove
@@ -561,7 +614,8 @@ sign-in has ended.
 | `user.canChangePassword` | boolean | Whether they may change their password in the app (from 1.28.0): false for someone without a password, and for someone an Admin turned that off for. Offer Change password only when it's true |
 | `user.canChangePin` | boolean | Whether they may change their own PIN in the app (from 1.36.2): false for someone an Admin turned that off for (never an Admin). Offer changing the PIN only when it's true |
 | `user.canReport` | boolean | Whether they may report a problem (from 1.30.0: see Reporting a problem): false for someone an Admin turned that off for. Offer Report a problem only when it's true (and while signing in is off, always) |
-| `user.byNetwork` | boolean | (From 1.36.0; only when true) A trusted network signed them in (with a PIN, or nothing): the sign-in is for watching. An Admin is a User then (`user.role` says `user`), with no Admin alerts; for Admin tasks they sign in with their password |
+| `user.byNetwork` | boolean | (From 1.36.0; only when true) A trusted network signed them in: the sign-in is for watching. An Admin is a User then (`user.role` says `user`), with no Admin alerts; for Admin tasks they sign in with their password. (From 1.38.0, an Admin's other sign-ins for watching also say `user`, without `byNetwork`) |
+| `user.watching` | boolean | (From 1.38.0; only when true) An Admin's sign-in for watching, however it was made (a trusted network's, their PIN without Light sign-in's Admin tools, or away from home): `user.role` says `user`, and Admin tasks need their password |
 | `languages` | object | Their own languages, for Options (from 1.29.0: see Languages); while signing in is off, everyone's |
 | `languages.audio` | object or null | The sound's language; null: each file's default track |
 | `languages.audio.code` | string | Its code, such as `jpn` |
@@ -955,6 +1009,10 @@ and once when it's fixed.
 From 1.31.0, tapiOca keeps its alerts across a restart:
 
 - **One still going** keeps its `id`. It isn't new, so don't notify again.
+  But from 1.37.1, a station's alert is cleared when tapiOca is updated (or
+  rolled back to an earlier version): it's listed as fixed, with its `id`,
+  as what failed was another version's. If the station fails again, a new
+  alert starts, with a new `id`.
 - **One fixed while tapiOca was stopped** is listed as fixed, with its
   `id`, once its check finds it.
 - **Those fixed in the last 24 hours** stay listed.

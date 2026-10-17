@@ -170,6 +170,21 @@ CREATE TABLE IF NOT EXISTS devices (
     created_ms   INTEGER NOT NULL,
     pin_ok       INTEGER NOT NULL DEFAULT 0
 );
+-- From 1.38.0, everyone who signed in on each browser (or app) with their
+-- password, by a hash of the token kept there: one browser may be several
+-- people's (devices kept one person to a browser, and is kept as it was, for
+-- going back to 1.37.1). Only the Admins among them are on its sign-in
+-- screen (the owner, October 17). pin_ok: whether their PIN may sign them
+-- in there (as devices' pin_ok); used_ms: when they last signed in there.
+CREATE TABLE IF NOT EXISTS browser_people (
+    token_hash   TEXT    NOT NULL,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_ms   INTEGER NOT NULL,
+    used_ms      INTEGER NOT NULL,
+    pin_ok       INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (token_hash, user_id)
+);
+CREATE INDEX IF NOT EXISTS browser_people_by_user ON browser_people (user_id);
 -- API tokens an Admin made, for scripts and other apps (see api.py), by a
 -- hash of the token: what each may do, and whose it is (gone with them).
 CREATE TABLE IF NOT EXISTS api_tokens (
@@ -592,6 +607,7 @@ class User:
     can_report: bool = True  # they may report problems from the apps (see reports.py)
     signed_in_from: str = ""  # where they last signed in from (see access.where); "": never
     own_pin: bool = True  # they may change their own PIN (1.36.2; an Admin always may)
+    admin_sign_in: str = "full"  # an Admin's: "full" or "light" (1.38.0, see access.py)
 
 
 @dataclass(frozen=True)
@@ -605,6 +621,10 @@ class SignedIn:
     active_ms: int  # when someone last used it, in a browser (see access.IDLE_SIGN_OUT_S)
     unlocked: bool  # made by picking someone without a PIN (see devices.choose)
     trusted: str = ""  # the trusted network it works only on (1.36.0; "" for any)
+    # (1.38.0, for an Admin: made with their PIN in Light sign-in, so Admin
+    # tools only at home; or for watching only. See access.STEP_UP.)
+    admin_pin: bool = False
+    watching: bool = False
 
 
 @dataclass
@@ -848,6 +868,20 @@ _ADDED_COLUMNS = (
     # made through (see trusted.py), which it works only on ('' for any).
     ("sessions", "trusted", "TEXT NOT NULL DEFAULT ''"),
     ("linked_devices", "trusted", "TEXT NOT NULL DEFAULT ''"),
+    # Added in 1.38.0 (the owner, October 17): how each Admin signs in, Full
+    # (their password for Admin tasks, every time) or Light (their password
+    # once on a browser or device, then their PIN there, at home); Full to
+    # start with. And how a sign-in was made, for an Admin: with that PIN, so
+    # it has Admin tools only at home (admin_pin); or for watching only, as
+    # a trusted network's are (watching). Sign-ins made before give what
+    # they gave then.
+    ("users", "admin_sign_in", "TEXT NOT NULL DEFAULT 'full'"),
+    ("sessions", "admin_pin", "INTEGER NOT NULL DEFAULT 0"),
+    ("sessions", "watching", "INTEGER NOT NULL DEFAULT 0"),
+    # ...and whether someone on a device's picker signed in on it with their
+    # password (not only an invite code, or an Admin's link): Light's PIN
+    # gives an Admin their Admin tools only there.
+    ("device_people", "by_password", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -958,7 +992,7 @@ def copy_database(source: Path, dest: Path, sign_ins: bool = False) -> None:
     out = sqlite3.connect(dest)
     try:
         src.backup(out)
-        for table in () if sign_ins else ("sessions", "devices"):
+        for table in () if sign_ins else ("sessions", "devices", "browser_people"):
             if out.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (table,)).fetchone():
                 out.execute(f"DELETE FROM {table}")
         out.commit()
@@ -1025,8 +1059,12 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA journal_mode = WAL")
+        # (1.38.0's browser_people starts with the browsers devices has: see _upgrade.)
+        browsers_new = not self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'browser_people'"
+        ).fetchone()
         self._conn.executescript(SCHEMA)
-        self._upgrade()
+        self._upgrade(browsers_new)
         # Each station's eras are cached in memory; an era never changes, and
         # they're read on every schedule lookup.
         self._eras_cache: dict[int, list[Era]] = {}
@@ -1071,10 +1109,13 @@ class Database:
                     (min(k for k in known if k), row["id"]),
                 )
 
-    def _upgrade(self) -> None:
+    def _upgrade(self, browsers_new: bool = False) -> None:
         """Brings a database made by an earlier version up to date. (What's
         done here must be found by changes_needed too, so the database is
-        backed up before it's changed: see backups.before_update.)"""
+        backed up before it's changed: see backups.before_update.)
+        `browsers_new`: browser_people was made just now, so it starts with
+        each browser someone signed in on before 1.38.0, as theirs, and
+        whether their PIN works there."""
         with self._conn:
             self._conn.execute("DROP INDEX IF EXISTS views_by_start")  # (an early 1.9.0's)
         for table, column, definition in _ADDED_COLUMNS:
@@ -1089,6 +1130,13 @@ class Database:
                             "UPDATE linked_devices SET linked_by_id = (SELECT id FROM users "
                             "WHERE users.name = linked_devices.linked_by)"
                         )
+        if browsers_new:  # (after devices.pin_ok, from 1.27)
+            with self._conn:
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO browser_people (token_hash, user_id, created_ms, "
+                    "used_ms, pin_ok) SELECT token_hash, user_id, created_ms, created_ms, pin_ok "
+                    "FROM devices"
+                )
         old = self._conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'channel_items'"
         ).fetchone()
@@ -1823,7 +1871,9 @@ class Database:
                 # their PIN signs them in there (see access.py), though they
                 # stay theirs for the internet's limit on tries.
                 self._conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
-                self._conn.execute("UPDATE devices SET pin_ok = 0 WHERE user_id = ?", (user_id,))
+                self._conn.execute(
+                    "UPDATE browser_people SET pin_ok = 0 WHERE user_id = ?", (user_id,)
+                )
             if role is not None:
                 self._conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
 
@@ -2026,20 +2076,24 @@ class Database:
         unlocked: bool = False,
         where: str = "",
         trusted: str = "",
+        admin_pin: bool = False,
+        watching: bool = False,
     ) -> None:
         """Signs a browser (or `app`, one of tapiOca's; on a linked
         device, from its picker: `device_id`, and `unlocked` when picked
         without a PIN) in as a user, from `where` (an address), keeping only their `keep` newest sign-ins
         (the rest are signed out). On a linked device, whoever was signed in
-        there before is signed out."""
+        there before is signed out. `admin_pin`, `watching`: see SignedIn."""
         with self._lock, self._conn:
             if device_id is not None:
                 self._conn.execute("DELETE FROM sessions WHERE device_id = ?", (device_id,))
             self._conn.execute(
                 "INSERT INTO sessions (token_hash, user_id, created_ms, seen_ms, app, device_id, "
-                "active_ms, unlocked, trusted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (token_hash, user_id, now, now, app, device_id, now, int(unlocked), trusted),
-            )
+                "active_ms, unlocked, trusted, admin_pin, watching) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (token_hash, user_id, now, now, app, device_id, now, int(unlocked), trusted,
+                 int(admin_pin), int(watching)),
+            )  # fmt: skip
             # (Kept apart by where they work: a trusted network's sign-ins
             # never push out someone's others, 1.36.0.)
             self._conn.execute(
@@ -2059,7 +2113,8 @@ class Database:
         with self._lock:
             row = self._conn.execute(
                 "SELECT users.*, sessions.seen_ms, sessions.device_id, sessions.app, "
-                "sessions.active_ms, sessions.unlocked, sessions.trusted FROM sessions JOIN users "
+                "sessions.active_ms, sessions.unlocked, sessions.trusted, sessions.admin_pin, "
+                "sessions.watching FROM sessions JOIN users "
                 "ON users.id = sessions.user_id WHERE token_hash = ? AND seen_ms >= ?",
                 (token_hash, since_ms),
             ).fetchone()
@@ -2073,6 +2128,8 @@ class Database:
             row["active_ms"],
             bool(row["unlocked"]),
             row["trusted"],
+            bool(row["admin_pin"]),
+            bool(row["watching"]),
         )
 
     def session_app(self, token_hash: str) -> str | None:
@@ -2097,50 +2154,70 @@ class Database:
                 "UPDATE sessions SET active_ms = ? WHERE token_hash = ?", (now, token_hash)
             )
 
-    def add_device(self, token_hash: str, user_id: int, now: int, keep: int) -> None:
-        """Remembers a browser someone signed in on, keeping their `keep`
-        newest."""
+    def add_browser_person(
+        self, token_hash: str, user_id: int, now: int, keep: int, most_here: int
+    ) -> None:
+        """Someone signed in on a browser (or an app) with their password:
+        it's theirs, again if it was, and their PIN may sign them in there.
+        They keep their `keep` newest, and it keeps its `most_here` people
+        who signed in there latest."""
         with self._lock, self._conn:
             self._conn.execute(
-                "INSERT INTO devices (token_hash, user_id, created_ms, pin_ok) VALUES (?, ?, ?, 1)",
-                (token_hash, user_id, now),
+                "INSERT INTO browser_people (token_hash, user_id, created_ms, used_ms, pin_ok) "
+                "VALUES (?, ?, ?, ?, 1) ON CONFLICT (token_hash, user_id) "
+                "DO UPDATE SET used_ms = excluded.used_ms, pin_ok = 1",
+                (token_hash, user_id, now, now),
             )
             self._conn.execute(
-                "DELETE FROM devices WHERE user_id = ? AND token_hash NOT IN ("
-                "SELECT token_hash FROM devices WHERE user_id = ? ORDER BY created_ms DESC, rowid DESC "
-                "LIMIT ?)",
+                "DELETE FROM browser_people WHERE user_id = ? AND token_hash NOT IN ("
+                "SELECT token_hash FROM browser_people WHERE user_id = ? "
+                "ORDER BY used_ms DESC, rowid DESC LIMIT ?)",
                 (user_id, user_id, keep),
             )
+            self._conn.execute(
+                "DELETE FROM browser_people WHERE token_hash = ? AND user_id NOT IN ("
+                "SELECT user_id FROM browser_people WHERE token_hash = ? "
+                "ORDER BY used_ms DESC, rowid DESC LIMIT ?)",
+                (token_hash, token_hash, most_here),
+            )
 
-    def device_signed_out(self, token_hash: str) -> None:
-        """Its person signed out of a browser on purpose: their PIN no longer
-        signs them in there until their password has, though it stays theirs
-        for the internet's limit on tries."""
-        with self._lock, self._conn:
-            self._conn.execute("UPDATE devices SET pin_ok = 0 WHERE token_hash = ?", (token_hash,))
-
-    def device_password_used(self, token_hash: str) -> None:
-        """Its person signed in on a browser with their password (see
-        device_signed_out)."""
-        with self._lock, self._conn:
-            self._conn.execute("UPDATE devices SET pin_ok = 1 WHERE token_hash = ?", (token_hash,))
-
-    def pin_device_user(self, token_hash: str) -> int | None:
-        """Whose PIN may sign them in on this browser, if anyone's (see
-        device_signed_out)."""
+    def browser_people(self, token_hash: str) -> list[tuple[int, bool]]:
+        """Who signed in on a browser with their password, latest first, and
+        whether their PIN may sign them in there: (user's id, pin_ok)."""
         with self._lock:
-            row = self._conn.execute(
-                "SELECT user_id FROM devices WHERE token_hash = ? AND pin_ok = 1", (token_hash,)
-            ).fetchone()
-        return int(row["user_id"]) if row else None
+            rows = self._conn.execute(
+                "SELECT user_id, pin_ok FROM browser_people WHERE token_hash = ? "
+                "ORDER BY used_ms DESC, rowid DESC",
+                (token_hash,),
+            ).fetchall()
+        return [(int(r["user_id"]), bool(r["pin_ok"])) for r in rows]
 
-    def device_user(self, token_hash: str) -> int | None:
-        """Whose browser this is, if it's one they signed in on."""
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT user_id FROM devices WHERE token_hash = ?", (token_hash,)
-            ).fetchone()
-        return int(row["user_id"]) if row else None
+    def browser_signed_out(self, token_hash: str, user_id: int | None = None) -> None:
+        """Someone signed out of a browser on purpose (`user_id`; None:
+        too many wrong PINs there, for everyone): their PIN no longer signs
+        them in there until their password has, though it stays theirs for
+        the internet's limit on tries and its sign-in screen."""
+        with self._lock, self._conn:
+            if user_id is None:
+                self._conn.execute(
+                    "UPDATE browser_people SET pin_ok = 0 WHERE token_hash = ?", (token_hash,)
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE browser_people SET pin_ok = 0 WHERE token_hash = ? AND user_id = ?",
+                    (token_hash, user_id),
+                )
+
+    def forget_browser_person(self, token_hash: str, user_id: int) -> bool:
+        """Someone is no longer one of a browser's people (Remove from this
+        browser): whether they were."""
+        with self._lock, self._conn:
+            return bool(
+                self._conn.execute(
+                    "DELETE FROM browser_people WHERE token_hash = ? AND user_id = ?",
+                    (token_hash, user_id),
+                ).rowcount
+            )
 
     def app_sessions(self, since_ms: int) -> list[dict]:
         """The apps signed in (seen since `since_ms`), newest first: {id,
@@ -2215,13 +2292,27 @@ class Database:
             ).rowcount
         return ended
 
-    def end_unlocked_sessions(self, user_id: int) -> int:
-        """Ends someone's sign-ins made with no password or PIN (see
-        SignedIn.unlocked): how many. For someone made an Admin."""
+    def end_sessions(self, user_id: int, but: str | None = None) -> int:
+        """Ends all of someone's sign-ins (but the one whose token hashes to
+        `but`): how many."""
         with self._lock, self._conn:
             return self._conn.execute(
-                "DELETE FROM sessions WHERE user_id = ? AND unlocked = 1", (user_id,)
+                "DELETE FROM sessions WHERE user_id = ? AND token_hash IS NOT ?", (user_id, but)
             ).rowcount
+
+    def end_admin_pin_sessions(self, user_id: int, but: str | None = None) -> int:
+        """Ends an Admin's sign-ins made with their PIN in Light sign-in
+        (see SignedIn.admin_pin), but the one whose token hashes to `but`:
+        how many."""
+        with self._lock, self._conn:
+            return self._conn.execute(
+                "DELETE FROM sessions WHERE user_id = ? AND admin_pin = 1 AND token_hash IS NOT ?",
+                (user_id, but),
+            ).rowcount
+
+    def set_admin_sign_in(self, user_id: int, how: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("UPDATE users SET admin_sign_in = ? WHERE id = ?", (how, user_id))
 
     def linked_device(self, key_hash: str) -> sqlite3.Row | None:
         with self._lock:
@@ -2260,6 +2351,17 @@ class Database:
             self._conn.execute("DELETE FROM linked_devices WHERE id = ?", (device_id,))
         return str(row["name"])
 
+    def signed_in_by_password(self, device_id: int, user_id: int) -> bool:
+        """Whether someone signed in on a linked device with their password
+        (see Database.set_device_person)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT by_password FROM device_people WHERE device_id = ? AND user_id = ? "
+                "AND how = 'signed-in'",
+                (device_id, user_id),
+            ).fetchone()
+        return bool(row and row["by_password"])
+
     def device_people(self) -> dict[int, dict[int, str]]:
         """How each person is on each device's picker, other than as their
         Show on says: by device, then person."""
@@ -2270,9 +2372,12 @@ class Database:
             out.setdefault(r["device_id"], {})[r["user_id"]] = r["how"]
         return out
 
-    def set_device_person(self, device_id: int, user_id: int, how: str | None) -> None:
-        """How a person is on a device's picker (None: only as their Show
-        on says)."""
+    def set_device_person(
+        self, device_id: int, user_id: int, how: str | None, by_password: bool = False
+    ) -> None:
+        """How a person is on a device's picker (None: not at all). Signed
+        in there (how 'signed-in'): `by_password`, with their password, which
+        stays so until they're taken off it (1.38.0)."""
         with self._lock, self._conn:
             if how is None:
                 self._conn.execute(
@@ -2281,9 +2386,12 @@ class Database:
                 )
             else:
                 self._conn.execute(
-                    "INSERT INTO device_people (device_id, user_id, how) VALUES (?, ?, ?) "
-                    "ON CONFLICT (device_id, user_id) DO UPDATE SET how = excluded.how",
-                    (device_id, user_id, how),
+                    "INSERT INTO device_people (device_id, user_id, how, by_password) "
+                    "VALUES (?, ?, ?, ?) ON CONFLICT (device_id, user_id) DO UPDATE SET "
+                    "by_password = CASE WHEN excluded.how = 'signed-in' AND how = 'signed-in' "
+                    "THEN MAX(by_password, excluded.by_password) ELSE excluded.by_password END, "
+                    "how = excluded.how",
+                    (device_id, user_id, how, int(by_password and how == "signed-in")),
                 )
 
     def set_chosen_devices(self, user_id: int, device_ids: list[int]) -> None:
@@ -2917,6 +3025,7 @@ def _user(row: sqlite3.Row) -> User:
         row["max_stations"], row["level_id"], bool(row["pin"]), row["show_on"],
         bool(row["password"]), bool(row["no_pin"]), bool(row["own_password"]),
         bool(row["can_report"]), row["signed_in_from"], bool(row["own_pin"]),
+        row["admin_sign_in"],
     )  # fmt: skip
 
 

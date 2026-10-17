@@ -715,6 +715,7 @@ table.stats .station img.shaped { padding: 2px; }
 /* Signing in */
 #signinView { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 16px; }
 .signin { width: min(380px, 100%); padding: 24px; display: grid; gap: 14px; }
+.signin-form { display: grid; gap: 14px; }
 /* (Use your password, and Switch user: far enough apart for a finger.) */
 .signin .linkish + .linkish { margin-top: 6px; }
 /* Who's tuning in?, on a trusted network (see trusted.js) */
@@ -905,6 +906,18 @@ table.now tr:last-child td { border-bottom: 0; }
 
 /* A new tapiOca is out (updates.js): for Admins, above the tabs. */
 .update-banner { margin: 0 0 14px; display: grid; gap: 8px; border-color: var(--accent); }
+/* (tapiOca couldn't be asked who's signed in: see firstMe in access.js.) */
+.me-problem { margin: 0 0 14px; padding: 14px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; border-color: var(--bad); }
+.me-problem p { margin: 0; flex: 1 1 16em; }
+/* (An Admin signed in for watching: see watchingNote in access.js.) */
+.watching-note { margin: 0 0 14px; padding: 14px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; border-color: var(--accent); }
+.watching-note p { margin: 0; flex: 1 1 16em; }
+.account-body { display: grid; gap: 18px; }
+.account-part { display: grid; gap: 10px; }
+.account-part .choice { display: flex; gap: 10px; align-items: flex-start; }
+.account-part .choice input { margin-top: 3px; }
+.mode-save { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.noscript { max-width: 32em; margin: 48px auto; padding: 0 16px; text-align: center; }
 .update-banner p { margin: 0; }
 .update-banner .update-steps { display: grid; gap: 4px; }
 .update-banner .copyrow code { flex: 1 1 260px; overflow-wrap: anywhere; }

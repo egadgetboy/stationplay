@@ -290,6 +290,12 @@ def test_no_password_to_change_and_the_limit_on_wrong_ones(pat, app):
     key = tv.post(
         "/api/internal/sign-in", json={**PAT, "app": "tapiOca for Roku", "picker": True}
     ).json()["deviceKey"]
+    # (On the TV's list once signed in there, with an invite code: 1.38.0.)
+    code = pat.post(f"/api/access/users/{kids['id']}/invite").json()["code"]
+    assert tv.post(
+        "/api/internal/picker/sign-in", json={"name": "Kids", "code": code},
+        headers={"StationPlay-Device": key},
+    ).status_code == 200  # fmt: skip
     picked = tv.post(
         "/api/internal/picker/choose", json={"id": kids["id"]},
         headers={"StationPlay-Device": key},

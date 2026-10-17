@@ -179,8 +179,11 @@ PAT = {"name": "Pat", "password": "correct horse"}
 def home(tmp_path):
     """tapiOca, started, with Pat (an Admin, PIN 1234) and Kid (a User with
     no password or PIN) shown on every device at home; 192.168.1.0/24 opens
-    on Who's tuning in?, and 192.168.1.44 signs in as Pat. The client: Pat,
-    at 192.168.1.50."""
+    on Who's tuning in?, 192.168.1.44 signs in as Pat, and 192.168.1.60 (the
+    family room TV) as Kid. The client: Pat, at 192.168.1.50. (From 1.38.0 a
+    network's Who's tuning in? lists no one on the page, nor anyone on an
+    app's who hasn't signed in on it: a network's sign-in for watching is
+    one that signs in as someone, as the TV's.)"""
     from fastapi.testclient import TestClient
 
     from app.config import Settings
@@ -206,6 +209,8 @@ def home(tmp_path):
         made.state.ctx.trusted.save({"entries": [
             {"network": "192.168.1.0/24", "label": "Home Wi-Fi", "gives": "picker"},
             {"network": "192.168.1.44", "gives": "person", "person": pat_id},
+            {"network": "192.168.1.60", "label": "Family room TV", "gives": "person",
+             "person": kid.json()["id"]},
         ]}, by=pat_id)  # fmt: skip
         made.state.pat, made.state.kid = pat_id, kid.json()["id"]
         yield made
@@ -218,22 +223,32 @@ def device_at(app, address: str, host: str = "192.168.1.20:3310", **headers):
     return TestClient(app, base_url=f"http://{host}", client=(address, 5000), headers=named or None)
 
 
-def test_a_trusted_network_opens_on_whos_tuning_in(home):
-    tv = device_at(home, "192.168.1.60")
-    me = tv.get("/api/access/me").json()
-    assert me["user"] is None
-    people = {p["name"]: p for p in me["trusted"]["people"]}
-    assert me["trusted"]["gives"] == "picker" and set(people) == {"Pat", "Kid"}
-    assert people["Pat"]["admin"] and people["Pat"]["pin"] and not people["Kid"]["pin"]
-    # Kid picks themselves: no PIN, no password; Kid's limits are Kid's.
-    picked = tv.post("/api/access/trusted-sign-in", json={"id": home.state.kid})
-    assert picked.status_code == 200, picked.text
-    assert tv.get("/api/access/me").json()["user"]["name"] == "Kid"
-    # An Admin always gives their PIN (or password).
-    other = device_at(home, "192.168.1.61")
-    assert other.post("/api/access/trusted-sign-in", json={"id": home.state.pat}).status_code == 403
-    signed = other.post("/api/access/trusted-sign-in", json={"id": home.state.pat, "pin": "1234"})
-    assert signed.status_code == 200 and other.get("/api/access/me").json()["user"]["name"] == "Pat"
+def test_a_trusted_networks_whos_tuning_in_lists_no_one_on_the_page(home):
+    """(1.36.0 to 1.37.1: the page on a network that opens on Who's tuning
+    in? listed everyone shown on every device at home, Users and Admins, and
+    signed them in with a PIN or nothing. 1.38.0, the owner, October 17:
+    "No user/admin appears on these sign in pages (client/server) unless
+    they signed into the app for the first time manually", and "No user
+    appears on the server sign in page at all unless their user is set as
+    Admin".) Its sign-in screen is as at any home address: no one, until an
+    Admin signs in there with their password."""
+    pc = device_at(home, "192.168.1.65")
+    me = pc.get("/api/access/me").json()
+    assert me["user"] is None and "trusted" not in me and "people" not in me
+    for who in ({"id": home.state.kid}, {"id": home.state.pat, "pin": "1234"}, {}):
+        refused = pc.post("/api/access/trusted-sign-in", json=who)
+        assert refused.status_code == 404 and refused.json()["detail"] == trustedapi.NOT_LISTED
+    assert pc.get("/api/access/me").json()["user"] is None
+    # Pat signs in with his password: an ordinary sign-in, and from then on
+    # this browser's sign-in screen has him (his password each time: Full).
+    assert pc.post("/api/access/sign-in", json=PAT).status_code == 200
+    assert pc.get("/api/access/trusted").status_code == 200
+    pc.cookies.delete(access.COOKIE)  # (an hour later)
+    assert [(p["name"], p["pin"]) for p in pc.get("/api/access/me").json()["people"]] == [
+        ("Pat", False)
+    ]
+    # Another browser on the same network: still no one.
+    assert "people" not in device_at(home, "192.168.1.66").get("/api/access/me").json()
 
 
 def test_what_a_trusted_network_gives_works_only_there(home):
@@ -275,7 +290,7 @@ def test_an_app_without_whos_tuning_in_is_told_so(home):
     1.36.0)."""
     from app import trustedapi
 
-    said = device_at(home, "192.168.1.60").post("/api/internal/trusted", json={"app": "Roku"})
+    said = device_at(home, "192.168.1.61").post("/api/internal/trusted", json={"app": "Roku"})
     assert said.status_code == 403 and said.json()["detail"] == trustedapi.NO_PICKER
 
 
@@ -284,10 +299,9 @@ def test_a_device_signed_in_as_someone(home):
     assert laptop.get("/api/access/me").json()["trusted"] == {"gives": "person", "name": "Pat"}
     assert laptop.post("/api/access/trusted-sign-in", json={}).status_code == 200
     assert laptop.get("/api/access/me").json()["user"]["name"] == "Pat"
-    # Its neighbor is the network's: Who's tuning in?.
-    assert (
-        device_at(home, "192.168.1.45").get("/api/access/me").json()["trusted"]["gives"] == "picker"
-    )
+    # Its neighbor is the network's: Who's tuning in?, for the apps (on the
+    # page, as at any home address, from 1.38.0).
+    assert "trusted" not in device_at(home, "192.168.1.45").get("/api/access/me").json()
 
 
 def test_an_admins_device_is_never_signed_in_through_a_proxy(home):
@@ -297,7 +311,7 @@ def test_an_admins_device_is_never_signed_in_through_a_proxy(home):
     applies through a proxy: its network's choice does, if any."""
     home.state.ctx.trusted.save({"proxies": [{"network": "192.168.1.2"}]}, by=home.state.pat)
     via = device_at(home, "192.168.1.2", x_forwarded_for="192.168.1.44")
-    assert via.get("/api/access/me").json()["trusted"]["gives"] == "picker"
+    assert "trusted" not in via.get("/api/access/me").json()  # (the network's: as at home)
     assert via.post("/api/access/trusted-sign-in", json={}).status_code == 404
     # (Straight from the laptop: as listed.)
     laptop = device_at(home, "192.168.1.44")
@@ -322,15 +336,17 @@ def admin_at_home(home):
 def test_admins_list_them_and_what_changes_ends_what_it_gave(home):
     pat = admin_at_home(home)
     got = pat.get("/api/access/trusted").json()
-    assert [e["network"] for e in got["entries"]] == ["192.168.1.0/24", "192.168.1.44/32"]
+    assert [e["network"] for e in got["entries"]] == [
+        "192.168.1.0/24", "192.168.1.44/32", "192.168.1.60/32"
+    ]  # fmt: skip
     assert got["entries"][0]["addresses"] == 256
     # (Pat is on the Home Wi-Fi network: the network to offer is shown.)
     assert got["you"]["offer"] == "192.168.1.0/24" and got["you"]["entry"]
-    # Kid picks themselves on the TV; then the network goes, and so does that.
+    # The TV signs in as Kid; then its entry goes, and so does that.
     tv = device_at(home, "192.168.1.60")
-    assert tv.post("/api/access/trusted-sign-in", json={"id": home.state.kid}).status_code == 200
+    assert tv.post("/api/access/trusted-sign-in", json={}).status_code == 200
     assert tv.get("/api/channels").status_code == 200
-    kept = [e for e in got["entries"] if e["network"] != "192.168.1.0/24"]
+    kept = [e for e in got["entries"] if e["network"] != "192.168.1.60/32"]
     assert pat.put("/api/access/trusted", json={"entries": kept}).status_code == 200
     assert tv.get("/api/channels").status_code == 401
     # Too wide asks first; public addresses never.
@@ -373,45 +389,55 @@ def test_a_person_removed_or_made_an_admin_takes_their_trust_with_them(home):
     assert (kept["gives"], kept["person"]) == ("picker", None)
 
 
-def test_wrong_pins_on_a_trusted_picker_are_limited_here_and_an_admins_lock_is_an_alert(home):
-    """Each person's PIN: 5 tries, then 15 minutes (as on the apps). From
-    one device (by its address, never a cookie a guesser can change):
-    BROWSER_PIN_TRIES, then a password there. An Admin's PIN locked is an
-    Admin alert (no name, no address), fixed once it's unlocked."""
+def light(c, who=PAT) -> None:
+    """An Admin, signed in with their password on `c`, chooses Light sign-in:
+    their PIN gives their Admin tools there from now on, at home (1.38.0)."""
+    chose = c.put("/api/access/me/sign-in", json={"how": "light", "password": who["password"]})
+    assert chose.status_code == 200, chose.text
+
+
+def test_wrong_pins_on_the_page_at_home_are_limited_and_an_admins_lock_is_an_alert(home):
+    """Each person's PIN: 5 tries, then 15 minutes (as on the apps); on one
+    browser, BROWSER_PIN_TRIES, then a password there. (1.38.0: on the page,
+    only an Admin's PIN, in Light sign-in, on a browser they signed in on
+    with their password; on a trusted network as anywhere at home. Before,
+    a network's Who's tuning in? counted them by its address.) An Admin's
+    PIN locked is an Admin alert (no name, no address), fixed once it's
+    unlocked."""
     from app import alerts, devices
 
     ctx = home.state.ctx
-    pat = admin_at_home(home)
-    ids = {}
-    for name, pin in (("Ann", "1111"), ("Bo", "2222")):
-        made = pat.post("/api/access/users", json={"name": name, "role": "user", "showOn": "home"})
-        ids[name] = made.json()["id"]
-        assert pat.put(f"/api/access/users/{ids[name]}/picker", json={"pin": pin}).is_success
-    tv = device_at(home, "192.168.1.60")
+    pc = device_at(home, "192.168.1.66")
+    assert pc.post("/api/access/sign-in", json=PAT).status_code == 200
+    light(pc)
+    pc.cookies.delete(access.COOKIE)  # (an hour later)
 
-    def pick(c, who, **said):
-        return c.post("/api/access/trusted-sign-in", json={"id": who, **said})
+    def pin(c, said):
+        return c.post("/api/access/pin-sign-in", json={"id": home.state.pat, "pin": said})
 
     for _ in range(devices.PIN_TRIES):
-        assert pick(tv, home.state.pat, pin="0000").status_code == 403
-    assert pick(tv, home.state.pat, pin="1234").status_code == 429  # (Pat waits)
+        assert pin(pc, "0000").status_code == 403
+    assert pin(pc, "1234").status_code == 429  # (Pat waits)
     [locked] = [a for a in ctx.alerts.now() if a.about == "pin"]
     assert locked.kind == "access" and locked.sentence == alerts.PIN_LOCKED
     assert f"{devices.PIN_TRIES} times" in locked.sentence
     assert f"{devices.PIN_WAIT_S // 60} minutes" in locked.sentence
-    # Others' PINs from the same TV: 10 wrong there in all, then a password.
+    # 10 wrong on this browser in all: then a password there.
+    ctx.devices._wrong.clear()  # (15 minutes later)
     for _ in range(access.BROWSER_PIN_TRIES - devices.PIN_TRIES - 1):
-        assert pick(tv, ids["Ann"], pin="0000").status_code == 403
-    last = pick(tv, ids["Ann"], pin="0000")
-    assert last.status_code == 403 and last.json()["detail"] == trustedapi.PASSWORD_NOW
-    assert pick(tv, ids["Bo"], pin="2222").json()["detail"] == trustedapi.PASSWORD_NOW
-    # (Another device, and the right PIN: fine.)
-    assert pick(device_at(home, "192.168.1.61"), ids["Bo"], pin="2222").status_code == 200
-    # A password on the TV: right, and PINs work there again.
-    assert pick(tv, home.state.pat, password="wrong one").status_code == 401
-    assert pick(tv, home.state.pat, password=PAT["password"]).status_code == 200
-    assert pick(tv, ids["Bo"], pin="2222").status_code == 200
+        assert pin(pc, "0000").status_code == 403
+    last = pin(pc, "0000")
+    assert last.status_code == 403 and "10 wrong PINs on this browser" in last.json()["detail"]
+    assert pin(pc, "1234").status_code == 400
+    # A password there: PINs work there again (15 minutes on, for Pat's own wait).
+    assert pc.post("/api/access/sign-in", json=PAT).status_code == 200
+    pc.cookies.delete(access.COOKIE)
+    ctx.devices._wrong.clear()
+    assert pin(pc, "1234").status_code == 200
+    pc.cookies.delete(access.COOKIE)
     # 15 minutes on, Pat's PIN is unlocked: the alert is fixed.
+    for _ in range(devices.PIN_TRIES):
+        pin(pc, "0000")
     assert ctx.devices.admins_locked()
     for wrong in ctx.devices._wrong.values():  # (as if 15 minutes went by)
         wrong.extend([t - devices.PIN_WAIT_S - 1 for t in wrong])
@@ -508,25 +534,28 @@ def test_a_sign_in_made_without_a_secret_mints_nothing_that_leaves_its_network(h
 
 def test_made_an_admin_their_sign_ins_without_a_secret_end(home):
     """An Admin always gives a PIN or password: someone made an Admin loses
-    what was signed in for them with neither (picked on Who's tuning in?,
-    or a device a network signs in as them, which becomes Who's tuning in?
-    until an Admin chooses Signed in as them again). The cold audit of
-    1.36.0."""
+    what was signed in for them with neither (a device a network signs in as
+    them, which becomes Who's tuning in? until an Admin chooses Signed in as
+    them again). The cold audit of 1.36.0. From 1.38.0 every sign-in of
+    theirs ends with a new role, even their password's (here, the TV's),
+    and they sign in again as what they are now."""
     pat = admin_at_home(home)
     sam = pat.post("/api/access/users", json={"name": "Sam", "password": "battery staple",
                                               "role": "user", "showOn": "home"}).json()  # fmt: skip
     entries = [*pat.get("/api/access/trusted").json()["entries"],
                {"network": "192.168.1.70", "gives": "person", "person": sam["id"]}]  # fmt: skip
     assert pat.put("/api/access/trusted", json={"entries": entries}).status_code == 200
-    tv = device_at(home, "192.168.1.60")
-    assert tv.post("/api/access/trusted-sign-in", json={"id": sam["id"]}).status_code == 200
+    tv = device_at(home, "192.168.20.8")
+    assert tv.post(
+        "/api/access/sign-in", json={"name": "Sam", "password": "battery staple"}
+    ).is_success
     phone = device_at(home, "192.168.1.70")
     assert phone.post("/api/access/trusted-sign-in", json={}).status_code == 200
     assert pat.put(f"/api/access/users/{sam['id']}", json={"role": "admin"}).status_code == 200
     for c in (tv, phone):
         assert c.get("/api/access/trusted").status_code == 401
         assert c.get("/api/access/me").json()["user"] is None
-    assert phone.get("/api/access/me").json()["trusted"]["gives"] == "picker"
+    assert "trusted" not in phone.get("/api/access/me").json()  # (the network's now)
     # (Chosen again, deliberately: as listed.)
     again = [e if e["network"] != "192.168.1.70/32" else {**e, "gives": "person", "person": sam["id"]}
              for e in pat.get("/api/access/trusted").json()["entries"]]  # fmt: skip
@@ -568,7 +597,10 @@ def test_a_network_cant_be_used_to_sign_people_out_or_unlink_devices(home, monke
     assert said[-1] == 429
     # A full network: a new device takes the place of one never used
     # (asked for, then not used: what a flood of asks makes), never of one
-    # in use; with every one in use, no new device.
+    # in use; with every one in use, no new device. (From 1.38.0 no one is
+    # on a network's device until they sign in on it, which makes it an
+    # ordinary linked device, no longer the network's: one in use is one
+    # someone was picked on before.)
     monkeypatch.setattr(devices, "TRUSTED_DEVICES_MOST", 2)
 
     def link(n: int) -> httpx.Response:
@@ -584,11 +616,10 @@ def test_a_network_cant_be_used_to_sign_people_out_or_unlink_devices(home, monke
         )
 
     def pick(n: int, key: str) -> int:
-        return (
-            device_at(home, f"192.168.1.{80 + n}", stationplay_device=key)
-            .post("/api/internal/picker/choose", json={"id": home.state.kid})
-            .status_code
-        )
+        """Kid picked on it, as Who's tuning in? did before 1.38.0."""
+        found = home.state.ctx.devices.device(key)
+        home.state.ctx.db.device_seen(found.id, found.created_ms + 1)
+        return 200
 
     first, second = link(0).json()["deviceKey"], link(1).json()["deviceKey"]
     assert pick(0, first) == 200
@@ -625,8 +656,14 @@ def test_a_password_on_a_device_a_network_linked_makes_it_ordinary(home):
     key2 = other.post("/api/internal/trusted", json={"app": "TV", "picker": True}).json()[
         "deviceKey"
     ]
-    tv = device_at(home, "192.168.1.62", stationplay_device=key2)
-    token = tv.post("/api/internal/picker/choose", json={"id": home.state.kid}).json()["token"]
+    # (Kid picked on it before 1.38.0, as its network's: from then on no one
+    # is on a network's device until they sign in on it.)
+    ctx = home.state.ctx
+    tv_device = ctx.devices.device(key2)
+    token = ctx.access.start_session(
+        ctx.db.user(home.state.kid), tv_device.name, tv_device.id, unlocked=True,
+        trusted=tv_device.trusted,
+    )  # fmt: skip
     pat = admin_at_home(home)
     kept = [e for e in pat.get("/api/access/trusted").json()["entries"]
             if e["network"] != "192.168.1.0/24"]  # fmt: skip
@@ -648,28 +685,26 @@ def test_the_away_address_name_is_never_a_name_for_home(home):
     assert pat.get("/api/access/trusted").json()["homeNames"] == []
 
 
-def test_wrong_pins_from_one_device_are_counted_for_an_hour(home, monkeypatch):
-    """Not forever: a device's wrong PINs on Who's tuning in? stop counting
-    after WRONG_PINS_WINDOW_S, so a PIN-only kid isn't told to use a
-    password for good (the cold audit of 1.36.0). Here, as if each were an
-    hour old already."""
-    from app import trustedapi
-
-    monkeypatch.setattr(trustedapi, "WRONG_PINS_WINDOW_S", 0.0)
+def test_a_browser_that_never_signed_in_tries_no_one_s_pin(home):
+    """(1.36.0 to 1.37.1: a network's Who's tuning in? on the page took
+    anyone's PIN, counted by the device's address, BROWSER_PIN_TRIES an hour,
+    the cold audit of 1.36.0.) From 1.38.0 the page takes only an Admin's
+    PIN, on a browser they signed in on with their password: anywhere
+    else, no PIN is tried at all, so none is counted or locked."""
     pat = admin_at_home(home)
-    ids = []
-    for n, name in enumerate(("Ann", "Bo", "Cy")):
+    light(pat)
+    ids = [home.state.pat]
+    for n, name in enumerate(("Ann", "Bo")):
         made = pat.post("/api/access/users", json={"name": name, "role": "user", "showOn": "home"})
         ids.append(made.json()["id"])
         assert pat.put(f"/api/access/users/{ids[-1]}/picker", json={"pin": f"111{n}"}).is_success
-    tv = device_at(home, "192.168.1.66")
-    for who in (ids[0],) * 4 + (ids[1],) * 4 + (ids[2],) * 2:
-        said = tv.post("/api/access/trusted-sign-in", json={"id": who, "pin": "9999"})
-        assert said.status_code == 403 and said.json()["detail"] != trustedapi.PASSWORD_NOW
-    assert (
-        tv.post("/api/access/trusted-sign-in", json={"id": ids[2], "pin": "1112"}).status_code
-        == 200
-    )
+    for c in (device_at(home, "192.168.1.66"), device_at(home, "192.168.1.67")):
+        c.cookies.set(access.DEVICE_COOKIE, "made up")
+        for who in ids * 6:
+            said = c.post("/api/access/pin-sign-in", json={"id": who, "pin": "9999"})
+            assert said.status_code == 400, said.text
+    assert not home.state.ctx.devices.admins_locked()
+    assert not any(home.state.ctx.devices._wrong.values())
 
 
 def test_a_networks_sign_in_streams_only_there(home):
@@ -719,9 +754,9 @@ def test_an_admin_signed_in_by_a_network_gives_their_password_for_admin_tasks(ho
     pat_id, kid = home.state.pat, home.state.kid
     laptop = device_at(home, "192.168.1.44")  # (Signed in as Pat)
     assert laptop.post("/api/access/trusted-sign-in", json={}).status_code == 200
-    tv = device_at(home, "192.168.1.60")
-    assert tv.post("/api/access/trusted-sign-in", json={"id": pat_id, "pin": "1234"}).is_success
-    for c in (laptop, tv):
+    # (1.38.0: the page's PIN for Pat only in Light sign-in, and then an
+    # ordinary sign-in with his Admin tools: test_admin_sign_in.py.)
+    for c in (laptop,):
         me = c.get("/api/access/me").json()["user"]
         assert me["role"] == "admin" and me["byNetwork"] is True
         for method, path, body in (
@@ -738,11 +773,9 @@ def test_an_admin_signed_in_by_a_network_gives_their_password_for_admin_tasks(ho
             assert said.json()["detail"] in (access.ADMIN_PASSWORD_NEEDED, access.STEP_UP)
         # (Watching, as anyone can.)
         assert c.get("/api/channels").status_code == 200
-    # With their password, on the same TV: an ordinary sign-in, an Admin's.
+    # With their password, on the same network: an ordinary sign-in, an Admin's.
     other = device_at(home, "192.168.1.61")
-    signed = other.post(
-        "/api/access/trusted-sign-in", json={"id": pat_id, "password": PAT["password"]}
-    )
+    signed = other.post("/api/access/sign-in", json=PAT)
     assert signed.status_code == 200
     assert other.get("/api/access/me").json()["user"].get("byNetwork") is False
     assert other.get("/api/access/trusted").status_code == 200
@@ -755,10 +788,11 @@ def test_an_admin_by_network_is_a_user_and_their_own_devices_are_as_before(home)
     """A network's sign-in for an Admin acts as a User's everywhere (who
     watched what, how the server is set up, others' stations), as the page
     shows it; an app's /me says so, so it doesn't ask for Admin alerts. But
-    an Admin with no PIN picking themselves on their own linked device (as
-    1.35.0 allowed) is an Admin as before, and so is one who gives their
-    password on a network's device. A network's PIN sign-in can't change
-    that PIN. The cold audit of 1.36.0, third round."""
+    a sign-in made before 1.38.0 for an Admin with no PIN, picked on their
+    own linked device (as 1.35.0 allowed), is an Admin's as it was (from
+    1.38.0 a new one is for watching: test_admin_sign_in.py), and so is one
+    who signs in with their password on a network's device. A network's
+    sign-in can't change their PIN. The cold audit of 1.36.0, third round."""
     pat_id = home.state.pat
     laptop = device_at(home, "192.168.1.44")
     assert laptop.post("/api/access/trusted-sign-in", json={}).status_code == 200
@@ -785,21 +819,23 @@ def test_an_admin_by_network_is_a_user_and_their_own_devices_are_as_before(home)
     mine = device_at(home, "192.168.20.7", authorization=f"Bearer {picked}")
     assert mine.get("/api/internal/alerts").status_code == 200
     assert "byNetwork" not in mine.get("/api/internal/me").json()["user"]
-    # Pat with his PIN on a network's TV app: for watching; his PIN stays.
-    tv_key = device_at(home, "192.168.1.60").post(
-        "/api/internal/trusted", json={"app": "TV", "picker": True}).json()["deviceKey"]  # fmt: skip
-    tv = device_at(home, "192.168.1.60", stationplay_device=tv_key)
-    by_pin = tv.post("/api/internal/picker/choose", json={"id": pat_id, "pin": "1234"}).json()
-    assert by_pin["user"] == {"name": "Pat", "role": "user", "byNetwork": True}  # (as /me says)
-    pins = device_at(home, "192.168.1.60", authorization=f"Bearer {by_pin['token']}")
-    said = pins.post("/api/internal/pin", json={"pin": "4321"})
+    # The app the network signed in as Pat: for watching; his PIN stays.
+    # (1.38.0: no one is on a network's TV's Who's tuning in? until they sign
+    # in on it, which makes it an ordinary linked device.)
+    said = app.post("/api/internal/pin", json={"pin": "4321"})
     assert said.status_code == 403 and said.json()["detail"] == access.STEP_UP
-    assert pins.get("/api/internal/alerts").status_code == 403
+    assert app.get("/api/internal/alerts").status_code == 403
+    tv_key = device_at(home, "192.168.1.62").post(
+        "/api/internal/trusted", json={"app": "TV", "picker": True}).json()["deviceKey"]  # fmt: skip
+    tv = device_at(home, "192.168.1.62", stationplay_device=tv_key)
+    assert (
+        tv.post("/api/internal/picker/choose", json={"id": pat_id, "pin": "1234"}).status_code
+        == 404
+    )
     # Jo with her password on the same TV: an ordinary sign-in, an Admin's.
-    assert pc.put(f"/api/access/users/{jo.json()['id']}/picker", json={"showOn": "home"}).is_success
     by_password = tv.post(
-        "/api/internal/picker/choose",
-        json={"id": jo.json()["id"], "password": "a plenty long password"},
+        "/api/internal/picker/sign-in",
+        json={"name": "Jo", "password": "a plenty long password"},
     )
     assert by_password.status_code == 200, by_password.text
     hers = device_at(home, "192.168.20.7", authorization=f"Bearer {by_password.json()['token']}")
@@ -818,83 +854,85 @@ def test_a_proxy_trusted_since_is_no_longer_a_door(home):
     assert ctx.doors.listed() == []
 
 
-def test_a_browser_its_person_signed_in_on_lists_them_for_their_pin(home):
+def test_a_browser_its_admin_signed_in_on_lists_them_for_their_pin(home):
     """(The owner, October 15: signed out after an hour without activity, on
     a trusted network, the page's picker listed no one and asked only for a
     password, though he'd signed in on that browser with his password, so
-    his PIN should do, as it does on a browser at home.) Someone shown only
-    on devices they've signed in on: on a browser they signed in on with
-    their password, the page's picker lists them, with their PIN; on
-    another browser, or after signing out on purpose, it doesn't."""
+    his PIN should do, as it does on a browser at home.) From 1.38.0 (the
+    owner, October 17), on the page only an Admin, in Light sign-in: on a
+    browser they signed in on with their password, the sign-in screen lists
+    them, with their PIN; on another browser it doesn't; after signing out on
+    purpose, their password first. A User who signed in there never shows."""
     pat = admin_at_home(home)
     made = pat.post("/api/access/users", json={
-        "name": "Lee", "password": "harbor violet quill", "role": "user", "showOn": "signed-in"})  # fmt: skip
+        "name": "Lee", "password": "harbor violet quill", "role": "admin"})  # fmt: skip
     assert made.status_code == 201, made.text
     lee = made.json()["id"]
     assert pat.put(f"/api/access/users/{lee}/picker", json={"pin": "4242"}).is_success
+    assert pat.post("/api/access/users", json={
+        "name": "Sam", "password": "battery staple", "role": "user"}).status_code == 201  # fmt: skip
+    lees = {"name": "Lee", "password": "harbor violet quill"}
 
     def listed(c) -> dict:
-        return {p["name"]: p for p in c.get("/api/access/me").json()["trusted"]["people"]}
+        return {p["name"]: p for p in c.get("/api/access/me").json().get("people", [])}
 
     laptop = device_at(home, "192.168.1.70")
-    signed = laptop.post(
-        "/api/access/sign-in", json={"name": "Lee", "password": "harbor violet quill"}
-    )
-    assert signed.status_code == 200, signed.text
+    assert laptop.post(
+        "/api/access/sign-in", json={"name": "Sam", "password": "battery staple"}
+    ).is_success
+    assert laptop.post("/api/access/sign-in", json=lees).status_code == 200
+    light(laptop, lees)
     # An hour without activity: signed out (the sign-in's cookie gone, the browser's kept).
     laptop.cookies.delete(access.COOKIE)
-    assert "Lee" in listed(laptop) and listed(laptop)["Lee"]["pin"]
-    # Another browser on the same network: not listed, and can't pick Lee.
+    assert set(listed(laptop)) == {"Lee"} and listed(laptop)["Lee"]["pin"]
+    # Another browser on the same network: not listed, and can't use Lee's PIN.
     other = device_at(home, "192.168.1.71")
     assert "Lee" not in listed(other)
+    assert other.post("/api/access/pin-sign-in", json={"id": lee, "pin": "4242"}).status_code == 400
+    # On the laptop: Lee's PIN signs Lee in, with Admin tools; a wrong one doesn't.
     assert (
-        other.post("/api/access/trusted-sign-in", json={"id": lee, "pin": "4242"}).status_code
-        == 404
+        laptop.post("/api/access/pin-sign-in", json={"id": lee, "pin": "0000"}).status_code == 403
     )
-    # Picked on the laptop: Lee's PIN signs Lee in; a wrong one doesn't.
-    assert (
-        laptop.post("/api/access/trusted-sign-in", json={"id": lee, "pin": "0000"}).status_code
-        == 403
-    )
-    picked = laptop.post("/api/access/trusted-sign-in", json={"id": lee, "pin": "4242"})
+    picked = laptop.post("/api/access/pin-sign-in", json={"id": lee, "pin": "4242"})
     assert picked.status_code == 200, picked.text
-    assert laptop.get("/api/access/me").json()["user"]["name"] == "Lee"
-    # Signed out on purpose: the password first, next time.
+    me = laptop.get("/api/access/me").json()["user"]
+    assert me["name"] == "Lee" and me["adminTools"] and not me["byNetwork"]
+    assert laptop.get("/api/access/trusted").status_code == 200
+    # Signed out on purpose: still listed, for the password first, next time.
     assert laptop.post("/api/access/sign-out").status_code == 200
-    assert "Lee" not in listed(laptop)
+    assert set(listed(laptop)) == {"Lee"} and not listed(laptop)["Lee"]["pin"]
 
 
-def test_wrong_pins_for_a_browsers_own_person_count_against_that_browser(home):
-    """(The audit of 1.37.0.) A browser's own person picked on a trusted
-    network: wrong PINs there count against that browser, as on the page's
-    own PIN form (BROWSER_PIN_TRIES, then the password on that browser, which
-    can't be waited out), from any address. Before, only the address's limit
-    and the person's applied, and both can be waited out."""
+def test_wrong_pins_for_a_browsers_own_admin_count_against_that_browser(home):
+    """(The audit of 1.37.0.) Wrong PINs on a browser count against that
+    browser (BROWSER_PIN_TRIES, then the password on that browser, which
+    can't be waited out), from any address with its cookie. From 1.38.0, on
+    the page's sign-in screen (an Admin, in Light sign-in)."""
     from app import devices
 
     pat = admin_at_home(home)
     lee = pat.post("/api/access/users", json={
-        "name": "Lee", "password": "harbor violet quill", "role": "user", "showOn": "signed-in"}).json()["id"]  # fmt: skip
+        "name": "Lee", "password": "harbor violet quill", "role": "admin"}).json()["id"]  # fmt: skip
     assert pat.put(f"/api/access/users/{lee}/picker", json={"pin": "4242"}).is_success
+    lees = {"name": "Lee", "password": "harbor violet quill"}
     laptop = device_at(home, "192.168.1.70")
-    assert laptop.post(
-        "/api/access/sign-in", json={"name": "Lee", "password": "harbor violet quill"}
-    ).is_success
+    assert laptop.post("/api/access/sign-in", json=lees).is_success
+    light(laptop, lees)
     laptop.cookies.delete(access.COOKIE)
     ctx = home.state.ctx
     for n in range(access.BROWSER_PIN_TRIES):
         ctx.devices._wrong.clear()  # (as if the person's own wait had gone by)
-        got = laptop.post("/api/access/trusted-sign-in", json={"id": lee, "pin": "0000"})
+        got = laptop.post("/api/access/pin-sign-in", json={"id": lee, "pin": "0000"})
         assert got.status_code in (401, 403), (n, got.text)
-    # That browser now needs Lee's password: he isn't listed, and his PIN does nothing,
-    # from this address or any other with the browser's cookies.
-    people = {p["name"] for p in laptop.get("/api/access/me").json()["trusted"]["people"]}
-    assert "Lee" not in people
+    # That browser now needs Lee's password: his PIN does nothing, from this
+    # address or any other with the browser's cookies.
+    [tile] = laptop.get("/api/access/me").json()["people"]
+    assert (tile["name"], tile["pin"]) == ("Lee", False)
     elsewhere = device_at(home, "192.168.1.99")
     elsewhere.cookies.update(laptop.cookies)
     ctx.devices._wrong.clear()
     assert (
-        elsewhere.post("/api/access/trusted-sign-in", json={"id": lee, "pin": "4242"}).status_code
-        == 404
+        elsewhere.post("/api/access/pin-sign-in", json={"id": lee, "pin": "4242"}).status_code
+        == 400
     )
     assert devices.PIN_TRIES < access.BROWSER_PIN_TRIES
