@@ -38,8 +38,27 @@ follow them in every change.
   do itself lives in the app.
 - **No real file names or paths** in anything the apps receive.
 - tapiOca is labeled **beta** (the owner, October 12; alpha before) until the
-  apps launch. No web client
-  for watching, no DVR.
+  apps launch. No DVR.
+- **The page is a full web client for Admins only** (the owner, October 17,
+  D10, replacing "no web client for watching" and the browse-only web
+  companion): one page for running the server and for everything the paid
+  apps do, Stations and Media playback included, free, and only with an
+  Admin's sign-in (Full or Light, as on the page today). At most **one
+  active browser sign-in per server**, across all Admins and browsers,
+  enforced by the server (tabs of the same sign-in are fine); it never
+  limits the apps, other clients or how many watch a Station. It never
+  changes the apps' purchase for anyone else, and no playback address it
+  uses works without that sign-in.
+- **Admins see viewing by default** (the owner, October 17, D09, replacing
+  the opt-in "Share what you watch with your Admin"): each person's history
+  and stats, for fixing problems and choosing what to add. A person may ask
+  to stop; an Admin decides, and the request shows Pending, Approved or
+  Denied. The privacy notice and each person's first sign-in say this
+  plainly, and never claim it overrides rights the law gives.
+- **The owner's later decisions** are in the apps repo's
+  `reference/owner-decisions-2026-10-17/` (D01 to D14, client-first weather
+  alerts, one watched mark) and the plan's decision log: where they differ
+  from an older handoff, they win.
 - **Personal use, on hardware you own** (the owner, October 12): the README
   and first-run setup's Plex step say tapiOca works with your own Plex
   Media Server, and that Plex's terms license it for personal use, on
