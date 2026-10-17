@@ -160,6 +160,9 @@ def test_everything_of_theirs_stays_theirs(app):
         ctx.db.add_media_watching((sam_id, "Sam", today, "Jaws", "movie", 1, 900.0))
         tv = TestClient(app)
         key = tv.post("/api/internal/sign-in", json={**SAM, **TV}).json()["deviceKey"]
+        # (Pat signs in on it too: from 1.38.0 only that puts him on its list.)
+        assert tv.post("/api/internal/picker/sign-in", json=PAT,
+                       headers={"StationPlay-Device": key}).status_code == 200  # fmt: skip
 
         assert rename(pat, sam_id, "Samuel").status_code == 200
 
@@ -204,6 +207,9 @@ def test_the_apps_show_the_new_name_the_next_time_they_ask(app):
         signed = tv.post("/api/internal/sign-in", json={**SAM, **TV}).json()
         key = {"StationPlay-Device": signed["deviceKey"]}
         his = bearer(signed["token"])
+        # (Pat signs in on it too: from 1.38.0 only that puts him on its list.)
+        assert tv.post("/api/internal/picker/sign-in", json=PAT, headers=key).status_code == 200
+        his = bearer(tv.post("/api/internal/picker/sign-in", json=SAM, headers=key).json()["token"])
         assert tv.get("/api/internal/me", headers=his).json()["user"] == {
             "name": "Sam", "role": "user", "pin": False, "canChangePassword": True,
             "canChangePin": True, "canReport": True,
@@ -239,10 +245,12 @@ def test_a_device_is_its_linkers_by_who_they_are_not_their_name(app):
         ).json()["deviceKey"]}  # fmt: skip
         assert pat.delete(f"/api/access/users/{eve.json()['id']}").status_code == 204
         rename(pat, ids(pat)["Pat"], "Eve")  # (the Admin, now named as Eve was)
-        [admin] = tv.get("/api/internal/picker", headers=key).json()["people"]
-        assert admin["name"] == "Eve" and admin["admin"]
+        # (From 1.38.0 a device lists only those who signed in on it, so the
+        # Admin isn't on it at all, and can't be picked there.)
+        admin = {"id": ids(pat)["Eve"], "name": "Eve"}
+        assert tv.get("/api/internal/picker", headers=key).json()["people"] == []
         refused = tv.post("/api/internal/picker/choose", json={"id": admin["id"]}, headers=key)
-        assert refused.status_code == 403 and "password" in refused.json()["detail"]
+        assert refused.status_code == 404 and not refused.json().get("token")
         # An Admin's own device stays theirs when they're renamed.
         own = TestClient(app)
         mine = {"StationPlay-Device": own.post(

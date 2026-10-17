@@ -3675,6 +3675,15 @@ def create_app(settings: Settings | None = None, plex: PlexClient | None = None)
 
     @app.put("/api/away")
     async def away_save(body: AwayIn, request: Request):
+        # (Turning it on, or moving it, widens where sign-ins work: only with
+        # a password's sign-in. Turning it off never needs one. The last
+        # check of 1.38.0's cold audit.)
+        try:
+            same = away.normalize_address(body.address) == ctx.away.address
+        except ValueError:
+            same = False  # (said below, as a 400)
+        if body.on and not (ctx.away.on and same):
+            ctx.access.refuse_without_secret(request)
         cap_given = "mediaMbps" in body.model_fields_set  # (the setup doesn't send it)
         cap_was = ctx.away.media_mbps
         try:

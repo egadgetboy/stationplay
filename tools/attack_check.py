@@ -2353,7 +2353,7 @@ async def _doors_and_trust(
         got = await gives(c, peer("192.168.1.60"))
         checks.ok(got == "picker", "a device on the network: Who's tuning in?", str(got))
         me = (await c.get("/api/access/me", headers=peer("192.168.1.60"))).json()
-        checks.ok("trusted" not in me and "people" not in me,
+        checks.ok(me.get("trusted") == {"gives": "picker"} and "people" not in me,
                   "the page there lists no one who hasn't signed in on it (1.38.0)",
                   str(me)[:200])  # fmt: skip
         # Not trusted: another VLAN, the public port, a trusted /32's

@@ -234,7 +234,7 @@ def test_a_trusted_networks_whos_tuning_in_lists_no_one_on_the_page(home):
     Admin signs in there with their password."""
     pc = device_at(home, "192.168.1.65")
     me = pc.get("/api/access/me").json()
-    assert me["user"] is None and "trusted" not in me and "people" not in me
+    assert me["user"] is None and me["trusted"] == {"gives": "picker"} and "people" not in me
     for who in ({"id": home.state.kid}, {"id": home.state.pat, "pin": "1234"}, {}):
         refused = pc.post("/api/access/trusted-sign-in", json=who)
         assert refused.status_code == 404 and refused.json()["detail"] == trustedapi.NOT_LISTED
@@ -302,7 +302,9 @@ def test_a_device_signed_in_as_someone(home):
     assert laptop.get("/api/access/me").json()["user"]["name"] == "Pat"
     # Its neighbor is the network's: Who's tuning in?, for the apps (on the
     # page, as at any home address, from 1.38.0).
-    assert "trusted" not in device_at(home, "192.168.1.45").get("/api/access/me").json()
+    assert device_at(home, "192.168.1.45").get("/api/access/me").json()["trusted"] == {
+        "gives": "picker"
+    }
 
 
 def test_an_admins_device_is_never_signed_in_through_a_proxy(home):
@@ -312,7 +314,7 @@ def test_an_admins_device_is_never_signed_in_through_a_proxy(home):
     applies through a proxy: its network's choice does, if any."""
     home.state.ctx.trusted.save({"proxies": [{"network": "192.168.1.2"}]}, by=home.state.pat)
     via = device_at(home, "192.168.1.2", x_forwarded_for="192.168.1.44")
-    assert "trusted" not in via.get("/api/access/me").json()  # (the network's: as at home)
+    assert via.get("/api/access/me").json()["trusted"] == {"gives": "picker"}  # (the network's)
     assert via.post("/api/access/trusted-sign-in", json={}).status_code == 404
     # (Straight from the laptop: as listed.)
     laptop = device_at(home, "192.168.1.44")
@@ -558,7 +560,9 @@ def test_made_an_admin_their_sign_ins_without_a_secret_end(home):
     for c in (tv, phone):
         assert c.get("/api/access/trusted").status_code == 401
         assert c.get("/api/access/me").json()["user"] is None
-    assert "trusted" not in phone.get("/api/access/me").json()  # (the network's now)
+    assert phone.get("/api/access/me").json()["trusted"] == {
+        "gives": "picker"
+    }  # (the network's now)
     # (Chosen again, deliberately: as listed.)
     again = [e if e["network"] != "192.168.1.70/32" else {**e, "gives": "person", "person": sam["id"]}
              for e in pat.get("/api/access/trusted").json()["entries"]]  # fmt: skip

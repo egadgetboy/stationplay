@@ -597,3 +597,20 @@ def test_a_pins_sign_in_never_takes_or_restores_a_backup(pat, app):
     # (With his password, as before.)
     assert pc.post("/api/access/sign-in", json=PAT).status_code == 200
     assert pc.get(f"/api/backups/{name}").status_code == 200
+
+
+def test_a_pins_sign_in_never_turns_on_watching_away_from_home(pat, app):
+    """(The last check of 1.38.0's cold audit.) Turning on watching away from
+    home, or changing its address, widens where tapiOca's sign-ins work:
+    only with the password. A PIN's sign-in can still turn it off."""
+    pc = browser(app, PAT)
+    light(pc)
+    assert pin(idle(pc), pat.ids["Pat"], "1234").status_code == 200
+    said = pc.put("/api/away", json={"on": True, "address": "https://tv.example.com"})
+    assert said.status_code == 403 and said.json()["detail"] == access.STEP_UP, said.text
+    assert pc.get("/api/away").json()["on"] is False
+    assert pat.put("/api/away", json={"on": True, "address": "https://tv.example.com"}).is_success
+    moved = pc.put("/api/away", json={"on": True, "address": "https://elsewhere.example.com"})
+    assert moved.status_code == 403, moved.text
+    assert pc.put("/api/away", json={"on": False, "address": "https://tv.example.com"}).is_success
+    assert pc.get("/api/away").json()["on"] is False

@@ -130,13 +130,15 @@ def routes(app: FastAPI, ctx: AppContext) -> None:
         return user
 
     def info(entry: dict[str, Any]) -> dict[str, Any] | None:
-        """What a trusted network that signs in as someone tells the page:
-        that it does, never who (the owner, October 17: "No user appears on
-        the server sign in page at all unless their user is set as Admin").
-        From 1.38.0, a network's Who's
-        tuning in? is for the apps only: on the page, as at any home
-        address, the sign-in screen has only the Admins who signed in on that
-        browser."""
+        """What a trusted network tells the page, signed out: that it signs
+        in as someone, never who (the owner, October 17: "No user appears on
+        the server sign in page at all unless their user is set as Admin");
+        or that it opens on Who's tuning in?, never its people (from 1.38.0
+        that list is the apps', of those who signed in on each device; the
+        page's sign-in screen has only the Admins who signed in on that
+        browser, as at any home address)."""
+        if entry["gives"] == "picker":
+            return {"gives": "picker"}
         if entry["gives"] != "person":
             return None
         user = ctx.db.user(entry["person"]) if entry.get("person") else None

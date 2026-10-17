@@ -564,7 +564,7 @@ From 1.38.0 (the owner, October 17), `app/access.py`.
 | `user.adminSignIn` | For an Admin only, their own: `full` or `light` |
 | `user.byNetwork` | A trusted network signed them in |
 | `people` | Signed out, at home: the Admins on this browser's sign-in screen, each with `id`, `name` and `pin` (whether their PIN signs them in here). Left out when there's no one. In place of 1.37.x's `pinFor` |
-| `trusted` | Signed out, at home, only on a network that signs in as someone: `{"gives": "person"}`, never who (1.38.0: no User is shown on the sign-in screen); `{"gives": "none"}` if that person is gone |
+| `trusted` | Signed out, at home, only on a trusted network. One that signs in as someone: `{"gives": "person"}`, never who (1.38.0: no User is shown on the sign-in screen); `{"gives": "none"}` if that person is gone; on one that opens on Who's tuning in?, `{"gives": "picker"}`, never its people |
 
 ## Trusted networks
 
